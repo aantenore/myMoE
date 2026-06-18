@@ -63,10 +63,32 @@ class WebTests(unittest.TestCase):
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
         self.assertTrue(extensions["tools"])
 
+    def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
+        server = build_server("configs/moe.mock.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            html = _get_text(base_url + "/")
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertIn("Enter sends / Alt Enter wraps", html)
+        self.assertIn("function renderMarkdown", html)
+        self.assertIn("event.altKey", html)
+        self.assertIn("Architecture decision", html)
+
 
 def _get_json(url: str) -> dict[str, object]:
     with request.urlopen(url, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _get_text(url: str) -> str:
+    with request.urlopen(url, timeout=5) as response:
+        return response.read().decode("utf-8")
 
 
 def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:

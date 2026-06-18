@@ -32,8 +32,10 @@
     "configs/single.live.qwen25-coder.json",
     "configs/moe.live.general-mlx.example.json",
     "configs/moe.live.fast-mlx.example.json",
+    "configs/moe.live.gemma-e4b-mlx.example.json",
     "configs/moe.live.ollama.example.json",
     "docs/agent-runtime.md",
+    "docs/gemma-e4b-runtime.md",
     "docs/installation.md",
     "docs/performance-benchmarking.md",
     "docs/tested-performance.md",
@@ -41,7 +43,8 @@
     "docs/screenshots/dashboard.png",
     "docs/screenshots/composer.png",
     "docs/screenshots/extensions.png",
-    "docs/screenshots/live-generation.png"
+    "docs/screenshots/live-generation.png",
+    "docs/screenshots/mobile.png"
   ],
   "forbidden_listeners": [
     {

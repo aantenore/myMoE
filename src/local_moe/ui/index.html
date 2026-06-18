@@ -295,9 +295,75 @@
         min-height: 22rem;
         max-height: calc(100svh - 20rem);
         overflow: auto;
-        white-space: pre-wrap;
         line-height: 1.55;
         color: hsl(var(--foreground));
+      }
+
+      .answer p,
+      .answer ul,
+      .answer ol,
+      .answer pre,
+      .answer blockquote {
+        margin: 0 0 0.85rem;
+      }
+
+      .answer :last-child {
+        margin-bottom: 0;
+      }
+
+      .answer ul,
+      .answer ol {
+        padding-left: 1.25rem;
+      }
+
+      .answer li {
+        margin: 0.25rem 0;
+      }
+
+      .answer strong {
+        font-weight: 700;
+      }
+
+      .answer em {
+        color: hsl(var(--foreground) / 0.92);
+      }
+
+      .answer code {
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 4px);
+        background: hsl(var(--secondary) / 0.52);
+        padding: 0.1rem 0.3rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.86em;
+      }
+
+      .answer pre {
+        overflow: auto;
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 2px);
+        background: hsl(var(--secondary) / 0.42);
+        padding: 0.75rem;
+      }
+
+      .answer pre code {
+        border: 0;
+        background: transparent;
+        padding: 0;
+      }
+
+      .answer a {
+        color: hsl(var(--info));
+        text-decoration: none;
+      }
+
+      .answer a:hover {
+        text-decoration: underline;
+      }
+
+      .answer blockquote {
+        border-left: 3px solid hsl(var(--border));
+        color: hsl(var(--muted-foreground));
+        padding-left: 0.85rem;
       }
 
       .answer.empty {
@@ -501,21 +567,21 @@
 
           <div class="section-title">Prompt library</div>
           <div class="stack">
-            <button class="sample" data-prompt="Analizza il tradeoff tra un singolo modello locale generalista e un MoE applicativo per un assistente personale privato.">
-              Decisione architetturale
-              <span>Reasoning generale</span>
+            <button class="sample" data-prompt="Analyze the tradeoff between one local generalist model and an application-level MoE for a private personal assistant.">
+              Architecture decision
+              <span>General reasoning</span>
             </button>
-            <button class="sample" data-prompt="Trasforma questa idea prodotto in un piano MVP con rischi, scope, test e requisiti hardware.">
-              Piano prodotto
-              <span>Planning sintetico</span>
+            <button class="sample" data-prompt="Turn this product idea into an MVP plan with risks, scope, tests, and hardware requirements.">
+              Product plan
+              <span>Concise planning</span>
             </button>
-            <button class="sample" data-prompt="Riscrivi questo messaggio in italiano, diretto ma caldo, senza sembrare corporate.">
-              Scrittura
-              <span>Risposta nella lingua utente</span>
+            <button class="sample" data-prompt="Rewrite this message in Italian, direct but warm, without sounding corporate.">
+              Writing
+              <span>User-language response</span>
             </button>
-            <button class="sample" data-prompt="Progetta una policy di memoria per un assistente locale che ricordi preferenze senza sporcare il contesto attivo.">
-              Memoria e contesto
-              <span>Compaction e retrieval</span>
+            <button class="sample" data-prompt="Design a memory policy for a local assistant that remembers preferences without polluting the active context.">
+              Memory and context
+              <span>Compaction and retrieval</span>
             </button>
           </div>
         </aside>
@@ -553,7 +619,7 @@
           <section class="card">
             <div class="card-header">
               <h2 class="card-title">Composer</h2>
-              <span class="badge">Cmd Enter</span>
+              <span class="badge">Enter sends / Alt Enter wraps</span>
             </div>
             <div class="card-content composer">
               <textarea id="prompt" placeholder="Ask the local MoE something..."></textarea>
@@ -645,18 +711,18 @@
         el("mode").textContent = payload.requires_model ? "model required" : "test fixture";
         el("config-name").textContent = payload.config_path;
         el("aggregation").textContent = `${payload.routing.aggregation} / top-${payload.routing.top_k}`;
-        el("config").innerHTML = `
-          <div>Mode <span>${payload.app.mode}</span></div>
-          <div>Experts <span>${payload.experts.length}</span></div>
-          <div>Rules <span>${payload.rules.length}</span></div>
-          <div>Fallback <span>${payload.routing.fallback_order.join(", ") || "none"}</span></div>
-          <div>Providers <span>${providerMix(payload.experts)}</span></div>
-          <div>Language <span>${payload.app.language.mode}</span></div>
-        `;
+        el("config").innerHTML = kvRows([
+          ["Mode", payload.app.mode],
+          ["Experts", payload.experts.length],
+          ["Rules", payload.rules.length],
+          ["Fallback", payload.routing.fallback_order.join(", ") || "none"],
+          ["Providers", providerMix(payload.experts)],
+          ["Language", payload.app.language.mode],
+        ]);
         el("experts").innerHTML = payload.experts.map((expert) => `
           <div class="list-item">
-            <strong>${expert.id}</strong>
-            <small>${expert.role} / ${expert.model}</small>
+            <strong>${escapeHtml(expert.id)}</strong>
+            <small>${escapeHtml(expert.role)} / ${escapeHtml(expert.model)} / ${escapeHtml(expert.runtime_backend)}</small>
           </div>
         `).join("");
       }
@@ -671,35 +737,114 @@
         el("runtime-summary").textContent = `${payload.platform_key}; ${payload.model_commands.length} configured model command${payload.model_commands.length === 1 ? "" : "s"}.`;
         el("start-command").textContent = payload.model_commands[0] ? payload.model_commands[0].join(" ") : "make start-models";
         el("model-state").textContent = "Start local model";
-        el("runtime-panel").innerHTML = `
-          <div>Platform <span>${payload.platform_key}</span></div>
-          <div>Backend <span>${payload.backend}</span></div>
-          <div>uv <span>${payload.available_commands.uv ? "yes" : "no"}</span></div>
-          <div>Ollama <span>${payload.available_commands.ollama ? "yes" : "no"}</span></div>
-          <div>Model commands <span>${payload.model_commands.length}</span></div>
-        `;
+        el("runtime-panel").innerHTML = kvRows([
+          ["Platform", payload.platform_key],
+          ["Backend", payload.backend],
+          ["uv", payload.available_commands.uv ? "yes" : "no"],
+          ["Ollama", payload.available_commands.ollama ? "yes" : "no"],
+          ["Python", payload.available_commands.python ? "yes" : "no"],
+          ["Model commands", payload.model_commands.length],
+        ]);
       }
 
       function renderExtensions(payload) {
         const total = payload.tools.length + payload.skills.length + payload.plugins.length + payload.mcp_servers.length + payload.cron_jobs.length;
         el("extension-count").textContent = total;
-        el("extensions").innerHTML = `
-          <div>Tools <span>${payload.tools.length}</span></div>
-          <div>Skills <span>${payload.skills.length}</span></div>
-          <div>Plugins <span>${payload.plugins.length}</span></div>
-          <div>MCP servers <span>${payload.mcp_servers.length}</span></div>
-          <div>Cron jobs <span>${payload.cron_jobs.length}</span></div>
-        `;
+        el("extensions").innerHTML = kvRows([
+          ["Tools", payload.tools.length],
+          ["Skills", payload.skills.length],
+          ["Plugins", payload.plugins.length],
+          ["MCP servers", payload.mcp_servers.length],
+          ["Cron jobs", payload.cron_jobs.length],
+        ]);
       }
 
       function renderRoutes(items) {
         el("routes").innerHTML = items.map((item) => `
           <div class="list-item">
-            <strong>${item.expert_id}</strong>
-            <small>score ${Number(item.score).toFixed(2)} / ${item.matched_keywords.join(", ") || "no keyword"}</small>
+            <strong>${escapeHtml(item.expert_id)}</strong>
+            <small>score ${Number(item.score).toFixed(2)} / ${escapeHtml(item.matched_keywords.join(", ") || "no keyword")}</small>
           </div>
         `).join("");
         el("route").textContent = items[0] ? items[0].expert_id : "-";
+      }
+
+      function kvRows(rows) {
+        return rows.map(([label, value]) => `<div>${escapeHtml(label)} <span>${escapeHtml(value)}</span></div>`).join("");
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function setAnswer(markdown, options = {}) {
+        el("answer").classList.toggle("empty", Boolean(options.empty));
+        el("answer").classList.toggle("error", Boolean(options.error));
+        el("answer").innerHTML = renderMarkdown(markdown);
+      }
+
+      function renderMarkdown(markdown) {
+        const codeBlocks = [];
+        let html = escapeHtml(markdown).replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, language, code) => {
+          const index = codeBlocks.length;
+          codeBlocks.push(`<pre><code data-language="${escapeHtml(language)}">${code.trim()}</code></pre>`);
+          return `\u0000CODE${index}\u0000`;
+        });
+
+        html = html
+          .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+          .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+          .replace(/_([^_\n]+)_/g, "<em>$1</em>");
+
+        const lines = html.split(/\n/);
+        const blocks = [];
+        let listItems = [];
+        let orderedItems = [];
+        const flushList = () => {
+          if (listItems.length) {
+            blocks.push(`<ul>${listItems.join("")}</ul>`);
+            listItems = [];
+          }
+          if (orderedItems.length) {
+            blocks.push(`<ol>${orderedItems.join("")}</ol>`);
+            orderedItems = [];
+          }
+        };
+
+        for (const line of lines) {
+          if (/^\u0000CODE\d+\u0000$/.test(line.trim())) {
+            flushList();
+            blocks.push(line.trim());
+          } else if (/^\s*[-*]\s+/.test(line)) {
+            if (orderedItems.length) {
+              blocks.push(`<ol>${orderedItems.join("")}</ol>`);
+              orderedItems = [];
+            }
+            listItems.push(`<li>${line.replace(/^\s*[-*]\s+/, "")}</li>`);
+          } else if (/^\s*\d+\.\s+/.test(line)) {
+            if (listItems.length) {
+              blocks.push(`<ul>${listItems.join("")}</ul>`);
+              listItems = [];
+            }
+            orderedItems.push(`<li>${line.replace(/^\s*\d+\.\s+/, "")}</li>`);
+          } else if (line.trim()) {
+            flushList();
+            blocks.push(`<p>${line}</p>`);
+          } else {
+            flushList();
+          }
+        }
+        flushList();
+
+        return blocks.join("").replace(/\u0000CODE(\d+)\u0000/g, (_, index) => codeBlocks[Number(index)] || "");
       }
 
       async function generate() {
@@ -708,20 +853,18 @@
 
         setBusy(true);
         const started = performance.now();
-        el("answer").classList.remove("empty", "error");
-        el("answer").textContent = "Generating...";
+        setAnswer("Generating...");
         try {
           const payload = await api("/api/generate", {
             method: "POST",
             body: JSON.stringify({ prompt }),
           });
-          el("answer").textContent = payload.content;
+          setAnswer(payload.content);
           el("latency").textContent = `${Math.round(performance.now() - started)} ms`;
           el("correlation").textContent = payload.correlation_id.slice(0, 8);
           renderRoutes(payload.route.selected);
         } catch (error) {
-          el("answer").classList.add("error");
-          el("answer").textContent = error.message;
+          setAnswer(error.message, { error: true });
         } finally {
           setBusy(false);
         }
@@ -729,23 +872,21 @@
 
       async function runEval() {
         setBusy(true);
-        el("answer").classList.remove("empty", "error");
-        el("answer").textContent = "Running eval...";
+        setAnswer("Running eval...");
         try {
           const payload = await api("/api/evaluate", {
             method: "POST",
             body: JSON.stringify({ eval_path: "experiments/eval_set_extended.jsonl" }),
           });
-          el("answer").textContent = JSON.stringify({
+          setAnswer("```json\n" + JSON.stringify({
             accuracy: payload.accuracy,
             total: payload.total,
             by_complexity: payload.by_complexity,
-          }, null, 2);
+          }, null, 2) + "\n```");
           el("latency").textContent = "-";
           el("correlation").textContent = "eval";
         } catch (error) {
-          el("answer").classList.add("error");
-          el("answer").textContent = error.message;
+          setAnswer(error.message, { error: true });
         } finally {
           setBusy(false);
         }
@@ -754,6 +895,15 @@
       function setBusy(value) {
         el("send").disabled = value;
         el("eval").disabled = value;
+      }
+
+      function insertComposerNewline() {
+        const prompt = el("prompt");
+        const start = prompt.selectionStart ?? prompt.value.length;
+        const end = prompt.selectionEnd ?? prompt.value.length;
+        prompt.value = `${prompt.value.slice(0, start)}\n${prompt.value.slice(end)}`;
+        prompt.selectionStart = start + 1;
+        prompt.selectionEnd = start + 1;
       }
 
       document.querySelectorAll(".sample").forEach((button) => {
@@ -775,7 +925,15 @@
       el("send").addEventListener("click", generate);
       el("eval").addEventListener("click", runEval);
       el("prompt").addEventListener("keydown", (event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") generate();
+        if (event.key === "Enter" && event.altKey && !event.metaKey && !event.ctrlKey) {
+          event.preventDefault();
+          insertComposerNewline();
+          return;
+        }
+        if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+          event.preventDefault();
+          generate();
+        }
       });
 
       Promise.all([
@@ -783,8 +941,7 @@
         api("/api/runtime").then(renderRuntime),
         api("/api/extensions").then(renderExtensions),
       ]).catch((error) => {
-        el("answer").classList.add("error");
-        el("answer").textContent = error.message;
+        setAnswer(error.message, { error: true });
       });
     </script>
   </body>

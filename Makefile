@@ -1,4 +1,4 @@
-.PHONY: check test eval ui cli doctor setup-models start-models benchmark-small
+.PHONY: check test eval ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	./scripts/run_all_checks.sh
@@ -31,6 +31,12 @@ start-models:
 
 benchmark-small:
 	PYTHONPATH=src .venv/bin/python experiments/benchmark_models.py \
-		--include qwen3-1.7b-mlx-4bit,qwen3-4b-mlx-4bit \
+		--include qwen3-1.7b-mlx-4bit,qwen3-4b-mlx-4bit,gemma4-e4b-it-mlx-4bit \
+		--prompt-limit 2 \
+		--max-tokens 96
+
+benchmark-gemma:
+	PYTHONPATH=src .venv/bin/python experiments/benchmark_models.py \
+		--include gemma4-e4b-it-mlx-4bit \
 		--prompt-limit 2 \
 		--max-tokens 96

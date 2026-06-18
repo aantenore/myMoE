@@ -26,13 +26,20 @@ The UI is a dependency-free shadcn/new-york inspired surface: zinc dark theme, t
 
 It now exposes runtime and extension status so you can see the selected backend, model commands, tools, skills, plugins, MCP servers, and cron jobs.
 
+Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, and bullet lists while escaping model-provided HTML before formatting.
+
+Keyboard behavior:
+
+- `Enter` sends the current prompt.
+- `Alt+Enter` inserts a newline.
+
 ## Screenshots
 
 Dashboard with live model-required config and extension registry:
 
 ![myMoE dashboard](screenshots/dashboard.png)
 
-Composer view with an Italian prompt and runtime panels visible:
+Composer view with the prompt library and runtime panels visible:
 
 ![myMoE composer](screenshots/composer.png)
 
@@ -40,9 +47,13 @@ Extension registry tab:
 
 ![myMoE extensions](screenshots/extensions.png)
 
-Live generation through `Qwen3-4B-4bit`:
+Live generation through `Gemma 4 E4B`:
 
 ![myMoE live generation](screenshots/live-generation.png)
+
+Mobile layout check:
+
+![myMoE mobile layout](screenshots/mobile.png)
 
 The UI exposes:
 

@@ -7,7 +7,19 @@ dependencies = []
 
 [project.optional-dependencies]
 mlx = [
+  "mlx==0.31.1",
+  "mlx-metal==0.31.1; platform_system == 'Darwin'",
+  "mlx-lm==0.31.2",
+  "huggingface-hub",
+  "psutil"
+]
+mlx-current = [
   "mlx-lm",
+  "huggingface-hub",
+  "psutil"
+]
+mlx-vlm = [
+  "mlx-vlm",
   "huggingface-hub",
   "psutil"
 ]

@@ -21,18 +21,18 @@ The current 1.5B Qwen coder model is only a smoke-test model. It proves the harn
 On the tested Apple M5 Pro / 24 GiB machine, the current benchmark selects:
 
 - primary general expert: `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`,
-- fast fallback/compaction expert: `Qwen3-4B-MLX-4bit`.
+- fast fallback/compaction expert: `Gemma-4-E4B-it-MLX-4bit`.
 
 Measured short-generation snapshot:
 
 | Candidate | Status | Avg generation tok/s | Peak memory |
 | --- | --- | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 96.95 | 17.31 GB |
-| Qwen3 4B MLX 4-bit | ok | 91.13 | 2.54 GB |
-| Qwen3 1.7B MLX 4-bit | ok | 209.87 | 1.17 GB |
-| Gemma 4 E4B it MLX 4-bit | failed to load | - | - |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 92.32 | 17.30 GB |
+| Gemma 4 E4B it MLX 4-bit | ok | 72.11 | 4.39 GB |
+| Qwen3 4B MLX 4-bit | ok | 92.77 | 2.53 GB |
+| Qwen3 1.7B MLX 4-bit | ok | 193.75 | 1.10 GB |
 
-The 30B result is strong enough to keep it as the default primary model on this machine class. The 4B model is the practical first-run and fallback profile.
+The 30B result is strong enough to keep it as the default primary model on this machine class. Gemma 4 E4B is now the selected fallback/compaction model because it loaded successfully with the pinned MLX profile and scored better than Qwen3 4B after quality prior and memory headroom were combined. Qwen3 4B remains the smallest practical fast-first profile.
 
 ## Recommended Default
 
@@ -64,7 +64,7 @@ configs/moe.live.general-mlx.example.json
 | Primary general default | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best risk-adjusted general model for 24 GB | Still needs capped context and memory monitoring |
 | Primary general stretch | `Qwen3.6-35B-A3B` MLX 4-bit | Stronger agentic/general/reasoning direction | Tight headroom; use only one heavy model resident |
 | Multimodal general | `Gemma 4 26B-A4B-it-MLX-4bit` | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
-| Fast fallback | Gemma 4 E4B or similar 4-bit small model | Summarization, compaction, routing, cheap fallback | Lower reasoning depth |
+| Fast fallback | `Gemma 4 E4B it MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Requires pinned MLX package profile for the current artifact |
 | Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
 | Rejected for this machine | `Qwen3-Coder-Next` | Strong but too large | 4-bit wants >45 GB; even good low-bit paths want >30 GB |
 
@@ -88,6 +88,8 @@ This still gives you MoE behavior at the application level without pretending th
 - Qwen3.6 35B A3B official page: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 - Qwen3.6 Apple Silicon quant reference: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit
 - Gemma 4 local guide: https://unsloth.ai/docs/models/gemma-4
+- Gemma 4 E4B MLX artifact: https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit
+- Gemma E4B MLX compatibility issue: https://github.com/ml-explore/mlx-lm/issues/1242
 - Gemma 4 26B A4B MLX 4-bit: https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit
 - Qwen3-Coder 30B A3B official/GGUF reference: https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
 - Qwen3-Coder-Next GGUF requirements: https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF

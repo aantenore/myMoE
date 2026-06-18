@@ -61,13 +61,13 @@
       "label": "Gemma 4 E4B it MLX 4-bit",
       "role": "fast_compaction_or_fallback",
       "runtime": "mlx_lm",
-      "repo": "lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+      "repo": "mlx-community/gemma-4-e4b-it-4bit",
       "estimated_size_gb": 3.5,
       "estimated_memory_gb": 5.5,
       "quality_prior": 0.62,
       "speed_target_tps": 65.0,
-      "source_url": "https://huggingface.co/lmstudio-community/gemma-4-E4B-it-MLX-4bit",
-      "notes": "Fast local fallback candidate; useful if Gemma instruction behavior is better on writing and summarization."
+      "source_url": "https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit",
+      "notes": "Fast local fallback candidate. This artifact is validated with the pinned MLX profile: mlx==0.31.1, mlx-metal==0.31.1, mlx-lm==0.31.2."
     },
     {
       "id": "qwen3-30b-a3b-2507-mlx-4bit",

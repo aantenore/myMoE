@@ -5,7 +5,7 @@ Tested machine: `Apple M5 Pro` / `arm64` / `24.0 GiB RAM`.
 
 ## Decision
 
-- Primary general expert: `Qwen3 30B-A3B Instruct 2507 MLX 4-bit`
+- Primary general expert: `none`
 - Fast fallback/compaction expert: `Gemma 4 E4B it MLX 4-bit`
 - Architecture: one resident heavy general expert plus one small resident fallback/compaction expert; cold-load specialists only after eval wins.
 
@@ -13,10 +13,10 @@ Tested machine: `Apple M5 Pro` / `arm64` / `24.0 GiB RAM`.
 
 | Rank | Candidate | Role | Status | Score | Tok/s | Peak GB | Load s |
 | ---: | --- | --- | --- | ---: | ---: | ---: | ---: |
-| 1 | `Qwen3 30B-A3B Instruct 2507 MLX 4-bit` | `primary_general` | `ok` | 0.903 | 92.32 | 17.30 | 4.33 |
-| 2 | `Gemma 4 E4B it MLX 4-bit` | `fast_compaction_or_fallback` | `ok` | 0.829 | 72.11 | 4.39 | 1.82 |
-| 3 | `Qwen3 4B MLX 4-bit` | `fast_compaction_or_fallback` | `ok` | 0.797 | 92.77 | 2.53 | 0.67 |
-| 4 | `Qwen3 1.7B MLX 4-bit` | `fast_compaction_or_fallback` | `ok` | 0.731 | 193.75 | 1.10 | 28.90 |
+| 1 | `Gemma 4 E4B it MLX 4-bit` | `fast_compaction_or_fallback` | `ok` | 0.829 | 72.76 | 4.39 | 1.38 |
+| 2 | `Qwen3 1.7B MLX 4-bit` | `fast_compaction_or_fallback` | `not_run` | 0.000 | - | - | - |
+| 3 | `Qwen3 4B MLX 4-bit` | `fast_compaction_or_fallback` | `not_run` | 0.000 | - | - | - |
+| 4 | `Qwen3 30B-A3B Instruct 2507 MLX 4-bit` | `primary_general` | `not_run` | 0.000 | - | - | - |
 | 5 | `Gemma 4 26B-A4B it MLX 4-bit` | `primary_general_alternative` | `not_run` | 0.000 | - | - | - |
 | 6 | `Gemma 4 26B-A4B it OptiQ MLX 4-bit` | `primary_general_alternative` | `not_run` | 0.000 | - | - | - |
 

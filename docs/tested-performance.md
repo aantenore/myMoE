@@ -8,7 +8,7 @@ This file records the local machine and benchmark results used to choose the def
 - Memory: 24.0 GiB unified memory
 - OS/runtime target: macOS Apple Silicon with MLX
 - Python: 3.12 virtual environment through `uv`
-- MLX runtime: `mlx-lm`
+- MLX runtime: pinned `.[mlx]` profile (`mlx==0.31.1`, `mlx-metal==0.31.1`, `mlx-lm==0.31.2`)
 
 ## Decision
 
@@ -18,13 +18,17 @@ Default primary model:
 
 Fast fallback / first-run model:
 
+- `mlx-community/gemma-4-e4b-it-4bit`
+
+Smallest fast demo model:
+
 - `mlx-community/Qwen3-4B-4bit`
 
 Why:
 
 - Qwen3 30B-A3B passed the local MLX benchmark and produced the best risk-adjusted score.
-- Qwen3 4B is dramatically smaller, starts quickly, and is the best practical fallback/compaction model tested.
-- Gemma 4 E4B failed to load with the current `mlx-lm` runtime/artifact combination, so it is not selected.
+- Gemma 4 E4B failed on the newest MLX stack but passed with the pinned profile and is now the selected fallback/compaction model.
+- Qwen3 4B is dramatically smaller and remains the best practical low-memory first-run model.
 - Gemma 26B variants remain stretch candidates; one quick run was too slow for the default benchmark loop and should be evaluated separately before making them defaults.
 
 ## Latest Benchmark Snapshot
@@ -38,10 +42,10 @@ The benchmark uses short prompts and `96` output tokens per prompt. It is a perf
 
 | Candidate | Status | Avg generation tok/s | Peak memory | Avg latency |
 | --- | --- | ---: | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 96.95 | 17.31 GB | 9.47 s |
-| Qwen3 4B MLX 4-bit | ok | 91.13 | 2.54 GB | 1.25 s |
-| Qwen3 1.7B MLX 4-bit | ok | 209.87 | 1.17 GB | 0.58 s |
-| Gemma 4 E4B it MLX 4-bit | failed to load | - | - | - |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 92.32 | 17.30 GB | 6.53 s |
+| Gemma 4 E4B it MLX 4-bit | ok | 72.11 | 4.39 GB | 1.63 s |
+| Qwen3 4B MLX 4-bit | ok | 92.77 | 2.53 GB | 1.06 s |
+| Qwen3 1.7B MLX 4-bit | ok | 193.75 | 1.10 GB | 0.60 s |
 
 ## Practical Requirements
 

@@ -7,6 +7,8 @@ from urllib import request, error
 
 from .config import ExpertConfig
 
+LOCAL_PROVIDER_PARAMS = {"runtime_backend"}
+
 
 class ProviderError(RuntimeError):
     """Raised when an expert provider fails."""
@@ -72,7 +74,7 @@ class OpenAICompatibleProvider:
                 {"role": "user", "content": req.prompt},
             ],
         }
-        payload.update(expert.params)
+        payload.update({key: value for key, value in expert.params.items() if key not in LOCAL_PROVIDER_PARAMS})
 
         data = json.dumps(payload).encode("utf-8")
         http_req = request.Request(

@@ -21,6 +21,14 @@ uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python ".[mlx]"
 ```
 
+The `.[mlx]` extra pins the MLX package versions validated locally:
+
+- `mlx==0.31.1`
+- `mlx-metal==0.31.1`
+- `mlx-lm==0.31.2`
+
+This matters for Gemma 4 E4B. Newer MLX packages loaded during testing reproduced the upstream `Received 126 parameters not in model` failure. The pinned profile loads and generates successfully.
+
 ## Run
 
 Small smoke pass:
@@ -44,9 +52,22 @@ Outputs:
 
 - `mlx-community/Qwen3-1.7B-4bit`
 - `mlx-community/Qwen3-4B-4bit`
-- `lmstudio-community/gemma-4-E4B-it-MLX-4bit`
+- `mlx-community/gemma-4-e4b-it-4bit`
 - `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit`
 - `lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit`
 - `mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit`
 
 The current policy is to choose one heavy resident general expert and one small resident fallback/compaction expert. Other large specialists should be cold-loaded only after they win evals for their task class.
+
+## Gemma E4B Regression
+
+Run the focused Gemma E4B benchmark with:
+
+```bash
+make benchmark-gemma
+```
+
+The focused result is also stored in:
+
+- `outputs/gemma-e4b-benchmark.json`
+- `outputs/gemma-e4b-decision.md`

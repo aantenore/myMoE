@@ -19,6 +19,14 @@ class PerformanceTests(unittest.TestCase):
         self.assertGreaterEqual(len(manifest.prompts), 2)
         self.assertEqual(manifest.hardware_budget_gb, 24.0)
 
+    def test_gemma_e4b_uses_validated_mlx_artifact(self) -> None:
+        manifest = load_benchmark_manifest("configs/model-benchmark.json")
+        gemma = next(candidate for candidate in manifest.candidates if candidate.id == "gemma4-e4b-it-mlx-4bit")
+
+        self.assertEqual(gemma.runtime, "mlx_lm")
+        self.assertEqual(gemma.repo, "mlx-community/gemma-4-e4b-it-4bit")
+        self.assertIn("pinned MLX profile", gemma.notes)
+
     def test_scores_failed_model_as_unreliable(self) -> None:
         manifest = load_benchmark_manifest("configs/model-benchmark.json")
         candidate = manifest.candidates[0]
