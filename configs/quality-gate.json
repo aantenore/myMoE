@@ -13,13 +13,16 @@
     "src/local_moe/runtime.py",
     "src/local_moe/context.py",
     "src/local_moe/memory.py",
+    "src/local_moe/web.py",
+    "src/local_moe/ui/index.html",
     "configs/context-policy.json",
     "experiments/eval_set_extended.jsonl",
     "configs/model-candidates.json",
     "configs/moe.mock.json",
     "configs/moe.live.qwen25-coder.json",
     "configs/single.live.qwen25-coder.json",
-    "configs/moe.live.general-mlx.example.json"
+    "configs/moe.live.general-mlx.example.json",
+    "docs/ui.md"
   ],
   "forbidden_listeners": [
     {
