@@ -17,6 +17,12 @@ Run the full local quality gate:
 ./scripts/run_all_checks.sh
 ```
 
+or:
+
+```bash
+make check
+```
+
 Run the offline smoke experiment with mock experts:
 
 ```bash
@@ -44,12 +50,24 @@ PYTHONPATH=src python3 -m local_moe.web \
 
 Then visit `http://127.0.0.1:8089`.
 
+or:
+
+```bash
+make ui
+```
+
 Use the interactive CLI:
 
 ```bash
 PYTHONPATH=src python3 -m local_moe.cli \
   --config configs/moe.mock.json \
   --interactive
+```
+
+or:
+
+```bash
+make cli
 ```
 
 ## Recommended Local Model Path
@@ -76,6 +94,7 @@ configs/
 docs/
   architecture.md
   context-architecture.md
+  ci.md
   distillation-plan.md
   evaluation.md
   model-selection.md
