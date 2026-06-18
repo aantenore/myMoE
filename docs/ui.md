@@ -26,6 +26,8 @@ PYTHONPATH=src python3 -m local_moe.web \
   --port 8089
 ```
 
+The UI is a dependency-free shadcn/new-york inspired surface: zinc dark theme, thin borders, small radius, badges, cards, and compact operator panels.
+
 The UI exposes:
 
 - prompt generation,

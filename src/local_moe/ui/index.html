@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,127 +7,243 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg: #0f1115;
-        --panel: #171a21;
-        --text: #f4f0e8;
-        --muted: #aaa49a;
-        --line: #2f3541;
-        --accent: #6ee7b7;
-        --error: #fb7185;
+        --background: 240 10% 3.9%;
+        --foreground: 0 0% 98%;
+        --card: 240 10% 3.9%;
+        --card-foreground: 0 0% 98%;
+        --popover: 240 10% 3.9%;
+        --popover-foreground: 0 0% 98%;
+        --primary: 0 0% 98%;
+        --primary-foreground: 240 5.9% 10%;
+        --secondary: 240 3.7% 15.9%;
+        --secondary-foreground: 0 0% 98%;
+        --muted: 240 3.7% 15.9%;
+        --muted-foreground: 240 5% 64.9%;
+        --accent: 240 3.7% 15.9%;
+        --accent-foreground: 0 0% 98%;
+        --destructive: 0 62.8% 30.6%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 240 3.7% 15.9%;
+        --input: 240 3.7% 15.9%;
+        --ring: 240 4.9% 83.9%;
+        --radius: 0.625rem;
       }
 
-      * { box-sizing: border-box; }
+      * {
+        box-sizing: border-box;
+      }
 
       body {
         margin: 0;
         min-height: 100svh;
-        background:
-          radial-gradient(circle at 10% 10%, rgba(110, 231, 183, 0.09), transparent 28rem),
-          linear-gradient(135deg, #0f1115 0%, #131722 48%, #191510 100%);
-        color: var(--text);
+        background: hsl(var(--background));
+        color: hsl(var(--foreground));
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      button, textarea { font: inherit; }
-
-      .shell {
-        display: grid;
-        grid-template-columns: 18rem minmax(0, 1fr) 23rem;
-        min-height: 100svh;
-      }
-
-      aside, main, .inspector { padding: 1.2rem; }
-
-      aside {
-        border-right: 1px solid var(--line);
-        background: rgba(15, 17, 21, 0.72);
-      }
-
-      .brand {
-        margin: 0 0 1.6rem;
-        font-size: 2.15rem;
-        line-height: 0.95;
         letter-spacing: 0;
       }
 
-      .status {
-        display: grid;
-        gap: 0.7rem;
-        color: var(--muted);
-        font-size: 0.88rem;
+      button,
+      textarea {
+        font: inherit;
       }
 
-      .status strong {
-        display: block;
-        color: var(--text);
+      .app {
+        min-height: 100svh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .topbar {
+        height: 4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        border-bottom: 1px solid hsl(var(--border));
+        padding: 0 1.25rem;
+        background: hsl(var(--background) / 0.96);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .logo {
+        display: grid;
+        place-items: center;
+        width: 2rem;
+        height: 2rem;
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 2px);
+        background: hsl(var(--secondary));
+        color: hsl(var(--secondary-foreground));
+        font-weight: 700;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 1rem;
         font-weight: 650;
-        margin-bottom: 0.2rem;
       }
 
-      .samples {
-        display: grid;
+      .subtitle {
+        color: hsl(var(--muted-foreground));
+        font-size: 0.8125rem;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
         gap: 0.5rem;
-        margin-top: 1.6rem;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        height: 1.5rem;
+        border: 1px solid hsl(var(--border));
+        border-radius: 999px;
+        padding: 0 0.6rem;
+        background: hsl(var(--secondary));
+        color: hsl(var(--secondary-foreground));
+        font-size: 0.75rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 18rem minmax(0, 1fr) 22rem;
+        min-height: 0;
+      }
+
+      .sidebar,
+      .workspace,
+      .inspector {
+        min-width: 0;
+        padding: 1rem;
+      }
+
+      .sidebar {
+        border-right: 1px solid hsl(var(--border));
+      }
+
+      .inspector {
+        border-left: 1px solid hsl(var(--border));
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 1rem;
+      }
+
+      .section-title {
+        margin-bottom: 0.5rem;
+        color: hsl(var(--muted-foreground));
+        font-size: 0.8125rem;
+        font-weight: 500;
+      }
+
+      .card {
+        border: 1px solid hsl(var(--border));
+        border-radius: var(--radius);
+        background: hsl(var(--card));
+        color: hsl(var(--card-foreground));
+        box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        border-bottom: 1px solid hsl(var(--border));
+        padding: 0.8rem 0.9rem;
+      }
+
+      .card-title {
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      .card-content {
+        padding: 0.9rem;
+      }
+
+      .stack {
+        display: grid;
+        gap: 0.75rem;
       }
 
       .sample {
-        border: 1px solid var(--line);
+        width: 100%;
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 2px);
         background: transparent;
-        color: var(--text);
-        border-radius: 0.45rem;
-        padding: 0.68rem 0.75rem;
+        color: hsl(var(--foreground));
+        padding: 0.65rem 0.75rem;
         text-align: left;
         cursor: pointer;
-        transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+        transition: background 140ms ease, border-color 140ms ease;
       }
 
       .sample:hover {
-        background: rgba(255, 255, 255, 0.045);
-        border-color: rgba(110, 231, 183, 0.55);
-        transform: translateY(-1px);
+        background: hsl(var(--accent));
+        border-color: hsl(var(--ring) / 0.45);
       }
 
-      main {
+      .sample span {
+        display: block;
+        color: hsl(var(--muted-foreground));
+        font-size: 0.75rem;
+        margin-top: 0.2rem;
+      }
+
+      .metrics {
         display: grid;
-        grid-template-rows: auto minmax(17rem, 1fr) auto;
-        gap: 1rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
       }
 
-      .topline {
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 1rem;
-        border-bottom: 1px solid var(--line);
-        padding-bottom: 1rem;
+      .metric {
+        border: 1px solid hsl(var(--border));
+        border-radius: var(--radius);
+        padding: 0.8rem 0.9rem;
       }
 
-      .topline h2, .inspector h2 {
-        margin: 0;
-        font-size: 0.95rem;
-        color: var(--muted);
-        font-weight: 560;
+      .metric-label {
+        color: hsl(var(--muted-foreground));
+        font-size: 0.75rem;
       }
 
-      .metric-row {
-        display: flex;
-        gap: 1rem;
-        flex-wrap: wrap;
-        color: var(--muted);
-        font-size: 0.85rem;
+      .metric-value {
+        margin-top: 0.35rem;
+        font-size: 1rem;
+        font-weight: 650;
+        overflow-wrap: anywhere;
       }
-
-      .metric-row span { color: var(--text); }
 
       .answer {
-        white-space: pre-wrap;
+        min-height: 20rem;
+        max-height: calc(100svh - 20rem);
         overflow: auto;
-        border-bottom: 1px solid var(--line);
-        padding: 1rem 0 1.4rem;
+        white-space: pre-wrap;
         line-height: 1.55;
+        color: hsl(var(--foreground));
       }
 
-      .answer.empty { color: var(--muted); }
+      .answer.empty {
+        color: hsl(var(--muted-foreground));
+      }
 
       .composer {
         display: grid;
@@ -138,166 +254,242 @@
         width: 100%;
         min-height: 8rem;
         resize: vertical;
-        border: 1px solid var(--line);
-        border-radius: 0.5rem;
-        background: rgba(0, 0, 0, 0.25);
-        color: var(--text);
-        padding: 0.9rem;
+        border: 1px solid hsl(var(--input));
+        border-radius: calc(var(--radius) - 2px);
+        background: transparent;
+        color: hsl(var(--foreground));
+        padding: 0.75rem 0.85rem;
         line-height: 1.45;
         outline: none;
       }
 
-      textarea:focus { border-color: rgba(110, 231, 183, 0.7); }
+      textarea:focus {
+        border-color: hsl(var(--ring));
+        box-shadow: 0 0 0 2px hsl(var(--ring) / 0.18);
+      }
 
       .actions {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 1rem;
+        gap: 0.75rem;
       }
 
-      .primary, .secondary {
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        height: 2.35rem;
         border: 1px solid transparent;
-        border-radius: 0.45rem;
-        padding: 0.68rem 0.9rem;
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0 0.9rem;
         cursor: pointer;
-        transition: opacity 140ms ease, transform 140ms ease;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
       }
 
-      .primary {
-        background: var(--accent);
-        color: #06110c;
-        font-weight: 700;
+      .button-primary {
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
       }
 
-      .secondary {
+      .button-secondary {
+        border-color: hsl(var(--border));
+        background: hsl(var(--secondary));
+        color: hsl(var(--secondary-foreground));
+      }
+
+      .button-ghost {
+        border-color: hsl(var(--border));
         background: transparent;
-        color: var(--muted);
-        border-color: var(--line);
+        color: hsl(var(--foreground));
       }
 
-      .primary:hover, .secondary:hover { transform: translateY(-1px); }
+      .button:hover {
+        opacity: 0.88;
+      }
 
-      .primary:disabled, .secondary:disabled {
-        opacity: 0.52;
+      .button:disabled {
         cursor: wait;
-        transform: none;
-      }
-
-      .inspector {
-        border-left: 1px solid var(--line);
-        background: rgba(15, 17, 21, 0.58);
-        overflow: auto;
-      }
-
-      .block {
-        border-top: 1px solid var(--line);
-        padding: 1rem 0;
-      }
-
-      .block:first-of-type {
-        border-top: 0;
-        padding-top: 0;
+        opacity: 0.55;
       }
 
       .kv {
         display: grid;
-        gap: 0.45rem;
-        font-size: 0.86rem;
+        gap: 0.55rem;
+        font-size: 0.8125rem;
       }
 
       .kv div {
         display: flex;
         justify-content: space-between;
         gap: 1rem;
-        color: var(--muted);
+        color: hsl(var(--muted-foreground));
       }
 
       .kv span {
-        color: var(--text);
+        color: hsl(var(--foreground));
         text-align: right;
-      }
-
-      .route-list, .expert-list {
-        display: grid;
-        gap: 0.55rem;
-        margin-top: 0.9rem;
-      }
-
-      .route-item, .expert-item {
-        border: 1px solid var(--line);
-        border-radius: 0.45rem;
-        padding: 0.65rem;
-        background: rgba(255, 255, 255, 0.025);
-      }
-
-      .route-item strong, .expert-item strong {
-        display: block;
-        font-size: 0.9rem;
-      }
-
-      .route-item small, .expert-item small {
-        color: var(--muted);
         overflow-wrap: anywhere;
       }
 
-      .error { color: var(--error); }
+      .list {
+        display: grid;
+        gap: 0.55rem;
+      }
 
-      @media (max-width: 980px) {
-        .shell { grid-template-columns: 1fr; }
-        aside, .inspector {
+      .list-item {
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0.65rem;
+        background: hsl(var(--secondary) / 0.42);
+      }
+
+      .list-item strong {
+        display: block;
+        font-size: 0.875rem;
+      }
+
+      .list-item small {
+        color: hsl(var(--muted-foreground));
+        overflow-wrap: anywhere;
+      }
+
+      .error {
+        color: hsl(var(--destructive-foreground));
+        background: hsl(var(--destructive) / 0.18);
+      }
+
+      @media (max-width: 1080px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar,
+        .inspector {
           border: 0;
-          border-bottom: 1px solid var(--line);
+          border-bottom: 1px solid hsl(var(--border));
+        }
+
+        .metrics {
+          grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
   <body>
-    <div class="shell">
-      <aside>
-        <h1 class="brand">myMoE</h1>
-        <div class="status" id="status"></div>
-        <div class="samples">
-          <button class="sample" data-prompt="Analyze the tradeoff between a single local general model and a routed MoE for a private desktop assistant.">Architecture tradeoff</button>
-          <button class="sample" data-prompt="Summarize this product idea into a concise plan with risks, MVP scope, and test strategy.">Product planning</button>
-          <button class="sample" data-prompt="Rewrite this message in Italian, keeping it direct and warm.">Writing task</button>
-          <button class="sample" data-prompt="Design a memory policy for a local assistant that must remember user preferences without polluting active context.">Memory policy</button>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">M</div>
+          <div>
+            <h1>myMoE</h1>
+            <p class="subtitle">Local general-purpose MoE console</p>
+          </div>
         </div>
-      </aside>
+        <div class="top-actions">
+          <span class="badge" id="mode">mock</span>
+          <span class="badge" id="config-name">configs/moe.mock.json</span>
+        </div>
+      </header>
 
-      <main>
-        <section class="topline">
-          <h2>Workspace</h2>
-          <div class="metric-row">
-            <div>Latency <span id="latency">-</span></div>
-            <div>Route <span id="route">-</span></div>
-            <div>Mode <span id="mode">mock</span></div>
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="section-title">Prompt presets</div>
+          <div class="stack">
+            <button class="sample" data-prompt="Analyze the tradeoff between a single local general model and a routed MoE for a private desktop assistant.">
+              Architecture tradeoff
+              <span>General reasoning route</span>
+            </button>
+            <button class="sample" data-prompt="Summarize this product idea into a concise plan with risks, MVP scope, and test strategy.">
+              Product planning
+              <span>Summary and planning route</span>
+            </button>
+            <button class="sample" data-prompt="Rewrite this message in Italian, keeping it direct and warm.">
+              Writing task
+              <span>Language route</span>
+            </button>
+            <button class="sample" data-prompt="Design a memory policy for a local assistant that must remember user preferences without polluting active context.">
+              Memory policy
+              <span>Context and memory route</span>
+            </button>
+          </div>
+        </aside>
+
+        <main class="workspace">
+          <section class="metrics">
+            <div class="metric">
+              <div class="metric-label">Latency</div>
+              <div class="metric-value" id="latency">-</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Route</div>
+              <div class="metric-value" id="route">-</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Aggregation</div>
+              <div class="metric-value" id="aggregation">-</div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <h2 class="card-title">Response</h2>
+              <span class="badge" id="correlation">No run</span>
+            </div>
+            <div class="card-content">
+              <div class="answer empty" id="answer">Run a prompt to inspect routing, provider output, fallback errors, and evaluation behavior.</div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <h2 class="card-title">Composer</h2>
+              <span class="badge">Cmd Enter</span>
+            </div>
+            <div class="card-content composer">
+              <textarea id="prompt" placeholder="Ask the local MoE something..."></textarea>
+              <div class="actions">
+                <button class="button button-secondary" id="eval">Run Eval</button>
+                <button class="button button-primary" id="send">Generate</button>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <section class="inspector">
+          <div class="stack">
+            <section class="card">
+              <div class="card-header">
+                <h2 class="card-title">Config</h2>
+              </div>
+              <div class="card-content">
+                <div class="kv" id="config"></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-header">
+                <h2 class="card-title">Selected Route</h2>
+              </div>
+              <div class="card-content">
+                <div class="list" id="routes"></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-header">
+                <h2 class="card-title">Experts</h2>
+              </div>
+              <div class="card-content">
+                <div class="list" id="experts"></div>
+              </div>
+            </section>
           </div>
         </section>
-
-        <section class="answer empty" id="answer">Run a prompt to inspect routing, provider output, fallback errors, and evaluation behavior.</section>
-
-        <section class="composer">
-          <textarea id="prompt" placeholder="Ask the local MoE something..."></textarea>
-          <div class="actions">
-            <button class="secondary" id="eval">Run Eval</button>
-            <button class="primary" id="send">Generate</button>
-          </div>
-        </section>
-      </main>
-
-      <section class="inspector">
-        <h2>Inspector</h2>
-        <div class="block"><div class="kv" id="config"></div></div>
-        <div class="block">
-          <h2>Selected Route</h2>
-          <div class="route-list" id="routes"></div>
-        </div>
-        <div class="block">
-          <h2>Experts</h2>
-          <div class="expert-list" id="experts"></div>
-        </div>
-      </section>
+      </div>
     </div>
 
     <script>
@@ -314,19 +506,18 @@
       }
 
       function renderConfig(payload) {
-        el("mode").textContent = payload.experts.some((expert) => expert.provider !== "mock") ? "live" : "mock";
-        el("status").innerHTML = `
-          <div><strong>Config</strong>${payload.config_path}</div>
-          <div><strong>Aggregation</strong>${payload.routing.aggregation}, top-${payload.routing.top_k}</div>
-          <div><strong>Fallback</strong>${payload.routing.fallback_order.join(", ") || "none"}</div>
-        `;
+        const live = payload.experts.some((expert) => expert.provider !== "mock");
+        el("mode").textContent = live ? "live" : "mock";
+        el("config-name").textContent = payload.config_path;
+        el("aggregation").textContent = `${payload.routing.aggregation} / top-${payload.routing.top_k}`;
         el("config").innerHTML = `
           <div>Experts <span>${payload.experts.length}</span></div>
           <div>Rules <span>${payload.rules.length}</span></div>
+          <div>Fallback <span>${payload.routing.fallback_order.join(", ") || "none"}</span></div>
           <div>Providers <span>${providerMix(payload.experts)}</span></div>
         `;
         el("experts").innerHTML = payload.experts.map((expert) => `
-          <div class="expert-item">
+          <div class="list-item">
             <strong>${expert.id}</strong>
             <small>${expert.role} / ${expert.model}</small>
           </div>
@@ -339,7 +530,7 @@
 
       function renderRoutes(items) {
         el("routes").innerHTML = items.map((item) => `
-          <div class="route-item">
+          <div class="list-item">
             <strong>${item.expert_id}</strong>
             <small>score ${Number(item.score).toFixed(2)} / ${item.matched_keywords.join(", ") || "no keyword"}</small>
           </div>
@@ -362,6 +553,7 @@
           });
           el("answer").textContent = payload.content;
           el("latency").textContent = `${Math.round(performance.now() - started)} ms`;
+          el("correlation").textContent = payload.correlation_id.slice(0, 8);
           renderRoutes(payload.route.selected);
         } catch (error) {
           el("answer").classList.add("error");
@@ -386,6 +578,7 @@
             by_complexity: payload.by_complexity,
           }, null, 2);
           el("latency").textContent = "-";
+          el("correlation").textContent = "eval";
         } catch (error) {
           el("answer").classList.add("error");
           el("answer").textContent = error.message;
