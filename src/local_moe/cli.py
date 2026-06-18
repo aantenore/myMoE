@@ -4,21 +4,53 @@ import argparse
 import json
 import sys
 
+from .app_config import app_config_payload, load_app_config
+from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
+from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Local MoE orchestrator")
-    parser.add_argument("--config", default="configs/moe.mock.json")
+    parser.add_argument("--config")
+    parser.add_argument("--app-config", default="configs/app.json")
     parser.add_argument("--prompt")
     parser.add_argument("--eval")
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
+    parser.add_argument("--doctor", action="store_true")
+    parser.add_argument("--bootstrap", action="store_true")
+    parser.add_argument("--list-extensions", action="store_true")
+    parser.add_argument("--create-plugin")
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    app_config = load_app_config(args.app_config)
+    config_path = args.config or app_config.default_moe_config
+    config = load_config(config_path)
+
+    if args.doctor:
+        payload = {
+            "app": app_config_payload(app_config),
+            "runtime": runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)),
+            "extensions": registry_payload(_registry(app_config)),
+        }
+        print(json.dumps(payload, indent=2))
+        return
+
+    if args.bootstrap:
+        print(json.dumps(runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)), indent=2))
+        return
+
+    if args.list_extensions:
+        print(json.dumps(registry_payload(_registry(app_config)), indent=2))
+        return
+
+    if args.create_plugin:
+        path = create_plugin_scaffold(args.create_plugin, root=app_config.extensions.plugins_dir)
+        print(json.dumps({"created": str(path)}, indent=2))
+        return
 
     if args.eval:
         cases = load_eval_cases(args.eval)
@@ -85,6 +117,16 @@ def _response_metadata(response: object) -> dict[str, object]:
         "fallback_order": list(response.route.fallback_order),
         "errors": list(response.errors),
     }
+
+
+def _registry(app_config: object) -> object:
+    return load_extension_registry(
+        plugins_dir=app_config.extensions.plugins_dir,
+        skills_dir=app_config.extensions.skills_dir,
+        tools_config=app_config.extensions.tools_config,
+        mcp_config=app_config.extensions.mcp_config,
+        cron_config=app_config.extensions.cron_config,
+    )
 
 
 if __name__ == "__main__":

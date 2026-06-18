@@ -1,0 +1,24 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": [],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "general",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "model": "qwen3:4b",
+      "role": "cross-platform-general-purpose",
+      "weight": 1.0,
+      "timeout_seconds": 120,
+      "params": {
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "max_tokens": 1024
+      }
+    }
+  ],
+  "rules": []
+}

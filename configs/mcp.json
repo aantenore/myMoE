@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "Optional local filesystem MCP bridge; disabled until explicitly configured.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "enabled": false,
+      "risk_class": "read_only",
+      "capabilities": ["resources", "tools"]
+    }
+  ]
+}

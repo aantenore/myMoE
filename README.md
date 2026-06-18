@@ -11,6 +11,30 @@ This project does not try to train a monolithic MoE from scratch. That would be 
 
 ## Quick Start
 
+Install and download the configured local model:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python ".[mlx]"
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
+```
+
+Start the configured local model server:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
+```
+
+For a faster first run on smaller machines:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
+  --config configs/moe.live.fast-mlx.example.json \
+  --download-models
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
+  --config configs/moe.live.fast-mlx.example.json
+```
+
 Run the full local quality gate:
 
 ```bash
@@ -36,15 +60,13 @@ Ask the orchestrator directly:
 
 ```bash
 PYTHONPATH=src python3 -m local_moe.cli \
-  --config configs/moe.mock.json \
-  --prompt "Write Python code for a retry policy with exponential backoff"
+  --prompt "Analyze the tradeoff between a single local model and a routed MoE."
 ```
 
 Open the local UI:
 
 ```bash
 PYTHONPATH=src python3 -m local_moe.web \
-  --config configs/moe.mock.json \
   --port 8089
 ```
 
@@ -59,9 +81,7 @@ make ui
 Use the interactive CLI:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
-  --config configs/moe.mock.json \
-  --interactive
+PYTHONPATH=src python3 -m local_moe.cli --interactive
 ```
 
 or:
@@ -83,6 +103,8 @@ For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpos
 
 The runtime must remain local. Distillation data can be created with a stronger teacher, then used to train a local router or small student.
 
+The user-facing app requires a real local model. `configs/moe.mock.json` is retained only for deterministic test fixtures.
+
 ## Project Layout
 
 ```text
@@ -90,14 +112,20 @@ configs/
   moe.mock.json            # deterministic local mock experts
   moe.local.example.json   # template for real llama.cpp/Ollama/LM Studio endpoints
   moe.live.general-mlx.example.json
+  moe.live.fast-mlx.example.json
+  moe.live.ollama.example.json
   quality-gate.json        # thresholds and project artifact checks
 docs/
+  agent-runtime.md
   architecture.md
   context-architecture.md
   ci.md
   distillation-plan.md
   evaluation.md
+  installation.md
   model-selection.md
+  performance-benchmarking.md
+  tested-performance.md
   ui.md
 experiments/
   eval_set.jsonl
@@ -147,3 +175,17 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 4. Add large specialist models only if evals beat the general baseline enough to justify memory and latency.
 
 The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 34 deterministic routing cases across the base and extended sets, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
+
+Run local model performance benchmarks with:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python ".[mlx]"
+PYTHONPATH=src .venv/bin/python experiments/benchmark_models.py
+```
+
+For a cheaper first pass:
+
+```bash
+make benchmark-small
+```

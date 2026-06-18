@@ -47,6 +47,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["accuracy"], 1.0)
         self.assertEqual(result["total"], 8)
 
+    def test_serves_runtime_and_extensions(self) -> None:
+        server = build_server("configs/moe.mock.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            runtime = _get_json(base_url + "/api/runtime")
+            extensions = _get_json(base_url + "/api/extensions")
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertTrue(extensions["tools"])
+
 
 def _get_json(url: str) -> dict[str, object]:
     with request.urlopen(url, timeout=5) as response:

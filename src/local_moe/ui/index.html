@@ -26,6 +26,9 @@
         --border: 240 3.7% 15.9%;
         --input: 240 3.7% 15.9%;
         --ring: 240 4.9% 83.9%;
+        --ok: 142 71% 45%;
+        --warn: 38 92% 50%;
+        --info: 199 89% 48%;
         --radius: 0.625rem;
       }
 
@@ -54,7 +57,7 @@
       }
 
       .topbar {
-        height: 4rem;
+        height: 4.5rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -121,7 +124,7 @@
 
       .layout {
         display: grid;
-        grid-template-columns: 18rem minmax(0, 1fr) 22rem;
+        grid-template-columns: 20rem minmax(0, 1fr) 24rem;
         min-height: 0;
       }
 
@@ -151,6 +154,62 @@
         color: hsl(var(--muted-foreground));
         font-size: 0.8125rem;
         font-weight: 500;
+      }
+
+      .run-card {
+        display: grid;
+        gap: 0.8rem;
+        border: 1px solid hsl(var(--border));
+        border-radius: var(--radius);
+        padding: 0.9rem;
+        background: hsl(var(--secondary) / 0.38);
+        margin-bottom: 1rem;
+      }
+
+      .run-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .run-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 650;
+      }
+
+      .status-dot {
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 999px;
+        background: hsl(var(--warn));
+        box-shadow: 0 0 0 4px hsl(var(--warn) / 0.13);
+      }
+
+      .status-dot.ready {
+        background: hsl(var(--ok));
+        box-shadow: 0 0 0 4px hsl(var(--ok) / 0.13);
+      }
+
+      .run-copy {
+        color: hsl(var(--muted-foreground));
+        font-size: 0.8125rem;
+        line-height: 1.45;
+      }
+
+      .command {
+        overflow: hidden;
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 2px);
+        background: hsl(var(--background));
+        padding: 0.65rem 0.7rem;
+        color: hsl(var(--foreground));
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.75rem;
+        white-space: nowrap;
+        text-overflow: ellipsis;
       }
 
       .card {
@@ -210,7 +269,7 @@
 
       .metrics {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 0.75rem;
       }
 
@@ -233,7 +292,7 @@
       }
 
       .answer {
-        min-height: 20rem;
+        min-height: 22rem;
         max-height: calc(100svh - 20rem);
         overflow: auto;
         white-space: pre-wrap;
@@ -362,6 +421,38 @@
         background: hsl(var(--destructive) / 0.18);
       }
 
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.35rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .tab {
+        height: 2rem;
+        border: 1px solid hsl(var(--border));
+        border-radius: calc(var(--radius) - 3px);
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        cursor: pointer;
+        font-size: 0.8125rem;
+      }
+
+      .tab.active {
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+        border-color: hsl(var(--primary));
+      }
+
+      .tab-panel {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .tab-panel.hidden {
+        display: none;
+      }
+
       @media (max-width: 1080px) {
         .layout {
           grid-template-columns: 1fr;
@@ -386,34 +477,45 @@
           <div class="logo">M</div>
           <div>
             <h1>myMoE</h1>
-            <p class="subtitle">Local general-purpose MoE console</p>
+            <p class="subtitle">Local model command center</p>
           </div>
         </div>
         <div class="top-actions">
-          <span class="badge" id="mode">mock</span>
-          <span class="badge" id="config-name">configs/moe.mock.json</span>
+          <span class="badge" id="mode">model required</span>
+          <span class="badge" id="runtime">runtime</span>
+          <span class="badge" id="config-name">config</span>
         </div>
       </header>
 
       <div class="layout">
         <aside class="sidebar">
-          <div class="section-title">Prompt presets</div>
+          <div class="section-title">System</div>
+          <div class="run-card">
+            <div class="run-head">
+              <div class="run-title"><span class="status-dot" id="status-dot"></span><span id="model-state">Model required</span></div>
+              <span class="badge" id="backend-mini">-</span>
+            </div>
+            <p class="run-copy" id="runtime-summary">Run doctor to inspect the local backend and model commands.</p>
+            <div class="command" id="start-command">make start-models</div>
+          </div>
+
+          <div class="section-title">Prompt library</div>
           <div class="stack">
-            <button class="sample" data-prompt="Analyze the tradeoff between a single local general model and a routed MoE for a private desktop assistant.">
-              Architecture tradeoff
-              <span>General reasoning route</span>
+            <button class="sample" data-prompt="Analizza il tradeoff tra un singolo modello locale generalista e un MoE applicativo per un assistente personale privato.">
+              Decisione architetturale
+              <span>Reasoning generale</span>
             </button>
-            <button class="sample" data-prompt="Summarize this product idea into a concise plan with risks, MVP scope, and test strategy.">
-              Product planning
-              <span>Summary and planning route</span>
+            <button class="sample" data-prompt="Trasforma questa idea prodotto in un piano MVP con rischi, scope, test e requisiti hardware.">
+              Piano prodotto
+              <span>Planning sintetico</span>
             </button>
-            <button class="sample" data-prompt="Rewrite this message in Italian, keeping it direct and warm.">
-              Writing task
-              <span>Language route</span>
+            <button class="sample" data-prompt="Riscrivi questo messaggio in italiano, diretto ma caldo, senza sembrare corporate.">
+              Scrittura
+              <span>Risposta nella lingua utente</span>
             </button>
-            <button class="sample" data-prompt="Design a memory policy for a local assistant that must remember user preferences without polluting active context.">
-              Memory policy
-              <span>Context and memory route</span>
+            <button class="sample" data-prompt="Progetta una policy di memoria per un assistente locale che ricordi preferenze senza sporcare il contesto attivo.">
+              Memoria e contesto
+              <span>Compaction e retrieval</span>
             </button>
           </div>
         </aside>
@@ -432,6 +534,10 @@
               <div class="metric-label">Aggregation</div>
               <div class="metric-value" id="aggregation">-</div>
             </div>
+            <div class="metric">
+              <div class="metric-label">Extensions</div>
+              <div class="metric-value" id="extension-count">-</div>
+            </div>
           </section>
 
           <section class="card">
@@ -440,7 +546,7 @@
               <span class="badge" id="correlation">No run</span>
             </div>
             <div class="card-content">
-              <div class="answer empty" id="answer">Run a prompt to inspect routing, provider output, fallback errors, and evaluation behavior.</div>
+              <div class="answer empty" id="answer">Start the configured local model, then run a prompt to inspect routing, provider output, fallback errors, and evaluation behavior.</div>
             </div>
           </section>
 
@@ -461,32 +567,62 @@
 
         <section class="inspector">
           <div class="stack">
-            <section class="card">
-              <div class="card-header">
-                <h2 class="card-title">Config</h2>
-              </div>
-              <div class="card-content">
-                <div class="kv" id="config"></div>
-              </div>
-            </section>
+            <div class="tabs" role="tablist" aria-label="Inspector">
+              <button class="tab active" data-tab="overview">Overview</button>
+              <button class="tab" data-tab="models">Models</button>
+              <button class="tab" data-tab="extensions">Extensions</button>
+            </div>
 
-            <section class="card">
-              <div class="card-header">
-                <h2 class="card-title">Selected Route</h2>
-              </div>
-              <div class="card-content">
-                <div class="list" id="routes"></div>
-              </div>
-            </section>
+            <div class="tab-panel" id="tab-overview">
+              <section class="card">
+                <div class="card-header">
+                  <h2 class="card-title">Config</h2>
+                </div>
+                <div class="card-content">
+                  <div class="kv" id="config"></div>
+                </div>
+              </section>
 
-            <section class="card">
-              <div class="card-header">
-                <h2 class="card-title">Experts</h2>
-              </div>
-              <div class="card-content">
-                <div class="list" id="experts"></div>
-              </div>
-            </section>
+              <section class="card">
+                <div class="card-header">
+                  <h2 class="card-title">Runtime</h2>
+                </div>
+                <div class="card-content">
+                  <div class="kv" id="runtime-panel"></div>
+                </div>
+              </section>
+            </div>
+
+            <div class="tab-panel hidden" id="tab-models">
+              <section class="card">
+                <div class="card-header">
+                  <h2 class="card-title">Selected Route</h2>
+                </div>
+                <div class="card-content">
+                  <div class="list" id="routes"></div>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-header">
+                  <h2 class="card-title">Experts</h2>
+                </div>
+                <div class="card-content">
+                  <div class="list" id="experts"></div>
+                </div>
+              </section>
+            </div>
+
+            <div class="tab-panel hidden" id="tab-extensions">
+              <section class="card">
+                <div class="card-header">
+                  <h2 class="card-title">Extensions</h2>
+                </div>
+                <div class="card-content">
+                  <div class="kv" id="extensions"></div>
+                </div>
+              </section>
+            </div>
           </div>
         </section>
       </div>
@@ -506,15 +642,16 @@
       }
 
       function renderConfig(payload) {
-        const live = payload.experts.some((expert) => expert.provider !== "mock");
-        el("mode").textContent = live ? "live" : "mock";
+        el("mode").textContent = payload.requires_model ? "model required" : "test fixture";
         el("config-name").textContent = payload.config_path;
         el("aggregation").textContent = `${payload.routing.aggregation} / top-${payload.routing.top_k}`;
         el("config").innerHTML = `
+          <div>Mode <span>${payload.app.mode}</span></div>
           <div>Experts <span>${payload.experts.length}</span></div>
           <div>Rules <span>${payload.rules.length}</span></div>
           <div>Fallback <span>${payload.routing.fallback_order.join(", ") || "none"}</span></div>
           <div>Providers <span>${providerMix(payload.experts)}</span></div>
+          <div>Language <span>${payload.app.language.mode}</span></div>
         `;
         el("experts").innerHTML = payload.experts.map((expert) => `
           <div class="list-item">
@@ -526,6 +663,33 @@
 
       function providerMix(experts) {
         return [...new Set(experts.map((expert) => expert.provider))].join(", ");
+      }
+
+      function renderRuntime(payload) {
+        el("runtime").textContent = payload.backend;
+        el("backend-mini").textContent = payload.backend;
+        el("runtime-summary").textContent = `${payload.platform_key}; ${payload.model_commands.length} configured model command${payload.model_commands.length === 1 ? "" : "s"}.`;
+        el("start-command").textContent = payload.model_commands[0] ? payload.model_commands[0].join(" ") : "make start-models";
+        el("model-state").textContent = "Start local model";
+        el("runtime-panel").innerHTML = `
+          <div>Platform <span>${payload.platform_key}</span></div>
+          <div>Backend <span>${payload.backend}</span></div>
+          <div>uv <span>${payload.available_commands.uv ? "yes" : "no"}</span></div>
+          <div>Ollama <span>${payload.available_commands.ollama ? "yes" : "no"}</span></div>
+          <div>Model commands <span>${payload.model_commands.length}</span></div>
+        `;
+      }
+
+      function renderExtensions(payload) {
+        const total = payload.tools.length + payload.skills.length + payload.plugins.length + payload.mcp_servers.length + payload.cron_jobs.length;
+        el("extension-count").textContent = total;
+        el("extensions").innerHTML = `
+          <div>Tools <span>${payload.tools.length}</span></div>
+          <div>Skills <span>${payload.skills.length}</span></div>
+          <div>Plugins <span>${payload.plugins.length}</span></div>
+          <div>MCP servers <span>${payload.mcp_servers.length}</span></div>
+          <div>Cron jobs <span>${payload.cron_jobs.length}</span></div>
+        `;
       }
 
       function renderRoutes(items) {
@@ -599,13 +763,26 @@
         });
       });
 
+      document.querySelectorAll(".tab").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+          document.querySelectorAll(".tab-panel").forEach((item) => item.classList.add("hidden"));
+          button.classList.add("active");
+          el(`tab-${button.dataset.tab}`).classList.remove("hidden");
+        });
+      });
+
       el("send").addEventListener("click", generate);
       el("eval").addEventListener("click", runEval);
       el("prompt").addEventListener("keydown", (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") generate();
       });
 
-      api("/api/config").then(renderConfig).catch((error) => {
+      Promise.all([
+        api("/api/config").then(renderConfig),
+        api("/api/runtime").then(renderRuntime),
+        api("/api/extensions").then(renderExtensions),
+      ]).catch((error) => {
         el("answer").classList.add("error");
         el("answer").textContent = error.message;
       });

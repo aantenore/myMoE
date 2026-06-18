@@ -1,0 +1,112 @@
+{
+  "hardware_budget_gb": 24.0,
+  "decision_weights": {
+    "quality_prior": 0.45,
+    "speed": 0.25,
+    "memory_headroom": 0.2,
+    "load_time": 0.05,
+    "reliability": 0.05
+  },
+  "prompts": [
+    {
+      "id": "it_product_strategy",
+      "category": "planning",
+      "prompt": "Sei un assistente locale general purpose. Valuta questa idea: una app personale che usa memoria locale, contesto compatto e routing MoE. Dammi decisione, rischi e MVP in italiano."
+    },
+    {
+      "id": "reasoning_policy",
+      "category": "reasoning",
+      "prompt": "Confronta tre strategie per gestire un contesto lungo in un assistente locale: sliding window, summary memory e retrieval semantico. Scegli una policy ibrida e spiega i tradeoff."
+    },
+    {
+      "id": "writing_rewrite",
+      "category": "writing",
+      "prompt": "Riscrivi questo messaggio in modo chiaro, sintetico e caldo: 'non so se questa architettura abbia senso, forse ci stiamo complicando la vita ma voglio capire se puo diventare un prodotto reale'."
+    },
+    {
+      "id": "tool_reasoning",
+      "category": "tool_use",
+      "prompt": "Disegna a parole un flusso tool-using per un assistente locale che deve leggere documenti, ricordare preferenze e rispondere senza mandare dati sensibili al cloud."
+    }
+  ],
+  "candidates": [
+    {
+      "id": "qwen3-1.7b-mlx-4bit",
+      "label": "Qwen3 1.7B MLX 4-bit",
+      "role": "fast_compaction_or_fallback",
+      "runtime": "mlx_lm",
+      "repo": "mlx-community/Qwen3-1.7B-4bit",
+      "estimated_size_gb": 0.92,
+      "estimated_memory_gb": 2.2,
+      "quality_prior": 0.42,
+      "speed_target_tps": 90.0,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit",
+      "notes": "Very small fallback candidate for routing, classification, summaries, and cheap compaction."
+    },
+    {
+      "id": "qwen3-4b-mlx-4bit",
+      "label": "Qwen3 4B MLX 4-bit",
+      "role": "fast_compaction_or_fallback",
+      "runtime": "mlx_lm",
+      "repo": "mlx-community/Qwen3-4B-4bit",
+      "estimated_size_gb": 2.12,
+      "estimated_memory_gb": 4.2,
+      "quality_prior": 0.55,
+      "speed_target_tps": 70.0,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
+      "notes": "Small general fallback with better quality headroom than the 1.7B model."
+    },
+    {
+      "id": "gemma4-e4b-it-mlx-4bit",
+      "label": "Gemma 4 E4B it MLX 4-bit",
+      "role": "fast_compaction_or_fallback",
+      "runtime": "mlx_lm",
+      "repo": "lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+      "estimated_size_gb": 3.5,
+      "estimated_memory_gb": 5.5,
+      "quality_prior": 0.62,
+      "speed_target_tps": 65.0,
+      "source_url": "https://huggingface.co/lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+      "notes": "Fast local fallback candidate; useful if Gemma instruction behavior is better on writing and summarization."
+    },
+    {
+      "id": "qwen3-30b-a3b-2507-mlx-4bit",
+      "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+      "role": "primary_general",
+      "runtime": "mlx_lm",
+      "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "estimated_size_gb": 16.01,
+      "estimated_memory_gb": 18.5,
+      "quality_prior": 0.86,
+      "speed_target_tps": 28.0,
+      "source_url": "https://huggingface.co/lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "notes": "Best first serious resident general expert candidate for a 24 GB Apple Silicon machine."
+    },
+    {
+      "id": "gemma4-26b-a4b-it-mlx-4bit",
+      "label": "Gemma 4 26B-A4B it MLX 4-bit",
+      "role": "primary_general_alternative",
+      "runtime": "mlx_lm",
+      "repo": "lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+      "estimated_size_gb": 14.57,
+      "estimated_memory_gb": 17.5,
+      "quality_prior": 0.84,
+      "speed_target_tps": 30.0,
+      "source_url": "https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+      "notes": "Main general alternative; likely stronger for multimodal/productive writing paths."
+    },
+    {
+      "id": "gemma4-26b-a4b-it-optiq-mlx-4bit",
+      "label": "Gemma 4 26B-A4B it OptiQ MLX 4-bit",
+      "role": "primary_general_alternative",
+      "runtime": "mlx_lm",
+      "repo": "mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit",
+      "estimated_size_gb": 17.52,
+      "estimated_memory_gb": 20.5,
+      "quality_prior": 0.88,
+      "speed_target_tps": 28.0,
+      "source_url": "https://huggingface.co/mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit",
+      "notes": "Newer sensitivity-aware quant. Test as stretch because memory headroom is tighter."
+    }
+  ]
+}

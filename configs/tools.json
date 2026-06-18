@@ -1,0 +1,32 @@
+{
+  "tools": [
+    {
+      "name": "memory.search",
+      "description": "Search local scoped memory records and return compact references.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
+      "name": "context.compact",
+      "description": "Create a structured handoff summary when context approaches its budget.",
+      "risk_class": "compute_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
+      "name": "plugin.create",
+      "description": "Scaffold a local myMoE plugin directory with manifest and skill entry point.",
+      "risk_class": "write_local",
+      "side_effects": "writes_files",
+      "enabled": true
+    },
+    {
+      "name": "mcp.search_capabilities",
+      "description": "List configured MCP servers and their declared capability domains.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    }
+  ]
+}
