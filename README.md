@@ -34,6 +34,24 @@ PYTHONPATH=src python3 -m local_moe.cli \
   --prompt "Write Python code for a retry policy with exponential backoff"
 ```
 
+Open the local UI:
+
+```bash
+PYTHONPATH=src python3 -m local_moe.web \
+  --config configs/moe.mock.json \
+  --port 8089
+```
+
+Then visit `http://127.0.0.1:8089`.
+
+Use the interactive CLI:
+
+```bash
+PYTHONPATH=src python3 -m local_moe.cli \
+  --config configs/moe.mock.json \
+  --interactive
+```
+
 ## Recommended Local Model Path
 
 For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpose app, so the default is not a coder model.
@@ -61,6 +79,7 @@ docs/
   distillation-plan.md
   evaluation.md
   model-selection.md
+  ui.md
 experiments/
   eval_set.jsonl
   eval_set_extended.jsonl
@@ -77,14 +96,18 @@ src/local_moe/
   providers.py
   orchestrator.py
   runtime.py
+  web.py
 tests/
   test_cli.py
   test_config.py
+  test_context.py
   test_evaluator.py
+  test_memory.py
   test_orchestrator.py
   test_providers.py
   test_runtime.py
   test_router.py
+  test_web.py
 ```
 
 ## Current Experiment
@@ -104,4 +127,4 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 3. Keep only small fallback/compaction experts resident alongside the heavy model.
 4. Add large specialist models only if evals beat the general baseline enough to justify memory and latency.
 
-The current quality gate compiles source/tests/scripts, runs 24 unit and contract tests, evaluates 34 deterministic routing cases across the base and extended sets, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
+The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 34 deterministic routing cases across the base and extended sets, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
