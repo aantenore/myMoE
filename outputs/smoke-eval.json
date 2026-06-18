@@ -1,0 +1,75 @@
+{
+  "accuracy": 1.0,
+  "total": 8,
+  "by_complexity": {
+    "medium": 1.0,
+    "complex": 1.0,
+    "simple": 1.0
+  },
+  "results": [
+    {
+      "id": "coding_retry",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "typescript_bug",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "gateway_arch",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "api_tradeoffs",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "summarize_note",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "translate_email",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "mixed_code_arch",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "system_tradeoff",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "required_files",
+      "passed": true,
+      "missing": []
+    },
+    {
+      "name": "routing_eval",
+      "passed": true,
+      "accuracy": 1.0,
+      "min_accuracy": 0.9,
+      "total": 26,
+      "min_total": 20,
+      "missing_complexities": [],
+      "failed_case_ids": []
+    },
+    {
+      "name": "forbidden_listeners",
+      "passed": true,
+      "active": []
+    }
+  ]
+}

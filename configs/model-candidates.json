@@ -1,0 +1,87 @@
+{
+  "hardware_class": "apple_silicon_24gb",
+  "updated_at": "2026-06-18",
+  "decision": "general_purpose_moe_single_resident_heavy_expert",
+  "runtime_preference": [
+    "MLX for Apple Silicon heavy experts",
+    "llama.cpp Metal for GGUF compatibility and broad tooling"
+  ],
+  "runtime_policy": {
+    "resident_heavy_experts": 1,
+    "resident_small_experts": 1,
+    "cold_load_specialists": true,
+    "reason": "24 GB unified memory is enough for one strong 4-bit MoE plus app/OS/context headroom, not several large resident experts."
+  },
+  "recommendation": {
+    "default_primary": "qwen3-30b-a3b-instruct-2507-mlx-4bit",
+    "stretch_primary": "qwen36-35b-a3b-mlx-4bit",
+    "multimodal_alternative": "gemma4-26b-a4b-it-mlx-4bit",
+    "optional_coding_specialist": "qwen3-coder-30b-a3b-mlx-4bit"
+  },
+  "candidates": [
+    {
+      "id": "qwen25-coder-1.5b-q4",
+      "role": "smoke_test_only",
+      "repo": "unsloth/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "file": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 986048032,
+      "local_path": "work/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "purpose": "Fast real endpoint smoke test; not a production-quality general model."
+    },
+    {
+      "id": "qwen3-30b-a3b-instruct-2507-mlx-4bit",
+      "role": "primary_general",
+      "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 17.2,
+      "source_url": "https://huggingface.co/lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "purpose": "Best risk-adjusted default for general-purpose local assistant on 24 GB: instruction following, reasoning, multilingual, tool use, long-context."
+    },
+    {
+      "id": "qwen36-35b-a3b-mlx-4bit",
+      "role": "primary_general_stretch",
+      "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 21.0,
+      "source_url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+      "purpose": "Higher ambition general/agentic model; test with capped context because 24 GB headroom is tight."
+    },
+    {
+      "id": "gemma4-26b-a4b-it-mlx-4bit",
+      "role": "multimodal_general",
+      "repo": "lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 15.6,
+      "source_url": "https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+      "purpose": "Alternative for chat, reasoning, vision, and broad multimodal general use."
+    },
+    {
+      "id": "gemma4-e4b-fast",
+      "role": "fast_compaction_or_fallback",
+      "repo": "gemma-4-E4B family",
+      "format": "GGUF or MLX 4-bit",
+      "approx_size_gb": 5.5,
+      "source_url": "https://unsloth.ai/docs/models/gemma-4",
+      "purpose": "Small resident expert for summarization, context compaction, cheap classification, and fallback."
+    },
+    {
+      "id": "qwen3-coder-30b-a3b-mlx-4bit",
+      "role": "optional_coding_specialist",
+      "repo": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 17.2,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+      "purpose": "Specialist loaded only when coding workflows justify it; not the default for a general-purpose app."
+    },
+    {
+      "id": "qwen3-coder-next",
+      "role": "not_viable_on_24gb",
+      "repo": "unsloth/Qwen3-Coder-Next-GGUF",
+      "format": "GGUF",
+      "minimum_memory_gb": 30,
+      "recommended_memory_gb": 45,
+      "source_url": "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF",
+      "purpose": "Reject for this machine unless using much lower quality quants or external hardware."
+    }
+  ]
+}

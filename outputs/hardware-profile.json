@@ -1,0 +1,12 @@
+{
+  "machine": "arm64",
+  "cpu_brand": "Apple M5 Pro",
+  "memory_bytes": 25769803776,
+  "memory_gib": 24.0,
+  "recommended_strategy": "general_purpose_moe_single_resident",
+  "rationale": [
+    "Apple Silicon detected: llama.cpp Metal is the preferred runtime.",
+    "24 GiB class memory: use a MoE harness with one strong resident general expert.",
+    "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
+  ]
+}

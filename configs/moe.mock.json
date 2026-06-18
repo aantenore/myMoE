@@ -1,0 +1,50 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": ["general"],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "coder",
+      "provider": "mock",
+      "model": "mock-coder",
+      "role": "coding",
+      "weight": 1.0,
+      "timeout_seconds": 20
+    },
+    {
+      "id": "architect",
+      "provider": "mock",
+      "model": "mock-architect",
+      "role": "architecture",
+      "weight": 1.0,
+      "timeout_seconds": 30
+    },
+    {
+      "id": "general",
+      "provider": "mock",
+      "model": "mock-general",
+      "role": "general",
+      "weight": 0.5,
+      "timeout_seconds": 20
+    }
+  ],
+  "rules": [
+    {
+      "expert_id": "coder",
+      "keywords": ["python", "typescript", "code", "function", "bug", "test", "refactor", "class", "interface", "interfaces", "plugin", "runner", "client", "adapter"],
+      "weight": 3.0
+    },
+    {
+      "expert_id": "architect",
+      "keywords": ["architecture", "design", "system", "component", "api", "scalability", "tradeoff", "gateway"],
+      "weight": 3.0
+    },
+    {
+      "expert_id": "general",
+      "keywords": ["summarize", "translate", "explain", "email", "rewrite", "compare"],
+      "weight": 2.0
+    }
+  ]
+}

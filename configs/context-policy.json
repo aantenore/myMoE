@@ -1,0 +1,30 @@
+{
+  "default": {
+    "context_limit_tokens": 32768,
+    "reserved_output_tokens": 2048,
+    "compaction_trigger_ratio": 0.75,
+    "max_recent_turns": 24,
+    "max_memory_items": 8
+  },
+  "qwen3_30b_a3b_general_24gb": {
+    "context_limit_tokens": 32768,
+    "reserved_output_tokens": 2048,
+    "compaction_trigger_ratio": 0.72,
+    "max_recent_turns": 18,
+    "max_memory_items": 8
+  },
+  "qwen36_35b_a3b_24gb_stretch": {
+    "context_limit_tokens": 16384,
+    "reserved_output_tokens": 2048,
+    "compaction_trigger_ratio": 0.7,
+    "max_recent_turns": 12,
+    "max_memory_items": 6
+  },
+  "gemma4_26b_a4b_multimodal_24gb": {
+    "context_limit_tokens": 32768,
+    "reserved_output_tokens": 2048,
+    "compaction_trigger_ratio": 0.72,
+    "max_recent_turns": 16,
+    "max_memory_items": 8
+  }
+}

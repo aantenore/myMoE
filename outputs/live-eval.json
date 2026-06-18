@@ -1,0 +1,92 @@
+{
+  "hardware": {
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "memory_bytes": 25769803776,
+    "memory_gib": 24.0,
+    "recommended_strategy": "single_strong_expert_first",
+    "rationale": [
+      "Apple Silicon detected: llama.cpp Metal is the preferred runtime.",
+      "24 GiB class memory: run one strong local expert, add MoE only after eval wins.",
+      "30B-A3B low quant may run, but multitasking/context headroom is tight."
+    ]
+  },
+  "server": {
+    "binary": "work/tools/llama-b9700/llama-server",
+    "model": "work/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+    "host": "127.0.0.1",
+    "port": 8101,
+    "ctx_size": 4096,
+    "threads": 8,
+    "gpu_layers": 99,
+    "flash_attn": "auto"
+  },
+  "records": [
+    {
+      "id": "coding_retry",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "actual_expert": "coder",
+      "latency_seconds": 1.07,
+      "completion_tokens": 180,
+      "predicted_tokens_per_second": 195.59455855938086,
+      "content_excerpt": "```python\nimport time\nimport random\n\nclass ExponentialBackoffRetryPolicy:\n    def __init__(self, max_retries=5, initial_delay=1, max_delay=60):\n        self.max_retries = max_retries\n        self.initial_delay = initial_delay\n        self.max_delay = max_delay\n        self.current_delay = initial_delay\n\n    def should_retry(self, attempt):\n        return attempt < self.max_retries\n\n    def get_del",
+      "errors": []
+    },
+    {
+      "id": "typescript_bug",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "actual_expert": "coder",
+      "latency_seconds": 0.178,
+      "completion_tokens": 30,
+      "predicted_tokens_per_second": 202.24219176604626,
+      "content_excerpt": "Sure, I'd be happy to help you with that! Please provide the TypeScript class with the bug and let me know what the bug is.",
+      "errors": []
+    },
+    {
+      "id": "gateway_arch",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "actual_expert": "architect",
+      "latency_seconds": 0.0,
+      "completion_tokens": null,
+      "predicted_tokens_per_second": null,
+      "content_excerpt": "[architecture:mock-architect] handled correlation_id=gateway_arch; prompt_chars=82",
+      "errors": []
+    },
+    {
+      "id": "api_tradeoffs",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "actual_expert": "architect",
+      "latency_seconds": 0.0,
+      "completion_tokens": null,
+      "predicted_tokens_per_second": null,
+      "content_excerpt": "[architecture:mock-architect] handled correlation_id=api_tradeoffs; prompt_chars=90",
+      "errors": []
+    },
+    {
+      "id": "summarize_note",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "actual_expert": "general",
+      "latency_seconds": 0.0,
+      "completion_tokens": null,
+      "predicted_tokens_per_second": null,
+      "content_excerpt": "[general:mock-general] handled correlation_id=summarize_note; prompt_chars=63",
+      "errors": []
+    },
+    {
+      "id": "translate_email",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "actual_expert": "general",
+      "latency_seconds": 0.0,
+      "completion_tokens": null,
+      "predicted_tokens_per_second": null,
+      "content_excerpt": "[general:mock-general] handled correlation_id=translate_email; prompt_chars=63",
+      "errors": []
+    }
+  ]
+}

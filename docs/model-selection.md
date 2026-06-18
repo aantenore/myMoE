@@ -1,0 +1,75 @@
+# Model Selection
+
+## Hardware Assumption
+
+Target class: Apple Silicon laptop/workstation with about 24 GB unified memory.
+
+## Current Decision
+
+This app is general-purpose, not coding-first. The local architecture should therefore be a system-level MoE with:
+
+1. one strong resident general expert,
+2. one small resident expert for summarization, compaction, classification, and fallback,
+3. optional cold-loaded specialists for coding, vision, research, or domain tasks,
+4. deterministic and later trainable routing,
+5. evals that compare against a single strong general baseline.
+
+The current 1.5B Qwen coder model is only a smoke-test model. It proves the harness and llama.cpp runtime; it should not drive product decisions.
+
+## Recommended Default
+
+Use `Qwen3-30B-A3B-Instruct-2507` in MLX 4-bit as the first serious general-purpose local expert.
+
+Why:
+
+- It is a general MoE model, not a coder-only model.
+- The MLX 4-bit artifact is listed at about `17.2 GB`, which leaves some headroom on a 24 GB Mac.
+- LM Studio describes it as improved in instruction following, logical reasoning, text comprehension, math, science, coding, and tool usage.
+- It supports up to `262,144` context tokens, but this app should cap runtime context much lower at first.
+
+Start it with:
+
+```bash
+./scripts/start_mlx_general_expert.sh
+```
+
+Then point the orchestrator to:
+
+```bash
+configs/moe.live.general-mlx.example.json
+```
+
+## Stretch Candidates
+
+| Role | Candidate | Why | 24 GB Risk |
+| --- | --- | --- | --- |
+| Primary general default | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best risk-adjusted general model for 24 GB | Still needs capped context and memory monitoring |
+| Primary general stretch | `Qwen3.6-35B-A3B` MLX 4-bit | Stronger agentic/general/reasoning direction | Tight headroom; use only one heavy model resident |
+| Multimodal general | `Gemma 4 26B-A4B-it-MLX-4bit` | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
+| Fast fallback | Gemma 4 E4B or similar 4-bit small model | Summarization, compaction, routing, cheap fallback | Lower reasoning depth |
+| Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
+| Rejected for this machine | `Qwen3-Coder-Next` | Strong but too large | 4-bit wants >45 GB; even good low-bit paths want >30 GB |
+
+## MoE Runtime Policy
+
+On 24 GB, do not keep multiple large experts resident. Use:
+
+- resident heavy expert: `1`,
+- resident small expert: `1`,
+- cold-load specialists: yes,
+- max initial context: `16K-32K`,
+- compaction trigger: around `70-75%`,
+- routing eval before enabling a specialist by default.
+
+This still gives you MoE behavior at the application level without pretending the machine can host several 17-22 GB models simultaneously.
+
+## Sources Checked
+
+- Qwen3 30B A3B 2507 MLX 4-bit: https://huggingface.co/lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit
+- Qwen3 30B A3B 2507 LM Studio page: https://lmstudio.ai/models/qwen/qwen3-30b-a3b-2507
+- Qwen3.6 35B A3B official page: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
+- Qwen3.6 Apple Silicon quant reference: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit
+- Gemma 4 local guide: https://unsloth.ai/docs/models/gemma-4
+- Gemma 4 26B A4B MLX 4-bit: https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit
+- Qwen3-Coder 30B A3B official/GGUF reference: https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+- Qwen3-Coder-Next GGUF requirements: https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF
