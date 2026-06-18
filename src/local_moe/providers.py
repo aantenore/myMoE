@@ -64,7 +64,9 @@ class OpenAICompatibleProvider:
                     "role": "system",
                     "content": (
                         "You are a local expert in a system-level MoE. "
-                        "Return useful, direct answers. Preserve correlation context."
+                        "Return useful, direct answers. response in the user's language "
+                        "unless they explicitly ask for another language. Preserve "
+                        "correlation context."
                     ),
                 },
                 {"role": "user", "content": req.prompt},

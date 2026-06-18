@@ -1,0 +1,540 @@
+{
+  "created_at": "2026-06-18T17:18:48+0200",
+  "manifest": "configs/model-benchmark.json",
+  "hardware": {
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "memory_bytes": 25769803776,
+    "memory_gib": 24.0,
+    "recommended_strategy": "general_purpose_moe_single_resident",
+    "rationale": [
+      "Apple Silicon detected: MLX is the preferred runtime for heavy local experts.",
+      "24 GiB class memory: use a MoE harness with one strong resident general expert.",
+      "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
+    ]
+  },
+  "max_tokens": 96,
+  "prompt_count": 2,
+  "results": [
+    {
+      "candidate_id": "qwen3-1.7b-mlx-4bit",
+      "label": "Qwen3 1.7B MLX 4-bit",
+      "repo": "mlx-community/Qwen3-1.7B-4bit",
+      "role": "fast_compaction_or_fallback",
+      "status": "ok",
+      "load_seconds": 0.581,
+      "total_seconds": 2.799,
+      "aggregate": {
+        "successful_prompts": 2,
+        "failed_prompts": 0,
+        "latency_seconds_avg": 0.578,
+        "generation_tps_avg": 209.867,
+        "prompt_tps_avg": 1258.464,
+        "peak_memory_gb": 1.166,
+        "generation_tokens_total": 192
+      },
+      "records": [
+        {
+          "prompt_id": "it_product_strategy",
+          "category": "planning",
+          "status": "ok",
+          "latency_seconds": 0.593,
+          "prompt_tokens": 76,
+          "generation_tokens": 96,
+          "prompt_tps": 974.275,
+          "generation_tps": 210.339,
+          "peak_memory_gb": 1.166,
+          "content_excerpt": "<think>\n</think>\n\nLa tua idea \u00e8 interessante! Ecco una valutazione concisa:\n\n**Decisione:**  \n- **Positivo:** Memoria locale, contesto compatto, routing MoE offrono una base robusta per applicazioni locali e personalizzate.  \n- **Negativo:** Potenziale di complessit\u00e0 se non si gestisce bene la memoria e il routing.  \n\n**Rischi:**  \n- Difficolt"
+        },
+        {
+          "prompt_id": "reasoning_policy",
+          "category": "reasoning",
+          "status": "ok",
+          "latency_seconds": 0.562,
+          "prompt_tokens": 79,
+          "generation_tokens": 96,
+          "prompt_tps": 1542.652,
+          "generation_tps": 209.395,
+          "peak_memory_gb": 1.166,
+          "content_excerpt": "<think>\nOkay, the user is asking to compare three strategies for managing a long context in a local assistant: sliding window, summary memory, and semantic retrieval. Then they want a hybrid policy and the trade-offs. Let me break this down.\n\nFirst, I need to recall what each of these strategies entails. Sliding window is about keeping a fixed amount of context, discarding old data when new comes in. That's straightforward but might lose some history. Summary memory would involve"
+        }
+      ]
+    },
+    {
+      "candidate_id": "qwen3-4b-mlx-4bit",
+      "label": "Qwen3 4B MLX 4-bit",
+      "repo": "mlx-community/Qwen3-4B-4bit",
+      "role": "fast_compaction_or_fallback",
+      "status": "ok",
+      "load_seconds": 0.624,
+      "total_seconds": 3.811,
+      "aggregate": {
+        "successful_prompts": 2,
+        "failed_prompts": 0,
+        "latency_seconds_avg": 1.247,
+        "generation_tps_avg": 91.131,
+        "prompt_tps_avg": 621.237,
+        "peak_memory_gb": 2.542,
+        "generation_tokens_total": 192
+      },
+      "records": [
+        {
+          "prompt_id": "it_product_strategy",
+          "category": "planning",
+          "status": "ok",
+          "latency_seconds": 1.281,
+          "prompt_tokens": 76,
+          "generation_tokens": 96,
+          "prompt_tps": 569.159,
+          "generation_tps": 88.364,
+          "peak_memory_gb": 2.533,
+          "content_excerpt": "<think>\nOkay, the user is asking me to evaluate an idea for a personal app that uses local memory, compact context, and MoE routing. They want a decision, risks, and MVP in Italian.\n\nFirst, I need to understand the components of the app. Local memory suggests the app stores data on the user's device, which is good for privacy and offline access. Compact context implies efficient handling of user data, maybe using techniques like sparse attention or pruning. MoE"
+        },
+        {
+          "prompt_id": "reasoning_policy",
+          "category": "reasoning",
+          "status": "ok",
+          "latency_seconds": 1.213,
+          "prompt_tokens": 79,
+          "generation_tokens": 96,
+          "prompt_tps": 673.315,
+          "generation_tps": 93.898,
+          "peak_memory_gb": 2.542,
+          "content_excerpt": "<think>\nOkay, the user is asking to compare three strategies for managing long contexts in a local assistant: sliding window, summary memory, and semantic retrieval. Then, choose a hybrid policy and explain the trade-offs.\n\nFirst, I need to understand each strategy. Sliding window is like keeping the latest N tokens, which is simple but might miss important info. Summary memory stores summaries of past interactions, which helps with context but might lose details. Semantic retrieval uses embeddi"
+        }
+      ]
+    },
+    {
+      "candidate_id": "gemma4-e4b-it-mlx-4bit",
+      "label": "Gemma 4 E4B it MLX 4-bit",
+      "repo": "lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+      "role": "fast_compaction_or_fallback",
+      "status": "failed",
+      "error_type": "load_failed",
+      "error": "Received 126 parameters not in model: \nlanguage_model.model.layers.24.self_attn.k_norm.weight,\nlanguage_model.model.layers.24.self_attn.k_proj.biases,\nlanguage_model.model.layers.24.self_attn.k_proj.scales,\nlanguage_model.model.layers.24.self_attn.k_proj.weight,\nlanguage_model.model.layers.24.self_attn.v_proj.biases,\nlanguage_model.model.layers.24.self_attn.v_proj.scales,\nlanguage_model.model.layers.24.self_attn.v_proj.weight,\nlanguage_model.model.layers.25.self_attn.k_norm.weight,\nlanguage_model.model.layers.25.self_attn.k_proj.biases,\nlanguage_model.model.layers.25.self_attn.k_proj.scales,\nlanguage_model.model.layers.25.self_attn.k_proj.weight,\nlanguage_model.model.layers.25.self_attn.v_proj.biases,\nlanguage_model.model.layers.25.self_attn.v_proj.scales,\nlanguage_model.model.layers.25.self_attn.v_proj.weight,\nlanguage_model.model.layers.26.self_attn.k_norm.weight,\nlanguage_model.model.layers.26.self_attn.k_proj.biases,\nlanguage_model.model.layers.26.self_attn.k_proj.scales,\nlanguage_model.model.layers.26.self_attn.k_proj.weight,\nlanguage_model.model.layers.26.self_attn.v_proj.biases,\nlanguage_model.model.layers.26.self_attn.v_proj.scales,\nlanguage_model.model.layers.26.self_attn.v_proj.weight,\nlanguage_model.model.layers.27.self_attn.k_norm.weight,\nlanguage_model.model.layers.27.self_attn.k_proj.biases,\nlanguage_model.model.layers.27.self_attn.k_proj.scales,\nlanguage_model.model.layers.27.self_attn.k_proj.weight,\nlanguage_model.model.layers.27.self_attn.v_proj.biases,\nlanguage_model.model.layers.27.self_attn.v_proj.scales,\nlanguage_model.model.layers.27.self_attn.v_proj.weight,\nlanguage_model.model.layers.28.self_attn.k_norm.weight,\nlanguage_model.model.layers.28.self_attn.k_proj.biases,\nlanguage_model.model.layers.28.self_attn.k_proj.scales,\nlanguage_model.model.layers.28.self_attn.k_proj.weight,\nlanguage_model.model.layers.28.self_attn.v_proj.biases,\nlanguage_model.model.layers.28.self_attn.v_proj.scales,\nlanguage_model.model.layers.28.self_attn.v_proj.weight,\nlanguage_model.model.layers.29.self_attn.k_norm.weight,\nlanguage_model.model.layers.29.self_attn.k_proj.biases,\nlanguage_model.model.layers.29.self_attn.k_proj.scales,\nlanguage_model.model.layers.29.self_attn.k_proj.weight,\nlanguage_model.model.layers.29.self_attn.v_proj.biases,\nlanguage_model.model.layers.29.self_attn.v_proj.scales,\nlanguage_model.model.layers.29.self_attn.v_proj.weight,\nlanguage_model.model.layers.30.self_attn.k_norm.weight,\nlanguage_model.model.layers.30.self_attn.k_proj.biases,\nlanguage_model.model.layers.30.self_attn.k_proj.scales,\nlanguage_model.model.layers.30.self_attn.k_proj.weight,\nlanguage_model.model.layers.30.self_attn.v_proj.biases,\nlanguage_model.model.layers.30.self_attn.v_proj.scales,\nlanguage_model.model.layers.30.self_attn.v_proj.weight,\nlanguage_model.model.layers.31.self_attn.k_norm.weight,\nlanguage_model.model.layers.31.self_attn.k_proj.biases,\nlanguage_model.model.layers.31.self_attn.k_proj.scales,\nlanguage_model.model.layers.31.self_attn.k_proj.weight,\nlanguage_model.model.layers.31.self_attn.v_proj.biases,\nlanguage_model.model.layers.31.self_attn.v_proj.scales,\nlanguage_model.model.layers.31.self_attn.v_proj.weight,\nlanguage_model.model.layers.32.self_attn.k_norm.weight,\nlanguage_model.model.layers.32.self_attn.k_proj.biases,\nlanguage_model.model.layers.32.self_attn.k_proj.scales,\nlanguage_model.model.layers.32.self_attn.k_proj.weight,\nlanguage_model.model.layers.32.self_attn.v_proj.biases,\nlanguage_model.model.layers.32.self_attn.v_proj.scales,\nlanguage_model.model.layers.32.self_attn.v_proj.weight,\nlanguage_model.model.layers.33.self_attn.k_norm.weight,\nlanguage_model.model.layers.33.self_attn.k_proj.biases,\nlanguage_model.model.layers.33.self_attn.k_proj.scales,\nlanguage_model.model.layers.33.self_attn.k_proj.weight,\nlanguage_model.model.layers.33.self_attn.v_proj.biases,\nlanguage_model.model.layers.33.self_attn.v_proj.scales,\nlanguage_model.model.layers.33.self_attn.v_proj.weight,\nlanguage_model.model.layers.34.self_attn.k_norm.weight,\nlanguage_model.model.layers.34.self_attn.k_proj.biases,\nlanguage_model.model.layers.34.self_attn.k_proj.scales,\nlanguage_model.model.layers.34.self_attn.k_proj.weight,\nlanguage_model.model.layers.34.self_attn.v_proj.biases,\nlanguage_model.model.layers.34.self_attn.v_proj.scales,\nlanguage_model.model.layers.34.self_attn.v_proj.weight,\nlanguage_model.model.layers.35.self_attn.k_norm.weight,\nlanguage_model.model.layers.35.self_attn.k_proj.biases,\nlanguage_model.model.layers.35.self_attn.k_proj.scales,\nlanguage_model.model.layers.35.self_attn.k_proj.weight,\nlanguage_model.model.layers.35.self_attn.v_proj.biases,\nlanguage_model.model.layers.35.self_attn.v_proj.scales,\nlanguage_model.model.layers.35.self_attn.v_proj.weight,\nlanguage_model.model.layers.36.self_attn.k_norm.weight,\nlanguage_model.model.layers.36.self_attn.k_proj.biases,\nlanguage_model.model.layers.36.self_attn.k_proj.scales,\nlanguage_model.model.layers.36.self_attn.k_proj.weight,\nlanguage_model.model.layers.36.self_attn.v_proj.biases,\nlanguage_model.model.layers.36.self_attn.v_proj.scales,\nlanguage_model.model.layers.36.self_attn.v_proj.weight,\nlanguage_model.model.layers.37.self_attn.k_norm.weight,\nlanguage_model.model.layers.37.self_attn.k_proj.biases,\nlanguage_model.model.layers.37.self_attn.k_proj.scales,\nlanguage_model.model.layers.37.self_attn.k_proj.weight,\nlanguage_model.model.layers.37.self_attn.v_proj.biases,\nlanguage_model.model.layers.37.self_attn.v_proj.scales,\nlanguage_model.model.layers.37.self_attn.v_proj.weight,\nlanguage_model.model.layers.38.self_attn.k_norm.weight,\nlanguage_model.model.layers.38.self_attn.k_proj.biases,\nlanguage_model.model.layers.38.self_attn.k_proj.scales,\nlanguage_model.model.layers.38.self_attn.k_proj.weight,\nlanguage_model.model.layers.38.self_attn.v_proj.biases,\nlanguage_model.model.layers.38.self_attn.v_proj.scales,\nlanguage_model.model.layers.38.self_attn.v_proj.weight,\nlanguage_model.model.layers.39.self_attn.k_norm.weight,\nlanguage_model.model.layers.39.self_attn.k_proj.biases,\nlanguage_model.model.layers.39.self_attn.k_proj.scales,\nlanguage_model.model.layers.39.self_attn.k_proj.weight,\nlanguage_model.model.layers.39.self_attn.v_proj.biases,\nlanguage_model.model.layers.39.self_attn.v_proj.scales,\nlanguage_model.model.layers.39.self_attn.v_proj.weight,\nlanguage_model.model.layers.40.self_attn.k_norm.weight,\nlanguage_model.model.layers.40.self_attn.k_proj.biases,\nlanguage_model.model.layers.40.self_attn.k_proj.scales,\nlanguage_model.model.layers.40.self_attn.k_proj.weight,\nlanguage_model.model.layers.40.self_attn.v_proj.biases,\nlanguage_model.model.layers.40.self_attn.v_proj.scales,\nlanguage_model.model.layers.40.self_attn.v_proj.weight,\nlanguage_model.model.layers.41.self_attn.k_norm.weight,\nlanguage_model.model.layers.41.self_attn.k_proj.biases,\nlanguage_model.model.layers.41.self_attn.k_proj.scales,\nlanguage_model.model.layers.41.self_attn.k_proj.weight,\nlanguage_model.model.layers.41.self_attn.v_proj.biases,\nlanguage_model.model.layers.41.self_attn.v_proj.scales,\nlanguage_model.model.layers.41.self_attn.v_proj.weight.",
+      "total_seconds": 0.926
+    },
+    {
+      "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+      "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+      "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "role": "primary_general",
+      "status": "ok",
+      "load_seconds": 3.436,
+      "total_seconds": 23.087,
+      "aggregate": {
+        "successful_prompts": 2,
+        "failed_prompts": 0,
+        "latency_seconds_avg": 9.471,
+        "generation_tps_avg": 96.951,
+        "prompt_tps_avg": 186.061,
+        "peak_memory_gb": 17.313,
+        "generation_tokens_total": 192
+      },
+      "records": [
+        {
+          "prompt_id": "it_product_strategy",
+          "category": "planning",
+          "status": "ok",
+          "latency_seconds": 17.682,
+          "prompt_tokens": 76,
+          "generation_tokens": 96,
+          "prompt_tps": 4.575,
+          "generation_tps": 96.822,
+          "peak_memory_gb": 17.302,
+          "content_excerpt": "**Valutazione dell\u2019idea: un\u2019app personale con memoria locale, contesto compatto e routing MoE**\n\n---\n\n### \u2705 **Decisione: S\u00ec, \u00e8 un\u2019idea promettente \u2013 ma con focus molto stretto**\n\nL\u2019idea di un\u2019app personale basata su **memoria locale**, **contesto compatto** e **routing MoE (Mixture of Experts)** \u00e8 tecnicamente avanzata e potenzialmente riv"
+        },
+        {
+          "prompt_id": "reasoning_policy",
+          "category": "reasoning",
+          "status": "ok",
+          "latency_seconds": 1.261,
+          "prompt_tokens": 79,
+          "generation_tokens": 96,
+          "prompt_tps": 367.548,
+          "generation_tps": 97.079,
+          "peak_memory_gb": 17.313,
+          "content_excerpt": "Ecco un confronto tra le tre strategie per gestire contesti lunghi in un assistente locale, seguito da una policy ibrida con relativi tradeoff.\n\n---\n\n### **1. Sliding Window (Finestra scorrevole)**\n- **Come funziona**: Si mantiene solo l\u2019ultima parte del contesto (es. ultimi 8k token), scartando i pi\u00f9 vecchi.\n- **Vant"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "hardware_budget_gb": 24.0,
+    "ranked": [
+      {
+        "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+        "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+        "role": "primary_general",
+        "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+        "status": "ok",
+        "score": {
+          "quality_prior": 0.86,
+          "speed": 1.0,
+          "memory_headroom": 0.8359,
+          "load_time": 0.9809,
+          "reliability": 1.0,
+          "overall": 0.9032
+        },
+        "result": {
+          "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+          "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+          "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+          "role": "primary_general",
+          "status": "ok",
+          "load_seconds": 3.436,
+          "total_seconds": 23.087,
+          "aggregate": {
+            "successful_prompts": 2,
+            "failed_prompts": 0,
+            "latency_seconds_avg": 9.471,
+            "generation_tps_avg": 96.951,
+            "prompt_tps_avg": 186.061,
+            "peak_memory_gb": 17.313,
+            "generation_tokens_total": 192
+          },
+          "records": [
+            {
+              "prompt_id": "it_product_strategy",
+              "category": "planning",
+              "status": "ok",
+              "latency_seconds": 17.682,
+              "prompt_tokens": 76,
+              "generation_tokens": 96,
+              "prompt_tps": 4.575,
+              "generation_tps": 96.822,
+              "peak_memory_gb": 17.302,
+              "content_excerpt": "**Valutazione dell\u2019idea: un\u2019app personale con memoria locale, contesto compatto e routing MoE**\n\n---\n\n### \u2705 **Decisione: S\u00ec, \u00e8 un\u2019idea promettente \u2013 ma con focus molto stretto**\n\nL\u2019idea di un\u2019app personale basata su **memoria locale**, **contesto compatto** e **routing MoE (Mixture of Experts)** \u00e8 tecnicamente avanzata e potenzialmente riv"
+            },
+            {
+              "prompt_id": "reasoning_policy",
+              "category": "reasoning",
+              "status": "ok",
+              "latency_seconds": 1.261,
+              "prompt_tokens": 79,
+              "generation_tokens": 96,
+              "prompt_tps": 367.548,
+              "generation_tps": 97.079,
+              "peak_memory_gb": 17.313,
+              "content_excerpt": "Ecco un confronto tra le tre strategie per gestire contesti lunghi in un assistente locale, seguito da una policy ibrida con relativi tradeoff.\n\n---\n\n### **1. Sliding Window (Finestra scorrevole)**\n- **Come funziona**: Si mantiene solo l\u2019ultima parte del contesto (es. ultimi 8k token), scartando i pi\u00f9 vecchi.\n- **Vant"
+            }
+          ]
+        }
+      },
+      {
+        "candidate_id": "qwen3-4b-mlx-4bit",
+        "label": "Qwen3 4B MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/Qwen3-4B-4bit",
+        "status": "ok",
+        "score": {
+          "quality_prior": 0.55,
+          "speed": 1.0,
+          "memory_headroom": 1.0,
+          "load_time": 0.9965,
+          "reliability": 1.0,
+          "overall": 0.7973
+        },
+        "result": {
+          "candidate_id": "qwen3-4b-mlx-4bit",
+          "label": "Qwen3 4B MLX 4-bit",
+          "repo": "mlx-community/Qwen3-4B-4bit",
+          "role": "fast_compaction_or_fallback",
+          "status": "ok",
+          "load_seconds": 0.624,
+          "total_seconds": 3.811,
+          "aggregate": {
+            "successful_prompts": 2,
+            "failed_prompts": 0,
+            "latency_seconds_avg": 1.247,
+            "generation_tps_avg": 91.131,
+            "prompt_tps_avg": 621.237,
+            "peak_memory_gb": 2.542,
+            "generation_tokens_total": 192
+          },
+          "records": [
+            {
+              "prompt_id": "it_product_strategy",
+              "category": "planning",
+              "status": "ok",
+              "latency_seconds": 1.281,
+              "prompt_tokens": 76,
+              "generation_tokens": 96,
+              "prompt_tps": 569.159,
+              "generation_tps": 88.364,
+              "peak_memory_gb": 2.533,
+              "content_excerpt": "<think>\nOkay, the user is asking me to evaluate an idea for a personal app that uses local memory, compact context, and MoE routing. They want a decision, risks, and MVP in Italian.\n\nFirst, I need to understand the components of the app. Local memory suggests the app stores data on the user's device, which is good for privacy and offline access. Compact context implies efficient handling of user data, maybe using techniques like sparse attention or pruning. MoE"
+            },
+            {
+              "prompt_id": "reasoning_policy",
+              "category": "reasoning",
+              "status": "ok",
+              "latency_seconds": 1.213,
+              "prompt_tokens": 79,
+              "generation_tokens": 96,
+              "prompt_tps": 673.315,
+              "generation_tps": 93.898,
+              "peak_memory_gb": 2.542,
+              "content_excerpt": "<think>\nOkay, the user is asking to compare three strategies for managing long contexts in a local assistant: sliding window, summary memory, and semantic retrieval. Then, choose a hybrid policy and explain the trade-offs.\n\nFirst, I need to understand each strategy. Sliding window is like keeping the latest N tokens, which is simple but might miss important info. Summary memory stores summaries of past interactions, which helps with context but might lose details. Semantic retrieval uses embeddi"
+            }
+          ]
+        }
+      },
+      {
+        "candidate_id": "qwen3-1.7b-mlx-4bit",
+        "label": "Qwen3 1.7B MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/Qwen3-1.7B-4bit",
+        "status": "ok",
+        "score": {
+          "quality_prior": 0.42,
+          "speed": 1.0,
+          "memory_headroom": 1.0,
+          "load_time": 0.9968,
+          "reliability": 1.0,
+          "overall": 0.7388
+        },
+        "result": {
+          "candidate_id": "qwen3-1.7b-mlx-4bit",
+          "label": "Qwen3 1.7B MLX 4-bit",
+          "repo": "mlx-community/Qwen3-1.7B-4bit",
+          "role": "fast_compaction_or_fallback",
+          "status": "ok",
+          "load_seconds": 0.581,
+          "total_seconds": 2.799,
+          "aggregate": {
+            "successful_prompts": 2,
+            "failed_prompts": 0,
+            "latency_seconds_avg": 0.578,
+            "generation_tps_avg": 209.867,
+            "prompt_tps_avg": 1258.464,
+            "peak_memory_gb": 1.166,
+            "generation_tokens_total": 192
+          },
+          "records": [
+            {
+              "prompt_id": "it_product_strategy",
+              "category": "planning",
+              "status": "ok",
+              "latency_seconds": 0.593,
+              "prompt_tokens": 76,
+              "generation_tokens": 96,
+              "prompt_tps": 974.275,
+              "generation_tps": 210.339,
+              "peak_memory_gb": 1.166,
+              "content_excerpt": "<think>\n</think>\n\nLa tua idea \u00e8 interessante! Ecco una valutazione concisa:\n\n**Decisione:**  \n- **Positivo:** Memoria locale, contesto compatto, routing MoE offrono una base robusta per applicazioni locali e personalizzate.  \n- **Negativo:** Potenziale di complessit\u00e0 se non si gestisce bene la memoria e il routing.  \n\n**Rischi:**  \n- Difficolt"
+            },
+            {
+              "prompt_id": "reasoning_policy",
+              "category": "reasoning",
+              "status": "ok",
+              "latency_seconds": 0.562,
+              "prompt_tokens": 79,
+              "generation_tokens": 96,
+              "prompt_tps": 1542.652,
+              "generation_tps": 209.395,
+              "peak_memory_gb": 1.166,
+              "content_excerpt": "<think>\nOkay, the user is asking to compare three strategies for managing a long context in a local assistant: sliding window, summary memory, and semantic retrieval. Then they want a hybrid policy and the trade-offs. Let me break this down.\n\nFirst, I need to recall what each of these strategies entails. Sliding window is about keeping a fixed amount of context, discarding old data when new comes in. That's straightforward but might lose some history. Summary memory would involve"
+            }
+          ]
+        }
+      },
+      {
+        "candidate_id": "gemma4-e4b-it-mlx-4bit",
+        "label": "Gemma 4 E4B it MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+        "status": "failed",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.62,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-e4b-it-mlx-4bit",
+          "label": "Gemma 4 E4B it MLX 4-bit",
+          "repo": "lmstudio-community/gemma-4-E4B-it-MLX-4bit",
+          "role": "fast_compaction_or_fallback",
+          "status": "failed",
+          "error_type": "load_failed",
+          "error": "Received 126 parameters not in model: \nlanguage_model.model.layers.24.self_attn.k_norm.weight,\nlanguage_model.model.layers.24.self_attn.k_proj.biases,\nlanguage_model.model.layers.24.self_attn.k_proj.scales,\nlanguage_model.model.layers.24.self_attn.k_proj.weight,\nlanguage_model.model.layers.24.self_attn.v_proj.biases,\nlanguage_model.model.layers.24.self_attn.v_proj.scales,\nlanguage_model.model.layers.24.self_attn.v_proj.weight,\nlanguage_model.model.layers.25.self_attn.k_norm.weight,\nlanguage_model.model.layers.25.self_attn.k_proj.biases,\nlanguage_model.model.layers.25.self_attn.k_proj.scales,\nlanguage_model.model.layers.25.self_attn.k_proj.weight,\nlanguage_model.model.layers.25.self_attn.v_proj.biases,\nlanguage_model.model.layers.25.self_attn.v_proj.scales,\nlanguage_model.model.layers.25.self_attn.v_proj.weight,\nlanguage_model.model.layers.26.self_attn.k_norm.weight,\nlanguage_model.model.layers.26.self_attn.k_proj.biases,\nlanguage_model.model.layers.26.self_attn.k_proj.scales,\nlanguage_model.model.layers.26.self_attn.k_proj.weight,\nlanguage_model.model.layers.26.self_attn.v_proj.biases,\nlanguage_model.model.layers.26.self_attn.v_proj.scales,\nlanguage_model.model.layers.26.self_attn.v_proj.weight,\nlanguage_model.model.layers.27.self_attn.k_norm.weight,\nlanguage_model.model.layers.27.self_attn.k_proj.biases,\nlanguage_model.model.layers.27.self_attn.k_proj.scales,\nlanguage_model.model.layers.27.self_attn.k_proj.weight,\nlanguage_model.model.layers.27.self_attn.v_proj.biases,\nlanguage_model.model.layers.27.self_attn.v_proj.scales,\nlanguage_model.model.layers.27.self_attn.v_proj.weight,\nlanguage_model.model.layers.28.self_attn.k_norm.weight,\nlanguage_model.model.layers.28.self_attn.k_proj.biases,\nlanguage_model.model.layers.28.self_attn.k_proj.scales,\nlanguage_model.model.layers.28.self_attn.k_proj.weight,\nlanguage_model.model.layers.28.self_attn.v_proj.biases,\nlanguage_model.model.layers.28.self_attn.v_proj.scales,\nlanguage_model.model.layers.28.self_attn.v_proj.weight,\nlanguage_model.model.layers.29.self_attn.k_norm.weight,\nlanguage_model.model.layers.29.self_attn.k_proj.biases,\nlanguage_model.model.layers.29.self_attn.k_proj.scales,\nlanguage_model.model.layers.29.self_attn.k_proj.weight,\nlanguage_model.model.layers.29.self_attn.v_proj.biases,\nlanguage_model.model.layers.29.self_attn.v_proj.scales,\nlanguage_model.model.layers.29.self_attn.v_proj.weight,\nlanguage_model.model.layers.30.self_attn.k_norm.weight,\nlanguage_model.model.layers.30.self_attn.k_proj.biases,\nlanguage_model.model.layers.30.self_attn.k_proj.scales,\nlanguage_model.model.layers.30.self_attn.k_proj.weight,\nlanguage_model.model.layers.30.self_attn.v_proj.biases,\nlanguage_model.model.layers.30.self_attn.v_proj.scales,\nlanguage_model.model.layers.30.self_attn.v_proj.weight,\nlanguage_model.model.layers.31.self_attn.k_norm.weight,\nlanguage_model.model.layers.31.self_attn.k_proj.biases,\nlanguage_model.model.layers.31.self_attn.k_proj.scales,\nlanguage_model.model.layers.31.self_attn.k_proj.weight,\nlanguage_model.model.layers.31.self_attn.v_proj.biases,\nlanguage_model.model.layers.31.self_attn.v_proj.scales,\nlanguage_model.model.layers.31.self_attn.v_proj.weight,\nlanguage_model.model.layers.32.self_attn.k_norm.weight,\nlanguage_model.model.layers.32.self_attn.k_proj.biases,\nlanguage_model.model.layers.32.self_attn.k_proj.scales,\nlanguage_model.model.layers.32.self_attn.k_proj.weight,\nlanguage_model.model.layers.32.self_attn.v_proj.biases,\nlanguage_model.model.layers.32.self_attn.v_proj.scales,\nlanguage_model.model.layers.32.self_attn.v_proj.weight,\nlanguage_model.model.layers.33.self_attn.k_norm.weight,\nlanguage_model.model.layers.33.self_attn.k_proj.biases,\nlanguage_model.model.layers.33.self_attn.k_proj.scales,\nlanguage_model.model.layers.33.self_attn.k_proj.weight,\nlanguage_model.model.layers.33.self_attn.v_proj.biases,\nlanguage_model.model.layers.33.self_attn.v_proj.scales,\nlanguage_model.model.layers.33.self_attn.v_proj.weight,\nlanguage_model.model.layers.34.self_attn.k_norm.weight,\nlanguage_model.model.layers.34.self_attn.k_proj.biases,\nlanguage_model.model.layers.34.self_attn.k_proj.scales,\nlanguage_model.model.layers.34.self_attn.k_proj.weight,\nlanguage_model.model.layers.34.self_attn.v_proj.biases,\nlanguage_model.model.layers.34.self_attn.v_proj.scales,\nlanguage_model.model.layers.34.self_attn.v_proj.weight,\nlanguage_model.model.layers.35.self_attn.k_norm.weight,\nlanguage_model.model.layers.35.self_attn.k_proj.biases,\nlanguage_model.model.layers.35.self_attn.k_proj.scales,\nlanguage_model.model.layers.35.self_attn.k_proj.weight,\nlanguage_model.model.layers.35.self_attn.v_proj.biases,\nlanguage_model.model.layers.35.self_attn.v_proj.scales,\nlanguage_model.model.layers.35.self_attn.v_proj.weight,\nlanguage_model.model.layers.36.self_attn.k_norm.weight,\nlanguage_model.model.layers.36.self_attn.k_proj.biases,\nlanguage_model.model.layers.36.self_attn.k_proj.scales,\nlanguage_model.model.layers.36.self_attn.k_proj.weight,\nlanguage_model.model.layers.36.self_attn.v_proj.biases,\nlanguage_model.model.layers.36.self_attn.v_proj.scales,\nlanguage_model.model.layers.36.self_attn.v_proj.weight,\nlanguage_model.model.layers.37.self_attn.k_norm.weight,\nlanguage_model.model.layers.37.self_attn.k_proj.biases,\nlanguage_model.model.layers.37.self_attn.k_proj.scales,\nlanguage_model.model.layers.37.self_attn.k_proj.weight,\nlanguage_model.model.layers.37.self_attn.v_proj.biases,\nlanguage_model.model.layers.37.self_attn.v_proj.scales,\nlanguage_model.model.layers.37.self_attn.v_proj.weight,\nlanguage_model.model.layers.38.self_attn.k_norm.weight,\nlanguage_model.model.layers.38.self_attn.k_proj.biases,\nlanguage_model.model.layers.38.self_attn.k_proj.scales,\nlanguage_model.model.layers.38.self_attn.k_proj.weight,\nlanguage_model.model.layers.38.self_attn.v_proj.biases,\nlanguage_model.model.layers.38.self_attn.v_proj.scales,\nlanguage_model.model.layers.38.self_attn.v_proj.weight,\nlanguage_model.model.layers.39.self_attn.k_norm.weight,\nlanguage_model.model.layers.39.self_attn.k_proj.biases,\nlanguage_model.model.layers.39.self_attn.k_proj.scales,\nlanguage_model.model.layers.39.self_attn.k_proj.weight,\nlanguage_model.model.layers.39.self_attn.v_proj.biases,\nlanguage_model.model.layers.39.self_attn.v_proj.scales,\nlanguage_model.model.layers.39.self_attn.v_proj.weight,\nlanguage_model.model.layers.40.self_attn.k_norm.weight,\nlanguage_model.model.layers.40.self_attn.k_proj.biases,\nlanguage_model.model.layers.40.self_attn.k_proj.scales,\nlanguage_model.model.layers.40.self_attn.k_proj.weight,\nlanguage_model.model.layers.40.self_attn.v_proj.biases,\nlanguage_model.model.layers.40.self_attn.v_proj.scales,\nlanguage_model.model.layers.40.self_attn.v_proj.weight,\nlanguage_model.model.layers.41.self_attn.k_norm.weight,\nlanguage_model.model.layers.41.self_attn.k_proj.biases,\nlanguage_model.model.layers.41.self_attn.k_proj.scales,\nlanguage_model.model.layers.41.self_attn.k_proj.weight,\nlanguage_model.model.layers.41.self_attn.v_proj.biases,\nlanguage_model.model.layers.41.self_attn.v_proj.scales,\nlanguage_model.model.layers.41.self_attn.v_proj.weight.",
+          "total_seconds": 0.926
+        }
+      },
+      {
+        "candidate_id": "gemma4-26b-a4b-it-mlx-4bit",
+        "label": "Gemma 4 26B-A4B it MLX 4-bit",
+        "role": "primary_general_alternative",
+        "repo": "lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.84,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-26b-a4b-it-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "gemma4-26b-a4b-it-optiq-mlx-4bit",
+        "label": "Gemma 4 26B-A4B it OptiQ MLX 4-bit",
+        "role": "primary_general_alternative",
+        "repo": "mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.88,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-26b-a4b-it-optiq-mlx-4bit",
+          "status": "not_run"
+        }
+      }
+    ],
+    "decision": {
+      "primary_general": {
+        "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+        "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+        "role": "primary_general",
+        "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+        "status": "ok",
+        "score": {
+          "quality_prior": 0.86,
+          "speed": 1.0,
+          "memory_headroom": 0.8359,
+          "load_time": 0.9809,
+          "reliability": 1.0,
+          "overall": 0.9032
+        },
+        "result": {
+          "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+          "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+          "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+          "role": "primary_general",
+          "status": "ok",
+          "load_seconds": 3.436,
+          "total_seconds": 23.087,
+          "aggregate": {
+            "successful_prompts": 2,
+            "failed_prompts": 0,
+            "latency_seconds_avg": 9.471,
+            "generation_tps_avg": 96.951,
+            "prompt_tps_avg": 186.061,
+            "peak_memory_gb": 17.313,
+            "generation_tokens_total": 192
+          },
+          "records": [
+            {
+              "prompt_id": "it_product_strategy",
+              "category": "planning",
+              "status": "ok",
+              "latency_seconds": 17.682,
+              "prompt_tokens": 76,
+              "generation_tokens": 96,
+              "prompt_tps": 4.575,
+              "generation_tps": 96.822,
+              "peak_memory_gb": 17.302,
+              "content_excerpt": "**Valutazione dell\u2019idea: un\u2019app personale con memoria locale, contesto compatto e routing MoE**\n\n---\n\n### \u2705 **Decisione: S\u00ec, \u00e8 un\u2019idea promettente \u2013 ma con focus molto stretto**\n\nL\u2019idea di un\u2019app personale basata su **memoria locale**, **contesto compatto** e **routing MoE (Mixture of Experts)** \u00e8 tecnicamente avanzata e potenzialmente riv"
+            },
+            {
+              "prompt_id": "reasoning_policy",
+              "category": "reasoning",
+              "status": "ok",
+              "latency_seconds": 1.261,
+              "prompt_tokens": 79,
+              "generation_tokens": 96,
+              "prompt_tps": 367.548,
+              "generation_tps": 97.079,
+              "peak_memory_gb": 17.313,
+              "content_excerpt": "Ecco un confronto tra le tre strategie per gestire contesti lunghi in un assistente locale, seguito da una policy ibrida con relativi tradeoff.\n\n---\n\n### **1. Sliding Window (Finestra scorrevole)**\n- **Come funziona**: Si mantiene solo l\u2019ultima parte del contesto (es. ultimi 8k token), scartando i pi\u00f9 vecchi.\n- **Vant"
+            }
+          ]
+        }
+      },
+      "fast_fallback": {
+        "candidate_id": "qwen3-4b-mlx-4bit",
+        "label": "Qwen3 4B MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/Qwen3-4B-4bit",
+        "status": "ok",
+        "score": {
+          "quality_prior": 0.55,
+          "speed": 1.0,
+          "memory_headroom": 1.0,
+          "load_time": 0.9965,
+          "reliability": 1.0,
+          "overall": 0.7973
+        },
+        "result": {
+          "candidate_id": "qwen3-4b-mlx-4bit",
+          "label": "Qwen3 4B MLX 4-bit",
+          "repo": "mlx-community/Qwen3-4B-4bit",
+          "role": "fast_compaction_or_fallback",
+          "status": "ok",
+          "load_seconds": 0.624,
+          "total_seconds": 3.811,
+          "aggregate": {
+            "successful_prompts": 2,
+            "failed_prompts": 0,
+            "latency_seconds_avg": 1.247,
+            "generation_tps_avg": 91.131,
+            "prompt_tps_avg": 621.237,
+            "peak_memory_gb": 2.542,
+            "generation_tokens_total": 192
+          },
+          "records": [
+            {
+              "prompt_id": "it_product_strategy",
+              "category": "planning",
+              "status": "ok",
+              "latency_seconds": 1.281,
+              "prompt_tokens": 76,
+              "generation_tokens": 96,
+              "prompt_tps": 569.159,
+              "generation_tps": 88.364,
+              "peak_memory_gb": 2.533,
+              "content_excerpt": "<think>\nOkay, the user is asking me to evaluate an idea for a personal app that uses local memory, compact context, and MoE routing. They want a decision, risks, and MVP in Italian.\n\nFirst, I need to understand the components of the app. Local memory suggests the app stores data on the user's device, which is good for privacy and offline access. Compact context implies efficient handling of user data, maybe using techniques like sparse attention or pruning. MoE"
+            },
+            {
+              "prompt_id": "reasoning_policy",
+              "category": "reasoning",
+              "status": "ok",
+              "latency_seconds": 1.213,
+              "prompt_tokens": 79,
+              "generation_tokens": 96,
+              "prompt_tps": 673.315,
+              "generation_tps": 93.898,
+              "peak_memory_gb": 2.542,
+              "content_excerpt": "<think>\nOkay, the user is asking to compare three strategies for managing long contexts in a local assistant: sliding window, summary memory, and semantic retrieval. Then, choose a hybrid policy and explain the trade-offs.\n\nFirst, I need to understand each strategy. Sliding window is like keeping the latest N tokens, which is simple but might miss important info. Summary memory stores summaries of past interactions, which helps with context but might lose details. Semantic retrieval uses embeddi"
+            }
+          ]
+        }
+      },
+      "recommended_architecture": "one resident heavy general expert plus one small resident fallback/compaction expert; cold-load specialists only after eval wins"
+    },
+    "hardware": {
+      "machine": "arm64",
+      "cpu_brand": "Apple M5 Pro",
+      "memory_bytes": 25769803776,
+      "memory_gib": 24.0,
+      "recommended_strategy": "general_purpose_moe_single_resident",
+      "rationale": [
+        "Apple Silicon detected: MLX is the preferred runtime for heavy local experts.",
+        "24 GiB class memory: use a MoE harness with one strong resident general expert.",
+        "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
+      ]
+    }
+  }
+}

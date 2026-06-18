@@ -16,6 +16,24 @@ This app is general-purpose, not coding-first. The local architecture should the
 
 The current 1.5B Qwen coder model is only a smoke-test model. It proves the harness and llama.cpp runtime; it should not drive product decisions.
 
+## Measured Local Result
+
+On the tested Apple M5 Pro / 24 GiB machine, the current benchmark selects:
+
+- primary general expert: `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`,
+- fast fallback/compaction expert: `Qwen3-4B-MLX-4bit`.
+
+Measured short-generation snapshot:
+
+| Candidate | Status | Avg generation tok/s | Peak memory |
+| --- | --- | ---: | ---: |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 96.95 | 17.31 GB |
+| Qwen3 4B MLX 4-bit | ok | 91.13 | 2.54 GB |
+| Qwen3 1.7B MLX 4-bit | ok | 209.87 | 1.17 GB |
+| Gemma 4 E4B it MLX 4-bit | failed to load | - | - |
+
+The 30B result is strong enough to keep it as the default primary model on this machine class. The 4B model is the practical first-run and fallback profile.
+
 ## Recommended Default
 
 Use `Qwen3-30B-A3B-Instruct-2507` in MLX 4-bit as the first serious general-purpose local expert.

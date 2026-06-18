@@ -5,7 +5,7 @@
   "memory_gib": 24.0,
   "recommended_strategy": "general_purpose_moe_single_resident",
   "rationale": [
-    "Apple Silicon detected: llama.cpp Metal is the preferred runtime.",
+    "Apple Silicon detected: MLX is the preferred runtime for heavy local experts.",
     "24 GiB class memory: use a MoE harness with one strong resident general expert.",
     "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
   ]

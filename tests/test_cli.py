@@ -61,6 +61,26 @@ class CliTests(unittest.TestCase):
         self.assertIn("[coding:mock-coder]", completed.stdout)
         self.assertIn('"correlation_id"', completed.stdout)
 
+    def test_doctor_prints_runtime_and_extensions(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--doctor",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["app"]["mode"], "local_model_required")
+        self.assertIn("runtime", payload)
+        self.assertTrue(payload["extensions"]["tools"])
+
 
 if __name__ == "__main__":
     unittest.main()

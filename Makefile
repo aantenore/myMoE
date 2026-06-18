@@ -1,4 +1,4 @@
-.PHONY: check test eval ui cli
+.PHONY: check test eval ui cli doctor setup-models start-models benchmark-small
 
 check:
 	./scripts/run_all_checks.sh
@@ -14,10 +14,23 @@ eval:
 
 ui:
 	PYTHONPATH=src python3 -m local_moe.web \
-		--config configs/moe.mock.json \
 		--port 8089
 
 cli:
 	PYTHONPATH=src python3 -m local_moe.cli \
-		--config configs/moe.mock.json \
 		--interactive
+
+doctor:
+	PYTHONPATH=src python3 -m local_moe.cli --doctor
+
+setup-models:
+	PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --execute --download-models
+
+start-models:
+	PYTHONPATH=src .venv/bin/python scripts/start_local_models.py
+
+benchmark-small:
+	PYTHONPATH=src .venv/bin/python experiments/benchmark_models.py \
+		--include qwen3-1.7b-mlx-4bit,qwen3-4b-mlx-4bit \
+		--prompt-limit 2 \
+		--max-tokens 96

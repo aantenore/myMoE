@@ -6,16 +6,17 @@
   },
   "experts": [
     {
-      "id": "coder",
+      "id": "general",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8101/v1",
-      "model": "qwen25-coder-1.5b-q4",
-      "role": "legacy-coding-smoke-endpoint",
+      "model": "mlx-community/Qwen3-4B-4bit",
+      "role": "fast-local-general-purpose",
       "weight": 1.0,
-      "timeout_seconds": 60,
+      "timeout_seconds": 90,
       "params": {
-        "temperature": 0.15,
-        "max_tokens": 180
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "max_tokens": 1024
       }
     }
   ],

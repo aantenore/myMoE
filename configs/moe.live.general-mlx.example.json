@@ -21,27 +21,20 @@
     },
     {
       "id": "fast_fallback",
-      "provider": "mock",
-      "model": "gemma4-e4b-fast-placeholder",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8102/v1",
+      "model": "mlx-community/Qwen3-4B-4bit",
       "role": "fast-summary-and-fallback",
       "weight": 0.4,
-      "timeout_seconds": 30
-    },
-    {
-      "id": "coder",
-      "provider": "mock",
-      "model": "qwen3-coder-optional-placeholder",
-      "role": "optional-coding-specialist",
-      "weight": 0.3,
-      "timeout_seconds": 60
+      "timeout_seconds": 60,
+      "params": {
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "max_tokens": 1024
+      }
     }
   ],
   "rules": [
-    {
-      "expert_id": "coder",
-      "keywords": ["python", "typescript", "code", "bug", "test", "refactor", "api client", "class"],
-      "weight": 2.5
-    },
     {
       "expert_id": "fast_fallback",
       "keywords": ["summarize", "summary", "compress", "rewrite", "shorten", "translate"],

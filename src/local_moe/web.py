@@ -7,20 +7,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .app_config import app_config_payload, load_app_config
+from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
+from .extensions import load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="myMoE local web UI")
-    parser.add_argument("--config", default="configs/moe.mock.json")
+    parser.add_argument("--config")
+    parser.add_argument("--app-config", default="configs/app.json")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8089)
     args = parser.parse_args()
 
-    server = build_server(args.config, args.host, args.port)
+    app_config = load_app_config(args.app_config)
+    server = build_server(args.config or app_config.default_moe_config, args.host, args.port, app_config_path=args.app_config)
     url = f"http://{args.host}:{server.server_address[1]}"
     print(f"myMoE UI listening on {url}")
     try:
@@ -31,14 +36,40 @@ def main() -> None:
         server.server_close()
 
 
-def build_server(config_path: str, host: str = "127.0.0.1", port: int = 8089) -> ThreadingHTTPServer:
+def build_server(
+    config_path: str,
+    host: str = "127.0.0.1",
+    port: int = 8089,
+    *,
+    app_config_path: str = "configs/app.json",
+) -> ThreadingHTTPServer:
+    app_config = load_app_config(app_config_path)
     config = load_config(config_path)
     moe = LocalMoE(config)
-    handler = _make_handler(config_path=config_path, config=config, moe=moe)
+    registry = load_extension_registry(
+        plugins_dir=app_config.extensions.plugins_dir,
+        skills_dir=app_config.extensions.skills_dir,
+        tools_config=app_config.extensions.tools_config,
+        mcp_config=app_config.extensions.mcp_config,
+        cron_config=app_config.extensions.cron_config,
+    )
+    handler = _make_handler(
+        config_path=config_path,
+        app_config=app_config,
+        config=config,
+        moe=moe,
+        registry=registry,
+    )
     return ThreadingHTTPServer((host, port), handler)
 
 
-def _make_handler(config_path: str, config: object, moe: LocalMoE) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    config_path: str,
+    app_config: object,
+    config: object,
+    moe: LocalMoE,
+    registry: object,
+) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path in {"/", "/index.html"}:
@@ -51,7 +82,16 @@ def _make_handler(config_path: str, config: object, moe: LocalMoE) -> type[BaseH
                 return
 
             if self.path == "/api/config":
-                _send_json(self, _config_payload(config_path, config))
+                _send_json(self, _config_payload(config_path, config, app_config))
+                return
+
+            if self.path == "/api/extensions":
+                _send_json(self, registry_payload(registry))
+                return
+
+            if self.path == "/api/runtime":
+                plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
+                _send_json(self, runtime_plan_payload(plan))
                 return
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
@@ -139,9 +179,11 @@ def _send(
     handler.wfile.write(body)
 
 
-def _config_payload(config_path: str, config: object) -> dict[str, object]:
+def _config_payload(config_path: str, config: object, app_config: object) -> dict[str, object]:
     return {
+        "app": app_config_payload(app_config),
         "config_path": config_path,
+        "requires_model": True,
         "routing": config.routing.__dict__,
         "experts": [
             {

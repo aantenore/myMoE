@@ -99,6 +99,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(_FakeOpenAIHandler.last_path, "/v1/chat/completions")
         self.assertEqual(_FakeOpenAIHandler.last_payload["model"], "fake-model")
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.2)
+        system = _FakeOpenAIHandler.last_payload["messages"][0]["content"]
+        self.assertIn("response in the user's language", system)
 
     def test_openai_provider_rejects_invalid_payload_shape(self) -> None:
         with _fake_openai_server({"choices": []}) as server:

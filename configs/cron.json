@@ -1,0 +1,26 @@
+{
+  "jobs": [
+    {
+      "id": "model-performance-refresh",
+      "description": "Refresh model benchmark report on demand or scheduled runs.",
+      "enabled": false,
+      "schedule": {
+        "type": "interval",
+        "seconds": 604800
+      },
+      "command": ["python", "experiments/benchmark_models.py", "--prompt-limit", "2", "--max-tokens", "96"],
+      "risk_class": "process_execution"
+    },
+    {
+      "id": "memory-maintenance",
+      "description": "Placeholder recurring memory cleanup and compaction health check.",
+      "enabled": true,
+      "schedule": {
+        "type": "interval",
+        "seconds": 86400
+      },
+      "command": ["python", "-m", "local_moe.cli", "--list-extensions"],
+      "risk_class": "compute_only"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "example-general",
+  "name": "Example General Plugin",
+  "version": "0.1.0",
+  "description": "Example plugin showing how myMoE discovers plugin metadata, skills, tools, MCP servers, and cron jobs.",
+  "skills": ["skills/general-assistant"],
+  "tools": ["memory.search", "context.compact"],
+  "mcp_servers": [],
+  "cron_jobs": [],
+  "permissions": {
+    "risk_class": "read_only"
+  }
+}
