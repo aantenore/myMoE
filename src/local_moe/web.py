@@ -193,6 +193,7 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
                 "role": expert.role,
                 "base_url": expert.base_url,
                 "weight": expert.weight,
+                "runtime_backend": str(expert.params.get("runtime_backend", "provider_default")),
             }
             for expert in config.experts
         ],

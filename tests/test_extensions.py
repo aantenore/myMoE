@@ -57,6 +57,15 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn(plan.backend, {"mlx_lm", "ollama", "llama_cpp"})
         self.assertTrue(plan.install_commands)
 
+    def test_builds_runtime_plan_for_gemma_pinned_mlx_config(self) -> None:
+        moe_config = load_config("configs/moe.live.gemma-e4b-mlx.example.json")
+        plan = build_runtime_plan(moe_config, {"darwin_arm64": "mlx_lm", "fallback": "mlx_lm"})
+        flattened = [" ".join(command) for command in plan.model_commands]
+
+        self.assertTrue(any("mlx_lm.server" in command for command in flattened))
+        self.assertTrue(any("gemma-4-e4b-it-4bit" in command for command in flattened))
+        self.assertTrue(any(".[mlx]" in command for command in (" ".join(item) for item in plan.install_commands)))
+
 
 if __name__ == "__main__":
     unittest.main()

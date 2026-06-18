@@ -14,6 +14,7 @@
       "weight": 1.0,
       "timeout_seconds": 120,
       "params": {
+        "runtime_backend": "mlx_lm",
         "temperature": 0.7,
         "top_p": 0.8,
         "max_tokens": 2048
@@ -23,14 +24,18 @@
       "id": "fast_fallback",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8102/v1",
-      "model": "mlx-community/Qwen3-4B-4bit",
+      "model": "mlx-community/gemma-4-e4b-it-4bit",
       "role": "fast-summary-and-fallback",
       "weight": 0.4,
       "timeout_seconds": 60,
       "params": {
+        "runtime_backend": "mlx_lm",
         "temperature": 0.3,
         "top_p": 0.9,
-        "max_tokens": 1024
+        "max_tokens": 1024,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
       }
     }
   ],

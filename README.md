@@ -19,6 +19,8 @@ uv pip install --python .venv/bin/python ".[mlx]"
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
 
+The `.[mlx]` extra intentionally pins the MLX stack that was validated with both Qwen and Gemma E4B on the tested machine. Use `.[mlx-current]` only when you explicitly want to track the newest MLX packages.
+
 Start the configured local model server:
 
 ```bash
@@ -33,6 +35,16 @@ PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
   --download-models
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.fast-mlx.example.json
+```
+
+Run Gemma 4 E4B directly:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
+  --config configs/moe.live.gemma-e4b-mlx.example.json \
+  --download-models
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
+  --config configs/moe.live.gemma-e4b-mlx.example.json
 ```
 
 Run the full local quality gate:
@@ -97,7 +109,7 @@ For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpos
 - `primary general`: Qwen3-30B-A3B-Instruct-2507 MLX 4-bit.
 - `stretch general`: Qwen3.6-35B-A3B MLX 4-bit with tighter context caps.
 - `multimodal alternative`: Gemma 4 26B-A4B MLX 4-bit.
-- `fast fallback`: Gemma 4 E4B or similar small local model.
+- `fast fallback`: Qwen3 4B or Gemma 4 E4B, selected by local benchmark and task quality.
 - `optional specialist`: Qwen3-Coder-30B-A3B only for coding-heavy workflows.
 - `judge/router-teacher`: use Codex/GPT-class teacher offline during dataset creation, not in runtime.
 
@@ -113,6 +125,7 @@ configs/
   moe.local.example.json   # template for real llama.cpp/Ollama/LM Studio endpoints
   moe.live.general-mlx.example.json
   moe.live.fast-mlx.example.json
+  moe.live.gemma-e4b-mlx.example.json
   moe.live.ollama.example.json
   quality-gate.json        # thresholds and project artifact checks
 docs/
@@ -122,6 +135,7 @@ docs/
   ci.md
   distillation-plan.md
   evaluation.md
+  gemma-e4b-runtime.md
   installation.md
   model-selection.md
   performance-benchmarking.md
@@ -188,4 +202,10 @@ For a cheaper first pass:
 
 ```bash
 make benchmark-small
+```
+
+For the Gemma E4B regression benchmark:
+
+```bash
+make benchmark-gemma
 ```

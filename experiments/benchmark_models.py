@@ -46,7 +46,7 @@ def main() -> None:
     for candidate in manifest.candidates:
         if include and candidate.id not in include:
             continue
-        if candidate.runtime != "mlx_lm":
+        if candidate.runtime not in {"mlx_lm", "mlx_vlm"}:
             results.append(_skipped(candidate, f"unsupported runtime: {candidate.runtime}"))
             continue
         if not _has_disk_headroom(candidate.estimated_size_gb, args.min_free_gb):
@@ -76,6 +76,16 @@ def main() -> None:
 
 
 def run_one_candidate(
+    candidate: BenchmarkCandidate,
+    prompts: list[Any],
+    max_tokens: int,
+) -> dict[str, Any]:
+    if candidate.runtime == "mlx_vlm":
+        return _run_mlx_vlm_candidate(candidate, prompts, max_tokens)
+    return _run_mlx_lm_candidate(candidate, prompts, max_tokens)
+
+
+def _run_mlx_lm_candidate(
     candidate: BenchmarkCandidate,
     prompts: list[Any],
     max_tokens: int,
@@ -147,6 +157,86 @@ def run_one_candidate(
         "label": candidate.label,
         "repo": candidate.repo,
         "role": candidate.role,
+        "runtime": candidate.runtime,
+        "status": "ok" if any(item["status"] == "ok" for item in records) else "failed",
+        "load_seconds": round(load_seconds, 3),
+        "total_seconds": round(time.perf_counter() - started, 3),
+        "aggregate": _aggregate(records),
+        "records": records,
+    }
+
+
+def _run_mlx_vlm_candidate(
+    candidate: BenchmarkCandidate,
+    prompts: list[Any],
+    max_tokens: int,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        from mlx_vlm import generate, load
+        import mlx.core as mx
+    except Exception as exc:
+        return _failed(candidate, "import_failed", str(exc), started)
+
+    try:
+        if hasattr(mx, "reset_peak_memory"):
+            mx.reset_peak_memory()
+        load_started = time.perf_counter()
+        model, processor = load(candidate.repo)
+        load_seconds = time.perf_counter() - load_started
+    except Exception as exc:
+        return _failed(candidate, "load_failed", str(exc), started)
+
+    records = []
+    for prompt in prompts:
+        prompt_started = time.perf_counter()
+        try:
+            formatted = _format_vlm_prompt(processor, prompt.prompt)
+            response = generate(
+                model,
+                processor,
+                formatted,
+                max_tokens=max_tokens,
+                temperature=0.2,
+                max_kv_size=8192,
+                verbose=False,
+            )
+            elapsed = time.perf_counter() - prompt_started
+            generation_tokens = getattr(response, "generation_tokens", None)
+            generation_tps = _round(getattr(response, "generation_tps", None))
+            if not generation_tps and generation_tokens:
+                generation_tps = _round(float(generation_tokens) / max(elapsed, 0.001))
+            records.append(
+                {
+                    "prompt_id": prompt.id,
+                    "category": prompt.category,
+                    "status": "ok",
+                    "latency_seconds": round(elapsed, 3),
+                    "prompt_tokens": getattr(response, "prompt_tokens", None),
+                    "generation_tokens": generation_tokens,
+                    "prompt_tps": _round(getattr(response, "prompt_tps", None)),
+                    "generation_tps": generation_tps,
+                    "peak_memory_gb": _round(getattr(response, "peak_memory", None)),
+                    "content_excerpt": str(getattr(response, "text", ""))[:500],
+                }
+            )
+        except Exception as exc:
+            records.append(
+                {
+                    "prompt_id": prompt.id,
+                    "category": prompt.category,
+                    "status": "failed",
+                    "latency_seconds": round(time.perf_counter() - prompt_started, 3),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "candidate_id": candidate.id,
+        "label": candidate.label,
+        "repo": candidate.repo,
+        "role": candidate.role,
+        "runtime": candidate.runtime,
         "status": "ok" if any(item["status"] == "ok" for item in records) else "failed",
         "load_seconds": round(load_seconds, 3),
         "total_seconds": round(time.perf_counter() - started, 3),
@@ -239,9 +329,40 @@ def _format_prompt(tokenizer: Any, prompt: str) -> str:
         {"role": "user", "content": prompt},
     ]
     try:
-        return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
     except Exception:
-        return f"System: {messages[0]['content']}\nUser: {prompt}\nAssistant:"
+        try:
+            return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        except Exception:
+            return f"System: {messages[0]['content']}\nUser: {prompt}\nAssistant:"
+
+
+def _format_vlm_prompt(processor: Any, prompt: str) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a concise local general-purpose assistant. Answer in the user's language.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    tokenizer = getattr(processor, "tokenizer", processor)
+    try:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
+    except Exception:
+        try:
+            return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        except Exception:
+            return f"System: {messages[0]['content']}\nUser: {prompt}\nAssistant:"
 
 
 def _find_candidate(manifest: BenchmarkManifest, candidate_id: str) -> BenchmarkCandidate:

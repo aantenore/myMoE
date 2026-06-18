@@ -34,29 +34,20 @@ def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | N
     platform_key = detect_platform_key()
     preferred = preferred_backends or {}
     backend = preferred.get(platform_key) or preferred.get("fallback") or _default_backend(platform_key)
-    models = tuple(expert.model for expert in config.experts if expert.provider == "openai_compatible")
+    experts = tuple(expert for expert in config.experts if expert.provider == "openai_compatible")
+    models = tuple(expert.model for expert in experts)
 
     if backend == "mlx_lm":
         venv_python = _venv_python(platform_key)
         install = (
             ("uv", "venv", "--python", "3.12", ".venv"),
-            ("uv", "pip", "install", "--python", venv_python, "mlx-lm", "huggingface-hub", "psutil"),
+            ("uv", "pip", "install", "--python", venv_python, _mlx_extra(experts)),
         )
-        commands = tuple(
-            (
-                venv_python,
-                "-m",
-                "mlx_lm.server",
-                "--model",
-                model,
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(8101 + index),
-            )
-            for index, model in enumerate(models)
+        commands = tuple(_mlx_server_command(venv_python, expert, _expert_port(expert, 8101 + index)) for index, expert in enumerate(experts))
+        notes = (
+            "Best path for Apple Silicon. Keep one heavy model resident; add small fallback only if memory allows.",
+            "Gemma 4 E4B is validated with the pinned .[mlx] profile because newer MLX packages can reject its current artifact.",
         )
-        notes = ("Best path for Apple Silicon. Keep one heavy model resident; add small fallback only if memory allows.",)
     elif backend == "ollama":
         install = (("install", "ollama", "from", "https://ollama.com/download"),)
         commands = tuple(("ollama", "pull", _ollama_model_name(model)) for model in models)
@@ -95,6 +86,7 @@ def runtime_plan_payload(plan: RuntimePlan) -> dict[str, object]:
             "uv": shutil.which("uv") is not None,
             "ollama": shutil.which("ollama") is not None,
             "llama-server": shutil.which("llama-server") is not None,
+            "python": shutil.which("python") is not None or shutil.which("python3") is not None,
         },
         "install_commands": [list(item) for item in plan.install_commands],
         "model_commands": [list(item) for item in plan.model_commands],
@@ -114,6 +106,46 @@ def _venv_python(platform_key: str) -> str:
     if platform_key == "windows":
         return ".venv\\Scripts\\python.exe"
     return ".venv/bin/python"
+
+
+def _mlx_server_command(venv_python: str, expert: object, port: int) -> tuple[str, ...]:
+    runtime_backend = str(getattr(expert, "params", {}).get("runtime_backend", "mlx_lm"))
+    module = "mlx_vlm.server" if runtime_backend == "mlx_vlm" else "mlx_lm.server"
+    command = [
+        venv_python,
+        "-m",
+        module,
+        "--model",
+        str(expert.model),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    max_kv_size = getattr(expert, "params", {}).get("max_kv_size")
+    if max_kv_size is not None and runtime_backend == "mlx_vlm":
+        command.extend(["--max-kv-size", str(max_kv_size)])
+    return tuple(command)
+
+
+def _mlx_extra(experts: tuple[object, ...]) -> str:
+    runtime_backends = {str(getattr(expert, "params", {}).get("runtime_backend", "mlx_lm")) for expert in experts}
+    if runtime_backends == {"mlx_vlm"}:
+        return ".[mlx-vlm]"
+    return ".[mlx]"
+
+
+def _expert_port(expert: object, default: int) -> int:
+    base_url = getattr(expert, "base_url", None)
+    if not base_url:
+        return default
+    try:
+        parsed = urlparse(str(base_url))
+        if parsed.port:
+            return int(parsed.port)
+    except ValueError:
+        return default
+    return default
 
 
 def _ollama_model_name(model: str) -> str:
