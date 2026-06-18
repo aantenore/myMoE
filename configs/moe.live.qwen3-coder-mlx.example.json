@@ -1,0 +1,24 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": [],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "coder",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8101/v1",
+      "model": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+      "role": "coding",
+      "weight": 1.0,
+      "timeout_seconds": 120,
+      "params": {
+        "temperature": 0.15,
+        "top_p": 0.95,
+        "max_tokens": 2048
+      }
+    }
+  ],
+  "rules": []
+}

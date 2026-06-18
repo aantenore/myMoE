@@ -1,0 +1,26 @@
+{"id":"ext-code-001","prompt":"Write Python code for a retry function with unit tests and clear edge cases.","expected_expert":"coder","complexity":"simple"}
+{"id":"ext-code-002","prompt":"Refactor this TypeScript class into smaller interfaces and add tests.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-003","prompt":"Debug a flaky async Python test and explain the likely race condition in code.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-004","prompt":"Implement a configurable plugin runner with a clean interface and no hardcoded providers.","expected_expert":"coder","complexity":"complex"}
+{"id":"ext-code-005","prompt":"Create a Python class that validates JSON config and writes focused tests.","expected_expert":"coder","complexity":"simple"}
+{"id":"ext-code-006","prompt":"Refactor this API client code so transport, retry policy, and model params are injectable.","expected_expert":"coder","complexity":"complex"}
+{"id":"ext-code-007","prompt":"Write TypeScript code for a provider adapter and add contract tests around its function calls.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-008","prompt":"Build a small test runner that loads cases from JSONL and reports failures by id.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-arch-001","prompt":"Design a scalable system architecture for local model routing with clear component boundaries.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-002","prompt":"Compare tradeoff options for an API gateway in front of multiple local inference services.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-003","prompt":"Propose the architecture for a model orchestration service with monitoring and fallback policy.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-004","prompt":"Define component responsibilities for a gateway that balances latency, reliability, and scalability.","expected_expert":"architect","complexity":"medium"}
+{"id":"ext-arch-005","prompt":"Explain the design tradeoff between one strong local model and a multi expert system.","expected_expert":"architect","complexity":"medium"}
+{"id":"ext-arch-006","prompt":"Draft a system design for a configurable evaluation service and its API contracts.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-007","prompt":"Review architecture risks for a local AI gateway that must support future provider swaps.","expected_expert":"architect","complexity":"very_complex"}
+{"id":"ext-arch-008","prompt":"Plan a scalable component layout for model downloads, runtime servers, and routing decisions.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-gen-001","prompt":"Summarize this technical note into five concise bullets for a non specialist.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-002","prompt":"Translate this short product update into Italian and keep the tone natural.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-003","prompt":"Rewrite this email so it is direct, friendly, and shorter.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-004","prompt":"Explain the main idea in plain language without implementation detail.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-gen-005","prompt":"Compare these two meeting notes and produce a neutral summary of the differences.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-gen-006","prompt":"Summarize the decision and rewrite it as an executive update.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-mix-001","prompt":"Design the plugin architecture, then sketch the Python interfaces and test strategy for the runner.","expected_expert":"coder","complexity":"very_complex"}
+{"id":"ext-mix-002","prompt":"Explain the tradeoff for a scalable gateway before writing any production code.","expected_expert":"architect","complexity":"very_complex"}
+{"id":"ext-mix-003","prompt":"Rewrite the incident email and summarize the timeline for leadership.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-mix-004","prompt":"Implement a configurable API client with Python tests, but keep the architecture provider agnostic.","expected_expert":"coder","complexity":"very_complex"}

@@ -1,0 +1,9 @@
+{"id":"coding_retry","prompt":"Write Python code for a retry policy with exponential backoff and tests.","expected_expert":"coder","complexity":"medium"}
+{"id":"typescript_bug","prompt":"Find the bug in this TypeScript class and refactor it for testability.","expected_expert":"coder","complexity":"medium"}
+{"id":"gateway_arch","prompt":"Design a provider-agnostic LLM gateway with fallback, tracing and budget policies.","expected_expert":"architect","complexity":"complex"}
+{"id":"api_tradeoffs","prompt":"Compare REST and GraphQL for a multi-tenant analytics API with strict latency constraints.","expected_expert":"architect","complexity":"complex"}
+{"id":"summarize_note","prompt":"Summarize this meeting note into three decisions and two risks.","expected_expert":"general","complexity":"simple"}
+{"id":"translate_email","prompt":"Translate and rewrite this email in a calmer professional tone.","expected_expert":"general","complexity":"simple"}
+{"id":"mixed_code_arch","prompt":"Propose an architecture and Python interfaces for a plugin-based tool runner.","expected_expert":"coder","complexity":"complex"}
+{"id":"system_tradeoff","prompt":"Explain the tradeoff between hot reload and deterministic config snapshots in a local agent system.","expected_expert":"architect","complexity":"medium"}
+

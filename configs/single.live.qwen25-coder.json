@@ -1,0 +1,20 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": [],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "single",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8101/v1",
+      "model": "qwen25-coder-1.5b-q4",
+      "role": "single-local-baseline",
+      "weight": 1.0,
+      "timeout_seconds": 60,
+      "params": { "temperature": 0.15, "max_tokens": 180 }
+    }
+  ],
+  "rules": []
+}

@@ -1,0 +1,92 @@
+{
+  "hardware": {
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "memory_bytes": 25769803776,
+    "memory_gib": 24.0,
+    "recommended_strategy": "single_strong_expert_first",
+    "rationale": [
+      "Apple Silicon detected: llama.cpp Metal is the preferred runtime.",
+      "24 GiB class memory: run one strong local expert, add MoE only after eval wins.",
+      "30B-A3B low quant may run, but multitasking/context headroom is tight."
+    ]
+  },
+  "server": {
+    "binary": "work/tools/llama-b9700/llama-server",
+    "model": "work/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+    "host": "127.0.0.1",
+    "port": 8101,
+    "ctx_size": 4096,
+    "threads": 8,
+    "gpu_layers": 99,
+    "flash_attn": "auto"
+  },
+  "records": [
+    {
+      "id": "coding_retry",
+      "expected_expert": "coder",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 1.044,
+      "completion_tokens": 180,
+      "predicted_tokens_per_second": 184.7110554697561,
+      "content_excerpt": "```python\nimport time\nimport random\n\nclass ExponentialBackoffRetryPolicy:\n    def __init__(self, max_retries=5, initial_delay=1, max_delay=60):\n        self.max_retries = max_retries\n        self.initial_delay = initial_delay\n        self.max_delay = max_delay\n\n    def retry(self, func, *args, **kwargs):\n        for attempt in range(self.max_retries):\n            try:\n                return func(*",
+      "errors": []
+    },
+    {
+      "id": "typescript_bug",
+      "expected_expert": "coder",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 0.185,
+      "completion_tokens": 31,
+      "predicted_tokens_per_second": 200.90471931666474,
+      "content_excerpt": "Sure, I'd be happy to help you with that! Please provide the TypeScript class with the bug and let me know what you need help with.",
+      "errors": []
+    },
+    {
+      "id": "gateway_arch",
+      "expected_expert": "architect",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 0.948,
+      "completion_tokens": 180,
+      "predicted_tokens_per_second": 195.88510685532583,
+      "content_excerpt": "Designing a provider-agnostic LLM gateway with fallback, tracing, and budget policies involves several key components. Below is a high-level overview of how you might approach this:\n\n### 1. Provider-Agnostic LLM Gateway\n\n#### Components:\n- **LLM Client**: A client library that handles communication with different LLM providers.\n- **Fallback Mechanism**: A mechanism to handle cases where the primar",
+      "errors": []
+    },
+    {
+      "id": "api_tradeoffs",
+      "expected_expert": "architect",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 1.007,
+      "completion_tokens": 180,
+      "predicted_tokens_per_second": 184.2440619674195,
+      "content_excerpt": "REST and GraphQL are both popular APIs used for building multi-tenant analytics applications, but they differ in their approach to handling data and latency constraints. Here's a comparison:\n\n### REST\n\nREST (Representational State Transfer) is a protocol for distributed systems that uses HTTP methods to perform CRUD (Create, Read, Update, Delete) operations on resources. It is widely used for buil",
+      "errors": []
+    },
+    {
+      "id": "summarize_note",
+      "expected_expert": "general",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 0.122,
+      "completion_tokens": 19,
+      "predicted_tokens_per_second": 204.38898450946644,
+      "content_excerpt": "Certainly! Please provide the meeting note for me to summarize into three decisions and two risks.",
+      "errors": []
+    },
+    {
+      "id": "translate_email",
+      "expected_expert": "general",
+      "selected_expert": "single",
+      "actual_expert": "single",
+      "latency_seconds": 0.205,
+      "completion_tokens": 35,
+      "predicted_tokens_per_second": 199.46656940296808,
+      "content_excerpt": "Certainly! I'd be happy to translate and rewrite the email in a more professional tone. Please provide the email content, and I'll do my best to assist you.",
+      "errors": []
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": ["fast_fallback"],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "general",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8101/v1",
+      "model": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+      "role": "primary-general-purpose",
+      "weight": 1.0,
+      "timeout_seconds": 120,
+      "params": {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "max_tokens": 2048
+      }
+    },
+    {
+      "id": "fast_fallback",
+      "provider": "mock",
+      "model": "gemma4-e4b-fast-placeholder",
+      "role": "fast-summary-and-fallback",
+      "weight": 0.4,
+      "timeout_seconds": 30
+    },
+    {
+      "id": "coder",
+      "provider": "mock",
+      "model": "qwen3-coder-optional-placeholder",
+      "role": "optional-coding-specialist",
+      "weight": 0.3,
+      "timeout_seconds": 60
+    }
+  ],
+  "rules": [
+    {
+      "expert_id": "coder",
+      "keywords": ["python", "typescript", "code", "bug", "test", "refactor", "api client", "class"],
+      "weight": 2.5
+    },
+    {
+      "expert_id": "fast_fallback",
+      "keywords": ["summarize", "summary", "compress", "rewrite", "shorten", "translate"],
+      "weight": 2.0
+    },
+    {
+      "expert_id": "general",
+      "keywords": ["reason", "analyze", "compare", "decide", "explain", "plan", "research"],
+      "weight": 1.5
+    }
+  ]
+}
