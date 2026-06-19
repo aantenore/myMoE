@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 import subprocess
 import time
 from typing import Any, Callable
@@ -49,6 +50,23 @@ class ModelServerAction:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class ModelServerLog:
+    expert_id: str
+    model: str
+    log_path: str
+    exists: bool
+    status: str
+    lines: tuple[str, ...] = ()
+    max_lines: int = 120
+    max_bytes: int = 65536
+    bytes_total: int = 0
+    bytes_read: int = 0
+    truncated: bool = False
+    sanitized: bool = True
+    message: str = ""
+
+
 class ModelServerManager:
     def __init__(
         self,
@@ -84,6 +102,28 @@ class ModelServerManager:
             "count": len(self._specs),
             "servers": [model_server_status_payload(item) for item in self._statuses()],
         }
+
+    def logs(
+        self,
+        *,
+        expert_id: str | None = None,
+        max_lines: int = 120,
+        max_bytes: int = 65536,
+    ) -> dict[str, object]:
+        selected = tuple(
+            spec
+            for spec in self._specs
+            if expert_id is None or spec.expert_id == expert_id
+        )
+        return model_server_logs_payload(
+            tuple(
+                read_model_server_log(spec, max_lines=max_lines, max_bytes=max_bytes)
+                for spec in selected
+            ),
+            expert_id=expert_id,
+            max_lines=max_lines,
+            max_bytes=max_bytes,
+        )
 
     def start(self, *, confirm: bool = False, only_first: bool = False) -> ModelServerAction:
         if not confirm:
@@ -242,12 +282,140 @@ def model_server_status_payload(status: ModelServerStatus) -> dict[str, object]:
     }
 
 
+def read_model_server_log(
+    spec: ModelServerSpec,
+    *,
+    max_lines: int = 120,
+    max_bytes: int = 65536,
+) -> ModelServerLog:
+    line_limit = _clamp_int(max_lines, minimum=1, maximum=1000)
+    byte_limit = _clamp_int(max_bytes, minimum=1024, maximum=1048576)
+    path = Path(spec.log_path)
+    if not path.exists():
+        return ModelServerLog(
+            expert_id=spec.expert_id,
+            model=spec.model,
+            log_path=str(path),
+            exists=False,
+            status="missing",
+            max_lines=line_limit,
+            max_bytes=byte_limit,
+            message="Log file has not been created yet.",
+        )
+    if not path.is_file():
+        return ModelServerLog(
+            expert_id=spec.expert_id,
+            model=spec.model,
+            log_path=str(path),
+            exists=False,
+            status="invalid",
+            max_lines=line_limit,
+            max_bytes=byte_limit,
+            message="Log path is not a regular file.",
+        )
+    try:
+        bytes_total = path.stat().st_size
+        raw = _read_tail_bytes(path, max_bytes=byte_limit)
+    except OSError as exc:
+        return ModelServerLog(
+            expert_id=spec.expert_id,
+            model=spec.model,
+            log_path=str(path),
+            exists=True,
+            status="error",
+            max_lines=line_limit,
+            max_bytes=byte_limit,
+            message=str(exc),
+        )
+    text = raw.decode("utf-8", errors="replace")
+    lines = tuple(_sanitize_log_line(line) for line in text.splitlines()[-line_limit:])
+    return ModelServerLog(
+        expert_id=spec.expert_id,
+        model=spec.model,
+        log_path=str(path),
+        exists=True,
+        status="ready",
+        lines=lines,
+        max_lines=line_limit,
+        max_bytes=byte_limit,
+        bytes_total=bytes_total,
+        bytes_read=len(raw),
+        truncated=bytes_total > len(raw) or len(text.splitlines()) > line_limit,
+        sanitized=True,
+    )
+
+
+def model_server_logs_payload(
+    logs: tuple[ModelServerLog, ...],
+    *,
+    expert_id: str | None = None,
+    max_lines: int = 120,
+    max_bytes: int = 65536,
+) -> dict[str, object]:
+    return {
+        "count": len(logs),
+        "expert_id": expert_id,
+        "max_lines": _clamp_int(max_lines, minimum=1, maximum=1000),
+        "max_bytes": _clamp_int(max_bytes, minimum=1024, maximum=1048576),
+        "sanitized": True,
+        "logs": [model_server_log_payload(item) for item in logs],
+    }
+
+
+def model_server_log_payload(log: ModelServerLog) -> dict[str, object]:
+    return {
+        "expert_id": log.expert_id,
+        "model": log.model,
+        "log_path": log.log_path,
+        "exists": log.exists,
+        "status": log.status,
+        "lines": list(log.lines),
+        "line_count": len(log.lines),
+        "max_lines": log.max_lines,
+        "max_bytes": log.max_bytes,
+        "bytes_total": log.bytes_total,
+        "bytes_read": log.bytes_read,
+        "truncated": log.truncated,
+        "sanitized": log.sanitized,
+        "message": log.message,
+    }
+
+
 def _server_status(managed_running: bool, endpoint_reachable: bool) -> str:
     if managed_running:
         return "managed_running"
     if endpoint_reachable:
         return "external_running"
     return "stopped"
+
+
+def _read_tail_bytes(path: Path, *, max_bytes: int) -> bytes:
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        handle.seek(max(size - max_bytes, 0))
+        return handle.read()
+
+
+def _sanitize_log_line(line: str) -> str:
+    sanitized = line
+    sanitized = re.sub(r"hf_[A-Za-z0-9_-]{12,}", "[REDACTED_HF_TOKEN]", sanitized)
+    sanitized = re.sub(r"sk-[A-Za-z0-9_-]{12,}", "[REDACTED_API_KEY]", sanitized)
+    sanitized = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}", r"\1[REDACTED_TOKEN]", sanitized)
+    sanitized = re.sub(
+        r"(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+",
+        r"\1[REDACTED_SECRET]",
+        sanitized,
+    )
+    return sanitized
+
+
+def _clamp_int(raw: object, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = minimum
+    return max(minimum, min(value, maximum))
 
 
 def _base_url_from_command(command: tuple[str, ...]) -> str:

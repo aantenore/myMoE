@@ -81,6 +81,12 @@ Inspect model process status from the app CLI:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-status
 ```
 
+Inspect sanitized model server log tails from the app CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-logs --models-log-lines 80
+```
+
 Start models from the app CLI in the foreground:
 
 ```bash
@@ -89,7 +95,7 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --models-confirm
 ```
 
-The web UI exposes equivalent guarded start/stop controls in Advanced Runtime. It skips endpoints that already respond and stops only processes started by the current web server.
+The web UI exposes equivalent guarded start/stop controls in Advanced Runtime. It skips endpoints that already respond, stops only processes started by the current web server, and shows bounded sanitized log tails from runtime-plan-generated log files.
 
 Fast MLX config for first-run demos:
 

@@ -150,6 +150,13 @@ make models-status
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-status
 ```
 
+Inspect sanitized model server log tails without opening log files manually:
+
+```bash
+make models-logs
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-logs --models-log-lines 80
+```
+
 Preview or run runtime preparation from the CLI:
 
 ```bash
@@ -191,7 +198,11 @@ Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
+
+Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
+
+![myMoE model logs](docs/screenshots/model-logs.png)
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 

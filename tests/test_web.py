@@ -134,6 +134,40 @@ class WebTests(unittest.TestCase):
         self.assertEqual(guarded_stop["status"], "confirmation_required")
         self.assertFalse(guarded_stop["ok"])
 
+    def test_model_logs_endpoint_returns_sanitized_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(root)
+            app_config = _write_temp_app_config(root)
+            log_path = root / "runtime" / "model-1.log"
+            log_path.parent.mkdir(parents=True)
+            log_path.write_text(
+                "boot\nAuthorization: Bearer abcdefghijklmnop\nready\n",
+                encoding="utf-8",
+            )
+            server = build_server(
+                str(config_path),
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                result = _get_json(base_url + "/api/models/logs?expert_id=general&lines=2")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(result["count"], 1)
+        self.assertTrue(result["sanitized"])
+        self.assertEqual(result["logs"][0]["expert_id"], "general")
+        self.assertEqual(result["logs"][0]["line_count"], 2)
+        joined = "\n".join(result["logs"][0]["lines"])
+        self.assertIn("[REDACTED_TOKEN]", joined)
+        self.assertNotIn("abcdefghijklmnop", joined)
+
     def test_runs_setup_endpoint_preview_and_confirmation_guard(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -926,9 +960,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("/api/models/processes", html)
+        self.assertIn("/api/models/logs", html)
         self.assertIn("/api/models/start", html)
         self.assertIn("/api/models/stop", html)
         self.assertIn("renderModelProcesses", html)
+        self.assertIn("refreshModelLogs", html)
+        self.assertIn("Model Logs", html)
+        self.assertIn("model-log-expert", html)
         self.assertIn("Start models", html)
         self.assertIn("Stop managed", html)
         self.assertIn("/api/setup", html)
@@ -1097,6 +1135,30 @@ def _write_temp_plugin_app_config(root: Path) -> Path:
     raw["extensions"]["plugins_dir"] = str(root / "plugins")
     raw["extensions"]["skills_dir"] = str(root / "skills")
     path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
+
+
+def _write_temp_openai_config(root: Path) -> Path:
+    path = root / "moe.openai.json"
+    path.write_text(
+        json.dumps(
+            {
+                "routing": {"top_k": 1, "fallback_order": ["general"], "aggregation": "best"},
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "openai_compatible",
+                        "base_url": "http://127.0.0.1:9999/v1",
+                        "model": "local/model",
+                        "role": "general",
+                        "params": {"runtime_backend": "mlx_lm"},
+                    }
+                ],
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 

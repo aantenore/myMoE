@@ -709,6 +709,11 @@
         color: var(--muted);
       }
 
+      .log-output {
+        max-height: 24rem;
+        overflow: auto;
+      }
+
       .tool-controls {
         display: grid;
         gap: 0.75rem;
@@ -939,6 +944,14 @@
             <button class="ghost-button" id="stop-models" type="button">Stop managed</button>
           </div>
           <pre class="eval-output" id="models-output">Not run yet.</pre>
+          <div class="tool-controls">
+            <div class="section-label">Model Logs</div>
+            <div class="tool-row">
+              <select class="tool-select" id="model-log-expert" aria-label="Model log expert"></select>
+              <button class="ghost-button" id="refresh-model-logs" type="button">Refresh logs</button>
+            </div>
+            <pre class="eval-output log-output" id="model-logs-output">Not loaded yet.</pre>
+          </div>
         </section>
         <section class="advanced-section">
           <h2>Setup</h2>
@@ -1263,6 +1276,7 @@
         config: null,
         runtime: null,
         modelProcesses: null,
+        modelLogs: null,
         setup: null,
         doctor: null,
         health: null,
@@ -1350,6 +1364,7 @@
         el("overlay").addEventListener("click", () => setAdvanced(false));
         el("start-models").addEventListener("click", startModels);
         el("stop-models").addEventListener("click", stopModels);
+        el("refresh-model-logs").addEventListener("click", refreshModelLogs);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-support-bundle").addEventListener("click", downloadSupportBundle);
@@ -1653,6 +1668,59 @@
         el("model-processes").innerHTML =
           `<div class="section-label">Model processes</div>` +
           (rows || '<span class="muted">No model process commands are configured.</span>');
+        renderModelLogSelector(servers);
+      }
+
+      function renderModelLogSelector(servers) {
+        const options = [
+          '<option value="">All experts</option>',
+          ...servers.map(
+            (server) =>
+              `<option value="${escapeHtml(server.expert_id)}">${escapeHtml(server.expert_id)} · ${escapeHtml(shortModel(server.model))}</option>`,
+          ),
+        ];
+        const current = el("model-log-expert").value;
+        el("model-log-expert").innerHTML = options.join("");
+        if ([...el("model-log-expert").options].some((option) => option.value === current)) {
+          el("model-log-expert").value = current;
+        }
+      }
+
+      async function refreshModelLogs() {
+        el("model-logs-output").textContent = "Loading logs...";
+        try {
+          const expert = el("model-log-expert").value;
+          const path = expert
+            ? `/api/models/logs?lines=80&expert_id=${encodeURIComponent(expert)}`
+            : "/api/models/logs?lines=80";
+          const result = await api(path);
+          state.modelLogs = result;
+          renderModelLogs(result);
+        } catch (error) {
+          el("model-logs-output").textContent = error.message;
+        }
+      }
+
+      function renderModelLogs(result) {
+        const logs = result?.logs || [];
+        if (!logs.length) {
+          el("model-logs-output").textContent = "No model log files are configured for this profile.";
+          return;
+        }
+        el("model-logs-output").textContent = logs
+          .map((log) => {
+            const header = [
+              `${log.expert_id} · ${log.status}`,
+              log.exists ? log.log_path : log.message || log.log_path,
+              log.truncated ? "tail truncated" : "",
+              log.sanitized ? "sanitized" : "",
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            const body = (log.lines || []).join("\n") || log.message || "No log lines yet.";
+            return `${header}\n${body}`;
+          })
+          .join("\n\n---\n\n");
       }
 
       function renderSetup(setup) {
@@ -1751,6 +1819,7 @@
           const processes = await api("/api/models/processes");
           state.modelProcesses = processes;
           renderModelProcesses(processes);
+          await refreshModelLogs();
         } catch (error) {
           el("health").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
         }

@@ -86,6 +86,68 @@ class ModelServerManagerTests(unittest.TestCase):
         self.assertEqual(specs[0].log_path.endswith("model-1.log"), True)
         self.assertIn("llama-server", specs[0].command[0])
 
+    def test_reads_sanitized_model_server_log_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "model-1.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "startup",
+                        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+                        "hf_token=hf_abcdefghijklmnopqrstuvwxyz123456",
+                        "ready",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            manager = ModelServerManager(
+                (
+                    ModelServerSpec(
+                        expert_id="general",
+                        model="local/model",
+                        base_url="http://127.0.0.1:9999/v1",
+                        command=("python", "-m", "model_server"),
+                        log_path=str(log_path),
+                    ),
+                ),
+                reachability_checker=lambda _url: False,
+            )
+
+            payload = manager.logs(max_lines=3)
+
+        self.assertEqual(payload["count"], 1)
+        log = payload["logs"][0]
+        self.assertEqual(log["status"], "ready")
+        self.assertEqual(log["line_count"], 3)
+        self.assertTrue(log["sanitized"])
+        joined = "\n".join(log["lines"])
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", joined)
+        self.assertIn("[REDACTED_TOKEN]", joined)
+        self.assertIn("[REDACTED_SECRET]", joined)
+        self.assertIn("ready", joined)
+
+    def test_model_server_logs_report_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ModelServerManager(
+                (
+                    ModelServerSpec(
+                        expert_id="general",
+                        model="local/model",
+                        base_url="http://127.0.0.1:9999/v1",
+                        command=("python", "-m", "model_server"),
+                        log_path=str(Path(tmp) / "missing.log"),
+                    ),
+                ),
+                reachability_checker=lambda _url: False,
+            )
+
+            payload = manager.logs(expert_id="general")
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["expert_id"], "general")
+        self.assertEqual(payload["logs"][0]["status"], "missing")
+        self.assertEqual(payload["logs"][0]["lines"], [])
+
 
 class _FakeProcess:
     def __init__(self, *, pid: int) -> None:
