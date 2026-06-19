@@ -59,7 +59,7 @@ Use anchored iterative summarization:
 4. preserve exact file paths, model ids, decisions, risks, test status, and next actions,
 5. probe the summary with tests before trusting it.
 
-The current code creates compaction prompts deterministically. The next step is adding a `CompactionProvider` that calls the small local fallback expert.
+The code creates compaction prompts deterministically and includes a `LocalCompactionProvider` that calls the configured fallback, summary, or compaction expert directly. In the default live profile this selects `fast_fallback`, so compaction does not spend the primary model's context budget.
 
 ## Memory
 
