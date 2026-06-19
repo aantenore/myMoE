@@ -149,7 +149,7 @@ System Doctor calls `/api/doctor` and combines setup, health, model process reac
 
 Performance calls `/api/performance` and shows the current benchmark status, measured candidate coverage, selected primary general expert, selected fallback/compaction expert, and top ranked model scores. It is read-only and does not start a benchmark. The Markdown handoff report is available from `/api/performance/report.md`.
 
-The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server.
+The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server. Model Logs calls `/api/models/logs` and shows bounded sanitized tails from the same runtime-plan-generated log paths, with no arbitrary path input from the browser.
 
 The Extensions section includes registry audit, Extension Studio, and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Extension Studio reads safe starter templates from `/api/extensions/templates`, lets operators configure MCP server and cron job entries through form controls, then writes through `/api/extensions/configure` only after explicit confirmation. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
@@ -197,6 +197,10 @@ Audit Trail exposes recent operational events plus guarded retention pruning:
 Runtime process controls require confirmation before starting or stopping configured model servers:
 
 ![myMoE model processes](screenshots/model-processes.png)
+
+Model Logs shows sanitized bounded tails for startup and artifact debugging:
+
+![myMoE model logs](screenshots/model-logs.png)
 
 Plugin Studio creates local plugin scaffolds with an explicit confirmation guard:
 

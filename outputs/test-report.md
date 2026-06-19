@@ -4,7 +4,7 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -19,14 +19,14 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_doctor.py`: unified setup, health, process, extension audit, and cron readiness report.
 - `tests/test_performance_report.py`: sanitized benchmark decision payload, missing benchmark status, and Markdown report rendering.
 - `tests/test_support_bundle.py`: privacy-safe diagnostic bundle content and exclusions.
-- `tests/test_cli.py`: eval mode, setup readiness, performance report output, guarded runtime preparation preview, model process status, doctor output, and prompt mode through the public CLI.
+- `tests/test_cli.py`: eval mode, setup readiness, performance report output, guarded runtime preparation preview, model process status, sanitized model log tail output, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
 - `tests/test_data_bundle.py`: portable local data export and restore for chat sessions plus memory records, including merge and replace behavior.
-- `tests/test_web.py`: web config, runtime profile discovery APIs, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, plugin creation APIs, extension audit APIs, guided extension templates and configure APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
+- `tests/test_web.py`: web config, runtime profile discovery APIs, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, model log diagnostics APIs, plugin creation APIs, extension audit APIs, guided extension templates and configure APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
 - `tests/test_setup_runner.py`: runtime preparation preview, confirmation guard, injected install runner, and local-file model validation without network access.
 - `tests/test_tools.py`: allowlisted local tool execution, knowledge ingestion, memory maintenance, guarded expired-memory pruning, guarded memory/document deletion, confirmed local data export/import, extension audit, guarded extension self-configuration for MCP/cron registries, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
-- `tests/test_model_servers.py`: managed model server specs, confirmation guards, reachable-endpoint skips, and managed start/stop lifecycle with fake processes.
+- `tests/test_model_servers.py`: managed model server specs, confirmation guards, reachable-endpoint skips, sanitized bounded log tail diagnostics, missing log reporting, and managed start/stop lifecycle with fake processes.
 - `tests/test_extensions.py`: registry loading, guided extension templates, plugin-local skill discovery, plugin audit, and runtime plan coverage.
 - `tests/test_scheduler.py`: cron dry runs, allowlisted actions, unsupported command rejection, write-local confirmation, expired-memory pruning jobs, auto-runnable filtering, and background runner status.
 - `tests/test_context.py`: cache-friendly context section ordering, policy loading, budget truncation, memory snippet ranking, compaction prompt requirements.
@@ -49,7 +49,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `180/180` passed
+- unit/contract tests: `184/184` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`
@@ -65,6 +65,7 @@ Result:
 - Playwright browser smoke for support bundle download control: passed
 - Playwright browser smoke for Performance report panel: passed
 - Playwright browser smoke for model process controls: passed
+- Playwright browser screenshot for sanitized Model Logs panel: passed
 - Playwright browser smoke for Plugin Studio confirmation guard: passed
 - Playwright browser screenshot for guided Extension Studio controls: passed
 - Playwright browser smoke for extension registry audit: passed
@@ -92,6 +93,8 @@ Local knowledge import now chunks pasted documents into `knowledge` memory recor
 Memory maintenance now reports active, pending, and expired temporal records separately. Expired-memory pruning is a separate guarded action through `memory.prune_expired`, `/api/memory/prune-expired`, the Advanced Memory panel, and optional write-local cron jobs; future `valid_from` records are preserved.
 
 Runtime profile discovery now exposes `/api/config/profiles` and the Advanced Profiles panel. It scans runnable public profiles, includes the active config even when it is outside `configs/`, and reports setup readiness, backend, expert count, and model names without switching profiles or starting model processes.
+
+Model log diagnostics now expose bounded, sanitized model server log tails through CLI `--models-logs`, web `/api/models/logs`, and the Advanced Runtime Model Logs panel. The reader only opens runtime-plan-generated log paths and redacts secret-looking values before returning text.
 
 Local data backup now exports chat sessions and memory records into a schema-versioned JSON bundle through `data.export`, `/api/data/export`, and the Advanced Local Data panel. Restore through `data.import` or `/api/data/import` supports `merge` and `replace` modes and requires confirmation before writing local stores.
 

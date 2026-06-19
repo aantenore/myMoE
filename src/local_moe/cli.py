@@ -43,6 +43,9 @@ def main() -> None:
     parser.add_argument("--prepare-download-models", action="store_true")
     parser.add_argument("--prepare-confirm", action="store_true")
     parser.add_argument("--models-status", action="store_true")
+    parser.add_argument("--models-logs", action="store_true")
+    parser.add_argument("--models-log-expert")
+    parser.add_argument("--models-log-lines", type=int, default=120)
     parser.add_argument("--start-models", action="store_true")
     parser.add_argument("--stop-models", action="store_true")
     parser.add_argument("--models-confirm", action="store_true")
@@ -141,7 +144,7 @@ def main() -> None:
             raise SystemExit(2)
         return
 
-    if args.models_status or args.start_models or args.stop_models:
+    if args.models_status or args.models_logs or args.start_models or args.stop_models:
         manager = ModelServerManager.from_config(
             config,
             preferred_backends=app_config.runtime.preferred_backends,
@@ -160,6 +163,17 @@ def main() -> None:
             print(json.dumps(model_server_action_payload(action), indent=2))
             if not action.ok:
                 raise SystemExit(2)
+            return
+        if args.models_logs:
+            print(
+                json.dumps(
+                    manager.logs(
+                        expert_id=args.models_log_expert,
+                        max_lines=args.models_log_lines,
+                    ),
+                    indent=2,
+                )
+            )
             return
         print(json.dumps(manager.status(), indent=2))
         return

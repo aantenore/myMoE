@@ -273,6 +273,22 @@ def _make_handler(
                 _send_json(self, model_manager.status())
                 return
 
+            if path == "/api/models/logs":
+                query = parse_qs(parsed_url.query)
+                _send_json(
+                    self,
+                    model_manager.logs(
+                        expert_id=_optional_str(query.get("expert_id", [""])[0]),
+                        max_lines=_bounded_int(
+                            query.get("lines", ["120"])[0],
+                            default=120,
+                            minimum=1,
+                            maximum=1000,
+                        ),
+                    ),
+                )
+                return
+
             if path == "/api/setup":
                 _send_json(
                     self,
