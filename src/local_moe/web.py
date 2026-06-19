@@ -14,11 +14,12 @@ from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .compaction import LocalCompactionProvider
 from .config import load_config
-from .context import ContextBundle, ConversationTurn, build_context_bundle
+from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
 from .health import check_runtime_health, runtime_health_payload
+from .memory import FileMemoryStore, memory_record_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
@@ -68,6 +69,7 @@ def build_server(
         cron_config=app_config.extensions.cron_config,
     )
     chat_store = FileChatStore(_chat_store_path(app_config))
+    memory_store = FileMemoryStore(_memory_store_path(app_config))
     handler = _make_handler(
         config_path=config_path,
         app_config_path=app_config_path,
@@ -77,6 +79,7 @@ def build_server(
         moe=moe,
         registry=registry,
         chat_store=chat_store,
+        memory_store=memory_store,
     )
     return ThreadingHTTPServer((host, port), handler)
 
@@ -90,6 +93,7 @@ def _make_handler(
     moe: LocalMoE,
     registry: object,
     chat_store: FileChatStore,
+    memory_store: FileMemoryStore,
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -180,6 +184,32 @@ def _make_handler(
                 _send_json(self, chat_session_payload(session))
                 return
 
+            if path == "/api/memory":
+                query = _optional_str(parse_qs(parsed_url.query).get("query", [""])[0])
+                scope = _optional_str(parse_qs(parsed_url.query).get("scope", ["default"])[0])
+                if query:
+                    results = memory_store.search(query, scope=scope)
+                    _send_json(
+                        self,
+                        {
+                            "count": len(results),
+                            "records": [
+                                memory_record_payload(record, score=score)
+                                for record, score in results
+                            ],
+                        },
+                    )
+                    return
+                records = memory_store.list(scope=scope)
+                _send_json(
+                    self,
+                    {
+                        "count": len(records),
+                        "records": [memory_record_payload(record) for record in records],
+                    },
+                )
+                return
+
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
@@ -205,12 +235,18 @@ def _make_handler(
                             status=HTTPStatus.NOT_FOUND,
                         )
                         return
-                model_context = _build_model_context(session, prompt, context_policy)
+                model_context = _build_model_context(
+                    session,
+                    prompt,
+                    context_policy,
+                    memory_store=memory_store,
+                )
 
                 try:
                     response = moe.generate(
                         model_context["prompt"],
                         correlation_id=_optional_str(payload.get("correlation_id")),
+                        route_prompt=prompt,
                     )
                 except ProviderError as exc:
                     _send_json(
@@ -252,6 +288,35 @@ def _make_handler(
                 payload = _read_json(self)
                 session = chat_store.create_session(title=_optional_str(payload.get("title")))
                 _send_json(self, chat_session_payload(session), status=HTTPStatus.CREATED)
+                return
+
+            if path == "/api/memory":
+                payload = _read_json(self)
+                text = _optional_str(payload.get("text"))
+                if not text:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "text is required"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                metadata = payload.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "metadata must be a JSON object"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                record = memory_store.add(
+                    text,
+                    scope=_optional_str(payload.get("scope")) or "default",
+                    kind=_optional_str(payload.get("kind")) or "fact",
+                    metadata=metadata,
+                    valid_from=_optional_str(payload.get("valid_from")),
+                    valid_until=_optional_str(payload.get("valid_until")),
+                )
+                _send_json(self, memory_record_payload(record), status=HTTPStatus.CREATED)
                 return
 
             if path.startswith("/api/chats/") and path.endswith("/compact"):
@@ -510,6 +575,10 @@ def _chat_store_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/chats.json"
 
 
+def _memory_store_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/memory.jsonl"
+
+
 def _path_tail(path: str, prefix: str) -> str:
     return unquote(path[len(prefix) :]).strip("/")
 
@@ -572,15 +641,20 @@ def _build_model_context(
     session: ChatSession | None,
     prompt: str,
     context_policy: object,
+    *,
+    memory_store: FileMemoryStore,
 ) -> dict[str, object]:
+    memories = _memory_snippets(memory_store, prompt, limit=context_policy.max_memory_items)
     if session is None or not session.messages:
         bundle = build_context_bundle(
             system_prompt="",
             current_prompt=prompt,
             turns=(),
+            memories=memories,
             policy=context_policy,
         )
-        return {"prompt": prompt, "payload": _context_payload(bundle)}
+        model_prompt = bundle.as_prompt() if memories else prompt
+        return {"prompt": model_prompt, "payload": _context_payload(bundle, memories=memories)}
 
     turns = _conversation_turns(session)
     bundle = build_context_bundle(
@@ -591,19 +665,37 @@ def _build_model_context(
         current_prompt=f"Current user message:\n{prompt}",
         turns=turns,
         summary=session.summary,
+        memories=memories,
         policy=context_policy,
     )
-    return {"prompt": bundle.as_prompt(), "payload": _context_payload(bundle)}
+    return {"prompt": bundle.as_prompt(), "payload": _context_payload(bundle, memories=memories)}
 
 
-def _context_payload(bundle: ContextBundle) -> dict[str, object]:
+def _context_payload(
+    bundle: ContextBundle,
+    *,
+    memories: tuple[MemorySnippet, ...] = (),
+) -> dict[str, object]:
     return {
         "token_estimate": bundle.token_estimate,
         "budget_tokens": bundle.budget_tokens,
         "compaction_needed": bundle.compaction_needed,
         "dropped_turns": bundle.dropped_turns,
         "sections": bundle.by_section(),
+        "memory_ids": [memory.id for memory in memories],
     }
+
+
+def _memory_snippets(
+    memory_store: FileMemoryStore,
+    prompt: str,
+    *,
+    limit: int,
+) -> tuple[MemorySnippet, ...]:
+    return tuple(
+        MemorySnippet(id=record.id, text=record.text, score=score)
+        for record, score in memory_store.search(prompt, scope="default", limit=limit)
+    )
 
 
 def _conversation_turns(session: ChatSession) -> tuple[ConversationTurn, ...]:

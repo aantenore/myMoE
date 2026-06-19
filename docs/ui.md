@@ -70,6 +70,16 @@ Inspect setup readiness:
 curl http://127.0.0.1:8089/api/setup
 ```
 
+Save and search local memories:
+
+```bash
+curl -X POST http://127.0.0.1:8089/api/memory \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"Antonio prefers local-first modular apps.","scope":"default","kind":"preference"}'
+
+curl 'http://127.0.0.1:8089/api/memory?scope=default&query=Antonio%20local-first'
+```
+
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
 - left rail with a new chat action and starter prompts,
@@ -79,9 +89,11 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 - concise model status,
 - Advanced drawer hidden by default.
 
-Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy and returns context telemetry with the generation response.
+Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy, retrieved local memories, and returns context telemetry with the generation response.
 
 The Compact action calls the configured local compaction expert, stores a durable session summary, and reuses that summary in later context bundles. Exported Markdown includes the current summary.
+
+The Memory section stores append-only local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt.
 
 The Advanced drawer contains runtime commands, setup readiness, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 

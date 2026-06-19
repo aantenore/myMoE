@@ -51,9 +51,15 @@ class LocalMoE:
             expert.id: build_provider(expert.provider) for expert in config.experts
         }
 
-    def generate(self, prompt: str, correlation_id: str | None = None) -> MoEResponse:
+    def generate(
+        self,
+        prompt: str,
+        correlation_id: str | None = None,
+        *,
+        route_prompt: str | None = None,
+    ) -> MoEResponse:
         cid = correlation_id or str(uuid4())
-        route = self._router.route(prompt)
+        route = self._router.route(route_prompt or prompt)
         req = GenerationRequest(prompt=prompt, correlation_id=cid)
 
         expert_order = [score.expert_id for score in route.selected]
