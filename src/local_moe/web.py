@@ -16,6 +16,7 @@ from .extensions import load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
 def main() -> None:
@@ -149,8 +150,44 @@ def _make_handler(
                     registry.cron_jobs,
                     state_path=_cron_state_path(app_config),
                     dry_run=bool(payload.get("dry_run", False)),
+                    confirm_writes=bool(payload.get("confirm_writes", False)),
+                    registry=registry,
                 )
                 _send_json(self, cron_summary_payload(summary))
+                return
+
+            if self.path == "/api/tools/run":
+                payload = _read_json(self)
+                name = str(payload.get("name", "")).strip()
+                tool_input = payload.get("input", {})
+                if not isinstance(tool_input, dict):
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "input must be a JSON object"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    result = LocalToolRunner(
+                        registry,
+                        app_config=app_config,
+                        moe_config=config,
+                    ).run(name, tool_input)
+                except ToolExecutionError as exc:
+                    _send_json(
+                        self,
+                        {"error": "tool_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                except ProviderError as exc:
+                    _send_json(
+                        self,
+                        {"error": "provider_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_GATEWAY,
+                    )
+                    return
+                _send_json(self, tool_result_payload(result))
                 return
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)

@@ -26,6 +26,18 @@ flowchart LR
 - `skills/*/SKILL.md`: portable skill instructions with progressive disclosure.
 - `plugins/*/plugin.json`: plugin manifests that can reference skills, tools, MCP servers, and cron jobs.
 
+## Extension Execution Matrix
+
+| Surface | Runtime behavior | Safety policy | Entry points |
+| --- | --- | --- | --- |
+| `memory.search` | Searches the local append-only memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `context.compact` | Builds a compaction prompt and, by default, asks the configured local model to summarize it. | Compute-only; uses the configured MoE expert and does not call cloud APIs. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `plugin.create` | Scaffolds a local plugin manifest and `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| Cron jobs | Runs due allowlisted actions such as memory maintenance, extension audit, and router distillation. | `write_local` jobs require `confirm_writes=true`; dry runs never persist state. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
+| MCP servers | Parsed from config and exposed for discovery. | Disabled by default; launcher/health checks should be explicit future integrations per server. | Extension registry and `mcp.search_capabilities`. |
+| Plugins | Discovered from manifests and scaffolded locally. | Plugin references are metadata until a tool/skill/MCP/cron entry is configured and allowlisted. | Extension registry and `plugin.create`. |
+
 ## Permission Policy
 
 The app config defaults to:
@@ -36,6 +48,12 @@ The app config defaults to:
 - process execution: disabled in the model-facing policy.
 
 The current implementation discovers and reports these surfaces. Cron jobs use a local allowlisted runner for supported actions such as `memory.maintenance`, `router.distill`, and `extension.audit`. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
+
+Enabled tools are also executed through a local allowlist in `src/local_moe/tool_runner.py`. The runner maps configured names to concrete Python functions and rejects arbitrary commands. Write-local operations require explicit confirmation in the tool payload or cron request.
+
+Cron schedules are evaluated by the local runner, not by a background daemon. A `startup` schedule means the job is due the first time the scheduler is run for the current state file. This makes cron behavior cross-platform and testable from CLI, API, or UI; an OS-level service can call the same CLI if unattended background execution is needed later.
+
+The `extension.audit` cron action validates the active registry: plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes are reported as structured issues.
 
 ## Local Model Requirement
 

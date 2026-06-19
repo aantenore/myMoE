@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from .extensions import CronJobDefinition
+from .extensions import CronJobDefinition, ExtensionRegistry
 from .memory import FileMemoryStore
 
 
@@ -95,6 +95,8 @@ def run_due_jobs(
     state_path: str | Path,
     now_epoch: float | None = None,
     dry_run: bool = False,
+    confirm_writes: bool = False,
+    registry: ExtensionRegistry | None = None,
 ) -> CronRunSummary:
     now = now_epoch if now_epoch is not None else datetime.now(timezone.utc).timestamp()
     state = _load_state(state_path)
@@ -109,8 +111,18 @@ def run_due_jobs(
                 command=job.command,
                 message="Job is due but was not executed.",
             )
+        elif not _is_allowlisted_action(job):
+            result = _run_allowed_job(job, registry=registry)
+        elif _requires_write_confirmation(job) and not confirm_writes:
+            result = CronRunResult(
+                id=job.id,
+                status="needs_confirmation",
+                reason=job.reason,
+                command=job.command,
+                message="Job writes local files and requires confirm_writes=true.",
+            )
         else:
-            result = _run_allowed_job(job)
+            result = _run_allowed_job(job, registry=registry)
             if result.status == "ok":
                 state[job.id] = now
         results.append(result)
@@ -147,7 +159,7 @@ def cron_summary_payload(summary: CronRunSummary) -> dict[str, object]:
     }
 
 
-def _run_allowed_job(job: DueJob) -> CronRunResult:
+def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) -> CronRunResult:
     if not job.command:
         return _cron_error(job, "Cron job has no command.")
 
@@ -166,19 +178,38 @@ def _run_allowed_job(job: DueJob) -> CronRunResult:
         )
 
     if action == "extension.audit":
+        from .extensions import audit_extension_registry, load_extension_registry
+
         return CronRunResult(
             id=job.id,
             status="ok",
             reason=job.reason,
             command=job.command,
             message="Extension registry audit completed.",
-            payload={"checked": True},
+            payload=audit_extension_registry(registry or load_extension_registry()),
         )
 
     if action == "router.distill":
         return _run_router_distill(job, args)
 
     return _cron_error(job, f"Unsupported cron action: {action}")
+
+
+def _requires_write_confirmation(job: DueJob) -> bool:
+    return job.risk_class in {
+        "write_local",
+        "write_internal",
+        "write_external",
+        "destructive",
+        "process_execution",
+        "privileged_admin",
+    }
+
+
+def _is_allowlisted_action(job: DueJob) -> bool:
+    if not job.command:
+        return False
+    return job.command[0] in {"memory.maintenance", "extension.audit", "router.distill"}
 
 
 def _run_router_distill(job: DueJob, args: dict[str, str]) -> CronRunResult:
