@@ -34,6 +34,11 @@ The extended eval set adds broader router pressure:
 - general writing and summarization,
 - mixed prompts where keywords intentionally collide.
 
+The live general eval set validates the default app profile:
+
+- `general` for analysis, comparison, decisions, planning, and research-style prompts,
+- `fast_fallback` for summarization, compression, rewriting, and translation prompts.
+
 Do not overfit to it. The next set should have at least 50 examples stratified by simple, medium, complex and very complex tasks.
 
 ## Current Results

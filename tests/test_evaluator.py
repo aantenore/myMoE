@@ -35,6 +35,16 @@ class EvaluatorTests(unittest.TestCase):
         self.assertIn("complex", result["by_complexity"])
         self.assertEqual(len(result["results"]), 8)
 
+    def test_live_general_eval_matches_live_config_experts(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        cases = load_eval_cases("experiments/eval_set_live_general.jsonl")
+
+        result = evaluate_router(config, cases)
+
+        self.assertEqual(result["accuracy"], 1.0)
+        self.assertEqual(result["total"], 10)
+        self.assertEqual({item["selected_expert"] for item in result["results"]}, {"general", "fast_fallback"})
+
 
 if __name__ == "__main__":
     unittest.main()

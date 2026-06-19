@@ -82,6 +82,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("What should we work on?", html)
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
+        self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("hidden", html)
 
 

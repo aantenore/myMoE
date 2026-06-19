@@ -1106,7 +1106,7 @@
         try {
           const result = await api("/api/evaluate", {
             method: "POST",
-            body: JSON.stringify({ eval_path: "experiments/eval_set_extended.jsonl" }),
+            body: JSON.stringify({ eval_path: "experiments/eval_set_live_general.jsonl" }),
           });
           el("eval-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
