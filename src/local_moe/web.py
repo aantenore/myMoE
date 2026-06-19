@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .app_config import app_config_payload, load_app_config
+from .audit import AuditLogStore, audit_log_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .compaction import LocalCompactionProvider
@@ -90,6 +91,7 @@ def build_server(
     )
     moe = LocalMoE(config)
     registry = _load_registry(app_config)
+    audit_store = AuditLogStore(_audit_log_path(app_config))
     chat_store = FileChatStore(_chat_store_path(app_config))
     memory_store = FileMemoryStore(_memory_store_path(app_config))
     model_manager = ModelServerManager.from_config(
@@ -113,6 +115,7 @@ def build_server(
         context_policy=context_policy,
         moe=moe,
         registry=registry,
+        audit_store=audit_store,
         chat_store=chat_store,
         memory_store=memory_store,
         model_manager=model_manager,
@@ -132,6 +135,7 @@ def _make_handler(
     context_policy: object,
     moe: LocalMoE,
     registry: object,
+    audit_store: AuditLogStore,
     chat_store: FileChatStore,
     memory_store: FileMemoryStore,
     model_manager: ModelServerManager,
@@ -227,6 +231,16 @@ def _make_handler(
                 )
                 return
 
+            if path == "/api/audit":
+                query = parse_qs(parsed_url.query)
+                events = audit_store.list_events(
+                    limit=_query_limit(query.get("limit", ["100"])[0], default=100, maximum=500),
+                    action=_optional_str(query.get("action", [""])[0]),
+                    status=_optional_str(query.get("status", [""])[0]),
+                )
+                _send_json(self, audit_log_payload(events))
+                return
+
             if path == "/api/runtime":
                 plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
                 _send_json(self, runtime_plan_payload(plan))
@@ -286,6 +300,13 @@ def _make_handler(
                     except KeyError:
                         _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
                         return
+                    _audit(
+                        audit_store,
+                        "chat.export",
+                        "ok",
+                        risk_class="read_only",
+                        subject=session_id,
+                    )
                     _send_download(
                         self,
                         markdown.encode("utf-8"),
@@ -503,6 +524,13 @@ def _make_handler(
             if path == "/api/chats":
                 payload = _read_json(self)
                 session = chat_store.create_session(title=_optional_str(payload.get("title")))
+                _audit(
+                    audit_store,
+                    "chat.create",
+                    "ok",
+                    risk_class="write_local",
+                    subject=session.id,
+                )
                 _send_json(self, chat_session_payload(session), status=HTTPStatus.CREATED)
                 return
 
@@ -532,12 +560,27 @@ def _make_handler(
                     valid_from=_optional_str(payload.get("valid_from")),
                     valid_until=_optional_str(payload.get("valid_until")),
                 )
+                _audit(
+                    audit_store,
+                    "memory.add",
+                    "ok",
+                    risk_class="write_local",
+                    subject=record.id,
+                    metadata={"scope": record.scope, "kind": record.kind},
+                )
                 _send_json(self, memory_record_payload(record), status=HTTPStatus.CREATED)
                 return
 
             if path == "/api/knowledge":
                 payload = _read_json(self)
                 if payload.get("confirm") is not True:
+                    _audit(
+                        audit_store,
+                        "knowledge.ingest",
+                        "confirmation_required",
+                        risk_class="write_local",
+                        metadata={"scope": _optional_str(payload.get("scope")) or "default"},
+                    )
                     _send_json(
                         self,
                         {
@@ -564,12 +607,31 @@ def _make_handler(
                         metadata=metadata,
                     )
                 except (ValueError, TypeError) as exc:
+                    _audit(
+                        audit_store,
+                        "knowledge.ingest",
+                        "error",
+                        risk_class="write_local",
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "bad_request", "message": str(exc)},
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                _audit(
+                    audit_store,
+                    "knowledge.ingest",
+                    "ok",
+                    risk_class="write_local",
+                    subject=report.document_id,
+                    metadata={
+                        "scope": report.scope,
+                        "chunk_count": report.chunk_count,
+                        "record_count": len(report.record_ids),
+                    },
+                )
                 _send_json(
                     self,
                     {
@@ -586,6 +648,7 @@ def _make_handler(
             if path == "/api/data/export":
                 payload = _read_json(self)
                 if payload.get("confirm") is not True:
+                    _audit(audit_store, "data.export", "confirmation_required", risk_class="read_only")
                     _send_json(
                         self,
                         {
@@ -595,15 +658,24 @@ def _make_handler(
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                bundle = build_local_data_bundle(chat_store=chat_store, memory_store=memory_store)
+                _audit(
+                    audit_store,
+                    "data.export",
+                    "ok",
+                    risk_class="read_only",
+                    metadata=bundle["counts"],
+                )
                 _send_json(
                     self,
-                    build_local_data_bundle(chat_store=chat_store, memory_store=memory_store),
+                    bundle,
                 )
                 return
 
             if path == "/api/data/import":
                 payload = _read_json(self)
                 if payload.get("confirm") is not True:
+                    _audit(audit_store, "data.import", "confirmation_required", risk_class="write_local")
                     _send_json(
                         self,
                         {
@@ -615,6 +687,13 @@ def _make_handler(
                     return
                 bundle = payload.get("bundle", {})
                 if not isinstance(bundle, dict):
+                    _audit(
+                        audit_store,
+                        "data.import",
+                        "error",
+                        risk_class="write_local",
+                        metadata={"message": "bundle must be a JSON object."},
+                    )
                     _send_json(
                         self,
                         {"error": "bad_request", "message": "bundle must be a JSON object."},
@@ -629,12 +708,26 @@ def _make_handler(
                         mode=_optional_str(payload.get("mode")) or "merge",
                     )
                 except ValueError as exc:
+                    _audit(
+                        audit_store,
+                        "data.import",
+                        "error",
+                        risk_class="write_local",
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "bad_request", "message": str(exc)},
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                _audit(
+                    audit_store,
+                    "data.import",
+                    "ok",
+                    risk_class="write_local",
+                    metadata=local_data_restore_payload(report),
+                )
                 _send_json(self, local_data_restore_payload(report))
                 return
 
@@ -721,12 +814,24 @@ def _make_handler(
                     download_models=bool(payload.get("download_models", False)),
                     confirm=bool(payload.get("confirm", False)),
                 )
+                _audit(
+                    audit_store,
+                    "setup.run",
+                    result.status,
+                    risk_class="process_execution" if result.execute or result.download_models else "read_only",
+                    metadata={
+                        "execute": result.execute,
+                        "download_models": result.download_models,
+                        "confirmed": result.confirmed,
+                    },
+                )
                 _send_json(self, setup_run_payload(result))
                 return
 
             if path == "/api/plugins":
                 payload = _read_json(self)
                 if payload.get("confirm") is not True:
+                    _audit(audit_store, "plugin.create", "confirmation_required", risk_class="write_local")
                     _send_json(
                         self,
                         {
@@ -745,6 +850,13 @@ def _make_handler(
                         risk_class=_optional_str(payload.get("risk_class")) or "read_only",
                     )
                 except (ExtensionError, ValueError) as exc:
+                    _audit(
+                        audit_store,
+                        "plugin.create",
+                        "error",
+                        risk_class="write_local",
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "plugin_error", "message": str(exc)},
@@ -752,6 +864,13 @@ def _make_handler(
                     )
                     return
                 registry = _load_registry(app_config)
+                _audit(
+                    audit_store,
+                    "plugin.create",
+                    "ok",
+                    risk_class=_optional_str(payload.get("risk_class")) or "read_only",
+                    subject=path_created.name,
+                )
                 _send_json(
                     self,
                     {
@@ -773,23 +892,54 @@ def _make_handler(
                     confirm=bool(payload.get("confirm", False)),
                     only_first=bool(payload.get("only_first", False)),
                 )
+                _audit(
+                    audit_store,
+                    "models.start",
+                    action.status,
+                    risk_class="process_execution",
+                    metadata={
+                        "confirmed": action.confirmed,
+                        "only_first": action.only_first,
+                        "result_count": len(action.results),
+                    },
+                )
                 _send_json(self, model_server_action_payload(action))
                 return
 
             if path == "/api/models/stop":
                 payload = _read_json(self)
                 action = model_manager.stop(confirm=bool(payload.get("confirm", False)))
+                _audit(
+                    audit_store,
+                    "models.stop",
+                    action.status,
+                    risk_class="process_execution",
+                    metadata={"confirmed": action.confirmed, "result_count": len(action.results)},
+                )
                 _send_json(self, model_server_action_payload(action))
                 return
 
             if path == "/api/cron/run":
                 payload = _read_json(self)
+                dry_run = bool(payload.get("dry_run", False))
+                confirm_writes = bool(payload.get("confirm_writes", False))
                 summary = run_due_jobs(
                     registry.cron_jobs,
                     state_path=_cron_state_path(app_config),
-                    dry_run=bool(payload.get("dry_run", False)),
-                    confirm_writes=bool(payload.get("confirm_writes", False)),
+                    dry_run=dry_run,
+                    confirm_writes=confirm_writes,
                     registry=registry,
+                )
+                _audit(
+                    audit_store,
+                    "cron.run",
+                    "dry_run" if dry_run else "ok",
+                    risk_class="write_local" if confirm_writes else "compute_only",
+                    metadata={
+                        "dry_run": dry_run,
+                        "confirm_writes": confirm_writes,
+                        "job_count": len(summary.results),
+                    },
                 )
                 _send_json(self, cron_summary_payload(summary))
                 return
@@ -799,6 +949,14 @@ def _make_handler(
                 name = str(payload.get("name", "")).strip()
                 tool_input = payload.get("input", {})
                 if not isinstance(tool_input, dict):
+                    _audit(
+                        audit_store,
+                        "tool.run",
+                        "bad_request",
+                        risk_class="compute_only",
+                        subject=name,
+                        metadata={"message": "input must be a JSON object"},
+                    )
                     _send_json(
                         self,
                         {"error": "bad_request", "message": "input must be a JSON object"},
@@ -812,6 +970,14 @@ def _make_handler(
                         moe_config=config,
                     ).run(name, tool_input)
                 except ToolExecutionError as exc:
+                    _audit(
+                        audit_store,
+                        "tool.run",
+                        "tool_error",
+                        risk_class="compute_only",
+                        subject=name,
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "tool_error", "message": str(exc)},
@@ -819,6 +985,14 @@ def _make_handler(
                     )
                     return
                 except ProviderError as exc:
+                    _audit(
+                        audit_store,
+                        "tool.run",
+                        "provider_error",
+                        risk_class="compute_only",
+                        subject=name,
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "provider_error", "message": str(exc)},
@@ -826,6 +1000,14 @@ def _make_handler(
                     )
                     return
                 payload = tool_result_payload(result)
+                _audit(
+                    audit_store,
+                    "tool.run",
+                    result.status,
+                    risk_class=result.risk_class,
+                    subject=result.name,
+                    metadata={"side_effects": result.side_effects},
+                )
                 if result.name == "extension.configure":
                     registry = _load_registry(app_config)
                     cron_runner.replace_registry(registry)
@@ -861,6 +1043,7 @@ def _make_handler(
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                _audit(audit_store, "chat.rename", "ok", risk_class="write_local", subject=session_id)
                 _send_json(self, chat_session_payload(session))
                 return
 
@@ -872,6 +1055,7 @@ def _make_handler(
             confirm = parse_qs(parsed_url.query).get("confirm", ["false"])[0] == "true"
             if path.startswith("/api/memory/"):
                 if not confirm:
+                    _audit(audit_store, "memory.forget", "confirmation_required", risk_class="write_local")
                     _send_json(
                         self,
                         {
@@ -885,12 +1069,28 @@ def _make_handler(
                 try:
                     report = memory_store.forget_record(record_id)
                 except ValueError as exc:
+                    _audit(
+                        audit_store,
+                        "memory.forget",
+                        "error",
+                        risk_class="write_local",
+                        subject=record_id,
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "invalid_request", "message": str(exc)},
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                _audit(
+                    audit_store,
+                    "memory.forget",
+                    "ok",
+                    risk_class="write_local",
+                    subject=report.target,
+                    metadata={"removed_count": report.removed_count, "remaining_count": report.remaining_count},
+                )
                 _send_json(
                     self,
                     {
@@ -905,6 +1105,7 @@ def _make_handler(
 
             if path.startswith("/api/knowledge/"):
                 if not confirm:
+                    _audit(audit_store, "knowledge.forget", "confirmation_required", risk_class="write_local")
                     _send_json(
                         self,
                         {
@@ -918,12 +1119,28 @@ def _make_handler(
                 try:
                     report = memory_store.forget_document(document_id)
                 except ValueError as exc:
+                    _audit(
+                        audit_store,
+                        "knowledge.forget",
+                        "error",
+                        risk_class="write_local",
+                        subject=document_id,
+                        metadata={"message": str(exc)},
+                    )
                     _send_json(
                         self,
                         {"error": "invalid_request", "message": str(exc)},
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                _audit(
+                    audit_store,
+                    "knowledge.forget",
+                    "ok",
+                    risk_class="write_local",
+                    subject=report.target,
+                    metadata={"removed_count": report.removed_count, "remaining_count": report.remaining_count},
+                )
                 _send_json(
                     self,
                     {
@@ -942,6 +1159,7 @@ def _make_handler(
                 if not deleted:
                     _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
                     return
+                _audit(audit_store, "chat.delete", "ok", risk_class="write_local", subject=session_id)
                 _send_json(self, {"deleted": True, "id": session_id})
                 return
 
@@ -1066,8 +1284,41 @@ def _memory_store_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/memory.jsonl"
 
 
+def _audit_log_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/audit.jsonl"
+
+
 def _path_tail(path: str, prefix: str) -> str:
     return unquote(path[len(prefix) :]).strip("/")
+
+
+def _query_limit(raw: object, *, default: int, maximum: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, maximum))
+
+
+def _audit(
+    audit_store: AuditLogStore,
+    action: str,
+    status: str,
+    *,
+    risk_class: str = "read_only",
+    subject: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        audit_store.record(
+            action,
+            status,
+            risk_class=risk_class,
+            subject=subject,
+            metadata=metadata,
+        )
+    except Exception:
+        return
 
 
 def _safe_filename(value: str) -> str:

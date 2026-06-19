@@ -653,6 +653,8 @@ class WebTests(unittest.TestCase):
                 )
                 chats = _get_json(base_url + "/api/chats")
                 memories = _get_json(base_url + "/api/memory?scope=default")
+                export_audit = _get_json(base_url + "/api/audit?action=data.export&limit=10")
+                import_audit = _get_json(base_url + "/api/audit?action=data.import&limit=10")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -669,6 +671,12 @@ class WebTests(unittest.TestCase):
         self.assertEqual(restored["memory"]["updated_count"], 1)
         self.assertEqual(chats["count"], 1)
         self.assertEqual(memories["count"], 1)
+        self.assertIn("ok", {event["status"] for event in export_audit["events"]})
+        self.assertIn("confirmation_required", {event["status"] for event in export_audit["events"]})
+        self.assertIn("ok", {event["status"] for event in import_audit["events"]})
+        self.assertIn("confirmation_required", {event["status"] for event in import_audit["events"]})
+        self.assertNotIn("Local backup API memory.", json.dumps(export_audit))
+        self.assertNotIn("Local backup API memory.", json.dumps(import_audit))
 
     def test_knowledge_api_ingests_and_retrieves_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -776,6 +784,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("importData", html)
         self.assertIn("data.export", html)
         self.assertIn("data.import", html)
+        self.assertIn("Audit Trail", html)
+        self.assertIn("/api/audit", html)
+        self.assertIn("refreshAudit", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
