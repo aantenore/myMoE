@@ -81,9 +81,14 @@ class CliTests(unittest.TestCase):
         )
 
         payload = json.loads(completed.stdout)
+        self.assertIn(payload["status"], {"ready", "attention", "blocked"})
+        self.assertIn("checks", payload)
+        self.assertIn("recommendations", payload)
         self.assertEqual(payload["app"]["mode"], "local_model_required")
         self.assertIn("runtime", payload)
         self.assertIn("setup", payload)
+        self.assertIn("health", payload)
+        self.assertIn("extension_audit", payload)
         self.assertIn("download_command_display", payload["setup"])
         self.assertTrue(payload["extensions"]["tools"])
 

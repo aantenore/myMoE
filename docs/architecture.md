@@ -33,6 +33,7 @@ flowchart LR
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation.
 - `Evaluator`: deterministic routing and behavior checks.
+- `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, model process reachability, extension audit, and cron state.
 
 ## Runtime Modes
 

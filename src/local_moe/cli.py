@@ -5,9 +5,10 @@ from dataclasses import asdict
 import json
 import sys
 
-from .app_config import app_config_payload, load_app_config
+from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
+from .doctor import build_doctor_report
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
@@ -53,19 +54,17 @@ def main() -> None:
     config = load_config(config_path)
 
     if args.doctor:
-        setup = inspect_setup_status(
-            config_path,
-            config,
-            app_config,
-            app_config_path=args.app_config,
+        print(
+            json.dumps(
+                build_doctor_report(
+                    config_path=config_path,
+                    config=config,
+                    app_config=app_config,
+                    app_config_path=args.app_config,
+                ),
+                indent=2,
+            )
         )
-        payload = {
-            "app": app_config_payload(app_config),
-            "runtime": runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)),
-            "setup": setup_status_payload(setup),
-            "extensions": registry_payload(_registry(app_config)),
-        }
-        print(json.dumps(payload, indent=2))
         return
 
     if args.setup:

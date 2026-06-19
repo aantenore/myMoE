@@ -122,6 +122,12 @@ Inspect local setup readiness before starting the app:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
 ```
 
+Run the full local system doctor when you want one readiness report across setup, runtime health, model processes, extension audit, and cron state:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
+```
+
 Inspect configured model process status:
 
 ```bash
@@ -156,7 +162,7 @@ Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details 
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-The Advanced drawer includes setup status and runtime health checks for every configured expert endpoint, so missing model assets and model-server issues are visible before the first prompt.
+The Advanced drawer includes System Doctor, setup status, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, plugin registry problems, and cron status are visible before the first prompt.
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 
