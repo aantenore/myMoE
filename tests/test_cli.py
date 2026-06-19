@@ -180,5 +180,40 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["payload"]["server"], "fake")
         self.assertEqual(payload["payload"]["tools"][0]["name"], "echo")
 
+    def test_run_tool_calls_enabled_mcp_server_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            server_script = write_fake_mcp_server(root / "fake_mcp.py")
+            app_config = write_temp_mcp_app_config(root, server_script)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--run-tool",
+                    "mcp.call_tool",
+                    "--tool-input",
+                    (
+                        '{"server":"fake","tool_name":"echo","arguments":{"text":"hi"},'
+                        '"confirm_process_execution":true,"confirm_tool_call":true,"timeout_seconds":3}'
+                    ),
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["payload"]["tool_name"], "echo")
+        self.assertEqual(payload["payload"]["content"][0]["text"], "echo:hi")
+
 if __name__ == "__main__":
     unittest.main()

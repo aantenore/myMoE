@@ -60,6 +60,44 @@ Replace hand-written routing rules with a trained small classifier. The experts 
 
 If system-level MoE is too slow, distill common expert behavior into one smaller local model.
 
+## Comparable Tool Pattern
+
+The closest local-first assistants usually share the same control-plane shape:
+
+- Chat front end with switchable local or remote model providers.
+- Knowledge/RAG layer for files, workspaces, or synced sources.
+- Tool calling layer where the model proposes a tool call, the host executes it, then the result is returned to the model.
+- Agent presets or workspaces that bind a model, instructions, tools, memory, and retrieval settings.
+- Optional automations for scheduled prompts or maintenance jobs.
+
+myMoE follows that pattern, but makes routing and execution policy first-class configuration. Open WebUI emphasizes a broad chat workspace with tools, RAG, memory, automations, and multiple providers. AnythingLLM exposes agents as LLM sessions with custom tools, MCP, and agent flows. LM Studio focuses on running local models behind local REST/OpenAI-compatible endpoints. Ollama exposes local model serving, context length controls, and tool calling primitives. myMoE sits one layer above those runtimes: it can use local OpenAI-compatible servers, but its core value is deciding which local expert, context, memory, and tool policy to use for each request.
+
+## Multilingual Behavior
+
+The app can work across languages when the selected local model supports them, but this should be treated as an evaluated capability rather than a blanket guarantee.
+
+The runtime uses a language-preserving policy:
+
+- Keep UI and documentation in English for product consistency.
+- Detect or infer the user's language from the prompt.
+- Ask the selected model to answer in the user's language unless the user requests otherwise.
+- Keep routing examples multilingual so task classification does not depend only on English keywords.
+- Add eval cases per language before claiming support for that language.
+- Prefer local multilingual embedding or classifier backends later if rule/character-ngram routing becomes too brittle.
+
+This is why the primary general expert matters more than a coding specialist. A coder-only model may be excellent for Python and terminal tasks, but a general-purpose assistant needs stronger multilingual instruction following, summarization, planning, tool-use comprehension, and conversational behavior.
+
+## Routing Cost Policy
+
+Do not use the heaviest resident model as the default request classifier. Classification runs before every request, so it should be cheap, deterministic, debuggable, and trainable. The heavy model should be reserved for answer generation, synthesis, or ambiguous fallback.
+
+The practical policy is:
+
+- Use configured rules, semantic examples, and a distilled local classifier for normal routing.
+- Use the small fallback model for compaction, lightweight classification experiments, and cheap retries.
+- Escalate to the heavy general model only when the router has low confidence or when the request itself requires deep reasoning.
+- Use stronger teacher models offline to label routing datasets, then distill those labels into local artifacts.
+
 ## Failure Modes
 
 - Router examples overfit narrow phrasing and miss semantic intent outside the evaluated languages.

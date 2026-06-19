@@ -145,6 +145,12 @@ The runtime must remain local. Distillation data can be created with a stronger 
 
 The user-facing app requires a real local model. Synthetic providers are confined to automated test fixtures and are not shipped as runnable app profiles.
 
+## Multilingual And Tooling Model
+
+myMoE is designed to preserve the user's language at runtime: the UI and docs stay English, while the model is instructed to answer in the user's language unless asked otherwise. Real quality still depends on the selected local model and must be covered by eval cases per language.
+
+Similar local assistant tools tend to combine chat, local/remote providers, RAG, tool calling, memory, and agent presets. myMoE's differentiator is the configurable local control plane: route cheaply first, keep the heavy model for generation, use MCP and local tools only through allowlists and confirmations, and cold-load specialists only when evals justify them.
+
 ## Project Layout
 
 ```text
@@ -275,6 +281,15 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 ```
 
 The default app config keeps `allow_process_execution=false`, so MCP process startup requires an explicit local app config override plus per-call confirmation.
+
+Call an allowlisted MCP tool from the same profile:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --app-config configs/app.mcp-enabled.local.example.json \
+  --run-tool mcp.call_tool \
+  --tool-input '{"server":"filesystem","tool_name":"list_allowed_directories","arguments":{},"confirm_process_execution":true,"confirm_tool_call":true}'
+```
 
 For the Gemma E4B regression benchmark:
 

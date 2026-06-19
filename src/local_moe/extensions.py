@@ -61,6 +61,7 @@ class McpServerDefinition:
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     timeout_seconds: float = 8.0
+    allowed_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,7 @@ def load_mcp_servers(path: str | Path) -> list[McpServerDefinition]:
                 cwd=str(item["cwd"]) if item.get("cwd") is not None else None,
                 env={str(key): str(value) for key, value in env_raw.items()},
                 timeout_seconds=timeout_seconds,
+                allowed_tools=tuple(str(name) for name in item.get("allowed_tools", [])),
             )
         )
     return servers

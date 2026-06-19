@@ -13,7 +13,12 @@ from .extensions import (
     ToolDefinition,
     create_plugin_scaffold,
 )
-from .mcp_client import McpClientError, StdioMcpClient, mcp_tool_list_payload
+from .mcp_client import (
+    McpClientError,
+    StdioMcpClient,
+    mcp_tool_call_payload,
+    mcp_tool_list_payload,
+)
 from .memory import FileMemoryStore
 
 
@@ -40,6 +45,7 @@ class LocalToolRunner:
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
+        "mcp.call_tool",
     }
 
     def __init__(
@@ -82,6 +88,8 @@ class LocalToolRunner:
             return self._mcp_search_capabilities(tool, tool_payload)
         if tool.name == "mcp.list_tools":
             return self._mcp_list_tools(tool, tool_payload)
+        if tool.name == "mcp.call_tool":
+            return self._mcp_call_tool(tool, tool_payload)
 
         raise ToolExecutionError(f"Unsupported tool: {tool.name}")
 
@@ -199,6 +207,10 @@ class LocalToolRunner:
                     "enabled": server.enabled,
                     "risk_class": server.risk_class,
                     "capabilities": list(server.capabilities),
+                    "transport": server.transport,
+                    "cwd": server.cwd,
+                    "timeout_seconds": server.timeout_seconds,
+                    "allowed_tools": list(server.allowed_tools),
                     "command": server.command,
                     "args": list(server.args),
                 }
@@ -235,6 +247,38 @@ class LocalToolRunner:
         except McpClientError as exc:
             raise ToolExecutionError(str(exc)) from exc
         return _ok(tool, "MCP tools listed.", mcp_tool_list_payload(result))
+
+    def _mcp_call_tool(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if not self._allow_process_execution:
+            raise ToolExecutionError(
+                "mcp.call_tool is disabled by app permissions; set allow_process_execution=true in the app config."
+            )
+        if payload.get("confirm_process_execution") is not True:
+            raise ToolExecutionError(
+                "mcp.call_tool requires confirm_process_execution=true because it starts an MCP server process."
+            )
+        if payload.get("confirm_tool_call") is not True:
+            raise ToolExecutionError("mcp.call_tool requires confirm_tool_call=true.")
+
+        server = self._mcp_server(_required_text(payload, "server"))
+        tool_name = _required_text(payload, "tool_name")
+        if tool_name not in server.allowed_tools:
+            raise ToolExecutionError(f"MCP tool is not allowlisted for server {server.name}: {tool_name}")
+        arguments = payload.get("arguments", {})
+        if not isinstance(arguments, dict):
+            raise ToolExecutionError("arguments must be a JSON object.")
+        try:
+            timeout = float(payload.get("timeout_seconds", server.timeout_seconds))
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("timeout_seconds must be a number.") from exc
+        if timeout <= 0 or timeout > 30:
+            raise ToolExecutionError("timeout_seconds must be greater than 0 and at most 30.")
+        try:
+            result = StdioMcpClient(server, timeout_seconds=timeout).call_tool(tool_name, arguments)
+        except McpClientError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        message = "MCP tool returned an error." if result.is_error else "MCP tool called."
+        return _ok(tool, message, mcp_tool_call_payload(result))
 
     def _mcp_server(self, name: str) -> McpServerDefinition:
         for server in self._registry.mcp_servers:

@@ -43,6 +43,28 @@ def write_fake_mcp_server(path: Path) -> Path:
         "                ]\n"
         "            },\n"
         "        }\n"
+        "    elif method == 'tools/call':\n"
+        "        params = message.get('params', {})\n"
+        "        name = params.get('name')\n"
+        "        arguments = params.get('arguments', {})\n"
+        "        if name == 'echo':\n"
+        "            response = {\n"
+        "                'jsonrpc': '2.0',\n"
+        "                'id': message['id'],\n"
+        "                'result': {\n"
+        "                    'content': [{'type': 'text', 'text': 'echo:' + str(arguments.get('text', ''))}],\n"
+        "                    'isError': False,\n"
+        "                },\n"
+        "            }\n"
+        "        else:\n"
+        "            response = {\n"
+        "                'jsonrpc': '2.0',\n"
+        "                'id': message['id'],\n"
+        "                'result': {\n"
+        "                    'content': [{'type': 'text', 'text': 'unknown tool'}],\n"
+        "                    'isError': True,\n"
+        "                },\n"
+        "            }\n"
         "    else:\n"
         "        response = {\n"
         "            'jsonrpc': '2.0',\n"
@@ -70,6 +92,7 @@ def write_temp_mcp_app_config(root: Path, server_script: Path) -> Path:
                         "enabled": True,
                         "risk_class": "read_only",
                         "capabilities": ["tools"],
+                        "allowed_tools": ["echo"],
                     }
                 ]
             }

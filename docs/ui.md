@@ -36,6 +36,8 @@ The Tools section exposes only configured local tools. It accepts JSON input and
 
 MCP tool discovery is available through `mcp.list_tools`. It starts an enabled stdio MCP server and lists its declared tools, but only when the app config has `permissions.allow_process_execution=true` and the tool input includes `confirm_process_execution: true`. The default app config blocks process execution, so the UI can show the tool contract without silently launching processes.
 
+MCP tool calls are available through `mcp.call_tool`. Calls require the same process permission plus `confirm_tool_call: true`, and the selected MCP tool must appear in that server's `allowed_tools` list.
+
 The bundled MCP-enabled example uses the local filesystem MCP server. It is useful for verifying integration, but it is marked `write_local` because the upstream server advertises write/edit tools.
 
 The Cron section runs due allowlisted jobs through `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
@@ -118,6 +120,15 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --app-config configs/app.mcp-enabled.local.example.json \
   --run-tool mcp.list_tools \
   --tool-input '{"server":"filesystem","confirm_process_execution":true}'
+```
+
+Call an allowlisted MCP tool:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --app-config configs/app.mcp-enabled.local.example.json \
+  --run-tool mcp.call_tool \
+  --tool-input '{"server":"filesystem","tool_name":"list_allowed_directories","arguments":{},"confirm_process_execution":true,"confirm_tool_call":true}'
 ```
 
 Run cron jobs that write local artifacts:

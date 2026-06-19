@@ -6,7 +6,12 @@ import tempfile
 import unittest
 
 from local_moe.extensions import McpServerDefinition
-from local_moe.mcp_client import McpClientError, StdioMcpClient, mcp_tool_list_payload
+from local_moe.mcp_client import (
+    McpClientError,
+    StdioMcpClient,
+    mcp_tool_call_payload,
+    mcp_tool_list_payload,
+)
 from tests.mcp_test_utils import write_fake_mcp_server
 
 
@@ -22,6 +27,7 @@ class McpClientTests(unittest.TestCase):
                 enabled=True,
                 risk_class="read_only",
                 capabilities=("tools",),
+                allowed_tools=("echo",),
             )
 
             result = StdioMcpClient(server, timeout_seconds=3).list_tools()
@@ -32,6 +38,28 @@ class McpClientTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["tools"][0]["name"], "echo")
         self.assertEqual(payload["tools"][0]["input_schema"]["type"], "object")
+
+    def test_calls_tool_from_enabled_stdio_server(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            script = write_fake_mcp_server(Path(tmp) / "fake_mcp.py")
+            server = McpServerDefinition(
+                name="fake",
+                description="Fake MCP server",
+                command=sys.executable,
+                args=(str(script),),
+                enabled=True,
+                risk_class="read_only",
+                capabilities=("tools",),
+                allowed_tools=("echo",),
+            )
+
+            result = StdioMcpClient(server, timeout_seconds=3).call_tool("echo", {"text": "hello"})
+
+        payload = mcp_tool_call_payload(result)
+        self.assertEqual(payload["server"], "fake")
+        self.assertEqual(payload["tool_name"], "echo")
+        self.assertFalse(payload["is_error"])
+        self.assertEqual(payload["content"][0]["text"], "echo:hello")
 
     def test_rejects_disabled_stdio_server(self) -> None:
         server = McpServerDefinition(
