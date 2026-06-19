@@ -15,6 +15,7 @@ from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_s
 from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
+from .health import check_runtime_health, runtime_health_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
@@ -102,6 +103,10 @@ def _make_handler(
             if path == "/api/runtime":
                 plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
                 _send_json(self, runtime_plan_payload(plan))
+                return
+
+            if path == "/api/health":
+                _send_json(self, runtime_health_payload(check_runtime_health(config)))
                 return
 
             if path == "/api/cron":

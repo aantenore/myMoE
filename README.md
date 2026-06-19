@@ -124,6 +124,8 @@ Advanced runtime, model, routing, extension, MCP, cron, and eval details are ava
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
+The Advanced drawer includes runtime health checks for every configured expert endpoint, so model-server issues are visible before the first prompt.
+
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 
 ![myMoE live local generation](docs/screenshots/live-generation.png)

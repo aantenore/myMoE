@@ -925,6 +925,11 @@
           <div class="kv" id="runtime"></div>
         </section>
         <section class="advanced-section">
+          <h2>Health</h2>
+          <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
+          <div class="kv" id="health"></div>
+        </section>
+        <section class="advanced-section">
           <h2>Models</h2>
           <div class="kv" id="models"></div>
         </section>
@@ -975,6 +980,7 @@
         busy: false,
         config: null,
         runtime: null,
+        health: null,
         extensions: null,
         messages: [],
         sessions: [],
@@ -1055,6 +1061,7 @@
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
+        el("refresh-health").addEventListener("click", refreshHealth);
         el("tool-select").addEventListener("change", setDefaultToolInput);
         el("chat-search").addEventListener("input", () => {
           window.clearTimeout(state.chatSearchTimer);
@@ -1064,16 +1071,19 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, extensions] = await Promise.all([
+          const [config, runtime, health, extensions] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
+            api("/api/health"),
             api("/api/extensions"),
           ]);
           state.config = config;
           state.runtime = runtime;
+          state.health = health;
           state.extensions = extensions;
           renderConfig(config);
           renderRuntime(runtime);
+          renderHealth(health);
           renderExtensions(extensions);
           renderToolRunner(extensions);
         } catch (error) {
@@ -1253,6 +1263,43 @@
           (commands
             ? `<div class="section-label">Start commands</div>${commands}`
             : `<span class="muted">No runtime commands available.</span>`);
+      }
+
+      function renderHealth(health) {
+        if (health.status && health.status !== "ready") {
+          setStatus("Server unavailable", "Open Advanced to inspect runtime health", false);
+        }
+        const experts = (health.experts || [])
+          .map((expert) => {
+            const latency = expert.latency_ms == null ? "" : ` · ${Number(expert.latency_ms).toFixed(0)} ms`;
+            const detail = expert.message || expert.checked_url || expert.base_url || expert.provider;
+            return `
+              <div class="kv-row">
+                <span>${escapeHtml(expert.expert_id)}</span>
+                <span>
+                  <strong>${escapeHtml(expert.status)}${escapeHtml(latency)}</strong><br>
+                  <span class="mono">${escapeHtml(shortModel(expert.model))}</span><br>
+                  <span class="muted">${escapeHtml(detail)}</span>
+                </span>
+              </div>`;
+          })
+          .join("");
+        el("health").innerHTML =
+          kvRows({
+            Status: health.status || "unknown",
+            Checked: health.checked_at || "unknown",
+          }) + (experts || '<span class="muted">No experts to check.</span>');
+      }
+
+      async function refreshHealth() {
+        el("health").innerHTML = '<span class="muted">Checking...</span>';
+        try {
+          const health = await api("/api/health");
+          state.health = health;
+          renderHealth(health);
+        } catch (error) {
+          el("health").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
+        }
       }
 
       function renderExtensions(extensions) {

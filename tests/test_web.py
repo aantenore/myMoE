@@ -61,6 +61,7 @@ class WebTests(unittest.TestCase):
         try:
             base_url = f"http://127.0.0.1:{server.server_address[1]}"
             runtime = _get_json(base_url + "/api/runtime")
+            health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
         finally:
             server.shutdown()
@@ -68,6 +69,8 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertEqual(health["status"], "ready")
+        self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
 
     def test_serves_and_runs_cron_endpoint(self) -> None:
@@ -275,6 +278,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("runCron", html)
+        self.assertIn("/api/health", html)
+        self.assertIn("renderHealth", html)
+        self.assertIn("refreshHealth", html)
+        self.assertIn("Refresh health", html)
         self.assertIn("/api/cron/run", html)
         self.assertIn("cron-confirm-writes", html)
         self.assertIn("runTool", html)
