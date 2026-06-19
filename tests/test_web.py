@@ -77,8 +77,12 @@ class WebTests(unittest.TestCase):
 
         self.assertIn("Enter sends / Alt Enter wraps", html)
         self.assertIn("function renderMarkdown", html)
+        self.assertIn("^[*-] (.+)", html)
         self.assertIn("event.altKey", html)
-        self.assertIn("Architecture decision", html)
+        self.assertIn("What should we work on?", html)
+        self.assertIn("advanced-panel", html)
+        self.assertIn("runtime.model_commands || runtime.commands", html)
+        self.assertIn("hidden", html)
 
 
 def _get_json(url: str) -> dict[str, object]:

@@ -33,11 +33,29 @@ def detect_platform_key() -> str:
 def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | None = None) -> RuntimePlan:
     platform_key = detect_platform_key()
     preferred = preferred_backends or {}
-    backend = preferred.get(platform_key) or preferred.get("fallback") or _default_backend(platform_key)
     experts = tuple(expert for expert in config.experts if expert.provider == "openai_compatible")
+    configured_backends = {
+        str(expert.params.get("runtime_backend"))
+        for expert in experts
+        if expert.params.get("runtime_backend")
+    }
+    backend = _runtime_backend(configured_backends, preferred, platform_key)
     models = tuple(expert.model for expert in experts)
 
-    if backend == "mlx_lm":
+    if backend == "mixed":
+        venv_python = _venv_python(platform_key)
+        install = _mixed_install_commands(configured_backends, platform_key, experts)
+        commands = tuple(
+            _expert_server_command(
+                expert,
+                _expert_runtime_backend(expert, _default_backend(platform_key)),
+                _expert_port(expert, 8101 + index),
+                venv_python,
+            )
+            for index, expert in enumerate(experts)
+        )
+        notes = ("Mixed runtime plan. Keep only the models needed for the current workflow resident.",)
+    elif backend in {"mlx_lm", "mlx_vlm"}:
         venv_python = _venv_python(platform_key)
         install = (
             ("uv", "venv", "--python", "3.12", ".venv"),
@@ -53,9 +71,9 @@ def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | N
         commands = tuple(("ollama", "pull", _ollama_model_name(model)) for model in models)
         notes = ("Cross-platform fallback for Windows/Linux/macOS. Uses Ollama OpenAI-compatible API at port 11434.",)
     else:
-        install = (("install", "llama.cpp", "from", "https://github.com/ggml-org/llama.cpp"),)
-        commands = ()
-        notes = ("Fallback backend. Configure GGUF model paths manually or through a launcher script.",)
+        install = (_llama_cpp_install_command(platform_key),)
+        commands = tuple(_llama_server_command(expert, _expert_port(expert, 8101 + index)) for index, expert in enumerate(experts))
+        notes = ("GGUF backend through llama.cpp. Prefer quantized models that fit local RAM/VRAM headroom.",)
 
     return RuntimePlan(
         platform_key=platform_key,
@@ -102,6 +120,14 @@ def _default_backend(platform_key: str) -> str:
     return "llama_cpp"
 
 
+def _runtime_backend(configured_backends: set[str], preferred: dict[str, str], platform_key: str) -> str:
+    if len(configured_backends) == 1:
+        return next(iter(configured_backends))
+    if len(configured_backends) > 1:
+        return "mixed"
+    return preferred.get(platform_key) or preferred.get("fallback") or _default_backend(platform_key)
+
+
 def _venv_python(platform_key: str) -> str:
     if platform_key == "windows":
         return ".venv\\Scripts\\python.exe"
@@ -126,6 +152,72 @@ def _mlx_server_command(venv_python: str, expert: object, port: int) -> tuple[st
     if max_kv_size is not None and runtime_backend == "mlx_vlm":
         command.extend(["--max-kv-size", str(max_kv_size)])
     return tuple(command)
+
+
+def _expert_server_command(
+    expert: object,
+    backend: str,
+    port: int,
+    venv_python: str,
+) -> tuple[str, ...]:
+    if backend in {"mlx_lm", "mlx_vlm"}:
+        return _mlx_server_command(venv_python, expert, port)
+    if backend == "llama_cpp":
+        return _llama_server_command(expert, port)
+    if backend == "ollama":
+        return ("ollama", "pull", _ollama_model_name(str(expert.model)))
+    return _llama_server_command(expert, port)
+
+
+def _llama_server_command(expert: object, port: int) -> tuple[str, ...]:
+    command = [
+        "llama-server",
+        "-hf",
+        str(expert.model),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    params = getattr(expert, "params", {})
+    context_size = params.get("context_size")
+    if context_size is not None:
+        command.extend(["--ctx-size", str(context_size)])
+    gpu_layers = params.get("gpu_layers")
+    if gpu_layers is not None:
+        command.extend(["--n-gpu-layers", str(gpu_layers)])
+    return tuple(command)
+
+
+def _llama_cpp_install_command(platform_key: str) -> tuple[str, ...]:
+    if platform_key == "windows":
+        return ("install", "llama.cpp", "from", "https://github.com/ggml-org/llama.cpp/releases")
+    return ("install", "llama.cpp", "from", "https://github.com/ggml-org/llama.cpp")
+
+
+def _mixed_install_commands(
+    configured_backends: set[str],
+    platform_key: str,
+    experts: tuple[object, ...],
+) -> tuple[tuple[str, ...], ...]:
+    commands: list[tuple[str, ...]] = []
+    if {"mlx_lm", "mlx_vlm"} & configured_backends:
+        venv_python = _venv_python(platform_key)
+        commands.extend(
+            [
+                ("uv", "venv", "--python", "3.12", ".venv"),
+                ("uv", "pip", "install", "--python", venv_python, _mlx_extra(experts)),
+            ]
+        )
+    if "llama_cpp" in configured_backends:
+        commands.append(_llama_cpp_install_command(platform_key))
+    if "ollama" in configured_backends:
+        commands.append(("install", "ollama", "from", "https://ollama.com/download"))
+    return tuple(commands)
+
+
+def _expert_runtime_backend(expert: object, default: str) -> str:
+    return str(getattr(expert, "params", {}).get("runtime_backend", default))
 
 
 def _mlx_extra(experts: tuple[object, ...]) -> str:

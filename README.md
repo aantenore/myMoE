@@ -47,6 +47,15 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.gemma-e4b-mlx.example.json
 ```
 
+Run the optional Gemma 4 12B GGUF coding/agentic specialist through llama.cpp:
+
+```bash
+# Install llama.cpp first:
+# https://github.com/ggml-org/llama.cpp/releases
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
+  --config configs/moe.live.gemma-12b-agentic-gguf.example.json
+```
+
 Run the full local quality gate:
 
 ```bash
@@ -59,10 +68,10 @@ or:
 make check
 ```
 
-Run the offline smoke experiment with mock experts:
+Run the deterministic developer smoke experiment:
 
 ```bash
-PYTHONPATH=src python3 experiments/run_smoke_eval.py \
+PYTHONPATH=src .venv/bin/python experiments/run_smoke_eval.py \
   --config configs/moe.mock.json \
   --eval experiments/eval_set.jsonl \
   --out outputs/smoke-eval.json
@@ -71,14 +80,14 @@ PYTHONPATH=src python3 experiments/run_smoke_eval.py \
 Ask the orchestrator directly:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --prompt "Analyze the tradeoff between a single local model and a routed MoE."
 ```
 
 Open the local UI:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.web \
+PYTHONPATH=src .venv/bin/python -m local_moe.web \
   --port 8089
 ```
 
@@ -93,7 +102,7 @@ make ui
 Use the interactive CLI:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli --interactive
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --interactive
 ```
 
 or:
@@ -110,7 +119,7 @@ For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpos
 - `stretch general`: Qwen3.6-35B-A3B MLX 4-bit with tighter context caps.
 - `multimodal alternative`: Gemma 4 26B-A4B MLX 4-bit.
 - `fast fallback`: Qwen3 4B or Gemma 4 E4B, selected by local benchmark and task quality.
-- `optional specialist`: Qwen3-Coder-30B-A3B only for coding-heavy workflows.
+- `optional specialist`: Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder-30B-A3B only for coding-heavy workflows.
 - `judge/router-teacher`: use Codex/GPT-class teacher offline during dataset creation, not in runtime.
 
 The runtime must remain local. Distillation data can be created with a stronger teacher, then used to train a local router or small student.
@@ -126,6 +135,8 @@ configs/
   moe.live.general-mlx.example.json
   moe.live.fast-mlx.example.json
   moe.live.gemma-e4b-mlx.example.json
+  moe.live.gemma-12b-coder-gguf.example.json
+  moe.live.gemma-12b-agentic-gguf.example.json
   moe.live.ollama.example.json
   quality-gate.json        # thresholds and project artifact checks
 docs/
@@ -175,7 +186,7 @@ tests/
 
 The first experiment validates the routing harness, not model quality. It checks that prompts are routed to the intended expert from configuration alone. This is the right first gate because model downloads are large, while a broken router wastes every later run.
 
-The live experiment now plugs in one real local GGUF endpoint and compares:
+The live experiment can plug in real local MLX or GGUF endpoints and compare:
 
 - single general model,
 - system-level MoE top-1 routing,
@@ -187,6 +198,8 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 2. Keep MoE as routing, context, memory, fallback, and cold-load specialist harness.
 3. Keep only small fallback/compaction experts resident alongside the heavy model.
 4. Add large specialist models only if evals beat the general baseline enough to justify memory and latency.
+
+The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile, adds v2 as the preferred GGUF coding/agentic profile, and leaves Qwen3 30B-A3B as the general-purpose default.
 
 The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 34 deterministic routing cases across the base and extended sets, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
 

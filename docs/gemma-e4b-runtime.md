@@ -64,15 +64,18 @@ PYTHONPATH=src .venv/bin/python -m local_moe.web \
 
 ## Thinking Output
 
-Gemma 4 can emit a thinking channel. For user-facing chat, myMoE disables that in the live config with:
+Gemma 4 can emit a thinking channel. myMoE uses a model-level policy:
 
 ```json
-"chat_template_kwargs": {
-  "enable_thinking": false
-}
+"supports_thinking": true,
+"thinking_policy": "auto"
 ```
 
-The benchmark runner also passes `enable_thinking=false` when the tokenizer supports it.
+When the prompt is simple, the provider sends `chat_template_kwargs.enable_thinking = false`. When the prompt asks for analysis, planning, debugging, comparison, or similarly complex work, it sends `enable_thinking = true`.
+
+The provider strips `<think>...</think>` and Gemma channel tokens such as `<|channel>thought ... <channel|>` before returning content to the UI/CLI. This keeps reasoning support available without leaking raw thinking markup into normal chat.
+
+The benchmark runner still disables thinking for deterministic performance measurements when the tokenizer supports that flag.
 
 ## Tested Result
 

@@ -15,7 +15,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add local OpenAI-compatible provider boundary for llama.cpp, Ollama, LM Studio or vLLM.
 - [x] Add an eval set and smoke evaluation harness.
 - [x] Run routing experiment and fix config-level failure.
-- [ ] Plug one real local GGUF expert into `configs/moe.local.example.json`.
+- [x] Plug real local GGUF specialist profiles into the live config set.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
 - [ ] Add top-2 routing plus deterministic disagreement reporting.
@@ -24,7 +24,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 
 ## Milestones
 
-### M0: Mock MoE
+### M0: Deterministic Routing Fixture
 
 Status: complete.
 
@@ -34,15 +34,15 @@ Goal: verify router/config/eval harness.
 
 Status: complete with Qwen2.5-Coder-1.5B Q4_K_M smoke model.
 
-Run one local GGUF server as the `coder` or `single` expert. Keep mock experts for the rest when testing hybrid routing.
+Run one local model server as the `coder`, `single`, or `general` expert. Mock experts remain only for deterministic fixture tests.
 
 ### M2: Three Real Experts
 
 Run local experts on separate ports:
 
-- `coder`: coding-focused GGUF.
-- `architect`: MoE or reasoning-oriented GGUF.
-- `general`: smaller dense fallback.
+- `primary-general`: Qwen3 30B-A3B MLX 4-bit.
+- `fallback-compaction`: Gemma 4 E4B MLX 4-bit.
+- `coding-agentic`: optional Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder profile.
 
 ### M3: Distilled Router
 

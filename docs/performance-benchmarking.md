@@ -59,6 +59,15 @@ Outputs:
 
 The current policy is to choose one heavy resident general expert and one small resident fallback/compaction expert. Other large specialists should be cold-loaded only after they win evals for their task class.
 
+## GGUF Specialist Benchmarking
+
+The current MLX benchmark does not directly score GGUF files. GGUF candidates are still first-class runtime profiles through llama.cpp:
+
+- `configs/moe.live.gemma-12b-coder-gguf.example.json`
+- `configs/moe.live.gemma-12b-agentic-gguf.example.json`
+
+The v2 agentic profile is the preferred successor for local coding, terminal, and tool-use tests. It should be benchmarked with a llama.cpp-backed eval slice before being enabled as a default coding route.
+
 ## Gemma E4B Regression
 
 Run the focused Gemma E4B benchmark with:

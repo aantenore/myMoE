@@ -33,6 +33,8 @@
     "configs/moe.live.general-mlx.example.json",
     "configs/moe.live.fast-mlx.example.json",
     "configs/moe.live.gemma-e4b-mlx.example.json",
+    "configs/moe.live.gemma-12b-coder-gguf.example.json",
+    "configs/moe.live.gemma-12b-agentic-gguf.example.json",
     "configs/moe.live.ollama.example.json",
     "docs/agent-runtime.md",
     "docs/gemma-e4b-runtime.md",

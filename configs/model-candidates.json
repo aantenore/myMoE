@@ -75,6 +75,28 @@
       "purpose": "Specialist loaded only when coding workflows justify it; not the default for a general-purpose app."
     },
     {
+      "id": "gemma4-12b-coder-fable5-composer25-gguf-q4km",
+      "role": "optional_coding_specialist",
+      "repo": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+      "file_alias": "Q4_K_M",
+      "format": "GGUF",
+      "runtime_backend": "llama_cpp",
+      "source_url": "https://huggingface.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+      "config": "configs/moe.live.gemma-12b-coder-gguf.example.json",
+      "purpose": "Legacy GGUF specialist for Python/coding tasks. It is not the general-purpose default because the model card positions it as a coding fine-tune, and the same author now publishes a v2 agentic successor."
+    },
+    {
+      "id": "gemma4-12b-agentic-fable5-composer25-v2-gguf-q4km",
+      "role": "preferred_optional_coding_agentic_specialist",
+      "repo": "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF",
+      "file_alias": "Q4_K_M",
+      "format": "GGUF",
+      "runtime_backend": "llama_cpp",
+      "source_url": "https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF",
+      "config": "configs/moe.live.gemma-12b-agentic-gguf.example.json",
+      "purpose": "Preferred successor to the v1 GGUF coding model for local coding, terminal, and tool-use experiments. Still not the default for this general-purpose app until it wins a local eval slice against the Qwen general baseline."
+    },
+    {
       "id": "qwen3-coder-next",
       "role": "not_viable_on_24gb",
       "repo": "unsloth/Qwen3-Coder-Next-GGUF",

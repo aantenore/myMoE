@@ -73,12 +73,23 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.gemma-e4b-mlx.example.json
 ```
 
-The Gemma config sets `chat_template_kwargs.enable_thinking = false` so user-facing chat does not render internal thinking channels.
+Gemma configs declare `supports_thinking = true` and `thinking_policy = auto`. myMoE enables thinking only for prompts that look complex enough to benefit from it, then strips Gemma thinking/channel tokens from the user-visible response.
+
+Optional Gemma 4 12B GGUF coding/agentic specialist:
+
+```bash
+# Install llama.cpp first:
+# https://github.com/ggml-org/llama.cpp/releases
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
+  --config configs/moe.live.gemma-12b-agentic-gguf.example.json
+```
+
+The older `configs/moe.live.gemma-12b-coder-gguf.example.json` profile is retained for the v1 model that was evaluated during research. Prefer the v2 agentic profile for new coding/tool-use experiments.
 
 ## Start UI
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.web --port 8089
+PYTHONPATH=src .venv/bin/python -m local_moe.web --port 8089
 ```
 
 Open `http://127.0.0.1:8089`.
@@ -90,13 +101,13 @@ Use `configs/moe.live.ollama.example.json` when running through Ollama:
 ```bash
 ollama pull qwen3:4b
 ollama serve
-PYTHONPATH=src python3 -m local_moe.web --config configs/moe.live.ollama.example.json
+PYTHONPATH=src .venv/bin/python -m local_moe.web --config configs/moe.live.ollama.example.json
 ```
 
 ## Doctor
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli --doctor
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 ```
 
 The doctor output reports platform, backend choice, install commands, model commands, configured tools, skills, plugins, MCP servers, and cron jobs.

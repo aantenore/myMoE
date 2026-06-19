@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,42 +7,43 @@
     <style>
       :root {
         color-scheme: dark;
-        --background: 240 10% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 240 10% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 240 10% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 240 5.9% 10%;
-        --secondary: 240 3.7% 15.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 240 3.7% 15.9%;
-        --muted-foreground: 240 5% 64.9%;
-        --accent: 240 3.7% 15.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 240 3.7% 15.9%;
-        --input: 240 3.7% 15.9%;
-        --ring: 240 4.9% 83.9%;
-        --ok: 142 71% 45%;
-        --warn: 38 92% 50%;
-        --info: 199 89% 48%;
-        --radius: 0.625rem;
+        --background: #09090b;
+        --surface: #0f0f12;
+        --surface-strong: #151519;
+        --surface-soft: #1b1b21;
+        --border: #27272f;
+        --border-strong: #3f3f46;
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --subtle: #71717a;
+        --accent: #f8fafc;
+        --accent-text: #09090b;
+        --danger: #fca5a5;
+        --success: #86efac;
+        --warning: #fde68a;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html,
+      body {
+        min-height: 100%;
+      }
+
       body {
         margin: 0;
-        min-height: 100svh;
-        background: hsl(var(--background));
-        color: hsl(var(--foreground));
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        letter-spacing: 0;
+        background: var(--background);
+        color: var(--text);
       }
 
       button,
@@ -50,651 +51,792 @@
         font: inherit;
       }
 
-      .app {
-        min-height: 100svh;
-        display: grid;
-        grid-template-rows: auto minmax(0, 1fr);
+      button {
+        border: 1px solid var(--border);
+        background: var(--surface-strong);
+        color: var(--text);
+        border-radius: 8px;
+        cursor: pointer;
+        transition:
+          border-color 160ms ease,
+          background 160ms ease,
+          transform 160ms ease;
       }
 
-      .topbar {
-        height: 4.5rem;
+      button:hover {
+        border-color: var(--border-strong);
+        background: var(--surface-soft);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--border);
+        background: #0b0b0e;
+        padding: 1rem;
         display: flex;
-        align-items: center;
-        justify-content: space-between;
+        flex-direction: column;
         gap: 1rem;
-        border-bottom: 1px solid hsl(var(--border));
-        padding: 0 1.25rem;
-        background: hsl(var(--background) / 0.96);
       }
 
       .brand {
         display: flex;
         align-items: center;
         gap: 0.75rem;
+        min-height: 2.5rem;
       }
 
-      .logo {
-        display: grid;
-        place-items: center;
+      .brand-mark {
         width: 2rem;
         height: 2rem;
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 2px);
-        background: hsl(var(--secondary));
-        color: hsl(var(--secondary-foreground));
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-text);
+        font-weight: 800;
+      }
+
+      .brand-title {
         font-weight: 700;
+        letter-spacing: 0;
       }
 
-      h1,
-      h2,
-      p {
-        margin: 0;
+      .brand-subtitle {
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.2;
       }
 
-      h1 {
-        font-size: 1rem;
-        font-weight: 650;
-      }
-
-      .subtitle {
-        color: hsl(var(--muted-foreground));
-        font-size: 0.8125rem;
-      }
-
-      .top-actions {
+      .new-chat {
+        width: 100%;
+        min-height: 2.5rem;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 0.5rem;
       }
 
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        height: 1.5rem;
-        border: 1px solid hsl(var(--border));
-        border-radius: 999px;
-        padding: 0 0.6rem;
-        background: hsl(var(--secondary));
-        color: hsl(var(--secondary-foreground));
-        font-size: 0.75rem;
-        font-weight: 500;
-        white-space: nowrap;
-      }
-
-      .layout {
+      .sidebar-section {
         display: grid;
-        grid-template-columns: 20rem minmax(0, 1fr) 24rem;
-        min-height: 0;
+        gap: 0.5rem;
       }
 
-      .sidebar,
-      .workspace,
-      .inspector {
+      .section-label {
+        color: var(--subtle);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .prompt-list {
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .prompt-item {
+        width: 100%;
+        text-align: left;
+        padding: 0.75rem;
+        color: var(--muted);
+        background: transparent;
+      }
+
+      .prompt-item:hover {
+        color: var(--text);
+      }
+
+      .sidebar-footer {
+        margin-top: auto;
+        display: grid;
+        gap: 0.5rem;
+        color: var(--subtle);
+        font-size: 0.8rem;
+      }
+
+      .main {
         min-width: 0;
-        padding: 1rem;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
       }
 
-      .sidebar {
-        border-right: 1px solid hsl(var(--border));
-      }
-
-      .inspector {
-        border-left: 1px solid hsl(var(--border));
-      }
-
-      .workspace {
-        display: grid;
-        grid-template-rows: auto minmax(0, 1fr) auto;
-        gap: 1rem;
-      }
-
-      .section-title {
-        margin-bottom: 0.5rem;
-        color: hsl(var(--muted-foreground));
-        font-size: 0.8125rem;
-        font-weight: 500;
-      }
-
-      .run-card {
-        display: grid;
-        gap: 0.8rem;
-        border: 1px solid hsl(var(--border));
-        border-radius: var(--radius);
-        padding: 0.9rem;
-        background: hsl(var(--secondary) / 0.38);
-        margin-bottom: 1rem;
-      }
-
-      .run-head {
+      .topbar {
+        min-height: 3.5rem;
+        border-bottom: 1px solid var(--border);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 0.75rem;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        background: rgba(9, 9, 11, 0.88);
+        backdrop-filter: blur(16px);
+        position: sticky;
+        top: 0;
+        z-index: 20;
       }
 
-      .run-title {
+      .model-line {
+        min-width: 0;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
-        font-weight: 650;
+        gap: 0.75rem;
       }
 
       .status-dot {
-        width: 0.62rem;
-        height: 0.62rem;
+        width: 0.6rem;
+        height: 0.6rem;
         border-radius: 999px;
-        background: hsl(var(--warn));
-        box-shadow: 0 0 0 4px hsl(var(--warn) / 0.13);
+        background: var(--warning);
+        box-shadow: 0 0 0 4px rgba(253, 230, 138, 0.08);
+        flex: 0 0 auto;
       }
 
       .status-dot.ready {
-        background: hsl(var(--ok));
-        box-shadow: 0 0 0 4px hsl(var(--ok) / 0.13);
+        background: var(--success);
+        box-shadow: 0 0 0 4px rgba(134, 239, 172, 0.08);
       }
 
-      .run-copy {
-        color: hsl(var(--muted-foreground));
-        font-size: 0.8125rem;
-        line-height: 1.45;
+      .status-copy {
+        min-width: 0;
       }
 
-      .command {
-        overflow: hidden;
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 2px);
-        background: hsl(var(--background));
-        padding: 0.65rem 0.7rem;
-        color: hsl(var(--foreground));
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 0.75rem;
+      .status-title {
+        font-weight: 650;
         white-space: nowrap;
+        overflow: hidden;
         text-overflow: ellipsis;
       }
 
-      .card {
-        border: 1px solid hsl(var(--border));
-        border-radius: var(--radius);
-        background: hsl(var(--card));
-        color: hsl(var(--card-foreground));
-        box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+      .status-subtitle {
+        color: var(--muted);
+        font-size: 0.78rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
-      .card-header {
+      .topbar-actions {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        border-bottom: 1px solid hsl(var(--border));
-        padding: 0.8rem 0.9rem;
+        gap: 0.5rem;
+        flex: 0 0 auto;
       }
 
-      .card-title {
-        font-size: 0.875rem;
-        font-weight: 600;
+      .ghost-button {
+        min-height: 2.25rem;
+        padding: 0 0.8rem;
       }
 
-      .card-content {
-        padding: 0.9rem;
+      .chat-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 2rem 1rem 8rem;
       }
 
-      .stack {
+      .chat-inner {
+        width: min(100%, 54rem);
+        margin: 0 auto;
         display: grid;
+        gap: 1.25rem;
+      }
+
+      .welcome {
+        min-height: calc(100vh - 15rem);
+        display: grid;
+        align-content: center;
+        gap: 1.5rem;
+      }
+
+      .welcome h1 {
+        margin: 0;
+        font-size: clamp(2rem, 5vw, 3.5rem);
+        font-weight: 720;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .welcome p {
+        margin: 0;
+        max-width: 42rem;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .suggestions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 0.75rem;
       }
 
-      .sample {
-        width: 100%;
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 2px);
-        background: transparent;
-        color: hsl(var(--foreground));
-        padding: 0.65rem 0.75rem;
+      .suggestion {
+        min-height: 5.5rem;
+        padding: 1rem;
         text-align: left;
-        cursor: pointer;
-        transition: background 140ms ease, border-color 140ms ease;
+        background: var(--surface);
       }
 
-      .sample:hover {
-        background: hsl(var(--accent));
-        border-color: hsl(var(--ring) / 0.45);
-      }
-
-      .sample span {
+      .suggestion strong {
         display: block;
-        color: hsl(var(--muted-foreground));
-        font-size: 0.75rem;
-        margin-top: 0.2rem;
+        margin-bottom: 0.35rem;
       }
 
-      .metrics {
+      .suggestion span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.4;
+      }
+
+      .message {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.75rem;
+        grid-template-columns: 2.25rem minmax(0, 1fr);
+        gap: 0.8rem;
+        align-items: start;
       }
 
-      .metric {
-        border: 1px solid hsl(var(--border));
-        border-radius: var(--radius);
-        padding: 0.8rem 0.9rem;
+      #messages {
+        display: grid;
+        gap: 1.25rem;
       }
 
-      .metric-label {
-        color: hsl(var(--muted-foreground));
-        font-size: 0.75rem;
+      .message.user {
+        grid-template-columns: minmax(0, 1fr) 2.25rem;
       }
 
-      .metric-value {
-        margin-top: 0.35rem;
-        font-size: 1rem;
-        font-weight: 650;
-        overflow-wrap: anywhere;
-      }
-
-      .answer {
-        min-height: 22rem;
-        max-height: calc(100svh - 20rem);
-        overflow: auto;
-        line-height: 1.55;
-        color: hsl(var(--foreground));
-      }
-
-      .answer p,
-      .answer ul,
-      .answer ol,
-      .answer pre,
-      .answer blockquote {
-        margin: 0 0 0.85rem;
-      }
-
-      .answer :last-child {
-        margin-bottom: 0;
-      }
-
-      .answer ul,
-      .answer ol {
-        padding-left: 1.25rem;
-      }
-
-      .answer li {
-        margin: 0.25rem 0;
-      }
-
-      .answer strong {
+      .avatar {
+        width: 2.25rem;
+        height: 2.25rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        background: var(--surface);
+        font-size: 0.8rem;
         font-weight: 700;
       }
 
-      .answer em {
-        color: hsl(var(--foreground) / 0.92);
+      .message.user .avatar {
+        grid-column: 2;
+        grid-row: 1;
+        background: var(--accent);
+        color: var(--accent-text);
       }
 
-      .answer code {
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 4px);
-        background: hsl(var(--secondary) / 0.52);
+      .message-body {
+        min-width: 0;
+        line-height: 1.65;
+        color: var(--text);
+      }
+
+      .message.user .message-body {
+        justify-self: end;
+        max-width: min(38rem, 100%);
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.75rem 0.9rem;
+      }
+
+      .message.assistant .message-body {
+        padding-top: 0.25rem;
+      }
+
+      .message.error .message-body {
+        color: var(--danger);
+      }
+
+      .message-meta {
+        margin-top: 0.6rem;
+        color: var(--subtle);
+        font-size: 0.78rem;
+      }
+
+      .markdown > *:first-child {
+        margin-top: 0;
+      }
+
+      .markdown > *:last-child {
+        margin-bottom: 0;
+      }
+
+      .markdown p {
+        margin: 0.55rem 0;
+      }
+
+      .markdown h1,
+      .markdown h2,
+      .markdown h3 {
+        margin: 1rem 0 0.5rem;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      .markdown h1 {
+        font-size: 1.35rem;
+      }
+
+      .markdown h2 {
+        font-size: 1.15rem;
+      }
+
+      .markdown h3 {
+        font-size: 1rem;
+      }
+
+      .markdown ul,
+      .markdown ol {
+        margin: 0.6rem 0;
+        padding-left: 1.35rem;
+      }
+
+      .markdown li {
+        margin: 0.25rem 0;
+      }
+
+      .markdown blockquote {
+        margin: 0.75rem 0;
+        padding-left: 0.9rem;
+        border-left: 2px solid var(--border-strong);
+        color: var(--muted);
+      }
+
+      .markdown code {
+        border: 1px solid var(--border);
+        background: var(--surface-strong);
+        border-radius: 6px;
         padding: 0.1rem 0.3rem;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 0.86em;
+        font-family:
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Monaco,
+          Consolas,
+          "Liberation Mono",
+          monospace;
+        font-size: 0.9em;
       }
 
-      .answer pre {
-        overflow: auto;
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 2px);
-        background: hsl(var(--secondary) / 0.42);
-        padding: 0.75rem;
+      .markdown pre {
+        margin: 0.85rem 0;
+        padding: 1rem;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        background: #050506;
+        border-radius: 8px;
       }
 
-      .answer pre code {
+      .markdown pre code {
         border: 0;
         background: transparent;
         padding: 0;
       }
 
-      .answer a {
-        color: hsl(var(--info));
+      .markdown a {
+        color: #93c5fd;
         text-decoration: none;
       }
 
-      .answer a:hover {
+      .markdown a:hover {
         text-decoration: underline;
       }
 
-      .answer blockquote {
-        border-left: 3px solid hsl(var(--border));
-        color: hsl(var(--muted-foreground));
-        padding-left: 0.85rem;
-      }
-
-      .answer.empty {
-        color: hsl(var(--muted-foreground));
+      .composer-wrap {
+        position: sticky;
+        bottom: 0;
+        z-index: 15;
+        padding: 1rem;
+        background: linear-gradient(
+          180deg,
+          rgba(9, 9, 11, 0),
+          rgba(9, 9, 11, 0.86) 18%,
+          rgba(9, 9, 11, 0.98)
+        );
       }
 
       .composer {
+        width: min(100%, 54rem);
+        margin: 0 auto;
+        border: 1px solid var(--border-strong);
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 0.75rem;
+        box-shadow: var(--shadow);
         display: grid;
         gap: 0.75rem;
       }
 
-      textarea {
+      .composer textarea {
         width: 100%;
-        min-height: 8rem;
+        min-height: 4rem;
+        max-height: 13rem;
         resize: vertical;
-        border: 1px solid hsl(var(--input));
-        border-radius: calc(var(--radius) - 2px);
+        border: 0;
+        outline: 0;
         background: transparent;
-        color: hsl(var(--foreground));
-        padding: 0.75rem 0.85rem;
-        line-height: 1.45;
-        outline: none;
+        color: var(--text);
+        line-height: 1.5;
       }
 
-      textarea:focus {
-        border-color: hsl(var(--ring));
-        box-shadow: 0 0 0 2px hsl(var(--ring) / 0.18);
+      .composer textarea::placeholder {
+        color: var(--subtle);
       }
 
-      .actions {
+      .composer-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .hint {
+        color: var(--subtle);
+        font-size: 0.78rem;
+      }
+
+      .send-button {
+        min-width: 5.25rem;
+        min-height: 2.35rem;
+        padding: 0 1rem;
+        background: var(--accent);
+        color: var(--accent-text);
+        border-color: transparent;
+        font-weight: 700;
+      }
+
+      .send-button:hover {
+        background: #e4e4e7;
+      }
+
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.46);
+        z-index: 39;
+      }
+
+      .advanced-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 40;
+        width: min(31rem, 100vw);
+        height: 100vh;
+        border-left: 1px solid var(--border);
+        background: #0c0c0f;
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .advanced-head {
+        min-height: 3.5rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .advanced-body {
+        overflow: auto;
+        padding: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .advanced-section {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 1rem;
+        display: grid;
         gap: 0.75rem;
       }
 
-      .button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.45rem;
-        height: 2.35rem;
-        border: 1px solid transparent;
-        border-radius: calc(var(--radius) - 2px);
-        padding: 0 0.9rem;
-        cursor: pointer;
-        font-size: 0.875rem;
-        font-weight: 500;
-        transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
-      }
-
-      .button-primary {
-        background: hsl(var(--primary));
-        color: hsl(var(--primary-foreground));
-      }
-
-      .button-secondary {
-        border-color: hsl(var(--border));
-        background: hsl(var(--secondary));
-        color: hsl(var(--secondary-foreground));
-      }
-
-      .button-ghost {
-        border-color: hsl(var(--border));
-        background: transparent;
-        color: hsl(var(--foreground));
-      }
-
-      .button:hover {
-        opacity: 0.88;
-      }
-
-      .button:disabled {
-        cursor: wait;
-        opacity: 0.55;
+      .advanced-section h2 {
+        margin: 0;
+        font-size: 0.95rem;
+        letter-spacing: 0;
       }
 
       .kv {
         display: grid;
-        gap: 0.55rem;
-        font-size: 0.8125rem;
+        gap: 0.45rem;
       }
 
-      .kv div {
-        display: flex;
-        justify-content: space-between;
-        gap: 1rem;
-        color: hsl(var(--muted-foreground));
-      }
-
-      .kv span {
-        color: hsl(var(--foreground));
-        text-align: right;
-        overflow-wrap: anywhere;
-      }
-
-      .list {
+      .kv-row {
         display: grid;
-        gap: 0.55rem;
-      }
-
-      .list-item {
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 2px);
-        padding: 0.65rem;
-        background: hsl(var(--secondary) / 0.42);
-      }
-
-      .list-item strong {
-        display: block;
-        font-size: 0.875rem;
-      }
-
-      .list-item small {
-        color: hsl(var(--muted-foreground));
-        overflow-wrap: anywhere;
-      }
-
-      .error {
-        color: hsl(var(--destructive-foreground));
-        background: hsl(var(--destructive) / 0.18);
-      }
-
-      .tabs {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.35rem;
-        margin-bottom: 0.75rem;
-      }
-
-      .tab {
-        height: 2rem;
-        border: 1px solid hsl(var(--border));
-        border-radius: calc(var(--radius) - 3px);
-        background: transparent;
-        color: hsl(var(--muted-foreground));
-        cursor: pointer;
-        font-size: 0.8125rem;
-      }
-
-      .tab.active {
-        background: hsl(var(--primary));
-        color: hsl(var(--primary-foreground));
-        border-color: hsl(var(--primary));
-      }
-
-      .tab-panel {
-        display: grid;
+        grid-template-columns: 7.5rem minmax(0, 1fr);
         gap: 0.75rem;
+        color: var(--muted);
+        font-size: 0.82rem;
       }
 
-      .tab-panel.hidden {
-        display: none;
+      .kv-row span:first-child {
+        color: var(--subtle);
       }
 
-      @media (max-width: 1080px) {
-        .layout {
+      .mono {
+        font-family:
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Monaco,
+          Consolas,
+          "Liberation Mono",
+          monospace;
+        font-size: 0.78rem;
+        overflow-wrap: anywhere;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .badge {
+        min-height: 1.6rem;
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        color: var(--muted);
+        font-size: 0.75rem;
+        background: var(--surface-strong);
+      }
+
+      .eval-output {
+        margin: 0;
+        white-space: pre-wrap;
+        color: var(--muted);
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      @media (max-width: 900px) {
+        .app {
           grid-template-columns: 1fr;
         }
 
-        .sidebar,
-        .inspector {
-          border: 0;
-          border-bottom: 1px solid hsl(var(--border));
+        .sidebar {
+          display: none;
         }
 
-        .metrics {
+        .suggestions {
           grid-template-columns: 1fr;
+        }
+
+        .chat-scroll {
+          padding: 1.25rem 1rem 7.5rem;
+        }
+
+        .welcome {
+          min-height: calc(100vh - 13rem);
+        }
+
+        .status-subtitle {
+          display: none;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .topbar {
+          padding: 0.65rem 0.75rem;
+        }
+
+        .ghost-button {
+          padding: 0 0.65rem;
+        }
+
+        .message,
+        .message.user {
+          grid-template-columns: 1fr;
+        }
+
+        .avatar {
+          display: none;
+        }
+
+        .message.user .message-body {
+          justify-self: stretch;
+        }
+
+        .composer-footer {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .send-button {
+          width: 100%;
+        }
+
+        .kv-row {
+          grid-template-columns: 1fr;
+          gap: 0.15rem;
         }
       }
     </style>
   </head>
   <body>
     <div class="app">
-      <header class="topbar">
+      <aside class="sidebar" aria-label="Chat sidebar">
         <div class="brand">
-          <div class="logo">M</div>
+          <div class="brand-mark">M</div>
           <div>
-            <h1>myMoE</h1>
-            <p class="subtitle">Local model command center</p>
+            <div class="brand-title">myMoE</div>
+            <div class="brand-subtitle">Local model assistant</div>
           </div>
         </div>
-        <div class="top-actions">
-          <span class="badge" id="mode">model required</span>
-          <span class="badge" id="runtime">runtime</span>
-          <span class="badge" id="config-name">config</span>
+
+        <button class="new-chat" id="new-chat" type="button">New chat</button>
+
+        <div class="sidebar-section">
+          <div class="section-label">Starters</div>
+          <div class="prompt-list" id="starter-list"></div>
         </div>
-      </header>
 
-      <div class="layout">
-        <aside class="sidebar">
-          <div class="section-title">System</div>
-          <div class="run-card">
-            <div class="run-head">
-              <div class="run-title"><span class="status-dot" id="status-dot"></span><span id="model-state">Model required</span></div>
-              <span class="badge" id="backend-mini">-</span>
+        <div class="sidebar-footer">
+          <span id="sidebar-model">Model required</span>
+          <span>Private local runtime</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="model-line">
+            <span class="status-dot" id="status-dot"></span>
+            <div class="status-copy">
+              <div class="status-title" id="status-title">Connecting to myMoE</div>
+              <div class="status-subtitle" id="status-subtitle">Loading local configuration</div>
             </div>
-            <p class="run-copy" id="runtime-summary">Run doctor to inspect the local backend and model commands.</p>
-            <div class="command" id="start-command">make start-models</div>
           </div>
-
-          <div class="section-title">Prompt library</div>
-          <div class="stack">
-            <button class="sample" data-prompt="Analyze the tradeoff between one local generalist model and an application-level MoE for a private personal assistant.">
-              Architecture decision
-              <span>General reasoning</span>
-            </button>
-            <button class="sample" data-prompt="Turn this product idea into an MVP plan with risks, scope, tests, and hardware requirements.">
-              Product plan
-              <span>Concise planning</span>
-            </button>
-            <button class="sample" data-prompt="Rewrite this message in Italian, direct but warm, without sounding corporate.">
-              Writing
-              <span>User-language response</span>
-            </button>
-            <button class="sample" data-prompt="Design a memory policy for a local assistant that remembers preferences without polluting the active context.">
-              Memory and context
-              <span>Compaction and retrieval</span>
-            </button>
+          <div class="topbar-actions">
+            <button class="ghost-button" id="advanced-toggle" type="button">Advanced</button>
           </div>
-        </aside>
+        </header>
 
-        <main class="workspace">
-          <section class="metrics">
-            <div class="metric">
-              <div class="metric-label">Latency</div>
-              <div class="metric-value" id="latency">-</div>
-            </div>
-            <div class="metric">
-              <div class="metric-label">Route</div>
-              <div class="metric-value" id="route">-</div>
-            </div>
-            <div class="metric">
-              <div class="metric-label">Aggregation</div>
-              <div class="metric-value" id="aggregation">-</div>
-            </div>
-            <div class="metric">
-              <div class="metric-label">Extensions</div>
-              <div class="metric-value" id="extension-count">-</div>
-            </div>
-          </section>
-
-          <section class="card">
-            <div class="card-header">
-              <h2 class="card-title">Response</h2>
-              <span class="badge" id="correlation">No run</span>
-            </div>
-            <div class="card-content">
-              <div class="answer empty" id="answer">Start the configured local model, then run a prompt to inspect routing, provider output, fallback errors, and evaluation behavior.</div>
-            </div>
-          </section>
-
-          <section class="card">
-            <div class="card-header">
-              <h2 class="card-title">Composer</h2>
-              <span class="badge">Enter sends / Alt Enter wraps</span>
-            </div>
-            <div class="card-content composer">
-              <textarea id="prompt" placeholder="Ask the local MoE something..."></textarea>
-              <div class="actions">
-                <button class="button button-secondary" id="eval">Run Eval</button>
-                <button class="button button-primary" id="send">Generate</button>
+        <section class="chat-scroll" id="chat-scroll" aria-live="polite">
+          <div class="chat-inner" id="chat-inner">
+            <section class="welcome" id="welcome">
+              <div>
+                <h1>What should we work on?</h1>
+                <p>
+                  Ask in any language. myMoE routes the request to the configured local
+                  model and keeps routing details tucked away until you open Advanced.
+                </p>
               </div>
-            </div>
-          </section>
-        </main>
-
-        <section class="inspector">
-          <div class="stack">
-            <div class="tabs" role="tablist" aria-label="Inspector">
-              <button class="tab active" data-tab="overview">Overview</button>
-              <button class="tab" data-tab="models">Models</button>
-              <button class="tab" data-tab="extensions">Extensions</button>
-            </div>
-
-            <div class="tab-panel" id="tab-overview">
-              <section class="card">
-                <div class="card-header">
-                  <h2 class="card-title">Config</h2>
-                </div>
-                <div class="card-content">
-                  <div class="kv" id="config"></div>
-                </div>
-              </section>
-
-              <section class="card">
-                <div class="card-header">
-                  <h2 class="card-title">Runtime</h2>
-                </div>
-                <div class="card-content">
-                  <div class="kv" id="runtime-panel"></div>
-                </div>
-              </section>
-            </div>
-
-            <div class="tab-panel hidden" id="tab-models">
-              <section class="card">
-                <div class="card-header">
-                  <h2 class="card-title">Selected Route</h2>
-                </div>
-                <div class="card-content">
-                  <div class="list" id="routes"></div>
-                </div>
-              </section>
-
-              <section class="card">
-                <div class="card-header">
-                  <h2 class="card-title">Experts</h2>
-                </div>
-                <div class="card-content">
-                  <div class="list" id="experts"></div>
-                </div>
-              </section>
-            </div>
-
-            <div class="tab-panel hidden" id="tab-extensions">
-              <section class="card">
-                <div class="card-header">
-                  <h2 class="card-title">Extensions</h2>
-                </div>
-                <div class="card-content">
-                  <div class="kv" id="extensions"></div>
-                </div>
-              </section>
-            </div>
+              <div class="suggestions" id="suggestions"></div>
+            </section>
+            <div id="messages"></div>
           </div>
         </section>
-      </div>
+
+        <section class="composer-wrap" aria-label="Message composer">
+          <form class="composer" id="composer-form">
+            <textarea
+              id="prompt"
+              rows="3"
+              placeholder="Message myMoE..."
+              autocomplete="off"
+              spellcheck="true"
+            ></textarea>
+            <div class="composer-footer">
+              <span class="hint">Enter sends / Alt Enter wraps</span>
+              <button class="send-button" id="send" type="submit">Send</button>
+            </div>
+          </form>
+        </section>
+      </main>
     </div>
 
+    <div class="overlay" id="overlay" hidden></div>
+    <aside class="advanced-panel" id="advanced-panel" aria-label="Advanced" hidden>
+      <div class="advanced-head">
+        <strong>Advanced</strong>
+        <button class="ghost-button" id="advanced-close" type="button">Close</button>
+      </div>
+      <div class="advanced-body">
+        <section class="advanced-section">
+          <h2>Runtime</h2>
+          <div class="kv" id="runtime"></div>
+        </section>
+        <section class="advanced-section">
+          <h2>Models</h2>
+          <div class="kv" id="models"></div>
+        </section>
+        <section class="advanced-section">
+          <h2>Routing</h2>
+          <div class="kv" id="routing"></div>
+        </section>
+        <section class="advanced-section">
+          <h2>Extensions</h2>
+          <div id="extensions"></div>
+        </section>
+        <section class="advanced-section">
+          <h2>Evaluation</h2>
+          <button class="ghost-button" id="run-eval" type="button">Run eval</button>
+          <pre class="eval-output" id="eval-output">Not run yet.</pre>
+        </section>
+      </div>
+    </aside>
+
     <script>
+      const state = {
+        busy: false,
+        config: null,
+        runtime: null,
+        extensions: null,
+        messages: [],
+      };
+
+      const starters = [
+        {
+          title: "Plan",
+          body: "Design a modular local assistant with plugin support.",
+          prompt:
+            "Plan a modular local assistant that supports plugins, MCP servers, scheduled jobs, and cross-platform model setup.",
+        },
+        {
+          title: "Compare",
+          body: "Evaluate two model/runtime options for this machine.",
+          prompt:
+            "Compare a single strong local model with an application-level MoE for a 24 GB Apple Silicon machine. Include tradeoffs and a recommendation.",
+        },
+        {
+          title: "Summarize",
+          body: "Compress a long note without losing decisions.",
+          prompt:
+            "Summarize the following note into decisions, risks, and next actions:\n\n",
+        },
+        {
+          title: "Reason",
+          body: "Ask for a deeper multi-step analysis.",
+          prompt:
+            "Analyze this architecture problem step by step and decide the safest implementation path:\n\n",
+        },
+      ];
+
       const el = (id) => document.getElementById(id);
 
       async function api(path, options = {}) {
@@ -702,75 +844,354 @@
           headers: { "Content-Type": "application/json" },
           ...options,
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || payload.error || "Request failed");
-        return payload;
+        const data = await response.json();
+        if (!response.ok) {
+          const message = data.message || data.error || "Request failed";
+          throw new Error(message);
+        }
+        return data;
       }
 
-      function renderConfig(payload) {
-        el("mode").textContent = payload.requires_model ? "model required" : "test fixture";
-        el("config-name").textContent = payload.config_path;
-        el("aggregation").textContent = `${payload.routing.aggregation} / top-${payload.routing.top_k}`;
-        el("config").innerHTML = kvRows([
-          ["Mode", payload.app.mode],
-          ["Experts", payload.experts.length],
-          ["Rules", payload.rules.length],
-          ["Fallback", payload.routing.fallback_order.join(", ") || "none"],
-          ["Providers", providerMix(payload.experts)],
-          ["Language", payload.app.language.mode],
-        ]);
-        el("experts").innerHTML = payload.experts.map((expert) => `
-          <div class="list-item">
-            <strong>${escapeHtml(expert.id)}</strong>
-            <small>${escapeHtml(expert.role)} / ${escapeHtml(expert.model)} / ${escapeHtml(expert.runtime_backend)}</small>
-          </div>
-        `).join("");
+      function init() {
+        renderStarters();
+        bindEvents();
+        loadMeta();
       }
 
-      function providerMix(experts) {
-        return [...new Set(experts.map((expert) => expert.provider))].join(", ");
+      function bindEvents() {
+        el("composer-form").addEventListener("submit", (event) => {
+          event.preventDefault();
+          generate();
+        });
+        el("prompt").addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          if (event.altKey) {
+            event.preventDefault();
+            insertComposerNewline();
+            return;
+          }
+          if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault();
+            generate();
+          }
+        });
+        el("new-chat").addEventListener("click", newChat);
+        el("advanced-toggle").addEventListener("click", () => setAdvanced(true));
+        el("advanced-close").addEventListener("click", () => setAdvanced(false));
+        el("overlay").addEventListener("click", () => setAdvanced(false));
+        el("run-eval").addEventListener("click", runEval);
       }
 
-      function renderRuntime(payload) {
-        el("runtime").textContent = payload.backend;
-        el("backend-mini").textContent = payload.backend;
-        el("runtime-summary").textContent = `${payload.platform_key}; ${payload.model_commands.length} configured model command${payload.model_commands.length === 1 ? "" : "s"}.`;
-        el("start-command").textContent = payload.model_commands[0] ? payload.model_commands[0].join(" ") : "make start-models";
-        el("model-state").textContent = "Start local model";
-        el("runtime-panel").innerHTML = kvRows([
-          ["Platform", payload.platform_key],
-          ["Backend", payload.backend],
-          ["uv", payload.available_commands.uv ? "yes" : "no"],
-          ["Ollama", payload.available_commands.ollama ? "yes" : "no"],
-          ["Python", payload.available_commands.python ? "yes" : "no"],
-          ["Model commands", payload.model_commands.length],
-        ]);
+      async function loadMeta() {
+        try {
+          const [config, runtime, extensions] = await Promise.all([
+            api("/api/config"),
+            api("/api/runtime"),
+            api("/api/extensions"),
+          ]);
+          state.config = config;
+          state.runtime = runtime;
+          state.extensions = extensions;
+          renderConfig(config);
+          renderRuntime(runtime);
+          renderExtensions(extensions);
+        } catch (error) {
+          setStatus("Configuration error", error.message, false);
+          appendMessage("assistant", `Unable to load configuration: ${error.message}`, {
+            error: true,
+          });
+        }
       }
 
-      function renderExtensions(payload) {
-        const total = payload.tools.length + payload.skills.length + payload.plugins.length + payload.mcp_servers.length + payload.cron_jobs.length;
-        el("extension-count").textContent = total;
-        el("extensions").innerHTML = kvRows([
-          ["Tools", payload.tools.length],
-          ["Skills", payload.skills.length],
-          ["Plugins", payload.plugins.length],
-          ["MCP servers", payload.mcp_servers.length],
-          ["Cron jobs", payload.cron_jobs.length],
-        ]);
+      function renderStarters() {
+        el("starter-list").innerHTML = starters
+          .map(
+            (item, index) =>
+              `<button class="prompt-item" type="button" data-starter="${index}">${escapeHtml(
+                item.title,
+              )}<br><span>${escapeHtml(item.body)}</span></button>`,
+          )
+          .join("");
+        el("suggestions").innerHTML = starters
+          .map(
+            (item, index) => `
+              <button class="suggestion" type="button" data-starter="${index}">
+                <strong>${escapeHtml(item.title)}</strong>
+                <span>${escapeHtml(item.body)}</span>
+              </button>`,
+          )
+          .join("");
+        document.querySelectorAll("[data-starter]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const item = starters[Number(button.dataset.starter)];
+            el("prompt").value = item.prompt;
+            el("prompt").focus();
+          });
+        });
       }
 
-      function renderRoutes(items) {
-        el("routes").innerHTML = items.map((item) => `
-          <div class="list-item">
-            <strong>${escapeHtml(item.expert_id)}</strong>
-            <small>score ${Number(item.score).toFixed(2)} / ${escapeHtml(item.matched_keywords.join(", ") || "no keyword")}</small>
-          </div>
-        `).join("");
-        el("route").textContent = items[0] ? items[0].expert_id : "-";
+      function renderConfig(config) {
+        const primary = config.experts?.[0];
+        const model = primary?.model || "No model configured";
+        setStatus("Ready", model, true);
+        el("sidebar-model").textContent = shortModel(model);
+
+        el("models").innerHTML = (config.experts || [])
+          .map(
+            (expert) => `
+              <div class="kv-row">
+                <span>${escapeHtml(expert.id)}</span>
+                <span>
+                  <strong>${escapeHtml(shortModel(expert.model))}</strong><br>
+                  <span class="mono">${escapeHtml(expert.role)} · ${escapeHtml(
+                    expert.runtime_backend,
+                  )}</span>
+                </span>
+              </div>`,
+          )
+          .join("");
+
+        el("routing").innerHTML = kvRows({
+          Strategy: config.routing?.aggregation || "best",
+          "Top K": config.routing?.top_k ?? 1,
+          Fallbacks: (config.routing?.fallback_order || []).join(", ") || "None",
+          Config: config.config_path,
+        });
+      }
+
+      function renderRuntime(runtime) {
+        const commands = (runtime.model_commands || runtime.commands || [])
+          .map((command) => `<div class="mono">${escapeHtml(formatCommand(command))}</div>`)
+          .join("");
+        el("runtime").innerHTML =
+          kvRows({
+            Backend: runtime.backend || "unknown",
+            Platform: runtime.platform_key || runtime.platform || "unknown",
+            Python: runtime.python || "unknown",
+          }) +
+          (commands
+            ? `<div class="section-label">Start commands</div>${commands}`
+            : `<span class="muted">No runtime commands available.</span>`);
+      }
+
+      function renderExtensions(extensions) {
+        const groups = [
+          ["Tools", extensions.tools],
+          ["Skills", extensions.skills],
+          ["Plugins", extensions.plugins],
+          ["MCP", extensions.mcp_servers],
+          ["Cron", extensions.cron_jobs],
+        ];
+        el("extensions").innerHTML = groups
+          .map(([label, items]) => {
+            const badges = (items || [])
+              .slice(0, 12)
+              .map((item) => `<span class="badge">${escapeHtml(item.name || item.id || item)}</span>`)
+              .join("");
+            return `<div class="section-label">${label}</div><div class="badge-row">${
+              badges || '<span class="badge">None</span>'
+            }</div>`;
+          })
+          .join("");
+      }
+
+      function setStatus(title, subtitle, ready) {
+        el("status-title").textContent = title;
+        el("status-subtitle").textContent = subtitle;
+        el("status-dot").classList.toggle("ready", Boolean(ready));
+      }
+
+      function setAdvanced(open) {
+        el("advanced-panel").hidden = !open;
+        el("overlay").hidden = !open;
+      }
+
+      function newChat() {
+        state.messages = [];
+        el("messages").innerHTML = "";
+        el("welcome").hidden = false;
+        el("prompt").value = "";
+        el("prompt").focus();
+      }
+
+      async function generate() {
+        if (state.busy) return;
+        const prompt = el("prompt").value.trim();
+        if (!prompt) return;
+        el("prompt").value = "";
+        el("welcome").hidden = true;
+        appendMessage("user", prompt);
+        const pendingId = appendMessage("assistant", "Thinking...", { pending: true });
+        setBusy(true);
+        try {
+          const result = await api("/api/generate", {
+            method: "POST",
+            body: JSON.stringify({ prompt }),
+          });
+          updateMessage(
+            pendingId,
+            result.content || "",
+            routeMeta(result),
+          );
+          renderLastRoute(result);
+        } catch (error) {
+          updateMessage(pendingId, error.message, "", true);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      function appendMessage(role, markdown, options = {}) {
+        const id = `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        state.messages.push({ id, role, markdown });
+        const wrapper = document.createElement("article");
+        wrapper.className = `message ${role}${options.error ? " error" : ""}`;
+        wrapper.id = id;
+        const avatar = role === "user" ? "You" : "AI";
+        wrapper.innerHTML = `
+          <div class="avatar">${avatar}</div>
+          <div>
+            <div class="message-body markdown">${renderMarkdown(markdown)}</div>
+            <div class="message-meta"${options.pending ? "" : " hidden"}>Working locally</div>
+          </div>`;
+        el("messages").appendChild(wrapper);
+        scrollChat();
+        return id;
+      }
+
+      function updateMessage(id, markdown, meta = "", error = false) {
+        const node = el(id);
+        if (!node) return;
+        node.classList.toggle("error", Boolean(error));
+        const body = node.querySelector(".message-body");
+        const metaNode = node.querySelector(".message-meta");
+        body.innerHTML = renderMarkdown(markdown);
+        metaNode.textContent = meta;
+        metaNode.hidden = !meta;
+        scrollChat();
+      }
+
+      function routeMeta(result) {
+        const selected = result.route?.selected || [];
+        const first = selected[0];
+        if (!first) return "";
+        const model = (result.results || [])[0]?.model || first.expert_id;
+        const speed = (result.results || [])[0]?.predicted_tokens_per_second;
+        const speedCopy = speed ? ` · ${Number(speed).toFixed(1)} tok/s` : "";
+        return `Routed to ${first.expert_id} · ${shortModel(model)}${speedCopy}`;
+      }
+
+      function renderLastRoute(result) {
+        const selected = result.route?.selected || [];
+        const routes = selected
+          .map(
+            (route) => `
+              <div class="kv-row">
+                <span>${escapeHtml(route.expert_id)}</span>
+                <span>${escapeHtml(
+                  `score ${Number(route.score).toFixed(2)} · ${
+                    (route.matched_keywords || []).join(", ") || "default"
+                  }`,
+                )}</span>
+              </div>`,
+          )
+          .join("");
+        if (routes) {
+          el("routing").innerHTML = routes + el("routing").innerHTML;
+        }
+      }
+
+      async function runEval() {
+        el("eval-output").textContent = "Running...";
+        try {
+          const result = await api("/api/evaluate", {
+            method: "POST",
+            body: JSON.stringify({ eval_path: "experiments/eval_set_extended.jsonl" }),
+          });
+          el("eval-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("eval-output").textContent = error.message;
+        }
+      }
+
+      function setBusy(busy) {
+        state.busy = busy;
+        el("send").disabled = busy;
+        el("send").textContent = busy ? "Wait" : "Send";
+      }
+
+      function insertComposerNewline() {
+        const input = el("prompt");
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        input.value = `${input.value.slice(0, start)}\n${input.value.slice(end)}`;
+        input.selectionStart = input.selectionEnd = start + 1;
+      }
+
+      function scrollChat() {
+        requestAnimationFrame(() => {
+          el("chat-scroll").scrollTop = el("chat-scroll").scrollHeight;
+        });
       }
 
       function kvRows(rows) {
-        return rows.map(([label, value]) => `<div>${escapeHtml(label)} <span>${escapeHtml(value)}</span></div>`).join("");
+        return Object.entries(rows)
+          .map(
+            ([key, value]) => `
+              <div class="kv-row">
+                <span>${escapeHtml(key)}</span>
+                <span class="mono">${escapeHtml(String(value ?? ""))}</span>
+              </div>`,
+          )
+          .join("");
+      }
+
+      function shortModel(model) {
+        return String(model || "").split("/").pop() || String(model || "model");
+      }
+
+      function formatCommand(command) {
+        if (Array.isArray(command)) return command.join(" ");
+        return String(command || "");
+      }
+
+      function renderMarkdown(markdown) {
+        const codeBlocks = [];
+        let text = String(markdown ?? "").replace(/\r\n/g, "\n");
+        text = text.replace(/```([\w-]+)?\n([\s\S]*?)```/g, (_match, lang, code) => {
+          const language = lang ? ` data-language="${escapeHtml(lang)}"` : "";
+          const index = codeBlocks.length;
+          codeBlocks.push(`<pre><code${language}>${escapeHtml(code.trim())}</code></pre>`);
+          return `\n@@CODE_BLOCK_${index}@@\n`;
+        });
+
+        text = escapeHtml(text);
+        text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+        text = text.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+        text = text.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+        text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+        text = text.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+        text = text.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
+        text = text.replace(/^[*-] (.+)$/gm, "<li>$1</li>");
+        text = text.replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
+        text = text.replace(/\*\*([^*\n](?:.*?[^*\n])?)\*\*/g, "<strong>$1</strong>");
+        text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+        text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+        text = text
+          .split(/\n{2,}/)
+          .map((part) => {
+            const trimmed = part.trim();
+            if (!trimmed) return "";
+            if (/^<(h1|h2|h3|ul|blockquote|pre)/.test(trimmed)) return trimmed;
+            if (/^@@CODE_BLOCK_\d+@@$/.test(trimmed)) return trimmed;
+            return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+          })
+          .join("");
+
+        codeBlocks.forEach((block, index) => {
+          text = text.replace(`@@CODE_BLOCK_${index}@@`, block);
+        });
+        return text;
       }
 
       function escapeHtml(value) {
@@ -779,170 +1200,10 @@
           .replaceAll("<", "&lt;")
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
+          .replaceAll("'", "&#039;");
       }
 
-      function setAnswer(markdown, options = {}) {
-        el("answer").classList.toggle("empty", Boolean(options.empty));
-        el("answer").classList.toggle("error", Boolean(options.error));
-        el("answer").innerHTML = renderMarkdown(markdown);
-      }
-
-      function renderMarkdown(markdown) {
-        const codeBlocks = [];
-        let html = escapeHtml(markdown).replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, language, code) => {
-          const index = codeBlocks.length;
-          codeBlocks.push(`<pre><code data-language="${escapeHtml(language)}">${code.trim()}</code></pre>`);
-          return `\u0000CODE${index}\u0000`;
-        });
-
-        html = html
-          .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-          .replace(/`([^`]+)`/g, "<code>$1</code>")
-          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-          .replace(/__([^_]+)__/g, "<strong>$1</strong>")
-          .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
-          .replace(/_([^_\n]+)_/g, "<em>$1</em>");
-
-        const lines = html.split(/\n/);
-        const blocks = [];
-        let listItems = [];
-        let orderedItems = [];
-        const flushList = () => {
-          if (listItems.length) {
-            blocks.push(`<ul>${listItems.join("")}</ul>`);
-            listItems = [];
-          }
-          if (orderedItems.length) {
-            blocks.push(`<ol>${orderedItems.join("")}</ol>`);
-            orderedItems = [];
-          }
-        };
-
-        for (const line of lines) {
-          if (/^\u0000CODE\d+\u0000$/.test(line.trim())) {
-            flushList();
-            blocks.push(line.trim());
-          } else if (/^\s*[-*]\s+/.test(line)) {
-            if (orderedItems.length) {
-              blocks.push(`<ol>${orderedItems.join("")}</ol>`);
-              orderedItems = [];
-            }
-            listItems.push(`<li>${line.replace(/^\s*[-*]\s+/, "")}</li>`);
-          } else if (/^\s*\d+\.\s+/.test(line)) {
-            if (listItems.length) {
-              blocks.push(`<ul>${listItems.join("")}</ul>`);
-              listItems = [];
-            }
-            orderedItems.push(`<li>${line.replace(/^\s*\d+\.\s+/, "")}</li>`);
-          } else if (line.trim()) {
-            flushList();
-            blocks.push(`<p>${line}</p>`);
-          } else {
-            flushList();
-          }
-        }
-        flushList();
-
-        return blocks.join("").replace(/\u0000CODE(\d+)\u0000/g, (_, index) => codeBlocks[Number(index)] || "");
-      }
-
-      async function generate() {
-        const prompt = el("prompt").value.trim();
-        if (!prompt) return;
-
-        setBusy(true);
-        const started = performance.now();
-        setAnswer("Generating...");
-        try {
-          const payload = await api("/api/generate", {
-            method: "POST",
-            body: JSON.stringify({ prompt }),
-          });
-          setAnswer(payload.content);
-          el("latency").textContent = `${Math.round(performance.now() - started)} ms`;
-          el("correlation").textContent = payload.correlation_id.slice(0, 8);
-          renderRoutes(payload.route.selected);
-        } catch (error) {
-          setAnswer(error.message, { error: true });
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      async function runEval() {
-        setBusy(true);
-        setAnswer("Running eval...");
-        try {
-          const payload = await api("/api/evaluate", {
-            method: "POST",
-            body: JSON.stringify({ eval_path: "experiments/eval_set_extended.jsonl" }),
-          });
-          setAnswer("```json\n" + JSON.stringify({
-            accuracy: payload.accuracy,
-            total: payload.total,
-            by_complexity: payload.by_complexity,
-          }, null, 2) + "\n```");
-          el("latency").textContent = "-";
-          el("correlation").textContent = "eval";
-        } catch (error) {
-          setAnswer(error.message, { error: true });
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      function setBusy(value) {
-        el("send").disabled = value;
-        el("eval").disabled = value;
-      }
-
-      function insertComposerNewline() {
-        const prompt = el("prompt");
-        const start = prompt.selectionStart ?? prompt.value.length;
-        const end = prompt.selectionEnd ?? prompt.value.length;
-        prompt.value = `${prompt.value.slice(0, start)}\n${prompt.value.slice(end)}`;
-        prompt.selectionStart = start + 1;
-        prompt.selectionEnd = start + 1;
-      }
-
-      document.querySelectorAll(".sample").forEach((button) => {
-        button.addEventListener("click", () => {
-          el("prompt").value = button.dataset.prompt;
-          el("prompt").focus();
-        });
-      });
-
-      document.querySelectorAll(".tab").forEach((button) => {
-        button.addEventListener("click", () => {
-          document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
-          document.querySelectorAll(".tab-panel").forEach((item) => item.classList.add("hidden"));
-          button.classList.add("active");
-          el(`tab-${button.dataset.tab}`).classList.remove("hidden");
-        });
-      });
-
-      el("send").addEventListener("click", generate);
-      el("eval").addEventListener("click", runEval);
-      el("prompt").addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && event.altKey && !event.metaKey && !event.ctrlKey) {
-          event.preventDefault();
-          insertComposerNewline();
-          return;
-        }
-        if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-          event.preventDefault();
-          generate();
-        }
-      });
-
-      Promise.all([
-        api("/api/config").then(renderConfig),
-        api("/api/runtime").then(renderRuntime),
-        api("/api/extensions").then(renderExtensions),
-      ]).catch((error) => {
-        setAnswer(error.message, { error: true });
-      });
+      init();
     </script>
   </body>
 </html>
