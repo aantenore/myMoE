@@ -31,6 +31,7 @@ flowchart LR
 | Surface | Runtime behavior | Safety policy | Entry points |
 | --- | --- | --- | --- |
 | `memory.search` | Searches the local append-only memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| Web memory API | Saves and searches append-only local memory records. | Writes only to `<runtime.work_dir>/memory.jsonl`; no arbitrary path input. | Web `/api/memory`, Advanced Memory panel. |
 | `context.compact` | Builds a compaction prompt and, by default, asks the configured local model to summarize it. | Compute-only; uses the configured MoE expert and does not call cloud APIs. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `plugin.create` | Scaffolds a local plugin manifest and `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
@@ -73,7 +74,9 @@ Setup readiness is exposed through CLI `--setup` and web `/api/setup`. It is sid
 
 The web API exposes `/api/health` to probe configured expert endpoints before generation. OpenAI-compatible experts are checked through `/v1/models` or `/health`; non-HTTP test providers are reported as skipped. The Advanced drawer displays the same status and latency metadata.
 
-Chat continuation uses the configured context policy profile from `configs/context-policy.json`. The web API builds a `ContextBundle`, truncates recent turns to budget, and returns context telemetry with each generation so compaction pressure is observable before quality degrades. Saved chats can be compacted through `POST /api/chats/<session-id>/compact`; the local compaction expert writes a durable summary that is reused in later prompts.
+Chat continuation uses the configured context policy profile from `configs/context-policy.json`. The web API builds a `ContextBundle`, retrieves matching default-scope memories, truncates recent turns to budget, and returns context telemetry with each generation so compaction pressure is observable before quality degrades. Saved chats can be compacted through `POST /api/chats/<session-id>/compact`; the local compaction expert writes a durable summary that is reused in later prompts.
+
+Routing and generation prompts are separated: the router sees the current user request, while the selected local expert receives the context-enriched prompt. This prevents a relevant memory about coding, architecture, or translation from accidentally changing the route for an unrelated current request.
 
 ## Routing Policy
 

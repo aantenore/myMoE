@@ -32,6 +32,19 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(len(response.disagreement.pairwise_overlaps), 1)
         self.assertIn(response.disagreement.status, {"agreement_likely", "review_recommended"})
 
+    def test_route_prompt_can_differ_from_generation_prompt(self) -> None:
+        moe = LocalMoE(load_config("tests/fixtures/moe.synthetic.json"))
+
+        response = moe.generate(
+            "Relevant memory: write Python code.\n\nCurrent user message: summarize this note.",
+            route_prompt="summarize this note",
+            correlation_id="case-route-prompt",
+        )
+
+        self.assertEqual(response.route.selected[0].expert_id, "general")
+        self.assertEqual(response.results[0].expert_id, "general")
+        self.assertIn("prompt_chars=", response.content)
+
 
 if __name__ == "__main__":
     unittest.main()

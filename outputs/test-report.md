@@ -16,11 +16,12 @@ The test hardening pass covers configuration validation, routing evaluation, Ope
 - `tests/test_health.py`: runtime health status for reachable, unreachable, malformed, path-prefixed, and skipped expert providers.
 - `tests/test_cli.py`: eval mode, setup readiness, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
-- `tests/test_web.py`: web config, generation, persisted chat sessions, chat compaction APIs, chat management APIs, and eval endpoints over a local HTTP server.
+- `tests/test_web.py`: web config, generation, persisted chat sessions, chat compaction APIs, memory APIs, chat management APIs, and eval endpoints over a local HTTP server.
 - `tests/test_tools.py`: allowlisted local tool execution, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
 - `tests/test_scheduler.py`: cron dry runs, allowlisted actions, unsupported command rejection, and write-local confirmation.
 - `tests/test_context.py`: cache-friendly context section ordering, policy loading, budget truncation, memory snippet ranking, compaction prompt requirements.
+- `tests/test_orchestrator.py`: correlation propagation, compare mode, and separated routing/generation prompts.
 - `tests/test_memory.py`: append-only local memory writes, scoped listing, temporal validity, keyword retrieval.
 - `experiments/eval_set_extended.jsonl`: 26 router cases across coding, architecture, general writing, and mixed prompts.
 - `experiments/run_quality_gate.py`: project-level quality gate.
@@ -36,7 +37,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `123/123` passed
+- unit/contract tests: `125/125` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `26/26`, accuracy `1.0`
 - quality gate: passed
@@ -49,6 +50,7 @@ Result:
 - Playwright browser smoke for runtime health panel: passed
 - Playwright browser smoke for setup readiness panel: passed
 - Playwright browser smoke for chat compaction action: passed
+- Playwright browser smoke for memory panel and context retrieval: passed
 - live local-model dashboard screenshot regenerated with `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`: passed
 
 ## Notes

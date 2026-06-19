@@ -343,6 +343,45 @@ class WebTests(unittest.TestCase):
         self.assertIn("summary", second["context"]["sections"])
         self.assertIn("## Summary", exported)
 
+    def test_memory_api_and_context_retrieval_do_not_distort_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                memory = _post_json(
+                    base_url + "/api/memory",
+                    {
+                        "text": "Antonio preference: Python code examples in local AI apps.",
+                        "scope": "default",
+                        "kind": "preference",
+                        "metadata": {"source": "test"},
+                    },
+                )
+                searched = _get_json(base_url + "/api/memory?scope=default&query=Antonio%20preference")
+                result = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "Summarize Antonio preference."},
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(searched["records"][0]["id"], memory["id"])
+        self.assertEqual(result["context"]["memory_ids"], [memory["id"]])
+        self.assertIn("memory", result["context"]["sections"])
+        self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
+        self.assertEqual(result["results"][0]["expert_id"], "general")
+        self.assertGreater(_prompt_chars(result["content"]), len("Summarize Antonio preference."))
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -375,6 +414,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("cron-confirm-writes", html)
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
+        self.assertIn("saveMemory", html)
+        self.assertIn("searchMemory", html)
+        self.assertIn("/api/memory", html)
         self.assertIn("/api/chats", html)
         self.assertIn("session-list", html)
         self.assertIn("activeSessionId", html)

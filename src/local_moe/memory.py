@@ -28,6 +28,22 @@ class MemoryMaintenanceReport:
     expired_records: int
 
 
+def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": record.id,
+        "scope": record.scope,
+        "kind": record.kind,
+        "text": record.text,
+        "metadata": record.metadata,
+        "created_at": record.created_at,
+        "valid_from": record.valid_from,
+        "valid_until": record.valid_until,
+    }
+    if score is not None:
+        payload["score"] = score
+    return payload
+
+
 class FileMemoryStore:
     """Append-only local memory store; simple first layer before vector/graph backends."""
 

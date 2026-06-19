@@ -63,6 +63,8 @@ When `/api/generate` receives a `session_id`, the web layer builds a `ContextBun
 
 Saved sessions include a durable `summary` field. `POST /api/chats/<session-id>/compact` calls the configured local compaction expert, updates that summary, appends a system metadata event, and reuses the summary in later context bundles.
 
+The web API also retrieves matching records from `<runtime.work_dir>/memory.jsonl` for each prompt. Retrieved memories are injected into the generation context and reported as `memory_ids` in response telemetry. Routing still uses the current user prompt, not the memory-enriched prompt, so durable memories do not accidentally reclassify a request.
+
 The active policy is configured through the app runtime fields:
 
 ```json

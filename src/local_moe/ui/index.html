@@ -946,6 +946,28 @@
           <div id="extensions"></div>
         </section>
         <section class="advanced-section">
+          <h2>Memory</h2>
+          <div class="tool-controls">
+            <div class="tool-row">
+              <input class="tool-select" id="memory-scope" aria-label="Memory scope" value="default" />
+              <button class="ghost-button" id="save-memory" type="button">Remember</button>
+            </div>
+            <textarea
+              class="tool-input"
+              id="memory-text"
+              rows="4"
+              spellcheck="true"
+              aria-label="Memory text"
+              placeholder="A reusable preference, decision, or fact..."
+            ></textarea>
+            <div class="tool-row">
+              <input class="tool-select" id="memory-query" aria-label="Memory query" placeholder="Search memory" />
+              <button class="ghost-button" id="search-memory" type="button">Search</button>
+            </div>
+            <pre class="eval-output" id="memory-output">No memory action yet.</pre>
+          </div>
+        </section>
+        <section class="advanced-section">
           <h2>Tools</h2>
           <div class="tool-controls">
             <div class="tool-row">
@@ -1066,6 +1088,8 @@
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
+        el("save-memory").addEventListener("click", saveMemory);
+        el("search-memory").addEventListener("click", searchMemory);
         el("refresh-health").addEventListener("click", refreshHealth);
         el("tool-select").addEventListener("change", setDefaultToolInput);
         el("chat-search").addEventListener("input", () => {
@@ -1616,6 +1640,42 @@
           el("tool-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("tool-output").textContent = error.message;
+        }
+      }
+
+      async function saveMemory() {
+        const text = el("memory-text").value.trim();
+        if (!text) return;
+        el("memory-output").textContent = "Saving...";
+        try {
+          const result = await api("/api/memory", {
+            method: "POST",
+            body: JSON.stringify({
+              text,
+              scope: el("memory-scope").value.trim() || "default",
+              kind: "fact",
+              metadata: { source: "ui" },
+            }),
+          });
+          el("memory-output").textContent = JSON.stringify(result, null, 2);
+          el("memory-text").value = "";
+        } catch (error) {
+          el("memory-output").textContent = error.message;
+        }
+      }
+
+      async function searchMemory() {
+        const query = el("memory-query").value.trim();
+        const scope = el("memory-scope").value.trim() || "default";
+        const path = query
+          ? `/api/memory?scope=${encodeURIComponent(scope)}&query=${encodeURIComponent(query)}`
+          : `/api/memory?scope=${encodeURIComponent(scope)}`;
+        el("memory-output").textContent = "Searching...";
+        try {
+          const result = await api(path);
+          el("memory-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("memory-output").textContent = error.message;
         }
       }
 
