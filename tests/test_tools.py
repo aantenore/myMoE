@@ -75,6 +75,31 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(search[0][0].kind, "knowledge")
         self.assertEqual(search[0][0].metadata["source"], "test")
 
+    def test_memory_forget_requires_confirmation_and_deletes_document(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "memory.jsonl"
+            store = FileMemoryStore(memory_path)
+            report = store.ingest_document(
+                "Forgettable local knowledge.",
+                title="Forgettable",
+                scope="project",
+            )
+            runner = LocalToolRunner(load_extension_registry(), memory_path=memory_path)
+
+            with self.assertRaises(ToolExecutionError):
+                runner.run("memory.forget", {"document_id": report.document_id})
+
+            result = runner.run(
+                "memory.forget",
+                {"document_id": report.document_id, "confirm": True},
+            )
+            remaining = FileMemoryStore(memory_path).list(scope="project")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["removed_count"], 1)
+        self.assertEqual(result.payload["removed_ids"], list(report.record_ids))
+        self.assertEqual(remaining, [])
+
     def test_context_compact_can_use_configured_model(self) -> None:
         runner = LocalToolRunner(
             load_extension_registry(),

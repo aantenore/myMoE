@@ -25,6 +25,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add sanitized performance decision report from CLI, API, and UI.
 - [x] Add progressive streamed chat responses with non-streaming fallback.
 - [x] Add local knowledge import into context retrieval.
+- [x] Add guarded local memory and knowledge deletion controls.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Add guarded extension self-configuration for MCP server and cron job entries.

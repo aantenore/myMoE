@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from uuid import uuid4
 
 
@@ -37,6 +37,14 @@ class KnowledgeIngestReport:
     record_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class MemoryForgetReport:
+    target: str
+    removed_count: int
+    remaining_count: int
+    removed_ids: tuple[str, ...]
+
+
 def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": record.id,
@@ -54,7 +62,7 @@ def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -
 
 
 class FileMemoryStore:
-    """Append-only local memory store; simple first layer before vector/graph backends."""
+    """Local JSONL memory store; simple first layer before vector/graph backends."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -88,6 +96,21 @@ class FileMemoryStore:
         if scope is not None:
             records = [record for record in records if record.scope == scope]
         return records
+
+    def forget_record(self, record_id: str) -> MemoryForgetReport:
+        target = str(record_id).strip()
+        if not target:
+            raise ValueError("record_id is required.")
+        return self._forget(lambda record: record.id == target, target=target)
+
+    def forget_document(self, document_id: str) -> MemoryForgetReport:
+        target = str(document_id).strip()
+        if not target:
+            raise ValueError("document_id is required.")
+        return self._forget(
+            lambda record: str(record.metadata.get("document_id", "")) == target,
+            target=target,
+        )
 
     def search(
         self,
@@ -162,6 +185,24 @@ class FileMemoryStore:
             expired_records=len(records) - len(active),
         )
 
+    def _forget(self, predicate: Callable[[MemoryRecord], bool], *, target: str) -> MemoryForgetReport:
+        records = _read_records(self.path)
+        kept: list[MemoryRecord] = []
+        removed: list[MemoryRecord] = []
+        for record in records:
+            if predicate(record):
+                removed.append(record)
+            else:
+                kept.append(record)
+        if removed:
+            _write_records(self.path, kept)
+        return MemoryForgetReport(
+            target=target,
+            removed_count=len(removed),
+            remaining_count=len(kept),
+            removed_ids=tuple(record.id for record in removed),
+        )
+
 
 def _read_records(path: Path) -> list[MemoryRecord]:
     if not path.exists():
@@ -184,6 +225,15 @@ def _read_records(path: Path) -> list[MemoryRecord]:
             )
         )
     return records
+
+
+def _write_records(path: Path, records: list[MemoryRecord]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record.__dict__, ensure_ascii=True) + "\n")
+    tmp.replace(path)
 
 
 def _terms(text: str) -> set[str]:

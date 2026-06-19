@@ -45,6 +45,7 @@ class LocalToolRunner:
 
     _SUPPORTED = {
         "memory.search",
+        "memory.forget",
         "knowledge.ingest",
         "context.compact",
         "extension.audit",
@@ -88,6 +89,8 @@ class LocalToolRunner:
 
         if tool.name == "memory.search":
             return self._memory_search(tool, tool_payload)
+        if tool.name == "memory.forget":
+            return self._memory_forget(tool, tool_payload)
         if tool.name == "knowledge.ingest":
             return self._knowledge_ingest(tool, tool_payload)
         if tool.name == "context.compact":
@@ -146,6 +149,30 @@ class LocalToolRunner:
                     }
                     for record, score in results
                 ],
+            },
+        )
+
+    def _memory_forget(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError("memory.forget requires confirm=true because it deletes local records.")
+        record_id = _optional_text(payload, "record_id")
+        document_id = _optional_text(payload, "document_id")
+        if bool(record_id) == bool(document_id):
+            raise ToolExecutionError("memory.forget requires exactly one of record_id or document_id.")
+        store = FileMemoryStore(self._memory_path)
+        try:
+            report = store.forget_record(record_id) if record_id else store.forget_document(document_id or "")
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return _ok(
+            tool,
+            "Local memory records removed.",
+            {
+                "target": report.target,
+                "removed_count": report.removed_count,
+                "remaining_count": report.remaining_count,
+                "removed_ids": list(report.removed_ids),
+                "memory_path": str(self._memory_path),
             },
         )
 

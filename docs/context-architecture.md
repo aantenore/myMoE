@@ -104,7 +104,7 @@ The first memory layer is intentionally simple:
 src/local_moe/memory.py
 ```
 
-It is an append-only JSONL store with:
+It is a local JSONL store with guarded deletion support for records and imported knowledge documents, plus:
 
 - `scope`,
 - `kind`,

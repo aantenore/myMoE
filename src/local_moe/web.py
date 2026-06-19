@@ -807,7 +807,75 @@ def _make_handler(
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_DELETE(self) -> None:
-            path = urlparse(self.path).path
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path
+            confirm = parse_qs(parsed_url.query).get("confirm", ["false"])[0] == "true"
+            if path.startswith("/api/memory/"):
+                if not confirm:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Memory deletion requires confirm=true.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                record_id = _path_tail(path, "/api/memory/")
+                try:
+                    report = memory_store.forget_record(record_id)
+                except ValueError as exc:
+                    _send_json(
+                        self,
+                        {"error": "invalid_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(
+                    self,
+                    {
+                        "deleted": report.removed_count > 0,
+                        "target": report.target,
+                        "removed_count": report.removed_count,
+                        "remaining_count": report.remaining_count,
+                        "removed_ids": list(report.removed_ids),
+                    },
+                )
+                return
+
+            if path.startswith("/api/knowledge/"):
+                if not confirm:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Knowledge deletion requires confirm=true.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                document_id = _path_tail(path, "/api/knowledge/")
+                try:
+                    report = memory_store.forget_document(document_id)
+                except ValueError as exc:
+                    _send_json(
+                        self,
+                        {"error": "invalid_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(
+                    self,
+                    {
+                        "deleted": report.removed_count > 0,
+                        "target": report.target,
+                        "removed_count": report.removed_count,
+                        "remaining_count": report.remaining_count,
+                        "removed_ids": list(report.removed_ids),
+                    },
+                )
+                return
+
             if path.startswith("/api/chats/"):
                 session_id = _path_tail(path, "/api/chats/")
                 deleted = chat_store.delete_session(session_id)
