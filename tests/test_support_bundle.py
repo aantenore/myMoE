@@ -43,6 +43,9 @@ class SupportBundleTests(unittest.TestCase):
         self.assertEqual(bundle["hardware_profile"]["data"]["machine"], "test")
         self.assertIn("chat transcripts", bundle["privacy"]["excludes"])
         self.assertIn("memory records", bundle["privacy"]["excludes"])
+        self.assertIn("benchmark prompt response excerpts", bundle["privacy"]["excludes"])
+        self.assertEqual(bundle["performance"]["schema_version"], "1.0")
+        self.assertNotIn("content_excerpt", str(bundle["performance"]))
         self.assertIn("chat_store", bundle["runtime_files"])
 
 

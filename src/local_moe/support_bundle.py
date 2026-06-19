@@ -8,6 +8,7 @@ from typing import Any
 from .doctor import build_doctor_report
 from .extensions import ExtensionRegistry
 from .model_servers import ModelServerManager
+from .performance_report import build_performance_report
 
 
 def build_support_bundle(
@@ -36,6 +37,7 @@ def build_support_bundle(
             "includes": [
                 "system doctor report",
                 "quality gate status",
+                "sanitized performance report",
                 "hardware profile",
                 "configured model server log paths",
                 "runtime file paths",
@@ -45,11 +47,13 @@ def build_support_bundle(
                 "memory records",
                 "environment variables",
                 "model log contents",
+                "benchmark prompt response excerpts",
                 "API keys or secrets",
             ],
         },
         "doctor": doctor,
         "quality_gate": _read_json_artifact(quality_gate_path),
+        "performance": build_performance_report(),
         "hardware_profile": _read_json_artifact(hardware_profile_path),
         "runtime_files": _runtime_files(app_config),
         "log_paths": _log_paths(doctor),

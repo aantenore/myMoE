@@ -136,6 +136,48 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["doctor"]["status"], "ready")
         self.assertIn("chat transcripts", payload["privacy"]["excludes"])
         self.assertIn("quality_gate", payload)
+        self.assertIn("performance", payload)
+
+    def test_performance_report_prints_runtime_decision(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--performance-report",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertIn(payload["status"], {"ready", "ready_partial"})
+        self.assertEqual(payload["decision"]["primary_general"]["candidate_id"], "qwen3-30b-a3b-2507-mlx-4bit")
+        self.assertNotIn("content_excerpt", completed.stdout)
+
+    def test_performance_report_can_render_markdown(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--performance-report",
+                "--performance-report-format",
+                "markdown",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("# myMoE Performance Report", completed.stdout)
+        self.assertIn("Primary general expert", completed.stdout)
 
     def test_prepare_runtime_preview_prints_setup_run(self) -> None:
         completed = subprocess.run(

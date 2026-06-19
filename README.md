@@ -128,13 +128,20 @@ Run the full local system doctor when you want one readiness report across setup
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 ```
 
+Inspect the latest local performance decision without running a new benchmark:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report --performance-report-format markdown
+```
+
 Create a privacy-safe support bundle for issues or handoff:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, quality gate status, hardware profile, runtime file paths, and model log paths. It intentionally excludes chat transcripts, memory records, environment variables, API keys, and log contents.
+The bundle includes the System Doctor report, quality gate status, sanitized performance report, hardware profile, runtime file paths, and model log paths. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, and log contents.
 
 Inspect configured model process status:
 
@@ -170,7 +177,7 @@ Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details 
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-The Advanced drawer includes System Doctor, setup status, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, setup status, performance decision, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 
@@ -244,6 +251,7 @@ src/local_moe/
   compaction.py
   hardware.py
   memory.py
+  performance_report.py
   router.py
   providers.py
   orchestrator.py

@@ -14,6 +14,7 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
 from .orchestrator import LocalMoE
+from .performance_report import build_performance_report, render_performance_report_markdown
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -30,6 +31,9 @@ def main() -> None:
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     parser.add_argument("--doctor", action="store_true")
+    parser.add_argument("--performance-report", action="store_true")
+    parser.add_argument("--performance-report-format", choices=["json", "markdown"], default="json")
+    parser.add_argument("--performance-report-out")
     parser.add_argument("--support-bundle", action="store_true")
     parser.add_argument("--support-bundle-out")
     parser.add_argument("--bootstrap", action="store_true")
@@ -69,6 +73,21 @@ def main() -> None:
                 indent=2,
             )
         )
+        return
+
+    if args.performance_report or args.performance_report_out:
+        payload = build_performance_report()
+        if args.performance_report_format == "markdown":
+            rendered = render_performance_report_markdown(payload)
+        else:
+            rendered = json.dumps(payload, indent=2)
+        if args.performance_report_out:
+            out = Path(args.performance_report_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(rendered, encoding="utf-8")
+            print(json.dumps({"written": str(out)}, indent=2))
+        else:
+            print(rendered)
         return
 
     if args.support_bundle or args.support_bundle_out:
