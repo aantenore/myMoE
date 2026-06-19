@@ -63,6 +63,7 @@ class WebTests(unittest.TestCase):
         try:
             base_url = f"http://127.0.0.1:{server.server_address[1]}"
             runtime = _get_json(base_url + "/api/runtime")
+            processes = _get_json(base_url + "/api/models/processes")
             setup = _get_json(base_url + "/api/setup")
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
@@ -72,12 +73,37 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertEqual(processes["count"], 0)
+        self.assertEqual(processes["servers"], [])
         self.assertEqual(setup["status"], "ready")
         self.assertEqual(setup["models"], [])
         self.assertIn("download_command_display", setup)
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
+
+    def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            status = _get_json(base_url + "/api/models/processes")
+            guarded_start = _post_json(base_url + "/api/models/start", {})
+            confirmed_start = _post_json(base_url + "/api/models/start", {"confirm": True})
+            guarded_stop = _post_json(base_url + "/api/models/stop", {})
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(status["count"], 0)
+        self.assertEqual(guarded_start["status"], "confirmation_required")
+        self.assertFalse(guarded_start["ok"])
+        self.assertEqual(confirmed_start["status"], "no_commands")
+        self.assertTrue(confirmed_start["ok"])
+        self.assertEqual(guarded_stop["status"], "confirmation_required")
+        self.assertFalse(guarded_stop["ok"])
 
     def test_runs_setup_endpoint_preview_and_confirmation_guard(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -424,6 +450,12 @@ class WebTests(unittest.TestCase):
         self.assertIn("What should we work on?", html)
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
+        self.assertIn("/api/models/processes", html)
+        self.assertIn("/api/models/start", html)
+        self.assertIn("/api/models/stop", html)
+        self.assertIn("renderModelProcesses", html)
+        self.assertIn("Start models", html)
+        self.assertIn("Stop managed", html)
         self.assertIn("/api/setup", html)
         self.assertIn("/api/setup/run", html)
         self.assertIn("renderSetup", html)

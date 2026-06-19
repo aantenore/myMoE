@@ -923,6 +923,16 @@
         <section class="advanced-section">
           <h2>Runtime</h2>
           <div class="kv" id="runtime"></div>
+          <div class="kv" id="model-processes"></div>
+          <label class="check-row">
+            <input id="models-confirm" type="checkbox" />
+            <span>Confirm model process changes</span>
+          </label>
+          <div class="tool-row">
+            <button class="ghost-button" id="start-models" type="button">Start models</button>
+            <button class="ghost-button" id="stop-models" type="button">Stop managed</button>
+          </div>
+          <pre class="eval-output" id="models-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
           <h2>Setup</h2>
@@ -1013,6 +1023,7 @@
         busy: false,
         config: null,
         runtime: null,
+        modelProcesses: null,
         setup: null,
         health: null,
         extensions: null,
@@ -1093,6 +1104,8 @@
         el("advanced-toggle").addEventListener("click", () => setAdvanced(true));
         el("advanced-close").addEventListener("click", () => setAdvanced(false));
         el("overlay").addEventListener("click", () => setAdvanced(false));
+        el("start-models").addEventListener("click", startModels);
+        el("stop-models").addEventListener("click", stopModels);
         el("run-setup").addEventListener("click", runSetup);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
@@ -1109,9 +1122,10 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, setup, health, extensions, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, health, extensions, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
+            api("/api/models/processes"),
             api("/api/setup"),
             api("/api/health"),
             api("/api/extensions"),
@@ -1119,12 +1133,14 @@
           ]);
           state.config = config;
           state.runtime = runtime;
+          state.modelProcesses = modelProcesses;
           state.setup = setup;
           state.health = health;
           state.extensions = extensions;
           state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
+          renderModelProcesses(modelProcesses);
           renderSetup(setup);
           renderHealth(health);
           renderExtensions(extensions);
@@ -1331,6 +1347,26 @@
             : `<span class="muted">No runtime commands available.</span>`);
       }
 
+      function renderModelProcesses(processes) {
+        const servers = processes?.servers || [];
+        const rows = servers
+          .map(
+            (server) => `
+              <div class="kv-row">
+                <span>${escapeHtml(server.expert_id)}</span>
+                <span>
+                  <strong>${escapeHtml(server.status)}</strong>${server.pid ? ` · pid ${escapeHtml(server.pid)}` : ""}<br>
+                  <span class="mono">${escapeHtml(shortModel(server.model))}</span><br>
+                  <span class="muted">${escapeHtml(server.message || server.base_url || server.log_path || "")}</span>
+                </span>
+              </div>`,
+          )
+          .join("");
+        el("model-processes").innerHTML =
+          `<div class="section-label">Model processes</div>` +
+          (rows || '<span class="muted">No model process commands are configured.</span>');
+      }
+
       function renderSetup(setup) {
         const models = (setup.models || [])
           .map(
@@ -1389,8 +1425,43 @@
           const health = await api("/api/health");
           state.health = health;
           renderHealth(health);
+          const processes = await api("/api/models/processes");
+          state.modelProcesses = processes;
+          renderModelProcesses(processes);
         } catch (error) {
           el("health").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function startModels() {
+        el("models-output").textContent = "Starting...";
+        try {
+          const result = await api("/api/models/start", {
+            method: "POST",
+            body: JSON.stringify({
+              confirm: el("models-confirm").checked,
+            }),
+          });
+          el("models-output").textContent = JSON.stringify(result, null, 2);
+          await refreshHealth();
+        } catch (error) {
+          el("models-output").textContent = error.message;
+        }
+      }
+
+      async function stopModels() {
+        el("models-output").textContent = "Stopping...";
+        try {
+          const result = await api("/api/models/stop", {
+            method: "POST",
+            body: JSON.stringify({
+              confirm: el("models-confirm").checked,
+            }),
+          });
+          el("models-output").textContent = JSON.stringify(result, null, 2);
+          await refreshHealth();
+        } catch (error) {
+          el("models-output").textContent = error.message;
         }
       }
 

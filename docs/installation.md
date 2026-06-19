@@ -75,6 +75,22 @@ For constrained machines, start only the first configured model:
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 ```
 
+Inspect model process status from the app CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-status
+```
+
+Start models from the app CLI in the foreground:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --start-models \
+  --models-confirm
+```
+
+The web UI exposes equivalent guarded start/stop controls in Advanced Runtime. It skips endpoints that already respond and stops only processes started by the current web server.
+
 Fast MLX config for first-run demos:
 
 ```bash

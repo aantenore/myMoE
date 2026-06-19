@@ -20,6 +20,7 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
 from .health import check_runtime_health, runtime_health_payload
 from .memory import FileMemoryStore, memory_record_payload
+from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
@@ -50,6 +51,9 @@ def main() -> None:
     finally:
         if cron_runner is not None:
             cron_runner.stop()
+        model_manager = getattr(server, "model_server_manager", None)
+        if model_manager is not None:
+            model_manager.close()
         server.server_close()
 
 
@@ -76,6 +80,11 @@ def build_server(
     )
     chat_store = FileChatStore(_chat_store_path(app_config))
     memory_store = FileMemoryStore(_memory_store_path(app_config))
+    model_manager = ModelServerManager.from_config(
+        config,
+        preferred_backends=app_config.runtime.preferred_backends,
+        work_dir=app_config.runtime.work_dir,
+    )
     cron_runner = BackgroundCronRunner(
         registry.cron_jobs,
         state_path=_cron_state_path(app_config),
@@ -94,10 +103,12 @@ def build_server(
         registry=registry,
         chat_store=chat_store,
         memory_store=memory_store,
+        model_manager=model_manager,
         cron_runner=cron_runner,
     )
     server = ThreadingHTTPServer((host, port), handler)
     server.background_cron_runner = cron_runner  # type: ignore[attr-defined]
+    server.model_server_manager = model_manager  # type: ignore[attr-defined]
     return server
 
 
@@ -111,6 +122,7 @@ def _make_handler(
     registry: object,
     chat_store: FileChatStore,
     memory_store: FileMemoryStore,
+    model_manager: ModelServerManager,
     cron_runner: BackgroundCronRunner,
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
@@ -137,6 +149,10 @@ def _make_handler(
             if path == "/api/runtime":
                 plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
                 _send_json(self, runtime_plan_payload(plan))
+                return
+
+            if path == "/api/models/processes":
+                _send_json(self, model_manager.status())
                 return
 
             if path == "/api/setup":
@@ -423,6 +439,21 @@ def _make_handler(
                     confirm=bool(payload.get("confirm", False)),
                 )
                 _send_json(self, setup_run_payload(result))
+                return
+
+            if path == "/api/models/start":
+                payload = _read_json(self)
+                action = model_manager.start(
+                    confirm=bool(payload.get("confirm", False)),
+                    only_first=bool(payload.get("only_first", False)),
+                )
+                _send_json(self, model_server_action_payload(action))
+                return
+
+            if path == "/api/models/stop":
+                payload = _read_json(self)
+                action = model_manager.stop(confirm=bool(payload.get("confirm", False)))
+                _send_json(self, model_server_action_payload(action))
                 return
 
             if path == "/api/cron/run":
