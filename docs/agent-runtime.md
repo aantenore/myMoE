@@ -73,7 +73,7 @@ Setup readiness is exposed through CLI `--setup` and web `/api/setup`. It is sid
 
 The web API exposes `/api/health` to probe configured expert endpoints before generation. OpenAI-compatible experts are checked through `/v1/models` or `/health`; non-HTTP test providers are reported as skipped. The Advanced drawer displays the same status and latency metadata.
 
-Chat continuation uses the configured context policy profile from `configs/context-policy.json`. The web API builds a `ContextBundle`, truncates recent turns to budget, and returns context telemetry with each generation so compaction pressure is observable before quality degrades.
+Chat continuation uses the configured context policy profile from `configs/context-policy.json`. The web API builds a `ContextBundle`, truncates recent turns to budget, and returns context telemetry with each generation so compaction pressure is observable before quality degrades. Saved chats can be compacted through `POST /api/chats/<session-id>/compact`; the local compaction expert writes a durable summary that is reused in later prompts.
 
 ## Routing Policy
 

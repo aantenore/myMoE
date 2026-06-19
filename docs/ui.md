@@ -42,12 +42,16 @@ curl -X POST http://127.0.0.1:8089/api/generate \
   --data '{"session_id":"<session-id>","prompt":"Continue this plan."}'
 ```
 
-Rename, export, or delete a saved chat:
+Rename, compact, export, or delete a saved chat:
 
 ```bash
 curl -X PATCH http://127.0.0.1:8089/api/chats/<session-id> \
   -H 'Content-Type: application/json' \
   --data '{"title":"Architecture notes"}'
+
+curl -X POST http://127.0.0.1:8089/api/chats/<session-id>/compact \
+  -H 'Content-Type: application/json' \
+  --data '{}'
 
 curl http://127.0.0.1:8089/api/chats/<session-id>/export.md
 
@@ -75,7 +79,9 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 - concise model status,
 - Advanced drawer hidden by default.
 
-Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy and returns context telemetry with the generation response.
+Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy and returns context telemetry with the generation response.
+
+The Compact action calls the configured local compaction expert, stores a durable session summary, and reuses that summary in later context bundles. Exported Markdown includes the current summary.
 
 The Advanced drawer contains runtime commands, setup readiness, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 

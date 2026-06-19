@@ -68,6 +68,36 @@ class ChatStoreTests(unittest.TestCase):
         self.assertIn("## Assistant", markdown)
         self.assertIn("Routed to", markdown)
 
+    def test_updates_searches_and_exports_chat_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chats.json"
+            store = FileChatStore(path)
+            session = store.append_exchange(
+                session_id=None,
+                user_content="Discuss long context handling.",
+                assistant_content="Use bounded turns and summaries.",
+            )
+            updated = store.update_summary(
+                session.id,
+                "Decision: keep a durable summary for compacted turns.",
+                meta={"expert_id": "fast_fallback"},
+            )
+            reloaded = FileChatStore(path).get_session(session.id)
+            searched = FileChatStore(path).search_sessions("durable summary")
+            markdown = FileChatStore(path).export_markdown(session.id)
+
+        self.assertEqual(updated.summary, "Decision: keep a durable summary for compacted turns.")
+        self.assertIsNotNone(updated.summary_updated_at)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.summary, updated.summary)
+        self.assertEqual(reloaded.messages[-1].role, "system")
+        self.assertEqual(reloaded.messages[-1].meta["kind"], "summary_update")
+        self.assertEqual(searched[0].id, session.id)
+        self.assertIn("## Summary", markdown)
+        self.assertIn("durable summary", markdown)
+        self.assertNotIn("Chat summary updated.", markdown)
+
     def test_rejects_unknown_session_on_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileChatStore(Path(tmp) / "chats.json")

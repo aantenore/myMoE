@@ -24,6 +24,8 @@ class ChatSession:
     title: str
     created_at: str
     updated_at: str
+    summary: str = ""
+    summary_updated_at: str | None = None
     messages: tuple[ChatMessage, ...] = ()
 
 
@@ -58,6 +60,7 @@ class FileChatStore:
             session
             for session in sessions
             if terms <= _terms(session.title)
+            or terms <= _terms(session.summary)
             or any(terms <= _terms(message.content) for message in session.messages)
         ]
         return _summaries(matched, limit=limit)
@@ -75,6 +78,8 @@ class FileChatStore:
                 title=clean_title,
                 created_at=current.created_at,
                 updated_at=_now_iso(),
+                summary=current.summary,
+                summary_updated_at=current.summary_updated_at,
                 messages=current.messages,
             )
             sessions[index] = session
@@ -101,6 +106,8 @@ class FileChatStore:
             title=_clean_title(title) or "New chat",
             created_at=now,
             updated_at=now,
+            summary="",
+            summary_updated_at=None,
             messages=(),
         )
         with self._lock:
@@ -135,6 +142,8 @@ class FileChatStore:
                     title=_title_from_prompt(user_content),
                     created_at=now,
                     updated_at=now,
+                    summary="",
+                    summary_updated_at=None,
                     messages=(user_message, assistant_message),
                 )
                 sessions.append(session)
@@ -146,9 +155,50 @@ class FileChatStore:
                     title=title,
                     created_at=current.created_at,
                     updated_at=now,
+                    summary=current.summary,
+                    summary_updated_at=current.summary_updated_at,
                     messages=(*current.messages, user_message, assistant_message),
                 )
                 sessions[index] = session
+            self._write_unlocked(sessions)
+        return session
+
+    def update_summary(
+        self,
+        session_id: str,
+        summary: str,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> ChatSession:
+        clean_summary = str(summary or "").strip()
+        if not clean_summary:
+            raise ValueError("Chat summary is required.")
+        now = _now_iso()
+        system_message = ChatMessage(
+            id=str(uuid4()),
+            role="system",
+            content="Chat summary updated.",
+            created_at=now,
+            meta={
+                "kind": "summary_update",
+                "summary": clean_summary,
+                **(meta or {}),
+            },
+        )
+        with self._lock:
+            sessions = self._read_unlocked()
+            index = _find_session_index(sessions, session_id)
+            current = sessions[index]
+            session = ChatSession(
+                id=current.id,
+                title=current.title,
+                created_at=current.created_at,
+                updated_at=now,
+                summary=clean_summary,
+                summary_updated_at=now,
+                messages=(*current.messages, system_message),
+            )
+            sessions[index] = session
             self._write_unlocked(sessions)
         return session
 
@@ -211,6 +261,8 @@ def chat_session_payload(session: ChatSession) -> dict[str, Any]:
         "title": session.title,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
+        "summary": session.summary,
+        "summary_updated_at": session.summary_updated_at,
         "message_count": len(session.messages),
         "messages": [
             {
@@ -235,7 +287,11 @@ def chat_session_markdown(session: ChatSession) -> str:
         f"- Messages: `{len(session.messages)}`",
         "",
     ]
+    if session.summary.strip():
+        lines.extend(["## Summary", "", session.summary.strip(), ""])
     for message in session.messages:
+        if message.role == "system":
+            continue
         heading = "User" if message.role == "user" else "Assistant"
         lines.extend(
             [
@@ -269,6 +325,10 @@ def _parse_session(raw: object) -> ChatSession:
         title=str(raw.get("title", "New chat")),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
+        summary=str(raw.get("summary", "")),
+        summary_updated_at=(
+            str(raw["summary_updated_at"]) if raw.get("summary_updated_at") is not None else None
+        ),
         messages=tuple(_parse_message(item) for item in messages_raw),
     )
 
