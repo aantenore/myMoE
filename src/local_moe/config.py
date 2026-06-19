@@ -42,6 +42,14 @@ class SemanticRoutingConfig:
 
 
 @dataclass(frozen=True)
+class DistilledRoutingConfig:
+    enabled: bool = False
+    artifact_path: str = ""
+    min_confidence: float = 0.12
+    weight: float = 2.0
+
+
+@dataclass(frozen=True)
 class RoutingRule:
     expert_id: str
     keywords: tuple[str, ...]
@@ -55,6 +63,7 @@ class RoutingConfig:
     aggregation: str = "best"
     strategy: str = "rules"
     semantic: SemanticRoutingConfig = field(default_factory=SemanticRoutingConfig)
+    distilled: DistilledRoutingConfig = field(default_factory=DistilledRoutingConfig)
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,7 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         aggregation=str(routing_raw.get("aggregation", "best")),
         strategy=str(routing_raw.get("strategy", "rules")),
         semantic=_parse_semantic_routing(routing_raw.get("semantic", {})),
+        distilled=_parse_distilled_routing(routing_raw.get("distilled", {})),
     )
 
     experts = tuple(_parse_expert(item) for item in raw.get("experts", []))
@@ -111,7 +121,7 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         supported = ", ".join(sorted(supported_aggregation))
         raise ConfigError(f"Unsupported aggregation '{routing.aggregation}'. Use one of: {supported}.")
 
-    supported_strategies = {"rules", "hybrid"}
+    supported_strategies = {"distilled", "hybrid", "rules"}
     if routing.strategy not in supported_strategies:
         supported = ", ".join(sorted(supported_strategies))
         raise ConfigError(f"Unsupported routing strategy '{routing.strategy}'. Use one of: {supported}.")
@@ -124,6 +134,12 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         for example in routing.semantic.examples:
             if example.expert_id not in expert_ids:
                 raise ConfigError(f"Semantic route references unknown expert: {example.expert_id}")
+
+    if routing.distilled.enabled:
+        if not routing.distilled.artifact_path:
+            raise ConfigError("routing.distilled.artifact_path is required when distilled routing is enabled.")
+        if routing.distilled.min_confidence < 0 or routing.distilled.weight < 0:
+            raise ConfigError("routing.distilled min_confidence and weight must be non-negative.")
 
     return MoEConfig(routing=routing, experts=experts, rules=rules)
 
@@ -190,4 +206,15 @@ def _parse_semantic_example(raw: object) -> SemanticRouteExample:
         expert_id=str(raw["expert_id"]),
         utterances=utterances,
         weight=float(raw.get("weight", 1.0)),
+    )
+
+
+def _parse_distilled_routing(raw: object) -> DistilledRoutingConfig:
+    if not isinstance(raw, dict):
+        raw = {}
+    return DistilledRoutingConfig(
+        enabled=bool(raw.get("enabled", False)),
+        artifact_path=str(raw.get("artifact_path", "")),
+        min_confidence=float(raw.get("min_confidence", 0.12)),
+        weight=float(raw.get("weight", 2.0)),
     )

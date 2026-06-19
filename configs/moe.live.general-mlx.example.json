@@ -3,7 +3,7 @@
     "top_k": 1,
     "fallback_order": ["fast_fallback"],
     "aggregation": "best",
-    "strategy": "hybrid",
+    "strategy": "distilled",
     "semantic": {
       "enabled": true,
       "method": "char_ngrams",
@@ -86,6 +86,12 @@
           ]
         }
       ]
+    },
+    "distilled": {
+      "enabled": true,
+      "artifact_path": "outputs/router-distilled-live-general.json",
+      "min_confidence": 0.08,
+      "weight": 2.0
     }
   },
   "experts": [

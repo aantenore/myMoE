@@ -45,7 +45,7 @@ The runtime planner reads each expert's `params.runtime_backend`. MLX experts ge
 
 ## Routing Policy
 
-The live general profile uses hybrid routing. It combines expert base weights, explicit rules, and local semantic route examples. The semantic matcher is intentionally lightweight: it uses normalized character n-grams, so it is cross platform and does not require a third model server.
+The live general profile uses distilled routing. It combines expert base weights, explicit rules, local semantic route examples, and a local centroid classifier artifact trained from route labels. The semantic and distilled matchers are intentionally lightweight: they use normalized character n-grams, so they are cross platform and do not require a third model server.
 
 The heavy general model is not used as the default request classifier. That model is reserved for actual general-purpose answers, while routing stays cheap enough to run before every request. A stronger teacher model can still be used offline to label route datasets for later distillation.
 

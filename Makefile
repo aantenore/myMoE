@@ -1,4 +1,4 @@
-.PHONY: check test eval ui cli doctor setup-models start-models benchmark-small benchmark-gemma
+.PHONY: check test eval distill-router ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	./scripts/run_all_checks.sh
@@ -11,6 +11,15 @@ eval:
 		--config tests/fixtures/moe.synthetic.json \
 		--eval experiments/eval_set_extended.jsonl \
 		--out outputs/smoke-eval-extended.json
+
+distill-router:
+	PYTHONPATH=src python3 experiments/build_route_label_dataset.py \
+		--eval experiments/eval_set_live_general.jsonl \
+		--out experiments/route_labels_live_general.jsonl \
+		--teacher-source curated_live_eval
+	PYTHONPATH=src python3 experiments/train_distilled_router.py \
+		--labels experiments/route_labels_live_general.jsonl \
+		--out outputs/router-distilled-live-general.json
 
 ui:
 	PYTHONPATH=src python3 -m local_moe.web \

@@ -9,7 +9,7 @@ Distill the expensive part of the system into local artifacts:
 
 ## Stage 1: Route Label Distillation
 
-Use a stronger teacher to label prompts with:
+Use a stronger teacher or curated eval labels to label prompts with:
 
 - primary expert,
 - fallback expert,
@@ -40,6 +40,13 @@ Train a local lightweight classifier over prompt features. Start with determinis
 
 Only move to embeddings if deterministic features plateau.
 
+Current implementation:
+
+- route labels: `experiments/route_labels_live_general.jsonl` and `experiments/route_labels_extended.jsonl`,
+- local router artifacts: `outputs/router-distilled-live-general.json` and `outputs/router-distilled-extended.json`,
+- training script: `experiments/train_distilled_router.py`,
+- runtime strategy: `routing.strategy = distilled`.
+
 ## Stage 2: Expert Answer Distillation
 
 For repeated task families, collect:
@@ -66,4 +73,3 @@ Every distilled artifact must beat the baseline on:
 - failure transparency.
 
 Do not accept a distilled model that is faster but hides uncertainty.
-
