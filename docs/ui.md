@@ -102,6 +102,18 @@ curl 'http://127.0.0.1:8089/api/knowledge?scope=default'
 curl -X DELETE 'http://127.0.0.1:8089/api/knowledge/<document-id>?confirm=true'
 ```
 
+Export and restore local user data:
+
+```bash
+curl -X POST http://127.0.0.1:8089/api/data/export \
+  -H 'Content-Type: application/json' \
+  --data '{"confirm":true}'
+
+curl -X POST http://127.0.0.1:8089/api/data/import \
+  -H 'Content-Type: application/json' \
+  --data '{"bundle":{"schema_version":"mymoe.local-data.v1","data":{"chats":{"sessions":[]},"memory":{"records":[]}}},"mode":"merge","confirm":true}'
+```
+
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
 - left rail with a new chat action and starter prompts,
@@ -116,6 +128,8 @@ Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. T
 The browser prefers `/api/generate/stream`, a server-sent event response with `route`, `content`, `final`, and `error` events. The chat bubble updates as content arrives, then the `final` event persists the exchange and refreshes the session list. If streaming is unavailable before content starts, the UI falls back to the regular `/api/generate` JSON endpoint.
 
 The Compact action calls the configured local compaction expert, stores a durable session summary, and reuses that summary in later context bundles. Exported Markdown includes the current summary.
+
+The Local Data section exports and restores a portable JSON bundle with chat sessions and memory records. Export and restore both require explicit confirmation because the bundle contains private user content. Restore defaults to `merge`; `replace` is available for deliberate migration or reset workflows.
 
 The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can forget one record by id after the user checks the deletion confirmation box.
 
@@ -135,7 +149,7 @@ The Runtime section exposes configured model process state from `/api/models/pro
 
 The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
-The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `knowledge.ingest`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before writing or deleting local files.
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `data.export`, `data.import`, `knowledge.ingest`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before returning private data or writing/deleting local files.
 
 `extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
 

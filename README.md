@@ -173,7 +173,7 @@ The composer supports normal chat usage, progressive streamed responses, rendere
 
 Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, imported knowledge chunks, and recent turns in the next local model prompt. The browser uses `/api/generate/stream` when available and falls back to `/api/generate` when streaming is unavailable.
 
-The Advanced drawer includes Memory and Knowledge panels. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
+The Advanced drawer includes Local Data, Memory, and Knowledge panels. Local Data can export and restore a portable JSON backup containing chat sessions and memory records, with explicit confirmation because the backup contains private user content. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
 
 Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 
@@ -352,6 +352,18 @@ Forget a local memory record or imported knowledge document through the same gua
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool memory.forget \
   --tool-input '{"document_id":"<document-id>","confirm":true}'
+```
+
+Export a portable local data backup, then restore it into another runtime with merge semantics:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool data.export \
+  --tool-input '{"confirm":true}' > outputs/local-data-export-result.json
+
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool data.import \
+  --tool-input "$(.venv/bin/python -c 'import json; p=json.load(open("outputs/local-data-export-result.json")); print(json.dumps({"bundle": p["payload"]["bundle"], "mode": "merge", "confirm": True}))')"
 ```
 
 Use the same Extensions panel to run a registry audit. The audit validates plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes before the plugin is used by an agent workflow.

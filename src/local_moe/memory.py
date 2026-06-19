@@ -45,6 +45,15 @@ class MemoryForgetReport:
     removed_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class MemoryRestoreReport:
+    mode: str
+    imported_count: int
+    updated_count: int
+    skipped_count: int
+    total_records: int
+
+
 def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": record.id,
@@ -110,6 +119,38 @@ class FileMemoryStore:
         return self._forget(
             lambda record: str(record.metadata.get("document_id", "")) == target,
             target=target,
+        )
+
+    def restore_records(self, raw_records: list[object], *, mode: str = "merge") -> MemoryRestoreReport:
+        if mode not in {"merge", "replace"}:
+            raise ValueError("mode must be merge or replace.")
+        if not isinstance(raw_records, list):
+            raise ValueError("records must be a JSON array.")
+        imported = [_parse_record(item) for item in raw_records]
+        seen: set[str] = set()
+        for record in imported:
+            if record.id in seen:
+                raise ValueError(f"Duplicate memory record id in bundle: {record.id}")
+            seen.add(record.id)
+
+        existing = [] if mode == "replace" else _read_records(self.path)
+        by_id = {record.id: index for index, record in enumerate(existing)}
+        updated_count = 0
+        imported_count = 0
+        for record in imported:
+            if record.id in by_id:
+                existing[by_id[record.id]] = record
+                updated_count += 1
+            else:
+                existing.append(record)
+                imported_count += 1
+        _write_records(self.path, existing)
+        return MemoryRestoreReport(
+            mode=mode,
+            imported_count=imported_count,
+            updated_count=updated_count,
+            skipped_count=0,
+            total_records=len(existing),
         )
 
     def search(
@@ -211,20 +252,23 @@ def _read_records(path: Path) -> list[MemoryRecord]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        raw = json.loads(line)
-        records.append(
-            MemoryRecord(
-                id=str(raw["id"]),
-                scope=str(raw["scope"]),
-                kind=str(raw["kind"]),
-                text=str(raw["text"]),
-                metadata=dict(raw.get("metadata", {})),
-                created_at=str(raw["created_at"]),
-                valid_from=raw.get("valid_from"),
-                valid_until=raw.get("valid_until"),
-            )
-        )
+        records.append(_parse_record(json.loads(line)))
     return records
+
+
+def _parse_record(raw: object) -> MemoryRecord:
+    if not isinstance(raw, dict):
+        raise ValueError("Memory record must be a JSON object.")
+    return MemoryRecord(
+        id=str(raw["id"]),
+        scope=str(raw["scope"]),
+        kind=str(raw["kind"]),
+        text=str(raw["text"]),
+        metadata=dict(raw.get("metadata", {})),
+        created_at=str(raw["created_at"]),
+        valid_from=raw.get("valid_from"),
+        valid_until=raw.get("valid_until"),
+    )
 
 
 def _write_records(path: Path, records: list[MemoryRecord]) -> None:
