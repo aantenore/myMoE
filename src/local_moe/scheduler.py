@@ -4,9 +4,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import threading
+from typing import Callable
 
 from .extensions import CronJobDefinition, ExtensionRegistry
 from .memory import FileMemoryStore
+
+
+WRITE_CONFIRMATION_RISK_CLASSES = frozenset(
+    {
+        "write_local",
+        "write_internal",
+        "write_external",
+        "destructive",
+        "process_execution",
+        "privileged_admin",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +48,131 @@ class CronRunSummary:
     due: tuple[str, ...]
     results: tuple[CronRunResult, ...]
     last_run_epoch: dict[str, float]
+
+
+class BackgroundCronRunner:
+    def __init__(
+        self,
+        jobs: tuple[CronJobDefinition, ...] | list[CronJobDefinition],
+        *,
+        state_path: str | Path,
+        poll_seconds: float = 300,
+        confirm_writes: bool = False,
+        enabled: bool = False,
+        registry: ExtensionRegistry | None = None,
+        now_func: Callable[[], float] | None = None,
+    ) -> None:
+        self._jobs = tuple(jobs)
+        self._state_path = state_path
+        self._poll_seconds = max(float(poll_seconds), 1.0)
+        self._confirm_writes = bool(confirm_writes)
+        self._enabled = bool(enabled)
+        self._registry = registry
+        self._now_func = now_func or (lambda: datetime.now(timezone.utc).timestamp())
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._run_count = 0
+        self._last_run_epoch: float | None = None
+        self._last_error: str | None = None
+        self._last_summary: dict[str, object] | None = None
+
+    def start(self) -> None:
+        if not self._enabled:
+            return
+        if self.running:
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="myMoE-background-cron",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self, *, timeout: float = 5) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+
+    @property
+    def running(self) -> bool:
+        thread = self._thread
+        return bool(thread and thread.is_alive())
+
+    def run_once(self) -> CronRunSummary | None:
+        now = self._now_func()
+        try:
+            summary = run_due_jobs(
+                auto_runnable_jobs(self._jobs, confirm_writes=self._confirm_writes),
+                state_path=self._state_path,
+                now_epoch=now,
+                confirm_writes=self._confirm_writes,
+                registry=self._registry,
+            )
+            payload = cron_summary_payload(summary)
+            with self._lock:
+                self._run_count += 1
+                self._last_run_epoch = now
+                self._last_error = None
+                self._last_summary = payload
+            return summary
+        except Exception as exc:  # pragma: no cover - defensive background guard
+            with self._lock:
+                self._run_count += 1
+                self._last_run_epoch = now
+                self._last_error = str(exc)
+                self._last_summary = None
+            return None
+
+    def status_payload(self) -> dict[str, object]:
+        auto_jobs = auto_runnable_jobs(self._jobs, confirm_writes=self._confirm_writes)
+        auto_ids = {job.id for job in auto_jobs}
+        skipped = tuple(
+            job.id
+            for job in self._jobs
+            if job.enabled and job.id not in auto_ids and requires_write_confirmation(job.risk_class)
+        )
+        with self._lock:
+            run_count = self._run_count
+            last_run_epoch = self._last_run_epoch
+            last_error = self._last_error
+            last_summary = self._last_summary
+        return {
+            "enabled": self._enabled,
+            "running": self.running,
+            "poll_seconds": self._poll_seconds,
+            "confirm_writes": self._confirm_writes,
+            "policy": "all_allowlisted_jobs" if self._confirm_writes else "safe_jobs_only",
+            "auto_job_ids": [job.id for job in auto_jobs],
+            "skipped_job_ids": list(skipped),
+            "run_count": run_count,
+            "last_run_epoch": last_run_epoch,
+            "last_error": last_error,
+            "last_summary": last_summary,
+        }
+
+    def _loop(self) -> None:
+        self.run_once()
+        while not self._stop_event.wait(self._poll_seconds):
+            self.run_once()
+
+
+def auto_runnable_jobs(
+    jobs: tuple[CronJobDefinition, ...] | list[CronJobDefinition],
+    *,
+    confirm_writes: bool = False,
+) -> tuple[CronJobDefinition, ...]:
+    if confirm_writes:
+        return tuple(job for job in jobs if job.enabled)
+    return tuple(
+        job for job in jobs if job.enabled and not requires_write_confirmation(job.risk_class)
+    )
+
+
+def requires_write_confirmation(risk_class: str) -> bool:
+    return risk_class in WRITE_CONFIRMATION_RISK_CLASSES
 
 
 def due_jobs(
@@ -82,6 +221,7 @@ def cron_status(
                 "schedule": job.schedule,
                 "command": list(job.command),
                 "risk_class": job.risk_class,
+                "auto_safe": not requires_write_confirmation(job.risk_class),
                 "due": job.id in due_ids,
             }
             for job in jobs
@@ -113,7 +253,7 @@ def run_due_jobs(
             )
         elif not _is_allowlisted_action(job):
             result = _run_allowed_job(job, registry=registry)
-        elif _requires_write_confirmation(job) and not confirm_writes:
+        elif requires_write_confirmation(job.risk_class) and not confirm_writes:
             result = CronRunResult(
                 id=job.id,
                 status="needs_confirmation",
@@ -193,17 +333,6 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
         return _run_router_distill(job, args)
 
     return _cron_error(job, f"Unsupported cron action: {action}")
-
-
-def _requires_write_confirmation(job: DueJob) -> bool:
-    return job.risk_class in {
-        "write_local",
-        "write_internal",
-        "write_external",
-        "destructive",
-        "process_execution",
-        "privileged_admin",
-    }
 
 
 def _is_allowlisted_action(job: DueJob) -> bool:

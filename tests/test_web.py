@@ -93,6 +93,9 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertIn("jobs", status)
+        self.assertIn("auto", status)
+        self.assertEqual(status["auto"]["policy"], "safe_jobs_only")
+        self.assertFalse(status["auto"]["running"])
         self.assertIn("results", result)
         self.assertTrue(all(item["status"] == "dry_run" for item in result["results"]))
 

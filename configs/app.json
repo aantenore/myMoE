@@ -18,7 +18,10 @@
     "model_cache_dir": "~/.cache/huggingface",
     "work_dir": "work/runtime",
     "context_policy_config": "configs/context-policy.json",
-    "context_policy_profile": "qwen3_30b_a3b_general_24gb"
+    "context_policy_profile": "qwen3_30b_a3b_general_24gb",
+    "cron_auto_run": true,
+    "cron_poll_seconds": 300,
+    "cron_confirm_writes": false
   },
   "extensions": {
     "plugins_dir": "plugins",

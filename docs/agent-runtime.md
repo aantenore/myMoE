@@ -37,7 +37,7 @@ flowchart LR
 | `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.list_tools` | Starts an enabled stdio MCP server, performs the MCP `initialize` handshake, and calls `tools/list`. | Requires `app.permissions.allow_process_execution=true` and `confirm_process_execution=true`; it lists tools only and does not call them. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.call_tool` | Starts an enabled stdio MCP server and calls `tools/call` for a configured tool. | Requires app process permission, process confirmation, tool-call confirmation, and the tool name in the server `allowed_tools` list. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
-| Cron jobs | Runs due allowlisted actions such as memory maintenance, extension audit, and router distillation. | `write_local` jobs require `confirm_writes=true`; dry runs never persist state. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
+| Cron jobs | Runs due allowlisted actions such as memory maintenance, extension audit, and router distillation. The web process can auto-run safe jobs in the background. | `write_local` jobs require `confirm_writes=true`; dry runs never persist state; background auto-run skips write-risk jobs unless configured otherwise. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
 | MCP servers | Parsed from config and exposed for discovery; enabled stdio servers can be inspected for tool metadata. | Disabled by default; process startup requires both app policy and per-call confirmation. | Extension registry, `mcp.search_capabilities`, and `mcp.list_tools`. |
 | Plugins | Discovered from manifests and scaffolded locally. | Plugin references are metadata until a tool/skill/MCP/cron entry is configured and allowlisted. | Extension registry and `plugin.create`. |
 
@@ -60,7 +60,11 @@ The default `configs/app.json` keeps `allow_process_execution=false`, so `mcp.li
 
 On the tested machine, the example filesystem MCP server starts through `npx -y @modelcontextprotocol/server-filesystem .` and returns 14 tools from `tools/list`. That server is classified as `write_local` because its advertised tools include file-writing and file-editing operations. The example allowlist contains read-oriented tools such as `list_allowed_directories`, `list_directory`, `directory_tree`, `get_file_info`, `search_files`, and `read_text_file`.
 
-Cron schedules are evaluated by the local runner, not by a background daemon. A `startup` schedule means the job is due the first time the scheduler is run for the current state file. This makes cron behavior cross-platform and testable from CLI, API, or UI; an OS-level service can call the same CLI if unattended background execution is needed later.
+Cron schedules are evaluated by the local Python runner. A `startup` schedule means the job is due the first time the scheduler is run for the current state file. CLI and API calls can still run jobs manually, and the web server starts a cross-platform in-process background runner when `runtime.cron_auto_run=true`.
+
+The background runner polls every `runtime.cron_poll_seconds` seconds. With the default `runtime.cron_confirm_writes=false`, it auto-runs only jobs whose risk class does not require write confirmation, for example `extension.audit` and `memory.maintenance`. Jobs such as `router.distill` remain manual-only unless `runtime.cron_confirm_writes=true` is set by the operator.
+
+The Advanced Cron panel and `/api/cron` expose the automatic runner state: enabled/running flags, policy, auto-runnable job IDs, manual-only job IDs, due jobs, last run time, and the last run summary. This keeps unattended maintenance observable without introducing OS-specific launchd, systemd, or Task Scheduler services.
 
 The `extension.audit` cron action validates the active registry: plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes are reported as structured issues.
 

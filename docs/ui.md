@@ -107,7 +107,7 @@ MCP tool calls are available through `mcp.call_tool`. Calls require the same pro
 
 The bundled MCP-enabled example uses the local filesystem MCP server. It is useful for verifying integration, but it is marked `write_local` because the upstream server advertises write/edit tools.
 
-The Cron section runs due allowlisted jobs through `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
+The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
 Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting.
 
@@ -126,7 +126,7 @@ Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
+Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes background automation status plus a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 

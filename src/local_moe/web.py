@@ -22,7 +22,7 @@ from .health import check_runtime_health, runtime_health_payload
 from .memory import FileMemoryStore, memory_record_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
-from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
@@ -39,11 +39,16 @@ def main() -> None:
     server = build_server(args.config or app_config.default_moe_config, args.host, args.port, app_config_path=args.app_config)
     url = f"http://{args.host}:{server.server_address[1]}"
     print(f"myMoE UI listening on {url}")
+    cron_runner = getattr(server, "background_cron_runner", None)
+    if cron_runner is not None:
+        cron_runner.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print()
     finally:
+        if cron_runner is not None:
+            cron_runner.stop()
         server.server_close()
 
 
@@ -70,6 +75,14 @@ def build_server(
     )
     chat_store = FileChatStore(_chat_store_path(app_config))
     memory_store = FileMemoryStore(_memory_store_path(app_config))
+    cron_runner = BackgroundCronRunner(
+        registry.cron_jobs,
+        state_path=_cron_state_path(app_config),
+        poll_seconds=app_config.runtime.cron_poll_seconds,
+        confirm_writes=app_config.runtime.cron_confirm_writes,
+        enabled=app_config.runtime.cron_auto_run,
+        registry=registry,
+    )
     handler = _make_handler(
         config_path=config_path,
         app_config_path=app_config_path,
@@ -80,8 +93,11 @@ def build_server(
         registry=registry,
         chat_store=chat_store,
         memory_store=memory_store,
+        cron_runner=cron_runner,
     )
-    return ThreadingHTTPServer((host, port), handler)
+    server = ThreadingHTTPServer((host, port), handler)
+    server.background_cron_runner = cron_runner  # type: ignore[attr-defined]
+    return server
 
 
 def _make_handler(
@@ -94,6 +110,7 @@ def _make_handler(
     registry: object,
     chat_store: FileChatStore,
     memory_store: FileMemoryStore,
+    cron_runner: BackgroundCronRunner,
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -140,12 +157,14 @@ def _make_handler(
                 return
 
             if path == "/api/cron":
+                status = cron_status(
+                    registry.cron_jobs,
+                    state_path=_cron_state_path(app_config),
+                )
+                status["auto"] = cron_runner.status_payload()
                 _send_json(
                     self,
-                    cron_status(
-                        registry.cron_jobs,
-                        state_path=_cron_state_path(app_config),
-                    ),
+                    status,
                 )
                 return
 

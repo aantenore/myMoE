@@ -7,7 +7,13 @@ import unittest
 
 from local_moe.extensions import CronJobDefinition
 from local_moe.memory import FileMemoryStore
-from local_moe.scheduler import cron_status, cron_summary_payload, run_due_jobs
+from local_moe.scheduler import (
+    BackgroundCronRunner,
+    auto_runnable_jobs,
+    cron_status,
+    cron_summary_payload,
+    run_due_jobs,
+)
 
 
 class SchedulerTests(unittest.TestCase):
@@ -170,6 +176,87 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(summary.results[0].payload["labels"], 1)
         self.assertTrue(labels_exists)
         self.assertTrue(artifact_exists)
+
+    def test_auto_runnable_jobs_skip_write_risk_without_confirmation(self) -> None:
+        safe_job = CronJobDefinition(
+            id="memory-maintenance",
+            description="Memory maintenance",
+            enabled=True,
+            schedule={"type": "interval", "seconds": 60},
+            command=("memory.maintenance",),
+            risk_class="compute_only",
+        )
+        write_job = CronJobDefinition(
+            id="router-distillation-refresh",
+            description="Router distillation",
+            enabled=True,
+            schedule={"type": "interval", "seconds": 60},
+            command=("router.distill",),
+            risk_class="write_local",
+        )
+        disabled_job = CronJobDefinition(
+            id="disabled-safe",
+            description="Disabled safe job",
+            enabled=False,
+            schedule={"type": "interval", "seconds": 60},
+            command=("extension.audit",),
+            risk_class="compute_only",
+        )
+
+        self.assertEqual(
+            tuple(job.id for job in auto_runnable_jobs((safe_job, write_job, disabled_job))),
+            ("memory-maintenance",),
+        )
+        self.assertEqual(
+            tuple(
+                job.id
+                for job in auto_runnable_jobs(
+                    (safe_job, write_job, disabled_job),
+                    confirm_writes=True,
+                )
+            ),
+            ("memory-maintenance", "router-distillation-refresh"),
+        )
+
+    def test_background_runner_runs_safe_jobs_and_reports_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "cron-state.json"
+            safe_job = CronJobDefinition(
+                id="memory-maintenance",
+                description="Memory maintenance",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=("memory.maintenance", "--memory-path", str(Path(tmp) / "memory.jsonl")),
+                risk_class="compute_only",
+            )
+            write_job = CronJobDefinition(
+                id="router-distillation-refresh",
+                description="Router distillation",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=("router.distill",),
+                risk_class="write_local",
+            )
+            runner = BackgroundCronRunner(
+                (safe_job, write_job),
+                state_path=state_path,
+                enabled=True,
+                confirm_writes=False,
+                now_func=lambda: 120,
+            )
+
+            summary = runner.run_once()
+            status = runner.status_payload()
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary.due, ("memory-maintenance",))
+        self.assertEqual(summary.results[0].status, "ok")
+        self.assertEqual(status["policy"], "safe_jobs_only")
+        self.assertEqual(status["auto_job_ids"], ["memory-maintenance"])
+        self.assertEqual(status["skipped_job_ids"], ["router-distillation-refresh"])
+        self.assertEqual(status["run_count"], 1)
+        self.assertEqual(status["last_error"], None)
 
 
 if __name__ == "__main__":

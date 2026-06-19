@@ -986,6 +986,7 @@
         </section>
         <section class="advanced-section">
           <h2>Cron</h2>
+          <div class="kv" id="cron-status"></div>
           <label class="check-row">
             <input id="cron-confirm-writes" type="checkbox" />
             <span>Confirm local write jobs</span>
@@ -1009,6 +1010,7 @@
         setup: null,
         health: null,
         extensions: null,
+        cron: null,
         messages: [],
         sessions: [],
         activeSessionId: null,
@@ -1100,24 +1102,27 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, setup, health, extensions] = await Promise.all([
+          const [config, runtime, setup, health, extensions, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/setup"),
             api("/api/health"),
             api("/api/extensions"),
+            api("/api/cron"),
           ]);
           state.config = config;
           state.runtime = runtime;
           state.setup = setup;
           state.health = health;
           state.extensions = extensions;
+          state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
           renderSetup(setup);
           renderHealth(health);
           renderExtensions(extensions);
           renderToolRunner(extensions);
+          renderCronStatus(cron);
         } catch (error) {
           setStatus("Configuration error", error.message, false);
           appendMessage("assistant", `Unable to load configuration: ${error.message}`, {
@@ -1411,6 +1416,29 @@
         setDefaultToolInput();
       }
 
+      function renderCronStatus(cron) {
+        const auto = cron?.auto || {};
+        const jobs = cron?.jobs || [];
+        const dueJobs = jobs.filter((job) => job.due).map((job) => job.id);
+        const lastRun = auto.last_run_epoch
+          ? new Date(Number(auto.last_run_epoch) * 1000).toISOString()
+          : "Not run yet";
+        const autoState = auto.enabled
+          ? auto.running
+            ? "Running"
+            : "Configured"
+          : "Disabled";
+        el("cron-status").innerHTML = kvRows({
+          "Auto run": autoState,
+          Policy: auto.policy || "manual_only",
+          Poll: auto.poll_seconds ? `${auto.poll_seconds}s` : "Manual",
+          "Auto jobs": (auto.auto_job_ids || []).join(", ") || "None",
+          "Manual-only jobs": (auto.skipped_job_ids || []).join(", ") || "None",
+          "Due now": dueJobs.join(", ") || "None",
+          "Last auto run": lastRun,
+        });
+      }
+
       function setDefaultToolInput() {
         const name = el("tool-select").value;
         const defaults = {
@@ -1623,6 +1651,9 @@
             body: JSON.stringify({ confirm_writes: el("cron-confirm-writes").checked }),
           });
           el("cron-output").textContent = JSON.stringify(result, null, 2);
+          const cron = await api("/api/cron");
+          state.cron = cron;
+          renderCronStatus(cron);
         } catch (error) {
           el("cron-output").textContent = error.message;
         }
