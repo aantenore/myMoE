@@ -10,6 +10,7 @@
 {"id":"live-fallback-translate","prompt":"Translate this short status update into Italian while keeping a natural tone.","expected_expert":"fast_fallback","complexity":"simple"}
 {"id":"live-general-it-analyze","prompt":"Analizza i pro e contro di usare memoria locale in un assistente personale.","expected_expert":"general","complexity":"medium"}
 {"id":"live-fallback-it-summarize","prompt":"Riassumi questa nota in tre punti brevi per un utente non tecnico.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-it-one-sentence","prompt":"Riassumi in una frase il risultato del download automatico dei modelli GGUF.","expected_expert":"fast_fallback","complexity":"simple"}
 {"id":"live-general-es-compare","prompt":"Compara estas opciones para una aplicacion local que debe proteger la privacidad.","expected_expert":"general","complexity":"medium"}
 {"id":"live-fallback-es-rewrite","prompt":"Reescribe este mensaje para que sea mas corto y claro.","expected_expert":"fast_fallback","complexity":"simple"}
 {"id":"live-general-fr-plan","prompt":"Planifie les prochaines etapes pour ajouter des plugins a un assistant local.","expected_expert":"general","complexity":"medium"}

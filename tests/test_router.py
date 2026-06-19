@@ -34,6 +34,14 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
         self.assertTrue(any(item.startswith("semantic:") for item in decision.selected[0].matched_keywords))
 
+    def test_hybrid_router_routes_italian_one_sentence_summary_to_fast_fallback(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        router = RuleRouter(config)
+
+        decision = router.route("Riassumi in una frase il risultato del download automatico dei modelli GGUF.")
+
+        self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
+
     def test_hybrid_router_routes_italian_analysis_to_general(self) -> None:
         config = load_config("configs/moe.live.general-mlx.example.json")
         router = RuleRouter(config)
