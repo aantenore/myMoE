@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 from local_moe.context import (
@@ -10,6 +13,7 @@ from local_moe.context import (
     build_compaction_prompt,
     build_context_bundle,
 )
+from local_moe.context_policy import load_context_policy
 
 
 class ContextTests(unittest.TestCase):
@@ -83,6 +87,36 @@ class ContextTests(unittest.TestCase):
         self.assertIn("exact file paths", prompt)
         self.assertIn("src/local_moe/context.py", prompt)
         self.assertIn("./scripts/run_all_checks.sh", prompt)
+
+    def test_loads_context_policy_profile_from_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "context-policy.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "default": {
+                            "context_limit_tokens": 2048,
+                            "reserved_output_tokens": 256,
+                        },
+                        "small": {
+                            "context_limit_tokens": 512,
+                            "reserved_output_tokens": 128,
+                            "compaction_trigger_ratio": 0.5,
+                            "max_recent_turns": 4,
+                            "max_memory_items": 2,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            policy = load_context_policy(path, "small")
+
+        self.assertEqual(policy.context_limit_tokens, 512)
+        self.assertEqual(policy.reserved_output_tokens, 128)
+        self.assertEqual(policy.compaction_trigger_ratio, 0.5)
+        self.assertEqual(policy.max_recent_turns, 4)
+        self.assertEqual(policy.max_memory_items, 2)
 
 
 if __name__ == "__main__":

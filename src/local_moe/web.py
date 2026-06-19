@@ -13,6 +13,8 @@ from .app_config import app_config_payload, load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .config import load_config
+from .context import ContextBundle, ConversationTurn, build_context_bundle
+from .context_policy import load_context_policy
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
 from .health import check_runtime_health, runtime_health_payload
@@ -52,6 +54,10 @@ def build_server(
 ) -> ThreadingHTTPServer:
     app_config = load_app_config(app_config_path)
     config = load_config(config_path)
+    context_policy = load_context_policy(
+        app_config.runtime.context_policy_config,
+        app_config.runtime.context_policy_profile,
+    )
     moe = LocalMoE(config)
     registry = load_extension_registry(
         plugins_dir=app_config.extensions.plugins_dir,
@@ -66,6 +72,7 @@ def build_server(
         app_config_path=app_config_path,
         app_config=app_config,
         config=config,
+        context_policy=context_policy,
         moe=moe,
         registry=registry,
         chat_store=chat_store,
@@ -78,6 +85,7 @@ def _make_handler(
     app_config_path: str,
     app_config: object,
     config: object,
+    context_policy: object,
     moe: LocalMoE,
     registry: object,
     chat_store: FileChatStore,
@@ -196,11 +204,11 @@ def _make_handler(
                             status=HTTPStatus.NOT_FOUND,
                         )
                         return
-                model_prompt = _prompt_with_chat_history(session, prompt) if session else prompt
+                model_context = _build_model_context(session, prompt, context_policy)
 
                 try:
                     response = moe.generate(
-                        model_prompt,
+                        model_context["prompt"],
                         correlation_id=_optional_str(payload.get("correlation_id")),
                     )
                 except ProviderError as exc:
@@ -212,6 +220,7 @@ def _make_handler(
                     return
 
                 response_payload = _response_payload(response)
+                response_payload["context"] = model_context["payload"]
                 try:
                     session = chat_store.append_exchange(
                         session_id=session_id,
@@ -223,6 +232,7 @@ def _make_handler(
                             "results": response_payload["results"],
                             "errors": response_payload["errors"],
                             "disagreement": response_payload["disagreement"],
+                            "context": response_payload["context"],
                         },
                     )
                 except KeyError:
@@ -486,31 +496,49 @@ def _response_payload(response: object) -> dict[str, object]:
         "results": [item.__dict__ for item in response.results],
         "errors": list(response.errors),
         "disagreement": asdict(response.disagreement) if response.disagreement else None,
+        "context": {},
     }
 
 
-def _prompt_with_chat_history(session: ChatSession, prompt: str, *, max_messages: int = 8) -> str:
-    if not session.messages:
-        return prompt
-    recent = session.messages[-max_messages:]
-    lines = [
-        "You are continuing a local chat session.",
-        "Use the recent conversation only as context for the current user message.",
-        "",
-        "Recent conversation:",
-    ]
-    for message in recent:
-        role = "User" if message.role == "user" else "Assistant"
-        lines.append(f"{role}: {_clip_for_prompt(message.content)}")
-    lines.extend(["", "Current user message:", prompt])
-    return "\n".join(lines)
+def _build_model_context(
+    session: ChatSession | None,
+    prompt: str,
+    context_policy: object,
+) -> dict[str, object]:
+    if session is None or not session.messages:
+        bundle = build_context_bundle(
+            system_prompt="",
+            current_prompt=prompt,
+            turns=(),
+            policy=context_policy,
+        )
+        return {"prompt": prompt, "payload": _context_payload(bundle)}
+
+    turns = tuple(
+        ConversationTurn(role=message.role, content=message.content)
+        for message in session.messages
+        if message.role in {"user", "assistant"}
+    )
+    bundle = build_context_bundle(
+        system_prompt=(
+            "You are continuing a local chat session. "
+            "Use prior messages only as context for the current user message."
+        ),
+        current_prompt=f"Current user message:\n{prompt}",
+        turns=turns,
+        policy=context_policy,
+    )
+    return {"prompt": bundle.as_prompt(), "payload": _context_payload(bundle)}
 
 
-def _clip_for_prompt(text: str, *, limit: int = 1200) -> str:
-    compact = " ".join(str(text).split())
-    if len(compact) <= limit:
-        return compact
-    return compact[: limit - 3].rstrip() + "..."
+def _context_payload(bundle: ContextBundle) -> dict[str, object]:
+    return {
+        "token_estimate": bundle.token_estimate,
+        "budget_tokens": bundle.budget_tokens,
+        "compaction_needed": bundle.compaction_needed,
+        "dropped_turns": bundle.dropped_turns,
+        "sections": bundle.by_section(),
+    }
 
 
 def _optional_str(raw: object) -> str | None:

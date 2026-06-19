@@ -59,7 +59,16 @@ The first durable conversation layer is `src/local_moe/chat_store.py`. It stores
 
 Chat history is intentionally separate from semantic memory. Chat history preserves what happened in a UI session, while memory stores selected durable facts, decisions, and reusable context.
 
-When `/api/generate` receives a `session_id`, the web layer includes up to eight recent chat messages in a bounded continuation prompt before calling the local MoE runtime. This gives normal chat continuity without making the browser responsible for prompt assembly.
+When `/api/generate` receives a `session_id`, the web layer builds a `ContextBundle` with the configured policy profile before calling the local MoE runtime. This gives normal chat continuity without making the browser responsible for prompt assembly. The bundle reports estimated tokens, section totals, dropped turns, and whether compaction is needed.
+
+The active policy is configured through the app runtime fields:
+
+```json
+{
+  "context_policy_config": "configs/context-policy.json",
+  "context_policy_profile": "qwen3_30b_a3b_general_24gb"
+}
+```
 
 ## Context Pipeline
 
@@ -134,6 +143,8 @@ Every generation should record:
 - fallback errors.
 
 This gives us a way to compare single-model vs MoE behavior honestly.
+
+The web API now returns context telemetry in `/api/generate` and stores it on the assistant message metadata. That metadata is reused when a saved chat is loaded.
 
 ## Evaluation Targets
 
