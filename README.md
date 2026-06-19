@@ -272,6 +272,8 @@ make run-cron
 make run-cron-writes
 ```
 
+When the web UI is running, `runtime.cron_auto_run=true` starts a lightweight in-process scheduler that executes safe due jobs such as extension audits and memory maintenance. Write-local jobs stay manual unless `runtime.cron_confirm_writes=true` is set.
+
 Run an allowlisted local tool from the CLI:
 
 ```bash

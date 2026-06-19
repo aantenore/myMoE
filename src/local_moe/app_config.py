@@ -21,6 +21,9 @@ class RuntimePolicy:
     work_dir: str
     context_policy_config: str
     context_policy_profile: str
+    cron_auto_run: bool
+    cron_poll_seconds: float
+    cron_confirm_writes: bool
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,9 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             work_dir=str(runtime_raw.get("work_dir", "work/runtime")),
             context_policy_config=str(runtime_raw.get("context_policy_config", "configs/context-policy.json")),
             context_policy_profile=str(runtime_raw.get("context_policy_profile", "default")),
+            cron_auto_run=bool(runtime_raw.get("cron_auto_run", False)),
+            cron_poll_seconds=float(runtime_raw.get("cron_poll_seconds", 300)),
+            cron_confirm_writes=bool(runtime_raw.get("cron_confirm_writes", False)),
         ),
         extensions=ExtensionPaths(
             plugins_dir=str(extensions_raw.get("plugins_dir", "plugins")),
@@ -110,6 +116,9 @@ def app_config_payload(config: AppConfig) -> dict[str, Any]:
             "work_dir": config.runtime.work_dir,
             "context_policy_config": config.runtime.context_policy_config,
             "context_policy_profile": config.runtime.context_policy_profile,
+            "cron_auto_run": config.runtime.cron_auto_run,
+            "cron_poll_seconds": config.runtime.cron_poll_seconds,
+            "cron_confirm_writes": config.runtime.cron_confirm_writes,
         },
         "extensions": config.extensions.__dict__,
         "permissions": config.permissions.__dict__,
