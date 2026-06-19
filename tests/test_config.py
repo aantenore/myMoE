@@ -15,14 +15,14 @@ def _base_config() -> dict[str, object]:
         "experts": [
             {
                 "id": "coder",
-                "provider": "mock",
-                "model": "mock-coder",
+                "provider": "synthetic",
+                "model": "synthetic-coder",
                 "role": "coding",
             },
             {
                 "id": "general",
-                "provider": "mock",
-                "model": "mock-general",
+                "provider": "synthetic",
+                "model": "synthetic-general",
                 "role": "general",
             },
         ],
@@ -49,13 +49,13 @@ class ConfigTests(unittest.TestCase):
         raw["experts"] = [
             {
                 "id": "coder",
-                "provider": "mock",
+                "provider": "synthetic",
                 "model": "a",
                 "role": "coding",
             },
             {
                 "id": "coder",
-                "provider": "mock",
+                "provider": "synthetic",
                 "model": "b",
                 "role": "coding",
             },

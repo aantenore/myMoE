@@ -38,10 +38,10 @@ Do not overfit to it. The next set should have at least 50 examples stratified b
 
 ## Current Results
 
-- Mock routing eval: `8/8` after config adjustment.
+- Deterministic routing fixture eval: `8/8` after config adjustment.
 - Live small-model benchmark: `196.47 tok/s` generation on Qwen2.5-Coder-1.5B Q4_K_M.
 - Live single-expert eval: 6 real calls, average latency `0.585 s`, average server-reported generation speed `194.93 tok/s`.
-- Live hybrid eval: 2 real coder calls + mock non-coder experts, average local generation speed `198.92 tok/s`.
+- Live hybrid eval: 2 real coder calls plus deterministic non-coder fixtures, average local generation speed `198.92 tok/s`.
 
 Interpretation: the harness is working, and the machine is fast enough for local inference. The current small model is not quality-optimal; it is a smoke expert. The next decision should be based on a stronger single expert before real multi-model MoE.
 

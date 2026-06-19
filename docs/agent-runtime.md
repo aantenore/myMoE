@@ -39,7 +39,7 @@ The current implementation discovers and reports these surfaces. Execution of hi
 
 ## Local Model Requirement
 
-The user-facing default is `configs/moe.live.general-mlx.example.json`, not a mock config. The mock config remains only for deterministic tests and CI-style routing checks.
+The user-facing default is `configs/moe.live.general-mlx.example.json`. Public configs are live local-model profiles or templates for live local-model profiles; synthetic providers are confined to automated test fixtures.
 
 The runtime planner reads each expert's `params.runtime_backend`. MLX experts generate `mlx_lm.server` commands, GGUF experts generate `llama-server -hf ...` commands, and mixed configs are represented as mixed runtime plans instead of hardcoding one global backend.
 

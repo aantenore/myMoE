@@ -49,7 +49,7 @@ Maximum resident set size observed: about 1.1 GB.
 Config: `configs/moe.live.qwen25-coder.json`
 
 - Real expert: `coder`
-- Mock experts: `architect`, `general`
+- Deterministic fixture experts: `architect`, `general`
 
 Summary:
 
@@ -60,7 +60,7 @@ Summary:
 | real local calls | 2 |
 | average local generation speed | 198.92 tok/s |
 
-This validates mixed real/mock routing but is not a quality comparison because non-coder experts were mocked.
+This validates mixed real/fixture routing but is not a quality comparison because non-coder experts used deterministic fixtures.
 
 ## Live Eval: Single Real Expert
 
@@ -92,7 +92,7 @@ Expected risk: likely runs on 24 GiB only with careful quant/context settings an
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 experiments/run_smoke_eval.py \
-  --config configs/moe.mock.json \
+  --config tests/fixtures/moe.synthetic.json \
   --eval experiments/eval_set.jsonl \
   --out outputs/smoke-eval.json
 PYTHONPATH=src python3 experiments/run_live_eval.py \
@@ -104,4 +104,3 @@ PYTHONPATH=src python3 experiments/run_live_eval.py \
   --out outputs/single-live-eval.json \
   --limit 6
 ```
-

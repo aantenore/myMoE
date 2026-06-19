@@ -7,24 +7,24 @@
   "experts": [
     {
       "id": "coder",
-      "provider": "mock",
-      "model": "mock-coder",
+      "provider": "synthetic",
+      "model": "synthetic-coder",
       "role": "coding",
       "weight": 1.0,
       "timeout_seconds": 20
     },
     {
       "id": "architect",
-      "provider": "mock",
-      "model": "mock-architect",
+      "provider": "synthetic",
+      "model": "synthetic-architect",
       "role": "architecture",
       "weight": 1.0,
       "timeout_seconds": 30
     },
     {
       "id": "general",
-      "provider": "mock",
-      "model": "mock-general",
+      "provider": "synthetic",
+      "model": "synthetic-general",
       "role": "general",
       "weight": 0.5,
       "timeout_seconds": 20

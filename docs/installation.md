@@ -1,7 +1,7 @@
 # Installation
 
 myMoE is local-first and requires a real local model for normal CLI/UI usage.
-`configs/moe.mock.json` exists only as a deterministic test fixture.
+The public configs under `configs/` are live local-model profiles or templates for live local-model profiles.
 
 ## Supported Platforms
 

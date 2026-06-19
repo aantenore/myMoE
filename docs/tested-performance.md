@@ -47,10 +47,10 @@ The benchmark uses short prompts and `96` output tokens per prompt. It is a perf
 
 | Candidate | Status | Avg generation tok/s | Peak memory | Avg latency |
 | --- | --- | ---: | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 92.32 | 17.30 GB | 6.53 s |
-| Gemma 4 E4B it MLX 4-bit | ok | 72.11 | 4.39 GB | 1.63 s |
-| Qwen3 4B MLX 4-bit | ok | 92.77 | 2.53 GB | 1.06 s |
-| Qwen3 1.7B MLX 4-bit | ok | 193.75 | 1.10 GB | 0.60 s |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 93.02 | 17.29 GB | 5.09 s |
+| Gemma 4 E4B it MLX 4-bit | ok | 72.90 | 4.39 GB | 1.53 s |
+| Qwen3 4B MLX 4-bit | ok | 97.98 | 2.49 GB | 0.94 s |
+| Qwen3 1.7B MLX 4-bit | ok | 206.99 | 1.09 GB | 0.45 s |
 
 ## Practical Requirements
 

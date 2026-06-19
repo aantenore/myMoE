@@ -37,7 +37,7 @@ class Provider(Protocol):
         ...
 
 
-class MockProvider:
+class SyntheticProvider:
     def generate(self, expert: ExpertConfig, req: GenerationRequest) -> ExpertResult:
         content = (
             f"[{expert.role}:{expert.model}] handled correlation_id="
@@ -116,8 +116,8 @@ class OpenAICompatibleProvider:
 
 
 def build_provider(provider_name: str) -> Provider:
-    if provider_name == "mock":
-        return MockProvider()
+    if provider_name == "synthetic":
+        return SyntheticProvider()
     if provider_name == "openai_compatible":
         return OpenAICompatibleProvider()
     raise ProviderError(f"Unsupported provider type: {provider_name}")

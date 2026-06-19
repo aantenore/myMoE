@@ -27,10 +27,10 @@ Measured short-generation snapshot:
 
 | Candidate | Status | Avg generation tok/s | Peak memory |
 | --- | --- | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 92.32 | 17.30 GB |
-| Gemma 4 E4B it MLX 4-bit | ok | 72.11 | 4.39 GB |
-| Qwen3 4B MLX 4-bit | ok | 92.77 | 2.53 GB |
-| Qwen3 1.7B MLX 4-bit | ok | 193.75 | 1.10 GB |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 93.02 | 17.29 GB |
+| Gemma 4 E4B it MLX 4-bit | ok | 72.90 | 4.39 GB |
+| Qwen3 4B MLX 4-bit | ok | 97.98 | 2.49 GB |
+| Qwen3 1.7B MLX 4-bit | ok | 206.99 | 1.09 GB |
 
 The 30B result is strong enough to keep it as the default primary model on this machine class. Gemma 4 E4B is now the selected fallback/compaction model because it loaded successfully with the pinned MLX profile and scored better than Qwen3 4B after quality prior and memory headroom were combined. Qwen3 4B remains the smallest practical fast-first profile.
 
@@ -63,8 +63,8 @@ configs/moe.live.general-mlx.example.json
 | Role | Candidate | Why | 24 GB Risk |
 | --- | --- | --- | --- |
 | Primary general default | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best risk-adjusted general model for 24 GB | Still needs capped context and memory monitoring |
-| Primary general stretch | `Qwen3.6-35B-A3B` MLX 4-bit | Stronger agentic/general/reasoning direction | Tight headroom; use only one heavy model resident |
-| Multimodal general | `Gemma 4 26B-A4B-it-MLX-4bit` | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
+| Primary general stretch | `Qwen3.6-35B-A3B` OptiQ MLX 4-bit | Newer general/agentic direction | Tight headroom; use only one heavy model resident and require a local eval win |
+| Multimodal general | `Gemma 4 26B-A4B-it` OptiQ MLX 4-bit | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
 | Fast fallback | `Gemma 4 E4B it MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Requires pinned MLX package profile for the current artifact |
 | Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
 | Optional GGUF coding/agentic specialist | `Gemma 4 12B Agentic Fable5 Composer 2.5 v2` GGUF | Local coding, terminal, and tool-use experiments through llama.cpp | Newly published; benchmark locally before enabling as default route |
@@ -106,10 +106,12 @@ This still gives you MoE behavior at the application level without pretending th
 - Qwen3 30B A3B 2507 LM Studio page: https://lmstudio.ai/models/qwen/qwen3-30b-a3b-2507
 - Qwen3.6 35B A3B official page: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 - Qwen3.6 Apple Silicon quant reference: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit
+- Qwen3.6 OptiQ MLX reference: https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
 - Gemma 4 local guide: https://unsloth.ai/docs/models/gemma-4
 - Gemma 4 E4B MLX artifact: https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit
 - Gemma E4B MLX compatibility issue: https://github.com/ml-explore/mlx-lm/issues/1242
 - Gemma 4 26B A4B MLX 4-bit: https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit
+- Gemma 4 26B A4B OptiQ MLX 4-bit: https://huggingface.co/mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit
 - Qwen3-Coder 30B A3B official/GGUF reference: https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
 - Gemma 4 12B Coder Fable5 Composer 2.5 v1 GGUF: https://huggingface.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF
 - Gemma 4 12B Agentic Fable5 Composer 2.5 v2 GGUF: https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF

@@ -11,7 +11,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 
 - [x] Reset the old project and remove previous model/tool artifacts.
 - [x] Create a dependency-free MoE orchestrator prototype.
-- [x] Add mock experts for deterministic offline routing tests.
+- [x] Add deterministic fixture experts for offline routing tests.
 - [x] Add local OpenAI-compatible provider boundary for llama.cpp, Ollama, LM Studio or vLLM.
 - [x] Add an eval set and smoke evaluation harness.
 - [x] Run routing experiment and fix config-level failure.
@@ -34,7 +34,7 @@ Goal: verify router/config/eval harness.
 
 Status: complete with Qwen2.5-Coder-1.5B Q4_K_M smoke model.
 
-Run one local model server as the `coder`, `single`, or `general` expert. Mock experts remain only for deterministic fixture tests.
+Run one local model server as the `coder`, `single`, or `general` expert. Synthetic experts remain only inside deterministic fixture tests.
 
 ### M2: Three Real Experts
 

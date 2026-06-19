@@ -68,15 +68,6 @@ or:
 make check
 ```
 
-Run the deterministic developer smoke experiment:
-
-```bash
-PYTHONPATH=src .venv/bin/python experiments/run_smoke_eval.py \
-  --config configs/moe.mock.json \
-  --eval experiments/eval_set.jsonl \
-  --out outputs/smoke-eval.json
-```
-
 Ask the orchestrator directly:
 
 ```bash
@@ -138,21 +129,20 @@ The layout has also been checked on a mobile viewport.
 For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpose app, so the default is not a coder model.
 
 - `primary general`: Qwen3-30B-A3B-Instruct-2507 MLX 4-bit.
-- `stretch general`: Qwen3.6-35B-A3B MLX 4-bit with tighter context caps.
-- `multimodal alternative`: Gemma 4 26B-A4B MLX 4-bit.
+- `stretch general`: Qwen3.6-35B-A3B OptiQ MLX 4-bit with tighter context caps.
+- `multimodal alternative`: Gemma 4 26B-A4B OptiQ MLX 4-bit.
 - `fast fallback`: Qwen3 4B or Gemma 4 E4B, selected by local benchmark and task quality.
 - `optional specialist`: Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder-30B-A3B only for coding-heavy workflows.
 - `judge/router-teacher`: use Codex/GPT-class teacher offline during dataset creation, not in runtime.
 
 The runtime must remain local. Distillation data can be created with a stronger teacher, then used to train a local router or small student.
 
-The user-facing app requires a real local model. `configs/moe.mock.json` is retained only for deterministic test fixtures.
+The user-facing app requires a real local model. Synthetic providers are confined to automated test fixtures and are not shipped as runnable app profiles.
 
 ## Project Layout
 
 ```text
 configs/
-  moe.mock.json            # deterministic local mock experts
   moe.local.example.json   # template for real llama.cpp/Ollama/LM Studio endpoints
   moe.live.general-mlx.example.json
   moe.live.fast-mlx.example.json
