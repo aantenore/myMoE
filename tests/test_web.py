@@ -69,6 +69,8 @@ class WebTests(unittest.TestCase):
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
             audit = _get_json(base_url + "/api/extensions/audit")
+            support_bundle = _get_json(base_url + "/api/support-bundle")
+            downloaded_bundle = json.loads(_get_text(base_url + "/api/support-bundle/download.json"))
         finally:
             server.shutdown()
             thread.join(timeout=5)
@@ -89,6 +91,10 @@ class WebTests(unittest.TestCase):
         self.assertTrue(extensions["tools"])
         self.assertEqual(audit["audit"]["issue_count"], 0)
         self.assertIn("extensions", audit)
+        self.assertEqual(support_bundle["schema_version"], "1.0")
+        self.assertEqual(support_bundle["doctor"]["status"], "ready")
+        self.assertIn("chat transcripts", support_bundle["privacy"]["excludes"])
+        self.assertEqual(downloaded_bundle["schema_version"], "1.0")
 
     def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -533,6 +539,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/doctor", html)
         self.assertIn("System Doctor", html)
         self.assertIn("runDoctor", html)
+        self.assertIn("/api/support-bundle/download.json", html)
+        self.assertIn("Download bundle", html)
+        self.assertIn("downloadSupportBundle", html)
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
         self.assertIn("saveMemory", html)
