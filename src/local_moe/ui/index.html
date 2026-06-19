@@ -961,6 +961,11 @@
           <h2>Extensions</h2>
           <div id="extensions"></div>
           <div class="tool-controls">
+            <div class="section-label">Registry Audit</div>
+            <button class="ghost-button" id="run-extension-audit" type="button">Run audit</button>
+            <pre class="eval-output" id="extension-audit-output">Not run yet.</pre>
+          </div>
+          <div class="tool-controls">
             <div class="section-label">Plugin Studio</div>
             <div class="tool-row">
               <input class="tool-select" id="plugin-id" aria-label="Plugin id" placeholder="sample-plugin" />
@@ -1053,6 +1058,7 @@
         setup: null,
         health: null,
         extensions: null,
+        extensionAudit: null,
         cron: null,
         messages: [],
         sessions: [],
@@ -1139,6 +1145,7 @@
         el("save-memory").addEventListener("click", saveMemory);
         el("search-memory").addEventListener("click", searchMemory);
         el("refresh-health").addEventListener("click", refreshHealth);
+        el("run-extension-audit").addEventListener("click", runExtensionAudit);
         el("create-plugin").addEventListener("click", createPlugin);
         el("tool-select").addEventListener("change", setDefaultToolInput);
         el("chat-search").addEventListener("input", () => {
@@ -1149,13 +1156,14 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, health, extensions, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, health, extensions, extensionAudit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
             api("/api/setup"),
             api("/api/health"),
             api("/api/extensions"),
+            api("/api/extensions/audit"),
             api("/api/cron"),
           ]);
           state.config = config;
@@ -1164,6 +1172,7 @@
           state.setup = setup;
           state.health = health;
           state.extensions = extensions;
+          state.extensionAudit = extensionAudit.audit;
           state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
@@ -1171,6 +1180,7 @@
           renderSetup(setup);
           renderHealth(health);
           renderExtensions(extensions);
+          renderExtensionAudit(extensionAudit.audit);
           renderToolRunner(extensions);
           renderCronStatus(cron);
         } catch (error) {
@@ -1538,6 +1548,37 @@
           .join("");
       }
 
+      function renderExtensionAudit(audit) {
+        const issueCount = Number(audit?.issue_count || 0);
+        const issues = (audit?.issues || [])
+          .slice(0, 8)
+          .map(
+            (issue) =>
+              `- ${issue.plugin_id || "unknown"} ${issue.surface || "surface"} ${issue.reference || ""}: ${
+                issue.message || "Invalid reference"
+              }`
+          )
+          .join("\n");
+        el("extension-audit-output").textContent =
+          issueCount === 0
+            ? `OK: ${audit?.plugin_count || 0} plugin(s) checked, no issues.`
+            : `Issues: ${issueCount}\n${issues}`;
+      }
+
+      async function runExtensionAudit() {
+        el("extension-audit-output").textContent = "Checking...";
+        try {
+          const result = await api("/api/extensions/audit");
+          state.extensions = result.extensions;
+          state.extensionAudit = result.audit;
+          renderExtensions(result.extensions);
+          renderExtensionAudit(result.audit);
+          renderToolRunner(result.extensions);
+        } catch (error) {
+          el("extension-audit-output").textContent = error.message;
+        }
+      }
+
       async function createPlugin() {
         el("plugin-output").textContent = "Creating...";
         try {
@@ -1553,7 +1594,9 @@
           });
           el("plugin-output").textContent = JSON.stringify(result, null, 2);
           state.extensions = result.extensions;
+          state.extensionAudit = result.audit;
           renderExtensions(result.extensions);
+          renderExtensionAudit(result.audit);
           renderToolRunner(result.extensions);
         } catch (error) {
           el("plugin-output").textContent = error.message;
@@ -1611,6 +1654,7 @@
             plugin_id: "sample-local-plugin",
             confirm: false,
           },
+          "extension.audit": {},
           "mcp.search_capabilities": {
             query: "filesystem",
           },

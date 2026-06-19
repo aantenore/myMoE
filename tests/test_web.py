@@ -67,6 +67,7 @@ class WebTests(unittest.TestCase):
             setup = _get_json(base_url + "/api/setup")
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
+            audit = _get_json(base_url + "/api/extensions/audit")
         finally:
             server.shutdown()
             thread.join(timeout=5)
@@ -81,6 +82,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
+        self.assertEqual(audit["audit"]["issue_count"], 0)
+        self.assertIn("extensions", audit)
 
     def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -151,6 +154,7 @@ class WebTests(unittest.TestCase):
                     },
                 )
                 extensions = _get_json(base_url + "/api/extensions")
+                audit = _get_json(base_url + "/api/extensions/audit")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -163,14 +167,17 @@ class WebTests(unittest.TestCase):
             created_plugin_ids = {plugin["id"] for plugin in created["extensions"]["plugins"]}
             created_skill_names = {item["name"] for item in created["extensions"]["skills"]}
             listed_plugin_ids = {plugin["id"] for plugin in extensions["plugins"]}
+            audited_plugin_ids = {plugin["id"] for plugin in audit["extensions"]["plugins"]}
 
         self.assertEqual(raised.exception.code, 400)
         self.assertTrue(created["created"])
+        self.assertEqual(created["audit"]["issue_count"], 0)
         self.assertTrue(manifest_exists)
         self.assertTrue(skill_exists)
         self.assertIn("demo-plugin", created_plugin_ids)
         self.assertIn("demo-plugin", created_skill_names)
         self.assertIn("demo-plugin", listed_plugin_ids)
+        self.assertIn("demo-plugin", audited_plugin_ids)
 
     def test_serves_and_runs_cron_endpoint(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -537,7 +544,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("confirm_process_execution", html)
         self.assertIn("confirm_tool_call", html)
         self.assertIn("/api/plugins", html)
+        self.assertIn("/api/extensions/audit", html)
         self.assertIn("Plugin Studio", html)
+        self.assertIn("Registry Audit", html)
+        self.assertIn("runExtensionAudit", html)
         self.assertIn("createPlugin", html)
         self.assertIn("plugin-confirm", html)
         self.assertIn("Confirm local write jobs", html)

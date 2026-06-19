@@ -312,6 +312,8 @@ Tools are allowlisted by name. Local write tools and write-local cron jobs requi
 
 The Advanced drawer also includes Plugin Studio for creating a local plugin scaffold without writing JSON by hand. It creates `plugin.json` plus plugin-local `SKILL.md`, requires confirmation, and refreshes the registry in the running web app.
 
+Use the same Extensions panel to run a registry audit. The audit validates plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes before the plugin is used by an agent workflow.
+
 MCP stdio discovery is also available for trusted, enabled MCP servers:
 
 ```bash

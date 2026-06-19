@@ -11,6 +11,7 @@ from .extensions import (
     ExtensionRegistry,
     McpServerDefinition,
     ToolDefinition,
+    audit_extension_registry,
     create_plugin_scaffold,
 )
 from .mcp_client import (
@@ -42,6 +43,7 @@ class LocalToolRunner:
     _SUPPORTED = {
         "memory.search",
         "context.compact",
+        "extension.audit",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -82,6 +84,8 @@ class LocalToolRunner:
             return self._memory_search(tool, tool_payload)
         if tool.name == "context.compact":
             return self._context_compact(tool, tool_payload)
+        if tool.name == "extension.audit":
+            return self._extension_audit(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -169,6 +173,13 @@ class LocalToolRunner:
             return _ok(tool, "Context compaction completed with the configured local model.", result_payload)
 
         return _ok(tool, "Context compaction prompt prepared.", result_payload)
+
+    def _extension_audit(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        return _ok(
+            tool,
+            "Extension registry audit completed.",
+            audit_extension_registry(self._registry),
+        )
 
     def _plugin_create(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
         if payload.get("confirm") is not True:

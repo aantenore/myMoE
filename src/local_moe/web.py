@@ -17,7 +17,13 @@ from .config import load_config
 from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
 from .evaluator import evaluate_router, load_eval_cases
-from .extensions import ExtensionError, create_plugin_scaffold, load_extension_registry, registry_payload
+from .extensions import (
+    ExtensionError,
+    audit_extension_registry,
+    create_plugin_scaffold,
+    load_extension_registry,
+    registry_payload,
+)
 from .health import check_runtime_health, runtime_health_payload
 from .memory import FileMemoryStore, memory_record_payload
 from .model_servers import ModelServerManager, model_server_action_payload
@@ -138,6 +144,16 @@ def _make_handler(
 
             if path == "/api/extensions":
                 _send_json(self, registry_payload(registry))
+                return
+
+            if path == "/api/extensions/audit":
+                _send_json(
+                    self,
+                    {
+                        "audit": audit_extension_registry(registry),
+                        "extensions": registry_payload(registry),
+                    },
+                )
                 return
 
             if path == "/api/runtime":
@@ -472,6 +488,7 @@ def _make_handler(
                         "path": str(path_created),
                         "manifest": str(path_created / "plugin.json"),
                         "skill": str(path_created / "SKILL.md"),
+                        "audit": audit_extension_registry(registry),
                         "extensions": registry_payload(registry),
                     },
                     status=HTTPStatus.CREATED,
