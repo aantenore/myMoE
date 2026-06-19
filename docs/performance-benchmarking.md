@@ -54,11 +54,16 @@ Outputs:
 - `mlx-community/Qwen3-4B-4bit`
 - `mlx-community/gemma-4-e4b-it-4bit`
 - `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit`
-- `mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit` as a stretch candidate
+- `mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit` as a rejected 24 GB stretch candidate after Metal OOM at 8192 and 2048 KV cache sizes
 - `lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit`
 - `mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit`
 
 The current policy is to choose one heavy resident general expert and one small resident fallback/compaction expert. Other large specialists should be cold-loaded only after they win evals for their task class.
+
+Qwen3.6 OptiQ is intentionally kept in the benchmark manifest as negative evidence: it is a better-looking current candidate on paper, but it did not run reliably on the tested 24 GB Apple Silicon machine. The tight retry is stored in:
+
+- `outputs/qwen36-optiq-low-kv-benchmark.json`
+- `outputs/qwen36-optiq-low-kv-decision.md`
 
 ## GGUF Specialist Benchmarking
 

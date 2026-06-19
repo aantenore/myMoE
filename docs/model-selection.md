@@ -27,12 +27,14 @@ Measured short-generation snapshot:
 
 | Candidate | Status | Avg generation tok/s | Peak memory |
 | --- | --- | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 93.02 | 17.29 GB |
-| Gemma 4 E4B it MLX 4-bit | ok | 72.90 | 4.39 GB |
-| Qwen3 4B MLX 4-bit | ok | 97.98 | 2.49 GB |
-| Qwen3 1.7B MLX 4-bit | ok | 206.99 | 1.09 GB |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 79.68 | 17.29 GB |
+| Gemma 4 E4B it MLX 4-bit | ok | 70.47 | 4.39 GB |
+| Qwen3 4B MLX 4-bit | ok | 93.89 | 2.49 GB |
+| Qwen3 1.7B MLX 4-bit | ok | 191.18 | 1.09 GB |
+| Qwen3.6 35B-A3B OptiQ MLX 4-bit | failed | - | Metal OOM |
 
 The 30B result is strong enough to keep it as the default primary model on this machine class. Gemma 4 E4B is now the selected fallback/compaction model because it loaded successfully with the pinned MLX profile and scored better than Qwen3 4B after quality prior and memory headroom were combined. Qwen3 4B remains the smallest practical fast-first profile.
+Qwen3.6 OptiQ was tested as the newest stretch candidate and rejected for this 24 GB machine after Metal OOM with both the normal 8192 KV cache benchmark and a tighter 2048 KV retry.
 
 ## Recommended Default
 
@@ -63,12 +65,12 @@ configs/moe.live.general-mlx.example.json
 | Role | Candidate | Why | 24 GB Risk |
 | --- | --- | --- | --- |
 | Primary general default | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best risk-adjusted general model for 24 GB | Still needs capped context and memory monitoring |
-| Primary general stretch | `Qwen3.6-35B-A3B` OptiQ MLX 4-bit | Newer general/agentic direction | Tight headroom; use only one heavy model resident and require a local eval win |
 | Multimodal general | `Gemma 4 26B-A4B-it` OptiQ MLX 4-bit | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
 | Fast fallback | `Gemma 4 E4B it MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Requires pinned MLX package profile for the current artifact |
 | Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
 | Optional GGUF coding/agentic specialist | `Gemma 4 12B Agentic Fable5 Composer 2.5 v2` GGUF | Local coding, terminal, and tool-use experiments through llama.cpp | Newly published; benchmark locally before enabling as default route |
 | Legacy GGUF coding specialist | `Gemma 4 12B Coder Fable5 Composer 2.5 v1` GGUF | Python/coding specialist requested during research | Superseded by the same author's v2 for agentic/coding tasks |
+| Rejected on tested 24 GB | `Qwen3.6-35B-A3B` OptiQ MLX 4-bit | Newer general/agentic direction | Failed with Metal OOM at 8192 and 2048 KV cache sizes |
 | Rejected for this machine | `Qwen3-Coder-Next` | Strong but too large | 4-bit wants >45 GB; even good low-bit paths want >30 GB |
 
 ## Why The Linked Gemma 12B Coder GGUF Is Not The Default
