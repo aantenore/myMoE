@@ -54,6 +54,7 @@ Outputs:
 - `mlx-community/Qwen3-4B-4bit`
 - `mlx-community/gemma-4-e4b-it-4bit`
 - `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit`
+- `mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit` as a stretch candidate
 - `lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit`
 - `mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit`
 
@@ -76,7 +77,7 @@ Run the focused Gemma E4B benchmark with:
 make benchmark-gemma
 ```
 
-The focused result is also stored in:
+The current Gemma E4B result is stored with the broader model benchmark output:
 
-- `outputs/gemma-e4b-benchmark.json`
-- `outputs/gemma-e4b-decision.md`
+- `outputs/performance-benchmark.json`
+- `outputs/performance-decision.md`

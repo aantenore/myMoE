@@ -9,8 +9,8 @@ from local_moe.web import build_server
 
 
 class WebTests(unittest.TestCase):
-    def test_serves_config_and_generates_with_mock_provider(self) -> None:
-        server = build_server("configs/moe.mock.json", port=0)
+    def test_serves_config_and_generates_with_synthetic_provider(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -26,11 +26,11 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertEqual(config["routing"]["aggregation"], "best")
-        self.assertIn("[general:mock-general]", result["content"])
+        self.assertIn("[general:synthetic-general]", result["content"])
         self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
 
     def test_runs_eval_endpoint(self) -> None:
-        server = build_server("configs/moe.mock.json", port=0)
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -48,7 +48,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["total"], 8)
 
     def test_serves_runtime_and_extensions(self) -> None:
-        server = build_server("configs/moe.mock.json", port=0)
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -64,7 +64,7 @@ class WebTests(unittest.TestCase):
         self.assertTrue(extensions["tools"])
 
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
-        server = build_server("configs/moe.mock.json", port=0)
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:

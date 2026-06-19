@@ -6,7 +6,7 @@ Date: 2026-06-18
 
 - Removed the previous Gemma local-test project artifacts.
 - Created a new local-first system-level MoE prototype.
-- Added config-driven routing, mock experts, OpenAI-compatible local provider boundary, CLI and eval harness.
+- Added config-driven routing, deterministic fixture experts, OpenAI-compatible local provider boundary, CLI and eval harness.
 - Added design docs and distillation plan.
 
 ## Experiment
@@ -15,7 +15,7 @@ Command:
 
 ```bash
 PYTHONPATH=src python3 experiments/run_smoke_eval.py \
-  --config configs/moe.mock.json \
+  --config tests/fixtures/moe.synthetic.json \
   --eval experiments/eval_set.jsonl \
   --out outputs/smoke-eval.json
 ```
@@ -65,11 +65,10 @@ This does not prove model quality yet. It proves that the local MoE shell can ro
 
 ## Recommended Next Experiment
 
-Download or attach one real local expert and keep the others mocked:
+Download or attach one real local expert and keep the other routes covered by deterministic fixtures:
 
 1. Start one local `llama-server` on a dedicated port.
 2. Copy `configs/moe.local.example.json` to `configs/moe.local.json`.
 3. Point `coder.base_url` to that server.
 4. Run the CLI against coding prompts.
-5. Compare latency and quality against mock and single-model baseline.
-
+5. Compare latency and quality against deterministic fixture and single-model baselines.

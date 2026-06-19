@@ -25,7 +25,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertEqual(cases[1].complexity, "unknown")
 
     def test_evaluates_accuracy_and_complexity_breakdown(self) -> None:
-        config = load_config("configs/moe.mock.json")
+        config = load_config("tests/fixtures/moe.synthetic.json")
         cases = load_eval_cases("experiments/eval_set.jsonl")
 
         result = evaluate_router(config, cases)

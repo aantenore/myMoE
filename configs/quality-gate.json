@@ -27,7 +27,7 @@
     "experiments/eval_set_extended.jsonl",
     "configs/model-candidates.json",
     "configs/model-benchmark.json",
-    "configs/moe.mock.json",
+    "tests/fixtures/moe.synthetic.json",
     "configs/moe.live.qwen25-coder.json",
     "configs/single.live.qwen25-coder.json",
     "configs/moe.live.general-mlx.example.json",

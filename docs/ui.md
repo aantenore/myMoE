@@ -89,8 +89,8 @@ Eval mode:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
-  --config configs/moe.mock.json \
+  --config configs/moe.live.fast-mlx.example.json \
   --eval experiments/eval_set_extended.jsonl
 ```
 
-Eval mode uses the mock fixture because it validates deterministic routing rather than model quality. Normal UI and CLI usage should use a live local model config.
+Eval mode can run against any live local config. Normal UI and CLI usage should use a live local model config.

@@ -83,12 +83,12 @@ On the tested Apple M5 Pro / 24 GiB machine:
 
 | Model | Runtime profile | Status | Avg generation tok/s | Peak memory |
 | --- | --- | --- | ---: | ---: |
-| `mlx-community/gemma-4-e4b-it-4bit` | pinned `.[mlx]` | ok | 72.11 | 4.39 GB |
+| `mlx-community/gemma-4-e4b-it-4bit` | pinned `.[mlx]` | ok | 72.90 | 4.39 GB |
 
 See:
 
-- `outputs/gemma-e4b-benchmark.json`
-- `outputs/gemma-e4b-decision.md`
+- `outputs/performance-benchmark.json`
+- `outputs/performance-decision.md`
 
 ## Source Notes
 

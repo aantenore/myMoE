@@ -25,7 +25,7 @@ class CliTests(unittest.TestCase):
                 "-m",
                 "local_moe.cli",
                 "--config",
-                "configs/moe.mock.json",
+                "tests/fixtures/moe.synthetic.json",
                 "--eval",
                 "experiments/eval_set.jsonl",
             ],
@@ -40,14 +40,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["accuracy"], 1.0)
         self.assertEqual(payload["total"], 8)
 
-    def test_prompt_mode_runs_mock_generation(self) -> None:
+    def test_prompt_mode_runs_synthetic_generation(self) -> None:
         completed = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "local_moe.cli",
                 "--config",
-                "configs/moe.mock.json",
+                "tests/fixtures/moe.synthetic.json",
                 "--prompt",
                 "Write Python tests for a class",
             ],
@@ -58,7 +58,7 @@ class CliTests(unittest.TestCase):
             capture_output=True,
         )
 
-        self.assertIn("[coding:mock-coder]", completed.stdout)
+        self.assertIn("[coding:synthetic-coder]", completed.stdout)
         self.assertIn('"correlation_id"', completed.stdout)
 
     def test_doctor_prints_runtime_and_extensions(self) -> None:

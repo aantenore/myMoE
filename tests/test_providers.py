@@ -71,7 +71,7 @@ def _expert(base_url: str) -> ExpertConfig:
 
 class ProviderTests(unittest.TestCase):
     def test_builds_known_provider_types(self) -> None:
-        self.assertIsNotNone(build_provider("mock"))
+        self.assertIsNotNone(build_provider("synthetic"))
         self.assertIsInstance(build_provider("openai_compatible"), OpenAICompatibleProvider)
 
     def test_rejects_unknown_provider_type(self) -> None:
