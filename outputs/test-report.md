@@ -4,11 +4,12 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
 - `tests/test_config.py`: duplicate expert ids, missing experts, invalid `top_k`, unsupported aggregation, unknown rule/fallback experts.
+- `tests/test_config_profiles.py`: read-only runtime profile discovery, setup readiness summary, active/default flags, and active profile inclusion outside `configs/`.
 - `tests/test_audit.py`: local JSONL audit event writes, latest-first listing, action/status filtering, metadata truncation, and latest-event retention pruning.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, streaming SSE parsing, usage/timing parsing, invalid payload handling, invalid JSON handling, reasoning-channel stripping, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
@@ -21,7 +22,7 @@ The test hardening pass covers configuration validation, routing evaluation, mul
 - `tests/test_cli.py`: eval mode, setup readiness, performance report output, guarded runtime preparation preview, model process status, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
 - `tests/test_data_bundle.py`: portable local data export and restore for chat sessions plus memory records, including merge and replace behavior.
-- `tests/test_web.py`: web config, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, plugin creation APIs, extension audit APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
+- `tests/test_web.py`: web config, runtime profile discovery APIs, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, plugin creation APIs, extension audit APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
 - `tests/test_setup_runner.py`: runtime preparation preview, confirmation guard, injected install runner, and local-file model validation without network access.
 - `tests/test_tools.py`: allowlisted local tool execution, knowledge ingestion, memory maintenance, guarded expired-memory pruning, guarded memory/document deletion, confirmed local data export/import, extension audit, guarded extension self-configuration for MCP/cron registries, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
@@ -48,7 +49,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `176/176` passed
+- unit/contract tests: `178/178` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`
@@ -68,6 +69,7 @@ Result:
 - Playwright browser smoke for extension registry audit: passed
 - Playwright browser screenshot for Audit Trail pruning controls: passed
 - Playwright browser smoke for setup readiness panel: passed
+- Playwright browser screenshot for runtime profile discovery: passed
 - Playwright browser smoke for guarded setup preparation controls: passed
 - Playwright browser smoke for chat compaction action: passed
 - Playwright browser smoke for memory panel and context retrieval: passed
@@ -87,6 +89,8 @@ Streaming generation is now covered from provider SSE parsing through orchestrat
 Local knowledge import now chunks pasted documents into `knowledge` memory records with document metadata. It is exposed through `knowledge.ingest`, `/api/knowledge`, and the Advanced Knowledge panel, with confirmation required before local records are written. Guarded forget controls now remove a single memory record or all chunks for one imported document id only when confirmation is supplied.
 
 Memory maintenance now reports active, pending, and expired temporal records separately. Expired-memory pruning is a separate guarded action through `memory.prune_expired`, `/api/memory/prune-expired`, the Advanced Memory panel, and optional write-local cron jobs; future `valid_from` records are preserved.
+
+Runtime profile discovery now exposes `/api/config/profiles` and the Advanced Profiles panel. It scans runnable public profiles, includes the active config even when it is outside `configs/`, and reports setup readiness, backend, expert count, and model names without switching profiles or starting model processes.
 
 Local data backup now exports chat sessions and memory records into a schema-versioned JSON bundle through `data.export`, `/api/data/export`, and the Advanced Local Data panel. Restore through `data.import` or `/api/data/import` supports `merge` and `replace` modes and requires confirmation before writing local stores.
 

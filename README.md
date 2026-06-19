@@ -175,15 +175,19 @@ Chat sessions are persisted locally under the configured runtime work directory.
 
 The Advanced drawer includes Local Data, Audit Trail, Memory, and Knowledge panels. Local Data can export and restore a portable JSON backup containing chat sessions and memory records, with explicit confirmation because the backup contains private user content. Audit Trail records host-side sensitive actions such as data export/import, model process changes, setup runs, tool calls, plugin creation, and memory or knowledge deletion without duplicating chat or memory content. Older audit events can be pruned with an explicit keep count and confirmation, and the prune action keeps its own audit event. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
 
-Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
+Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
+
+Profiles lists runnable local model configs, active/default flags, setup readiness, backend, and model names without switching runtime state.
+
+![myMoE runtime profiles](docs/screenshots/profiles.png)
 
 Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, setup status, performance decision, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 

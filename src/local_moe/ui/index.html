@@ -951,6 +951,10 @@
           <pre class="eval-output" id="setup-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>Profiles</h2>
+          <div class="kv" id="config-profiles"></div>
+        </section>
+        <section class="advanced-section">
           <h2>System Doctor</h2>
           <div class="kv" id="doctor"></div>
           <div class="tool-row">
@@ -1304,11 +1308,12 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, doctor, health, performance, extensions, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
             api("/api/setup"),
+            api("/api/config/profiles"),
             api("/api/doctor"),
             api("/api/health"),
             api("/api/performance"),
@@ -1321,6 +1326,7 @@
           state.runtime = runtime;
           state.modelProcesses = modelProcesses;
           state.setup = setup;
+          state.configProfiles = configProfiles;
           state.doctor = doctor;
           state.health = health;
           state.performance = performance;
@@ -1332,6 +1338,7 @@
           renderRuntime(runtime);
           renderModelProcesses(modelProcesses);
           renderSetup(setup);
+          renderConfigProfiles(configProfiles);
           renderDoctor(doctor);
           renderHealth(health);
           renderPerformance(performance);
@@ -1585,6 +1592,41 @@
             ? `<div class="kv-row"><span>Error</span><span class="mono">${escapeHtml(setup.error)}</span></div>`
             : "") +
           (models || '<span class="muted">No model assets are required by this profile.</span>');
+      }
+
+      function renderConfigProfiles(profiles) {
+        const items = profiles?.profiles || [];
+        const rows = items
+          .map((profile) => {
+            const flags = [
+              profile.active ? "active" : "",
+              profile.default ? "default" : "",
+              profile.status === "valid" ? profile.setup?.status || "valid" : "invalid",
+            ].filter(Boolean);
+            const experts = (profile.experts || [])
+              .map((expert) => `${expert.id}: ${shortModel(expert.model)}`)
+              .join(" · ");
+            const detail =
+              profile.status === "valid"
+                ? `${profile.backend || "unknown"} · ${profile.expert_count || 0} expert(s) · ${experts || "No experts"}`
+                : profile.error || "Invalid profile";
+            return `
+              <div class="kv-row">
+                <span>${escapeHtml(flags.join(" · ") || "profile")}</span>
+                <span>
+                  <strong>${escapeHtml(profile.name || profile.path)}</strong><br>
+                  <span class="mono">${escapeHtml(profile.path || "")}</span><br>
+                  <span class="muted">${escapeHtml(detail)}</span>
+                </span>
+              </div>`;
+          })
+          .join("");
+        el("config-profiles").innerHTML =
+          kvRows({
+            Active: profiles?.active_config_path || "Unknown",
+            Default: profiles?.default_config_path || "Unknown",
+            Count: profiles?.count ?? 0,
+          }) + (rows || '<span class="muted">No runnable profiles found.</span>');
       }
 
       function renderHealth(health) {
