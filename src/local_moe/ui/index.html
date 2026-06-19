@@ -947,7 +947,10 @@
         <section class="advanced-section">
           <h2>System Doctor</h2>
           <div class="kv" id="doctor"></div>
-          <button class="ghost-button" id="run-doctor" type="button">Run doctor</button>
+          <div class="tool-row">
+            <button class="ghost-button" id="run-doctor" type="button">Run doctor</button>
+            <button class="ghost-button" id="download-support-bundle" type="button">Download bundle</button>
+          </div>
           <pre class="eval-output" id="doctor-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
@@ -1147,6 +1150,7 @@
         el("stop-models").addEventListener("click", stopModels);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
+        el("download-support-bundle").addEventListener("click", downloadSupportBundle);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
@@ -1582,6 +1586,10 @@
         } catch (error) {
           el("doctor-output").textContent = error.message;
         }
+      }
+
+      function downloadSupportBundle() {
+        window.open("/api/support-bundle/download.json", "_blank", "noreferrer");
       }
 
       function renderExtensions(extensions) {

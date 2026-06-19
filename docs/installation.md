@@ -156,6 +156,14 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 
 The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor.
 
+For issue reports or handoffs, generate a privacy-safe support bundle:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
+```
+
+The bundle includes the Doctor report, quality gate status, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variables, API keys, and log contents. The web UI exposes the same artifact through Advanced System Doctor.
+
 ## Background Maintenance
 
 The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web UI starts, it also starts a lightweight in-process scheduler that polls every `runtime.cron_poll_seconds` seconds and runs due safe jobs. By default, `runtime.cron_confirm_writes=false`, so write-local jobs such as router distillation remain manual and require the CLI `--cron-confirm-writes` flag or the UI confirmation checkbox.

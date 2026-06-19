@@ -114,6 +114,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["models"], [])
         self.assertIn("scripts/bootstrap_runtime.py", payload["download_command_display"])
 
+    def test_support_bundle_prints_privacy_safe_payload(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--support-bundle",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["doctor"]["status"], "ready")
+        self.assertIn("chat transcripts", payload["privacy"]["excludes"])
+        self.assertIn("quality_gate", payload)
+
     def test_prepare_runtime_preview_prints_setup_run(self) -> None:
         completed = subprocess.run(
             [

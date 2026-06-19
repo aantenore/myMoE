@@ -34,6 +34,7 @@ flowchart LR
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation.
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, model process reachability, extension audit, and cron state.
+- `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 
 ## Runtime Modes
 

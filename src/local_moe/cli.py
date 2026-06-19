@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import json
+from pathlib import Path
 import sys
 
 from .app_config import load_app_config
@@ -16,6 +17,7 @@ from .orchestrator import LocalMoE
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
+from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -28,6 +30,8 @@ def main() -> None:
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     parser.add_argument("--doctor", action="store_true")
+    parser.add_argument("--support-bundle", action="store_true")
+    parser.add_argument("--support-bundle-out")
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--prepare-runtime", action="store_true")
@@ -65,6 +69,24 @@ def main() -> None:
                 indent=2,
             )
         )
+        return
+
+    if args.support_bundle or args.support_bundle_out:
+        payload = build_support_bundle(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+            app_config_path=args.app_config,
+        )
+        if args.support_bundle_out:
+            out = Path(args.support_bundle_out)
+            if out.is_dir():
+                out = out / support_bundle_filename()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            print(json.dumps({"written": str(out)}, indent=2))
+        else:
+            print(json.dumps(payload, indent=2))
         return
 
     if args.setup:

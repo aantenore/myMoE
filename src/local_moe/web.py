@@ -33,6 +33,7 @@ from .providers import ProviderError
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
+from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -154,6 +155,37 @@ def _make_handler(
                         registry=registry,
                         model_manager=model_manager,
                     ),
+                )
+                return
+
+            if path == "/api/support-bundle":
+                _send_json(
+                    self,
+                    build_support_bundle(
+                        config_path=config_path,
+                        config=config,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                        registry=registry,
+                        model_manager=model_manager,
+                    ),
+                )
+                return
+
+            if path == "/api/support-bundle/download.json":
+                bundle = build_support_bundle(
+                    config_path=config_path,
+                    config=config,
+                    app_config=app_config,
+                    app_config_path=app_config_path,
+                    registry=registry,
+                    model_manager=model_manager,
+                )
+                _send_download(
+                    self,
+                    json.dumps(bundle, indent=2).encode("utf-8"),
+                    content_type="application/json; charset=utf-8",
+                    filename=support_bundle_filename(),
                 )
                 return
 
