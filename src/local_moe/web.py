@@ -184,7 +184,7 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
         "app": app_config_payload(app_config),
         "config_path": config_path,
         "requires_model": True,
-        "routing": config.routing.__dict__,
+        "routing": _routing_payload(config.routing),
         "experts": [
             {
                 "id": expert.id,
@@ -198,6 +198,33 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
             for expert in config.experts
         ],
         "rules": [rule.__dict__ for rule in config.rules],
+    }
+
+
+def _routing_payload(routing: object) -> dict[str, object]:
+    semantic = routing.semantic
+    return {
+        "top_k": routing.top_k,
+        "fallback_order": list(routing.fallback_order),
+        "aggregation": routing.aggregation,
+        "strategy": routing.strategy,
+        "semantic": {
+            "enabled": semantic.enabled,
+            "method": semantic.method,
+            "min_score": semantic.min_score,
+            "margin": semantic.margin,
+            "weight": semantic.weight,
+            "ngram_min": semantic.ngram_min,
+            "ngram_max": semantic.ngram_max,
+            "examples": [
+                {
+                    "expert_id": example.expert_id,
+                    "utterances": list(example.utterances),
+                    "weight": example.weight,
+                }
+                for example in semantic.examples
+            ],
+        },
     }
 
 

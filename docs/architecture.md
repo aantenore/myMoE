@@ -29,7 +29,7 @@ flowchart LR
 - `MoEConfig`: immutable parsed configuration.
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight.
 - `RoutingRule`: configured keyword/weight mapping to expert ids.
-- `Router`: pure deterministic scorer, no provider names in code.
+- `Router`: pure deterministic scorer with rules and optional local semantic examples, no provider names in code.
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation.
 - `Evaluator`: deterministic routing and behavior checks.
@@ -62,7 +62,7 @@ If system-level MoE is too slow, distill common expert behavior into one smaller
 
 ## Failure Modes
 
-- Router overfits keyword rules and misses semantic intent.
+- Router examples overfit narrow phrasing and miss semantic intent outside the evaluated languages.
 - Multiple experts increase latency linearly if called sequentially.
 - Synthesis can hide a bad expert answer instead of exposing disagreement.
 - Local context limits differ per model; routing must know each expert context budget.

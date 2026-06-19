@@ -38,6 +38,7 @@ The live general eval set validates the default app profile:
 
 - `general` for analysis, comparison, decisions, planning, and research-style prompts,
 - `fast_fallback` for summarization, compression, rewriting, and translation prompts.
+- multilingual route coverage across English, Italian, Spanish, French, German, and Portuguese prompts.
 
 Do not overfit to it. The next set should have at least 50 examples stratified by simple, medium, complex and very complex tasks.
 

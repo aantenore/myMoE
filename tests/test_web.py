@@ -26,6 +26,8 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertEqual(config["routing"]["aggregation"], "best")
+        self.assertEqual(config["routing"]["strategy"], "rules")
+        self.assertIn("semantic", config["routing"])
         self.assertIn("[general:synthetic-general]", result["content"])
         self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
 
@@ -83,6 +85,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
+        self.assertIn("config.routing?.strategy", html)
+        self.assertIn("config.routing?.semantic?.enabled", html)
         self.assertIn("hidden", html)
 
 

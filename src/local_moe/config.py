@@ -23,6 +23,25 @@ class ExpertConfig:
 
 
 @dataclass(frozen=True)
+class SemanticRouteExample:
+    expert_id: str
+    utterances: tuple[str, ...]
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class SemanticRoutingConfig:
+    enabled: bool = False
+    method: str = "char_ngrams"
+    min_score: float = 0.16
+    margin: float = 0.02
+    weight: float = 2.4
+    ngram_min: int = 3
+    ngram_max: int = 5
+    examples: tuple[SemanticRouteExample, ...] = ()
+
+
+@dataclass(frozen=True)
 class RoutingRule:
     expert_id: str
     keywords: tuple[str, ...]
@@ -34,6 +53,8 @@ class RoutingConfig:
     top_k: int = 1
     fallback_order: tuple[str, ...] = ()
     aggregation: str = "best"
+    strategy: str = "rules"
+    semantic: SemanticRoutingConfig = field(default_factory=SemanticRoutingConfig)
 
 
 @dataclass(frozen=True)
@@ -58,6 +79,8 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         top_k=int(routing_raw.get("top_k", 1)),
         fallback_order=tuple(routing_raw.get("fallback_order", [])),
         aggregation=str(routing_raw.get("aggregation", "best")),
+        strategy=str(routing_raw.get("strategy", "rules")),
+        semantic=_parse_semantic_routing(routing_raw.get("semantic", {})),
     )
 
     experts = tuple(_parse_expert(item) for item in raw.get("experts", []))
@@ -88,6 +111,20 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         supported = ", ".join(sorted(supported_aggregation))
         raise ConfigError(f"Unsupported aggregation '{routing.aggregation}'. Use one of: {supported}.")
 
+    supported_strategies = {"rules", "hybrid"}
+    if routing.strategy not in supported_strategies:
+        supported = ", ".join(sorted(supported_strategies))
+        raise ConfigError(f"Unsupported routing strategy '{routing.strategy}'. Use one of: {supported}.")
+
+    if routing.semantic.enabled:
+        if routing.semantic.method != "char_ngrams":
+            raise ConfigError("Only semantic routing method 'char_ngrams' is currently supported.")
+        if routing.semantic.ngram_min < 1 or routing.semantic.ngram_max < routing.semantic.ngram_min:
+            raise ConfigError("Semantic routing ngram range is invalid.")
+        for example in routing.semantic.examples:
+            if example.expert_id not in expert_ids:
+                raise ConfigError(f"Semantic route references unknown expert: {example.expert_id}")
+
     return MoEConfig(routing=routing, experts=experts, rules=rules)
 
 
@@ -117,5 +154,40 @@ def _parse_rule(raw: dict[str, Any]) -> RoutingRule:
     return RoutingRule(
         expert_id=str(raw["expert_id"]),
         keywords=keywords,
+        weight=float(raw.get("weight", 1.0)),
+    )
+
+
+def _parse_semantic_routing(raw: object) -> SemanticRoutingConfig:
+    if not isinstance(raw, dict):
+        raw = {}
+
+    raw_examples = raw.get("examples", [])
+    if not isinstance(raw_examples, list):
+        raise ConfigError("routing.semantic.examples must be a list.")
+    examples = tuple(_parse_semantic_example(item) for item in raw_examples)
+    return SemanticRoutingConfig(
+        enabled=bool(raw.get("enabled", False)),
+        method=str(raw.get("method", "char_ngrams")),
+        min_score=float(raw.get("min_score", 0.16)),
+        margin=float(raw.get("margin", 0.02)),
+        weight=float(raw.get("weight", 2.4)),
+        ngram_min=int(raw.get("ngram_min", 3)),
+        ngram_max=int(raw.get("ngram_max", 5)),
+        examples=examples,
+    )
+
+
+def _parse_semantic_example(raw: object) -> SemanticRouteExample:
+    if not isinstance(raw, dict):
+        raise ConfigError("Semantic routing examples must be objects.")
+
+    utterances = tuple(str(item).strip() for item in raw.get("utterances", []) if str(item).strip())
+    if not raw.get("expert_id") or not utterances:
+        raise ConfigError("Semantic routing examples require expert_id and at least one utterance.")
+
+    return SemanticRouteExample(
+        expert_id=str(raw["expert_id"]),
+        utterances=utterances,
         weight=float(raw.get("weight", 1.0)),
     )
