@@ -1,0 +1,10 @@
+{"id":"live-general-analyze","prompt":"Analyze the tradeoff between local privacy and cloud convenience for a personal assistant.","expected_expert":"general","complexity":"medium"}
+{"id":"live-general-compare","prompt":"Compare MLX and llama.cpp as local runtime options for an Apple Silicon laptop.","expected_expert":"general","complexity":"medium"}
+{"id":"live-general-decide","prompt":"Decide whether a local assistant should keep one heavy resident model or multiple large resident specialists.","expected_expert":"general","complexity":"complex"}
+{"id":"live-general-plan","prompt":"Plan a small roadmap for adding plugin support to a local assistant.","expected_expert":"general","complexity":"medium"}
+{"id":"live-general-research","prompt":"Research-style question: explain what evidence should be collected before changing the default local model.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-summarize","prompt":"Summarize this note into three concise bullets for a non-technical user.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-summary","prompt":"Create a short summary of a meeting about model routing and context compaction.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-compress","prompt":"Compress this long project note without losing the decisions and risks.","expected_expert":"fast_fallback","complexity":"medium"}
+{"id":"live-fallback-rewrite","prompt":"Rewrite this message so it is shorter, clearer, and warmer.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-translate","prompt":"Translate this short status update into Italian while keeping a natural tone.","expected_expert":"fast_fallback","complexity":"simple"}

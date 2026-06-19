@@ -25,6 +25,7 @@
     "configs/mcp.json",
     "configs/cron.json",
     "experiments/eval_set_extended.jsonl",
+    "experiments/eval_set_live_general.jsonl",
     "configs/model-candidates.json",
     "configs/model-benchmark.json",
     "tests/fixtures/moe.synthetic.json",

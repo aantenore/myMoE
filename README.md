@@ -167,6 +167,7 @@ docs/
 experiments/
   eval_set.jsonl
   eval_set_extended.jsonl
+  eval_set_live_general.jsonl
   run_quality_gate.py
   run_smoke_eval.py
 src/local_moe/
