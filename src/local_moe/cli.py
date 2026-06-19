@@ -12,6 +12,7 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .setup_status import inspect_setup_status, setup_status_payload
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -25,6 +26,7 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", dest="json_output")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--bootstrap", action="store_true")
+    parser.add_argument("--setup", action="store_true")
     parser.add_argument("--list-extensions", action="store_true")
     parser.add_argument("--create-plugin")
     parser.add_argument("--run-tool")
@@ -40,12 +42,35 @@ def main() -> None:
     config = load_config(config_path)
 
     if args.doctor:
+        setup = inspect_setup_status(
+            config_path,
+            config,
+            app_config,
+            app_config_path=args.app_config,
+        )
         payload = {
             "app": app_config_payload(app_config),
             "runtime": runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)),
+            "setup": setup_status_payload(setup),
             "extensions": registry_payload(_registry(app_config)),
         }
         print(json.dumps(payload, indent=2))
+        return
+
+    if args.setup:
+        print(
+            json.dumps(
+                setup_status_payload(
+                    inspect_setup_status(
+                        config_path,
+                        config,
+                        app_config,
+                        app_config_path=args.app_config,
+                    )
+                ),
+                indent=2,
+            )
+        )
         return
 
     if args.bootstrap:

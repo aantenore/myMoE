@@ -61,6 +61,7 @@ class WebTests(unittest.TestCase):
         try:
             base_url = f"http://127.0.0.1:{server.server_address[1]}"
             runtime = _get_json(base_url + "/api/runtime")
+            setup = _get_json(base_url + "/api/setup")
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
         finally:
@@ -69,6 +70,9 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertEqual(setup["status"], "ready")
+        self.assertEqual(setup["models"], [])
+        self.assertIn("download_command_display", setup)
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
@@ -276,6 +280,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("What should we work on?", html)
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
+        self.assertIn("/api/setup", html)
+        self.assertIn("renderSetup", html)
+        self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("runCron", html)
         self.assertIn("/api/health", html)

@@ -19,6 +19,7 @@ from .health import check_runtime_health, runtime_health_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .setup_status import inspect_setup_status, setup_status_payload
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -62,6 +63,7 @@ def build_server(
     chat_store = FileChatStore(_chat_store_path(app_config))
     handler = _make_handler(
         config_path=config_path,
+        app_config_path=app_config_path,
         app_config=app_config,
         config=config,
         moe=moe,
@@ -73,6 +75,7 @@ def build_server(
 
 def _make_handler(
     config_path: str,
+    app_config_path: str,
     app_config: object,
     config: object,
     moe: LocalMoE,
@@ -103,6 +106,20 @@ def _make_handler(
             if path == "/api/runtime":
                 plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
                 _send_json(self, runtime_plan_payload(plan))
+                return
+
+            if path == "/api/setup":
+                _send_json(
+                    self,
+                    setup_status_payload(
+                        inspect_setup_status(
+                            config_path,
+                            config,
+                            app_config,
+                            app_config_path=app_config_path,
+                        )
+                    ),
+                )
                 return
 
             if path == "/api/health":

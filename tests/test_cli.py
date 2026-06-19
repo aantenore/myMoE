@@ -83,7 +83,31 @@ class CliTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["app"]["mode"], "local_model_required")
         self.assertIn("runtime", payload)
+        self.assertIn("setup", payload)
+        self.assertIn("download_command_display", payload["setup"])
         self.assertTrue(payload["extensions"]["tools"])
+
+    def test_setup_prints_model_asset_status(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--setup",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["models"], [])
+        self.assertIn("scripts/bootstrap_runtime.py", payload["download_command_display"])
 
     def test_cron_status_prints_jobs(self) -> None:
         completed = subprocess.run(

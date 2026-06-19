@@ -60,6 +60,12 @@ Inspect runtime health:
 curl http://127.0.0.1:8089/api/health
 ```
 
+Inspect setup readiness:
+
+```bash
+curl http://127.0.0.1:8089/api/setup
+```
+
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
 - left rail with a new chat action and starter prompts,
@@ -71,7 +77,9 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 
 Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, export, and delete saved sessions. When a saved session continues, the web API includes recent turns as bounded local context for the model.
 
-The Advanced drawer contains runtime commands, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+The Advanced drawer contains runtime commands, setup readiness, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+
+Setup readiness is side-effect free. It reports the bootstrap command, configured model cache path, and whether each model asset appears present, missing, partial, or runtime-dependent.
 
 The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
 
@@ -100,7 +108,7 @@ Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
+Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 
@@ -145,6 +153,14 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 ```
 
 Eval mode can run against any live local config. Normal UI and CLI usage should use a live local model config.
+
+Setup readiness:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --config configs/moe.live.general-mlx.example.json \
+  --setup
+```
 
 Run an allowlisted tool:
 

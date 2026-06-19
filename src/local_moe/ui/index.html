@@ -925,6 +925,10 @@
           <div class="kv" id="runtime"></div>
         </section>
         <section class="advanced-section">
+          <h2>Setup</h2>
+          <div class="kv" id="setup"></div>
+        </section>
+        <section class="advanced-section">
           <h2>Health</h2>
           <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
           <div class="kv" id="health"></div>
@@ -980,6 +984,7 @@
         busy: false,
         config: null,
         runtime: null,
+        setup: null,
         health: null,
         extensions: null,
         messages: [],
@@ -1071,18 +1076,21 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, health, extensions] = await Promise.all([
+          const [config, runtime, setup, health, extensions] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
+            api("/api/setup"),
             api("/api/health"),
             api("/api/extensions"),
           ]);
           state.config = config;
           state.runtime = runtime;
+          state.setup = setup;
           state.health = health;
           state.extensions = extensions;
           renderConfig(config);
           renderRuntime(runtime);
+          renderSetup(setup);
           renderHealth(health);
           renderExtensions(extensions);
           renderToolRunner(extensions);
@@ -1263,6 +1271,32 @@
           (commands
             ? `<div class="section-label">Start commands</div>${commands}`
             : `<span class="muted">No runtime commands available.</span>`);
+      }
+
+      function renderSetup(setup) {
+        const models = (setup.models || [])
+          .map(
+            (model) => `
+              <div class="kv-row">
+                <span>${escapeHtml(model.status)}</span>
+                <span>
+                  <strong>${escapeHtml(shortModel(model.model))}</strong><br>
+                  <span class="mono">${escapeHtml(model.backend)} · ${escapeHtml(model.kind)}</span><br>
+                  <span class="muted">${escapeHtml(model.detail || model.cache_path || "")}</span>
+                </span>
+              </div>`,
+          )
+          .join("");
+        el("setup").innerHTML =
+          kvRows({
+            Status: setup.status || "unknown",
+            Cache: setup.model_cache_dir || "default",
+            Bootstrap: setup.download_command_display || "Unavailable",
+          }) +
+          (setup.error
+            ? `<div class="kv-row"><span>Error</span><span class="mono">${escapeHtml(setup.error)}</span></div>`
+            : "") +
+          (models || '<span class="muted">No model assets are required by this profile.</span>');
       }
 
       function renderHealth(health) {
