@@ -86,6 +86,8 @@ curl -X POST http://127.0.0.1:8089/api/memory \
   --data '{"text":"Antonio prefers local-first modular apps.","scope":"default","kind":"preference"}'
 
 curl 'http://127.0.0.1:8089/api/memory?scope=default&query=Antonio%20local-first'
+
+curl -X DELETE 'http://127.0.0.1:8089/api/memory/<record-id>?confirm=true'
 ```
 
 Import pasted local knowledge into the same retrieval path:
@@ -96,6 +98,8 @@ curl -X POST http://127.0.0.1:8089/api/knowledge \
   --data '{"title":"Project notes","content":"Paste local reference text here.","scope":"default","confirm":true}'
 
 curl 'http://127.0.0.1:8089/api/knowledge?scope=default'
+
+curl -X DELETE 'http://127.0.0.1:8089/api/knowledge/<document-id>?confirm=true'
 ```
 
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
@@ -113,9 +117,9 @@ The browser prefers `/api/generate/stream`, a server-sent event response with `r
 
 The Compact action calls the configured local compaction expert, stores a durable session summary, and reuses that summary in later context bundles. Exported Markdown includes the current summary.
 
-The Memory section stores append-only local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt.
+The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can forget one record by id after the user checks the deletion confirmation box.
 
-The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same append-only memory file. It requires an explicit confirmation checkbox because it writes local records. It does not read arbitrary files from the browser.
+The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same memory file. It requires an explicit confirmation checkbox because it writes local records, and its forget action requires a separate confirmation before deleting all chunks for a document id. It does not read arbitrary files from the browser.
 
 The Advanced drawer contains runtime commands, System Doctor, setup readiness, runtime health with a manual refresh action, configured models, latest performance decision, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 
@@ -131,7 +135,7 @@ The Runtime section exposes configured model process state from `/api/models/pro
 
 The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
-The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `knowledge.ingest`, `plugin.create`, and `extension.configure` still require `confirm: true` before writing local files.
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `knowledge.ingest`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before writing or deleting local files.
 
 `extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
 

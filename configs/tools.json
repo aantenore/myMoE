@@ -8,8 +8,15 @@
       "enabled": true
     },
     {
+      "name": "memory.forget",
+      "description": "Delete a local memory record or imported knowledge document from the local memory store.",
+      "risk_class": "write_local",
+      "side_effects": "deletes_memory_records",
+      "enabled": true
+    },
+    {
       "name": "knowledge.ingest",
-      "description": "Chunk pasted local knowledge into the append-only memory store for later retrieval.",
+      "description": "Chunk pasted local knowledge into the local memory store for later retrieval.",
       "risk_class": "write_local",
       "side_effects": "writes_memory_records",
       "enabled": true

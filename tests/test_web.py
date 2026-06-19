@@ -582,6 +582,44 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["expert_id"], "general")
         self.assertGreater(_prompt_chars(result["content"]), len("Summarize Antonio preference."))
 
+    def test_memory_api_forget_requires_confirmation_and_valid_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                memory = _post_json(
+                    base_url + "/api/memory",
+                    {
+                        "text": "Temporary local memory.",
+                        "scope": "default",
+                        "kind": "note",
+                    },
+                )
+                with self.assertRaises(HTTPError) as delete_raised:
+                    _delete_json(base_url + f"/api/memory/{memory['id']}")
+                with self.assertRaises(HTTPError) as invalid_raised:
+                    _delete_json(base_url + "/api/memory/?confirm=true")
+                deleted = _delete_json(base_url + f"/api/memory/{memory['id']}?confirm=true")
+                searched = _get_json(base_url + "/api/memory?scope=default&query=Temporary")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(delete_raised.exception.code, 400)
+        self.assertEqual(invalid_raised.exception.code, 400)
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual(deleted["removed_ids"], [memory["id"]])
+        self.assertEqual(searched["records"], [])
+
     def test_knowledge_api_ingests_and_retrieves_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -617,17 +655,27 @@ class WebTests(unittest.TestCase):
                     base_url + "/api/generate",
                     {"prompt": "What covers multilingual prompts?"},
                 )
+                with self.assertRaises(HTTPError) as delete_raised:
+                    _delete_json(base_url + f"/api/knowledge/{imported['document_id']}")
+                deleted = _delete_json(
+                    base_url + f"/api/knowledge/{imported['document_id']}?confirm=true"
+                )
+                final = _get_json(base_url + "/api/knowledge?scope=default")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
                 server.server_close()
 
         self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(delete_raised.exception.code, 400)
         self.assertEqual(imported["chunk_count"], 1)
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["records"][0]["kind"], "knowledge")
         self.assertEqual(result["context"]["memory_ids"], imported["record_ids"])
         self.assertIn("memory", result["context"]["sections"])
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual(deleted["removed_ids"], imported["record_ids"])
+        self.assertEqual(final["count"], 0)
 
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -667,6 +715,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/knowledge", html)
         self.assertIn("importKnowledge", html)
         self.assertIn("knowledge.ingest", html)
+        self.assertIn("forgetKnowledge", html)
+        self.assertIn("forgetMemory", html)
+        self.assertIn("/api/memory/", html)
+        self.assertIn("/api/knowledge/", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)

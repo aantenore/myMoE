@@ -1029,6 +1029,14 @@
               <input class="tool-select" id="memory-query" aria-label="Memory query" placeholder="Search memory" />
               <button class="ghost-button" id="search-memory" type="button">Search</button>
             </div>
+            <div class="tool-row">
+              <input class="tool-select" id="memory-forget-id" aria-label="Memory id to forget" placeholder="Memory id to forget" />
+              <button class="ghost-button" id="forget-memory" type="button">Forget memory</button>
+            </div>
+            <label class="check-row">
+              <input id="memory-forget-confirm" type="checkbox" />
+              <span>Confirm memory deletion</span>
+            </label>
             <pre class="eval-output" id="memory-output">No memory action yet.</pre>
           </div>
         </section>
@@ -1055,6 +1063,14 @@
               <button class="ghost-button" id="import-knowledge" type="button">Import knowledge</button>
               <button class="ghost-button" id="list-knowledge" type="button">List knowledge</button>
             </div>
+            <div class="tool-row">
+              <input class="tool-select" id="knowledge-forget-id" aria-label="Knowledge document id to forget" placeholder="Document id to forget" />
+              <button class="ghost-button" id="forget-knowledge" type="button">Forget document</button>
+            </div>
+            <label class="check-row">
+              <input id="knowledge-forget-confirm" type="checkbox" />
+              <span>Confirm knowledge deletion</span>
+            </label>
             <pre class="eval-output" id="knowledge-output">No knowledge action yet.</pre>
           </div>
         </section>
@@ -1194,8 +1210,10 @@
         el("run-tool").addEventListener("click", runTool);
         el("save-memory").addEventListener("click", saveMemory);
         el("search-memory").addEventListener("click", searchMemory);
+        el("forget-memory").addEventListener("click", forgetMemory);
         el("import-knowledge").addEventListener("click", importKnowledge);
         el("list-knowledge").addEventListener("click", listKnowledge);
+        el("forget-knowledge").addEventListener("click", forgetKnowledge);
         el("refresh-health").addEventListener("click", refreshHealth);
         el("run-extension-audit").addEventListener("click", runExtensionAudit);
         el("create-plugin").addEventListener("click", createPlugin);
@@ -1794,6 +1812,11 @@
             scope: "default",
             limit: 5,
           },
+          "memory.forget": {
+            record_id: "",
+            document_id: "",
+            confirm: false,
+          },
           "knowledge.ingest": {
             title: "Local notes",
             content: "Paste local reference text here.",
@@ -2192,6 +2215,23 @@
         }
       }
 
+      async function forgetMemory() {
+        const recordId = el("memory-forget-id").value.trim();
+        if (!recordId) return;
+        el("memory-output").textContent = "Deleting...";
+        try {
+          const result = await api(
+            `/api/memory/${encodeURIComponent(recordId)}?confirm=${el("memory-forget-confirm").checked}`,
+            { method: "DELETE" },
+          );
+          el("memory-output").textContent = JSON.stringify(result, null, 2);
+          el("memory-forget-id").value = "";
+          el("memory-forget-confirm").checked = false;
+        } catch (error) {
+          el("memory-output").textContent = error.message;
+        }
+      }
+
       async function importKnowledge() {
         const title = el("knowledge-title").value.trim();
         const content = el("knowledge-content").value.trim();
@@ -2222,6 +2262,23 @@
         try {
           const result = await api(`/api/knowledge?scope=${encodeURIComponent(scope)}`);
           el("knowledge-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("knowledge-output").textContent = error.message;
+        }
+      }
+
+      async function forgetKnowledge() {
+        const documentId = el("knowledge-forget-id").value.trim();
+        if (!documentId) return;
+        el("knowledge-output").textContent = "Deleting...";
+        try {
+          const result = await api(
+            `/api/knowledge/${encodeURIComponent(documentId)}?confirm=${el("knowledge-forget-confirm").checked}`,
+            { method: "DELETE" },
+          );
+          el("knowledge-output").textContent = JSON.stringify(result, null, 2);
+          el("knowledge-forget-id").value = "";
+          el("knowledge-forget-confirm").checked = false;
         } catch (error) {
           el("knowledge-output").textContent = error.message;
         }

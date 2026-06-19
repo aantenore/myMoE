@@ -70,6 +70,26 @@ class MemoryTests(unittest.TestCase):
 
         self.assertEqual([item[0].text for item in results], ["Current model recommendation."])
 
+    def test_forgets_single_record_and_document_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileMemoryStore(Path(tmp) / "memory.jsonl")
+            first = store.add("Temporary memory.", scope="project")
+            report = store.ingest_document(
+                "Alpha note.\n\nBeta note.",
+                title="Temporary Document",
+                scope="project",
+                chunk_chars=200,
+            )
+            removed_record = store.forget_record(first.id)
+            removed_document = store.forget_document(report.document_id)
+            records = store.list(scope="project")
+
+        self.assertEqual(removed_record.removed_count, 1)
+        self.assertEqual(removed_record.removed_ids, (first.id,))
+        self.assertEqual(removed_document.removed_count, 1)
+        self.assertEqual(removed_document.removed_ids, report.record_ids)
+        self.assertEqual(records, [])
+
 
 if __name__ == "__main__":
     unittest.main()
