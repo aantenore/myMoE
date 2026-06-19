@@ -15,6 +15,7 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 from .providers import ProviderError
+from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 
 
 def main() -> None:
@@ -95,6 +96,16 @@ def _make_handler(
                 _send_json(self, runtime_plan_payload(plan))
                 return
 
+            if self.path == "/api/cron":
+                _send_json(
+                    self,
+                    cron_status(
+                        registry.cron_jobs,
+                        state_path=_cron_state_path(app_config),
+                    ),
+                )
+                return
+
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
@@ -130,6 +141,16 @@ def _make_handler(
                 eval_path = str(payload.get("eval_path", "experiments/eval_set.jsonl"))
                 result = evaluate_router(config, load_eval_cases(eval_path))
                 _send_json(self, result)
+                return
+
+            if self.path == "/api/cron/run":
+                payload = _read_json(self)
+                summary = run_due_jobs(
+                    registry.cron_jobs,
+                    state_path=_cron_state_path(app_config),
+                    dry_run=bool(payload.get("dry_run", False)),
+                )
+                _send_json(self, cron_summary_payload(summary))
                 return
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
@@ -200,6 +221,10 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
         ],
         "rules": [rule.__dict__ for rule in config.rules],
     }
+
+
+def _cron_state_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/cron-state.json"
 
 
 def _routing_payload(routing: object) -> dict[str, object]:

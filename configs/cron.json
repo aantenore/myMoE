@@ -1,6 +1,16 @@
 {
   "jobs": [
     {
+      "id": "extension-audit",
+      "description": "Validate configured extension surfaces at startup.",
+      "enabled": true,
+      "schedule": {
+        "type": "startup"
+      },
+      "command": ["extension.audit"],
+      "risk_class": "compute_only"
+    },
+    {
       "id": "model-performance-refresh",
       "description": "Refresh model benchmark report on demand or scheduled runs.",
       "enabled": false,
@@ -13,14 +23,35 @@
     },
     {
       "id": "memory-maintenance",
-      "description": "Placeholder recurring memory cleanup and compaction health check.",
+      "description": "Report local memory store health and expired-record counts.",
       "enabled": true,
       "schedule": {
         "type": "interval",
         "seconds": 86400
       },
-      "command": ["python", "-m", "local_moe.cli", "--list-extensions"],
+      "command": ["memory.maintenance", "--memory-path", "work/runtime/memory.jsonl"],
       "risk_class": "compute_only"
+    },
+    {
+      "id": "router-distillation-refresh",
+      "description": "Regenerate local route-label data and distilled router artifact from the curated live eval set.",
+      "enabled": true,
+      "schedule": {
+        "type": "interval",
+        "seconds": 604800
+      },
+      "command": [
+        "router.distill",
+        "--eval",
+        "experiments/eval_set_live_general.jsonl",
+        "--labels",
+        "experiments/route_labels_live_general.jsonl",
+        "--artifact",
+        "outputs/router-distilled-live-general.json",
+        "--teacher-source",
+        "curated_live_eval"
+      ],
+      "risk_class": "write_local"
     }
   ]
 }

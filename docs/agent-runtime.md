@@ -35,7 +35,7 @@ The app config defaults to:
 - external communication: draft-only,
 - process execution: disabled in the model-facing policy.
 
-The current implementation discovers and reports these surfaces. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
+The current implementation discovers and reports these surfaces. Cron jobs use a local allowlisted runner for supported actions such as `memory.maintenance`, `router.distill`, and `extension.audit`. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
 
 ## Local Model Requirement
 

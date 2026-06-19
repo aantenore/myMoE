@@ -49,7 +49,7 @@ Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime, model, routing, extension, MCP, cron, and eval drawer:
+Advanced runtime, model, routing, extension, MCP, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 

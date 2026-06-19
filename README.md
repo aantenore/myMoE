@@ -247,6 +247,13 @@ Regenerate the local distilled router artifact with:
 make distill-router
 ```
 
+Inspect and run allowlisted local cron jobs with:
+
+```bash
+make cron-status
+make run-cron
+```
+
 For the Gemma E4B regression benchmark:
 
 ```bash

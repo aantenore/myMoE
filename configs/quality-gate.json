@@ -42,6 +42,7 @@
     "tests/test_model_downloads.py",
     "tests/test_compaction.py",
     "tests/test_distilled_router.py",
+    "tests/test_scheduler.py",
     "configs/moe.live.qwen25-coder.json",
     "configs/single.live.qwen25-coder.json",
     "configs/moe.live.general-mlx.example.json",
