@@ -103,7 +103,7 @@ The Setup section also exposes a guarded "Prepare runtime" action backed by `/ap
 
 The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server.
 
-The Extensions section includes Plugin Studio. It writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, and refreshes the extension registry immediately after creation.
+The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
 The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
 

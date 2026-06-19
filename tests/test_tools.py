@@ -83,6 +83,16 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertTrue(manifest_exists)
         self.assertTrue(skill_exists)
 
+    def test_extension_audit_returns_registry_issues(self) -> None:
+        runner = LocalToolRunner(load_extension_registry())
+
+        result = runner.run("extension.audit", {})
+
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.payload["checked"])
+        self.assertEqual(result.payload["issue_count"], 0)
+        self.assertGreaterEqual(result.payload["plugin_count"], 1)
+
     def test_mcp_search_capabilities_returns_declared_servers(self) -> None:
         runner = LocalToolRunner(load_extension_registry())
 

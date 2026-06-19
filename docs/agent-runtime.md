@@ -33,6 +33,7 @@ flowchart LR
 | `memory.search` | Searches the local append-only memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | Web memory API | Saves and searches append-only local memory records. | Writes only to `<runtime.work_dir>/memory.jsonl`; no arbitrary path input. | Web `/api/memory`, Advanced Memory panel. |
 | `context.compact` | Builds a compaction prompt and, by default, asks the configured local model to summarize it. | Compute-only; uses the configured MoE expert and does not call cloud APIs. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `extension.audit` | Validates the active extension registry and returns structured plugin reference issues. | Read-only; no filesystem writes or process execution. | CLI `--run-tool`, web `/api/tools/run`, web `/api/extensions/audit`, Advanced Extensions panel, cron. |
 | Runtime setup | Runs configured install commands and model downloads from the runtime plan. | Requires explicit confirmation; executes only app-generated commands, never arbitrary user input. | CLI `--prepare-runtime`, web `/api/setup/run`, Advanced Setup panel. |
 | Model process manager | Starts configured local model server commands and tracks processes started by the web server. | Requires explicit confirmation; skips already reachable endpoints; stops only managed child processes. | CLI `--models-status`, web `/api/models/processes`, `/api/models/start`, `/api/models/stop`, Advanced Runtime panel. |
 | `plugin.create` | Scaffolds a local plugin manifest and plugin-local `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, web `/api/plugins`, Advanced Plugin Studio. |
@@ -56,7 +57,9 @@ The current implementation discovers and reports these surfaces. Cron jobs use a
 
 Enabled tools are also executed through a local allowlist in `src/local_moe/tool_runner.py`. The runner maps configured names to concrete Python functions and rejects arbitrary commands. Write-local operations require explicit confirmation in the tool payload or cron request.
 
-Plugin scaffolding is exposed through `plugin.create` and web `/api/plugins`. The scaffold creates `plugin.json` plus a plugin-local `SKILL.md`, then refreshes the extension registry so the new plugin and skill are visible without restarting the web server.
+Plugin scaffolding is exposed through `plugin.create` and web `/api/plugins`. The scaffold creates `plugin.json` plus a plugin-local `SKILL.md`, then refreshes and audits the extension registry so the new plugin and skill are visible without restarting the web server.
+
+Manual registry auditing is exposed through `extension.audit` and web `/api/extensions/audit`. It reuses the same validator as the background cron job and reports missing tool, skill, MCP server, cron job, or risk-class references as structured issues.
 
 MCP stdio integration lives in `src/local_moe/mcp_client.py`. It follows MCP JSON-RPC lifecycle basics: `initialize`, `notifications/initialized`, then `tools/list` or `tools/call`. Calls are intentionally narrow: myMoE only invokes tools listed in the server-level `allowed_tools` configuration.
 
