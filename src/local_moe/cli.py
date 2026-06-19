@@ -10,6 +10,7 @@ from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
+from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
 from .orchestrator import LocalMoE
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
@@ -32,6 +33,11 @@ def main() -> None:
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
     parser.add_argument("--prepare-confirm", action="store_true")
+    parser.add_argument("--models-status", action="store_true")
+    parser.add_argument("--start-models", action="store_true")
+    parser.add_argument("--stop-models", action="store_true")
+    parser.add_argument("--models-confirm", action="store_true")
+    parser.add_argument("--models-only-first", action="store_true")
     parser.add_argument("--list-extensions", action="store_true")
     parser.add_argument("--create-plugin")
     parser.add_argument("--run-tool")
@@ -93,6 +99,29 @@ def main() -> None:
         print(json.dumps(setup_run_payload(result), indent=2))
         if not result.ok and result.status not in {"planned", "needs_setup"}:
             raise SystemExit(2)
+        return
+
+    if args.models_status or args.start_models or args.stop_models:
+        manager = ModelServerManager.from_config(
+            config,
+            preferred_backends=app_config.runtime.preferred_backends,
+            work_dir=app_config.runtime.work_dir,
+        )
+        if args.start_models:
+            action = manager.start(confirm=args.models_confirm, only_first=args.models_only_first)
+            print(json.dumps(model_server_action_payload(action), indent=2))
+            if not action.ok:
+                raise SystemExit(2)
+            if any(item.managed for item in action.results):
+                wait_for_managed_processes(manager)
+            return
+        if args.stop_models:
+            action = manager.stop(confirm=args.models_confirm)
+            print(json.dumps(model_server_action_payload(action), indent=2))
+            if not action.ok:
+                raise SystemExit(2)
+            return
+        print(json.dumps(manager.status(), indent=2))
         return
 
     if args.list_extensions:

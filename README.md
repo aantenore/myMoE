@@ -35,6 +35,8 @@ Start the configured local model server:
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 ```
 
+The web UI can also manage configured model processes from the Advanced Runtime panel. It starts only app-generated model commands, requires the confirmation checkbox, skips endpoints that are already reachable, and stops only processes that were started by the current web server.
+
 For a faster first run on smaller machines:
 
 ```bash
@@ -118,6 +120,13 @@ Inspect local setup readiness before starting the app:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
+```
+
+Inspect configured model process status:
+
+```bash
+make models-status
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --models-status
 ```
 
 Preview or run runtime preparation from the CLI:

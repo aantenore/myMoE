@@ -132,6 +132,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["setup_before"]["status"], "ready")
         self.assertEqual(payload["steps"], [])
 
+    def test_models_status_prints_managed_process_contract(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--models-status",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["count"], 0)
+        self.assertEqual(payload["servers"], [])
+
     def test_cron_status_prints_jobs(self) -> None:
         completed = subprocess.run(
             [
