@@ -1,6 +1,6 @@
 {
   "accuracy": 1.0,
-  "total": 26,
+  "total": 56,
   "by_complexity": {
     "simple": 1.0,
     "medium": 1.0,
@@ -214,6 +214,246 @@
       "selected_expert": "coder",
       "passed": true,
       "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-009",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-010",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-011",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-012",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-013",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-014",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-015",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-code-016",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-009",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-010",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-011",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-012",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-013",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-014",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-015",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-arch-016",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-007",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-008",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-009",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-010",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-011",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-012",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-013",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "ext-gen-014",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-005",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-006",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-007",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-008",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-009",
+      "expected_expert": "architect",
+      "selected_expert": "architect",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "ext-mix-010",
+      "expected_expert": "coder",
+      "selected_expert": "coder",
+      "passed": true,
+      "complexity": "complex",
       "score": 1.0
     }
   ]

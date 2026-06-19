@@ -11,8 +11,8 @@
       "passed": true,
       "accuracy": 1.0,
       "min_accuracy": 0.9,
-      "total": 26,
-      "min_total": 20,
+      "total": 56,
+      "min_total": 50,
       "missing_complexities": [],
       "failed_case_ids": []
     },

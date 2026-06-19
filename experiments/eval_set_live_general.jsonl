@@ -17,3 +17,36 @@
 {"id":"live-fallback-fr-translate","prompt":"Traduis cette mise a jour en anglais avec un ton naturel.","expected_expert":"fast_fallback","complexity":"simple"}
 {"id":"live-general-de-decide","prompt":"Entscheide den besten Ansatz fuer ein lokales Assistant-System mit mehreren Modellen.","expected_expert":"general","complexity":"complex"}
 {"id":"live-fallback-pt-summarize","prompt":"Resuma esta nota em dois pontos curtos para uma pessoa nao tecnica.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-en-plugin-risk","prompt":"Analyze the reliability risks of allowing plugins to call local tools without confirmation.","expected_expert":"general","complexity":"complex"}
+{"id":"live-general-en-thinking-policy","prompt":"Decide a policy for when thinking mode should be enabled automatically for complex prompts.","expected_expert":"general","complexity":"complex"}
+{"id":"live-general-en-cross-platform-roadmap","prompt":"Plan a release checklist for running this local assistant across macOS, Windows, and Linux.","expected_expert":"general","complexity":"medium"}
+{"id":"live-general-en-mcp-evidence","prompt":"Explain what evidence is needed before enabling a new MCP server by default.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-en-release-shortening","prompt":"Shorten this release note to one paragraph while keeping the user impact clear.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-en-incident-summary","prompt":"Summarize the incident timeline into an executive update with three bullets.","expected_expert":"fast_fallback","complexity":"medium"}
+{"id":"live-general-en-rollout-plan","prompt":"Compare privacy, latency, memory, and tooling tradeoffs, then recommend the safest rollout plan.","expected_expert":"general","complexity":"very_complex"}
+{"id":"live-fallback-en-context-compress","prompt":"Compress the following long context into decisions, risks, and next actions without adding new facts.","expected_expert":"fast_fallback","complexity":"medium"}
+{"id":"live-general-it-thinking","prompt":"Decidi quando attivare il thinking automatico per richieste complesse in un assistente locale.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-it-rewrite","prompt":"Riscrivi questo messaggio in modo piu breve, chiaro e gentile.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-fallback-it-translate","prompt":"Traduci questo aggiornamento in inglese mantenendo un tono naturale.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-es-risk","prompt":"Analiza los riesgos de conectar herramientas locales a un asistente con memoria persistente.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-es-summary","prompt":"Resume esta nota en dos puntos breves para una persona no tecnica.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-fr-compare","prompt":"Compare les avantages et les risques d'un routeur local face a un modele unique.","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-fr-shorten","prompt":"Raccourcis ce message tout en gardant les decisions et les prochaines actions.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-de-analyze","prompt":"Analysiere die Risiken eines lokalen Assistenten mit persistentem Speicher und Werkzeugen.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-de-summary","prompt":"Fasse diese Notiz in zwei kurzen Punkten fuer eine nicht technische Person zusammen.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-pt-decide","prompt":"Decida a melhor politica para carregar especialistas grandes apenas quando a avaliacao justificar.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-pt-rewrite","prompt":"Reescreva esta mensagem para ficar mais curta, clara e acolhedora.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-nl-analyze","prompt":"Analyseer de risico's van lokale geheugenopslag in een persoonlijke assistent.","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-nl-summary","prompt":"Vat deze notitie samen in drie korte punten.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-pl-compare","prompt":"Porownaj lokalny routing modeli z jednym silnym modelem dla aplikacji prywatnej.","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-pl-summary","prompt":"Podsumuj te notatke w dwoch krotkich punktach.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-ar-analyze","prompt":"حلل مخاطر استخدام ذاكرة محلية دائمة في مساعد شخصي.","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-ar-summary","prompt":"لخص هذه الملاحظة في ثلاث نقاط قصيرة.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-hi-plan","prompt":"स्थानीय सहायक में प्लगइन समर्थन जोड़ने के अगले कदमों की योजना बनाएं।","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-hi-rewrite","prompt":"इस संदेश को छोटा, स्पष्ट और विनम्र बनाकर फिर से लिखें।","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-ja-compare","prompt":"ローカルルーティングと単一モデルの選択肢を比較して、最適な方針を決めてください。","expected_expert":"general","complexity":"medium"}
+{"id":"live-fallback-ja-summary","prompt":"このメモを三つの短い箇条書きに要約してください。","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-ko-risk","prompt":"로컬 도구와 영구 메모리를 연결할 때의 위험과 완화책을 분석해 주세요.","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-ko-translate","prompt":"이 상태 업데이트를 자연스러운 영어로 번역해 주세요.","expected_expert":"fast_fallback","complexity":"simple"}
+{"id":"live-general-zh-decision","prompt":"分析本地助手是否应该保留一个大型常驻模型还是多个专家模型。","expected_expert":"general","complexity":"complex"}
+{"id":"live-fallback-zh-summary","prompt":"请把这条项目备注总结成三个简短要点。","expected_expert":"fast_fallback","complexity":"simple"}

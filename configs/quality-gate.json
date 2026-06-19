@@ -2,7 +2,7 @@
   "routing_eval": {
     "result_path": "outputs/smoke-eval-extended.json",
     "min_accuracy": 0.9,
-    "min_total": 20,
+    "min_total": 50,
     "required_complexities": ["simple", "medium", "complex", "very_complex"]
   },
   "required_files": [
@@ -43,6 +43,7 @@
     "experiments/train_distilled_router.py",
     "outputs/router-distilled-live-general.json",
     "outputs/router-distilled-extended.json",
+    "outputs/live-general-routing-eval.json",
     "configs/model-candidates.json",
     "configs/model-benchmark.json",
     "tests/fixtures/moe.synthetic.json",
