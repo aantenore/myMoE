@@ -19,6 +19,8 @@ class RuntimePolicy:
     preferred_backends: dict[str, str]
     model_cache_dir: str
     work_dir: str
+    context_policy_config: str
+    context_policy_profile: str
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,8 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             },
             model_cache_dir=str(runtime_raw.get("model_cache_dir", "~/.cache/huggingface")),
             work_dir=str(runtime_raw.get("work_dir", "work/runtime")),
+            context_policy_config=str(runtime_raw.get("context_policy_config", "configs/context-policy.json")),
+            context_policy_profile=str(runtime_raw.get("context_policy_profile", "default")),
         ),
         extensions=ExtensionPaths(
             plugins_dir=str(extensions_raw.get("plugins_dir", "plugins")),
@@ -104,6 +108,8 @@ def app_config_payload(config: AppConfig) -> dict[str, Any]:
             "preferred_backends": dict(config.runtime.preferred_backends),
             "model_cache_dir": config.runtime.model_cache_dir,
             "work_dir": config.runtime.work_dir,
+            "context_policy_config": config.runtime.context_policy_config,
+            "context_policy_profile": config.runtime.context_policy_profile,
         },
         "extensions": config.extensions.__dict__,
         "permissions": config.permissions.__dict__,

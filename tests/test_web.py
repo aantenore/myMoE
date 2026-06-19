@@ -35,6 +35,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("distilled", config["routing"])
         self.assertIn("[general:synthetic-general]", result["content"])
         self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
+        self.assertIn("context", result)
+        self.assertIn("token_estimate", result["context"])
 
     def test_runs_eval_endpoint(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -224,7 +226,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(loaded["messages"][0]["role"], "user")
         self.assertEqual(loaded["messages"][1]["role"], "assistant")
         self.assertIn("route", loaded["messages"][1]["meta"])
+        self.assertIn("context", loaded["messages"][1]["meta"])
         self.assertEqual(second["session"]["message_count"], 4)
+        self.assertIn("recent_turns", second["context"]["sections"])
         self.assertGreater(
             _prompt_chars(second["content"]),
             _prompt_chars(first["content"]) + len("Continue the same chat."),
@@ -260,6 +264,46 @@ class WebTests(unittest.TestCase):
                 server.server_close()
 
         self.assertEqual(raised.exception.code, 404)
+
+    def test_generate_reports_context_compaction_when_budget_is_tight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy_path = root / "context-policy.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "default": {
+                            "context_limit_tokens": 80,
+                            "reserved_output_tokens": 20,
+                            "compaction_trigger_ratio": 0.5,
+                            "max_recent_turns": 20,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            app_config = _write_temp_app_config(root, context_policy_path=policy_path)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                first = _post_json(base_url + "/api/generate", {"prompt": "alpha " * 160})
+                second = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "beta " * 160, "session_id": first["session_id"]},
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertTrue(second["context"]["compaction_needed"])
+        self.assertGreater(second["context"]["dropped_turns"], 0)
 
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -309,6 +353,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("config.routing?.semantic?.enabled", html)
         self.assertIn("config.routing?.distilled?.enabled", html)
         self.assertIn("result.disagreement", html)
+        self.assertIn("routeMeta(message.meta || {})", html)
         self.assertIn("hidden", html)
 
 
@@ -350,10 +395,13 @@ def _delete_json(url: str) -> dict[str, object]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _write_temp_app_config(root: Path) -> Path:
+def _write_temp_app_config(root: Path, *, context_policy_path: Path | None = None) -> Path:
     raw = json.loads(Path("configs/app.json").read_text(encoding="utf-8"))
     raw["default_moe_config"] = "tests/fixtures/moe.synthetic.json"
     raw["runtime"]["work_dir"] = str(root / "runtime")
+    if context_policy_path is not None:
+        raw["runtime"]["context_policy_config"] = str(context_policy_path)
+        raw["runtime"]["context_policy_profile"] = "default"
     path = root / "app.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
     return path

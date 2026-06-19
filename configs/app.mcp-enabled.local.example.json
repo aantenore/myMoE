@@ -16,7 +16,9 @@
       "fallback": "llama_cpp"
     },
     "model_cache_dir": "~/.cache/huggingface",
-    "work_dir": "work/runtime"
+    "work_dir": "work/runtime",
+    "context_policy_config": "configs/context-policy.json",
+    "context_policy_profile": "qwen3_30b_a3b_general_24gb"
   },
   "extensions": {
     "plugins_dir": "plugins",

@@ -20,7 +20,7 @@ The test hardening pass covers configuration validation, routing evaluation, Ope
 - `tests/test_tools.py`: allowlisted local tool execution, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
 - `tests/test_scheduler.py`: cron dry runs, allowlisted actions, unsupported command rejection, and write-local confirmation.
-- `tests/test_context.py`: cache-friendly context section ordering, budget truncation, memory snippet ranking, compaction prompt requirements.
+- `tests/test_context.py`: cache-friendly context section ordering, policy loading, budget truncation, memory snippet ranking, compaction prompt requirements.
 - `tests/test_memory.py`: append-only local memory writes, scoped listing, temporal validity, keyword retrieval.
 - `experiments/eval_set_extended.jsonl`: 26 router cases across coding, architecture, general writing, and mixed prompts.
 - `experiments/run_quality_gate.py`: project-level quality gate.
@@ -36,7 +36,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `119/119` passed
+- unit/contract tests: `121/121` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `26/26`, accuracy `1.0`
 - quality gate: passed

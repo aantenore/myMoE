@@ -73,6 +73,8 @@ Setup readiness is exposed through CLI `--setup` and web `/api/setup`. It is sid
 
 The web API exposes `/api/health` to probe configured expert endpoints before generation. OpenAI-compatible experts are checked through `/v1/models` or `/health`; non-HTTP test providers are reported as skipped. The Advanced drawer displays the same status and latency metadata.
 
+Chat continuation uses the configured context policy profile from `configs/context-policy.json`. The web API builds a `ContextBundle`, truncates recent turns to budget, and returns context telemetry with each generation so compaction pressure is observable before quality degrades.
+
 ## Routing Policy
 
 The live general profile uses distilled routing. It combines expert base weights, explicit rules, local semantic route examples, and a local centroid classifier artifact trained from route labels. The semantic and distilled matchers are intentionally lightweight: they use normalized character n-grams, so they are cross platform and do not require a third model server.
