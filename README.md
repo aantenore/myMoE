@@ -9,7 +9,7 @@ This project does not try to train a monolithic MoE from scratch. That would be 
 3. optionally synthesize multiple expert answers,
 4. distill routing decisions and/or expert outputs later.
 
-The current live profile uses a hybrid local router: base expert weights plus explicit rules plus multilingual semantic route examples. See `docs/router.md`.
+The current live profile uses a distilled local router: base expert weights, explicit rules, multilingual semantic examples, and a local classifier artifact trained from curated route labels. See `docs/router.md`.
 
 ## Quick Start
 
@@ -181,6 +181,8 @@ src/local_moe/
   config.py
   cli.py
   evaluator.py
+  distilled_router.py
+  text_features.py
   context.py
   compaction.py
   hardware.py
@@ -237,6 +239,12 @@ For a cheaper first pass:
 
 ```bash
 make benchmark-small
+```
+
+Regenerate the local distilled router artifact with:
+
+```bash
+make distill-router
 ```
 
 For the Gemma E4B regression benchmark:

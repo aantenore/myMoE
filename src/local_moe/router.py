@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-import math
-import re
-import unicodedata
 
 from .config import MoEConfig, SemanticRoutingConfig
+from .distilled_router import load_distilled_router_artifact
+from .text_features import cosine, vectorize
 
 
 @dataclass(frozen=True)
@@ -28,6 +27,7 @@ class RuleRouter:
     def __init__(self, config: MoEConfig):
         self._config = config
         self._semantic_profiles = _build_semantic_profiles(config.routing.semantic)
+        self._distilled_artifact = load_distilled_router_artifact(config.routing.distilled)
 
     def route(self, prompt: str) -> RouteDecision:
         normalized = prompt.lower()
@@ -45,6 +45,7 @@ class RuleRouter:
                 matched_by_expert[rule.expert_id].extend(matches)
 
         self._apply_semantic_score(prompt, scores, matched_by_expert)
+        self._apply_distilled_score(prompt, scores, matched_by_expert)
 
         ranked = sorted(
             (
@@ -71,12 +72,12 @@ class RuleRouter:
         matched_by_expert: dict[str, list[str]],
     ) -> None:
         semantic = self._config.routing.semantic
-        if self._config.routing.strategy != "hybrid" or not semantic.enabled:
+        if self._config.routing.strategy not in {"hybrid", "distilled"} or not semantic.enabled:
             return
         if not self._semantic_profiles:
             return
 
-        prompt_vector = _vectorize(prompt, semantic.ngram_min, semantic.ngram_max)
+        prompt_vector = vectorize(prompt, semantic.ngram_min, semantic.ngram_max)
         if not prompt_vector:
             return
 
@@ -84,7 +85,7 @@ class RuleRouter:
         for expert_id, profile in self._semantic_profiles.items():
             best_score = 0.0
             for example_vector, example_weight in profile:
-                score = _cosine(prompt_vector, example_vector) * example_weight
+                score = cosine(prompt_vector, example_vector) * example_weight
                 best_score = max(best_score, score)
             ranked.append((expert_id, best_score))
 
@@ -102,6 +103,25 @@ class RuleRouter:
         scores[best_expert] += semantic.weight * best_score
         matched_by_expert[best_expert].append(f"semantic:{best_score:.2f}")
 
+    def _apply_distilled_score(
+        self,
+        prompt: str,
+        scores: dict[str, float],
+        matched_by_expert: dict[str, list[str]],
+    ) -> None:
+        distilled = self._config.routing.distilled
+        if self._config.routing.strategy != "distilled" or not distilled.enabled:
+            return
+        artifact = self._distilled_artifact
+        if artifact is None:
+            return
+
+        expert_id, confidence = artifact.predict(prompt)
+        if expert_id is None or confidence < distilled.min_confidence:
+            return
+        scores[expert_id] += distilled.weight * confidence
+        matched_by_expert[expert_id].append(f"distilled:{confidence:.2f}")
+
 
 def _build_semantic_profiles(
     semantic: SemanticRoutingConfig,
@@ -111,46 +131,7 @@ def _build_semantic_profiles(
         return profiles
     for example in semantic.examples:
         for utterance in example.utterances:
-            vector = _vectorize(utterance, semantic.ngram_min, semantic.ngram_max)
+            vector = vectorize(utterance, semantic.ngram_min, semantic.ngram_max)
             if vector:
                 profiles.setdefault(example.expert_id, []).append((vector, example.weight))
     return profiles
-
-
-def _vectorize(text: str, ngram_min: int, ngram_max: int) -> Counter[str]:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return Counter()
-
-    features: Counter[str] = Counter()
-    words = normalized.split()
-    for word in words:
-        features[f"w:{word}"] += 2
-    padded = f" {normalized} "
-    for size in range(ngram_min, ngram_max + 1):
-        if len(padded) < size:
-            continue
-        for index in range(0, len(padded) - size + 1):
-            gram = padded[index : index + size]
-            if gram.strip():
-                features[f"c:{gram}"] += 1
-    return features
-
-
-def _normalize_text(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.lower())
-    without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    cleaned = re.sub(r"[^\w\s]+", " ", without_marks, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", cleaned, flags=re.UNICODE).strip()
-
-
-def _cosine(left: Counter[str], right: Counter[str]) -> float:
-    if not left or not right:
-        return 0.0
-    overlap = set(left) & set(right)
-    dot = sum(left[key] * right[key] for key in overlap)
-    left_norm = math.sqrt(sum(value * value for value in left.values()))
-    right_norm = math.sqrt(sum(value * value for value in right.values()))
-    if not left_norm or not right_norm:
-        return 0.0
-    return dot / (left_norm * right_norm)

@@ -21,8 +21,8 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
 - [x] Add top-2 routing plus deterministic disagreement reporting.
-- [ ] Generate route-label dataset with a strong teacher.
-- [ ] Train or implement a distilled local router.
+- [x] Generate route-label dataset with curated teacher labels.
+- [x] Train and enable a distilled local router artifact.
 
 ## Milestones
 
@@ -48,7 +48,9 @@ Run local experts on separate ports:
 
 ### M3: Distilled Router
 
-Create teacher-labelled route data and replace keyword rules with a learned local classifier.
+Create teacher-labelled route data and replace or augment keyword rules with a learned local classifier.
+
+Status: complete for the current centroid classifier artifact. Next improvements should expand route labels rather than change the runtime contract.
 
 ### M4: Distilled Student
 

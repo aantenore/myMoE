@@ -95,7 +95,7 @@ Use task-level routing:
 - coding: optional Qwen3-Coder specialist,
 - uncertain or high-risk answer: compare two experts or ask for verification.
 
-The router should learn from eval data later, but remain configurable now.
+The router now learns from curated route-label data through a local distilled artifact while remaining configurable.
 
 ## Observability
 

@@ -4,11 +4,12 @@ myMoE uses a local routing layer before generation. The router decides which con
 
 ## Default Strategy
 
-The default live profile uses `strategy = hybrid`:
+The default live profile uses `strategy = distilled`:
 
 1. expert base weights provide a stable default,
 2. keyword rules add explicit high-confidence signals,
 3. semantic route examples add language-aware intent matching through local character n-grams.
+4. a local distilled route artifact adds classifier-style scores trained from curated route labels.
 
 This keeps runtime routing cheap and offline. The heavy general model is not used to classify every request because that would add latency, occupy the most expensive context, and make routing fail whenever the heavy endpoint is unavailable.
 
@@ -44,14 +45,25 @@ Common agent and RAG frameworks use similar separation:
 - [Haystack ConditionalRouter](https://docs.haystack.deepset.ai/docs/conditionalrouter) routes data through different pipeline paths by evaluating configured conditions.
 - [LangGraph workflows and agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents) model deterministic workflow paths and dynamic agent steps as graph nodes and edges.
 
-myMoE keeps the same pattern local and config-driven. The current implementation starts with a deterministic hybrid router so it can be tested without model calls; the contract can later host a trained classifier or local multilingual embeddings without changing the UI or orchestrator.
+myMoE keeps the same pattern local and config-driven. The current implementation uses deterministic rules, local semantic examples, and a local distilled classifier artifact; the same contract can later host multilingual embeddings without changing the UI or orchestrator.
+
+The current distilled artifact is a local `char_ngram_centroid` classifier trained from curated eval labels. It is not a cloud dependency and can be regenerated with:
+
+```bash
+PYTHONPATH=src python3 experiments/build_route_label_dataset.py \
+  --eval experiments/eval_set_live_general.jsonl \
+  --out experiments/route_labels_live_general.jsonl
+PYTHONPATH=src python3 experiments/train_distilled_router.py \
+  --labels experiments/route_labels_live_general.jsonl \
+  --out outputs/router-distilled-live-general.json
+```
 
 ## Config Shape
 
 ```json
 {
   "routing": {
-    "strategy": "hybrid",
+    "strategy": "distilled",
     "aggregation": "best",
     "top_k": 1,
     "semantic": {
@@ -70,6 +82,12 @@ myMoE keeps the same pattern local and config-driven. The current implementation
           "utterances": ["summarize this note", "riassumi questa nota"]
         }
       ]
+    },
+    "distilled": {
+      "enabled": true,
+      "artifact_path": "outputs/router-distilled-live-general.json",
+      "min_confidence": 0.08,
+      "weight": 2.0
     }
   }
 }

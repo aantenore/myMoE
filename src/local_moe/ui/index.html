@@ -957,6 +957,9 @@
           Semantic: config.routing?.semantic?.enabled
             ? `${config.routing.semantic.method} · ${config.routing.semantic.examples?.length || 0} routes`
             : "Disabled",
+          Distilled: config.routing?.distilled?.enabled
+            ? config.routing.distilled.artifact_path || "Enabled"
+            : "Disabled",
           "Top K": config.routing?.top_k ?? 1,
           Fallbacks: (config.routing?.fallback_order || []).join(", ") || "None",
           Config: config.config_path,

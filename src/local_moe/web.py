@@ -204,6 +204,7 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
 
 def _routing_payload(routing: object) -> dict[str, object]:
     semantic = routing.semantic
+    distilled = routing.distilled
     return {
         "top_k": routing.top_k,
         "fallback_order": list(routing.fallback_order),
@@ -225,6 +226,12 @@ def _routing_payload(routing: object) -> dict[str, object]:
                 }
                 for example in semantic.examples
             ],
+        },
+        "distilled": {
+            "enabled": distilled.enabled,
+            "artifact_path": distilled.artifact_path,
+            "min_confidence": distilled.min_confidence,
+            "weight": distilled.weight,
         },
     }
 

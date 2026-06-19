@@ -159,6 +159,36 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.routing.semantic.enabled)
         self.assertEqual(config.routing.semantic.examples[0].expert_id, "general")
 
+    def test_rejects_enabled_distilled_routing_without_artifact_path(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {
+            "strategy": "distilled",
+            "distilled": {
+                "enabled": True,
+            },
+        }
+
+        with self.assertRaisesRegex(ConfigError, "artifact_path"):
+            parse_config(raw)
+
+    def test_parses_distilled_routing(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {
+            "strategy": "distilled",
+            "distilled": {
+                "enabled": True,
+                "artifact_path": "outputs/router-distilled-extended.json",
+                "min_confidence": 0.1,
+                "weight": 1.5,
+            },
+        }
+
+        config = parse_config(raw)
+
+        self.assertEqual(config.routing.strategy, "distilled")
+        self.assertTrue(config.routing.distilled.enabled)
+        self.assertEqual(config.routing.distilled.artifact_path, "outputs/router-distilled-extended.json")
+
 
 if __name__ == "__main__":
     unittest.main()
