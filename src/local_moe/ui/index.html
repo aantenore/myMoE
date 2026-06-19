@@ -945,6 +945,12 @@
           <pre class="eval-output" id="setup-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>System Doctor</h2>
+          <div class="kv" id="doctor"></div>
+          <button class="ghost-button" id="run-doctor" type="button">Run doctor</button>
+          <pre class="eval-output" id="doctor-output">Not run yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Health</h2>
           <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
           <div class="kv" id="health"></div>
@@ -1056,6 +1062,7 @@
         runtime: null,
         modelProcesses: null,
         setup: null,
+        doctor: null,
         health: null,
         extensions: null,
         extensionAudit: null,
@@ -1139,6 +1146,7 @@
         el("start-models").addEventListener("click", startModels);
         el("stop-models").addEventListener("click", stopModels);
         el("run-setup").addEventListener("click", runSetup);
+        el("run-doctor").addEventListener("click", runDoctor);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
@@ -1156,11 +1164,12 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, health, extensions, extensionAudit, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, doctor, health, extensions, extensionAudit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
             api("/api/setup"),
+            api("/api/doctor"),
             api("/api/health"),
             api("/api/extensions"),
             api("/api/extensions/audit"),
@@ -1170,6 +1179,7 @@
           state.runtime = runtime;
           state.modelProcesses = modelProcesses;
           state.setup = setup;
+          state.doctor = doctor;
           state.health = health;
           state.extensions = extensions;
           state.extensionAudit = extensionAudit.audit;
@@ -1178,6 +1188,7 @@
           renderRuntime(runtime);
           renderModelProcesses(modelProcesses);
           renderSetup(setup);
+          renderDoctor(doctor);
           renderHealth(health);
           renderExtensions(extensions);
           renderExtensionAudit(extensionAudit.audit);
@@ -1522,8 +1533,54 @@
             state.setup = setup;
             renderSetup(setup);
           }
+          await runDoctor({ quiet: true });
         } catch (error) {
           el("setup-output").textContent = error.message;
+        }
+      }
+
+      function renderDoctor(doctor) {
+        const summary = doctor?.summary || {};
+        const failed = Number(summary.failed || 0);
+        const warnings = Number(summary.warnings || 0);
+        const recommendations = (doctor?.recommendations || []).slice(0, 4).join("\n");
+        const checks = (doctor?.checks || [])
+          .map((check) => `${check.status.toUpperCase()} ${check.id}: ${check.message}`)
+          .join("\n");
+        el("doctor").innerHTML = kvRows({
+          Status: doctor?.status || "unknown",
+          Passed: summary.passed ?? 0,
+          Warnings: warnings,
+          Failed: failed,
+          Checked: doctor?.checked_at || "Not run yet",
+        });
+        el("doctor-output").textContent = [
+          recommendations || "No recommendations.",
+          checks ? `\nChecks:\n${checks}` : "",
+        ].join("");
+      }
+
+      async function runDoctor(options = {}) {
+        if (!options.quiet) el("doctor-output").textContent = "Checking...";
+        try {
+          const result = await api("/api/doctor");
+          state.doctor = result;
+          state.setup = result.setup || state.setup;
+          state.health = result.health || state.health;
+          state.modelProcesses = result.model_processes || state.modelProcesses;
+          state.extensions = result.extensions || state.extensions;
+          state.extensionAudit = result.extension_audit || state.extensionAudit;
+          renderDoctor(result);
+          if (result.setup) renderSetup(result.setup);
+          if (result.health) renderHealth(result.health);
+          if (result.model_processes) renderModelProcesses(result.model_processes);
+          if (result.extensions) {
+            renderExtensions(result.extensions);
+            renderToolRunner(result.extensions);
+          }
+          if (result.extension_audit) renderExtensionAudit(result.extension_audit);
+        } catch (error) {
+          el("doctor-output").textContent = error.message;
         }
       }
 

@@ -154,7 +154,7 @@ PYTHONPATH=src .venv/bin/python -m local_moe.web --config configs/moe.live.ollam
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 ```
 
-The doctor output reports platform, backend choice, install commands, model commands, configured tools, skills, plugins, MCP servers, and cron jobs. It also embeds the same setup readiness payload returned by `--setup` and `/api/setup`.
+The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor.
 
 ## Background Maintenance
 

@@ -16,6 +16,7 @@ from .compaction import LocalCompactionProvider
 from .config import load_config
 from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
+from .doctor import build_doctor_report
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import (
     ExtensionError,
@@ -140,6 +141,20 @@ def _make_handler(
 
             if path == "/api/config":
                 _send_json(self, _config_payload(config_path, config, app_config))
+                return
+
+            if path == "/api/doctor":
+                _send_json(
+                    self,
+                    build_doctor_report(
+                        config_path=config_path,
+                        config=config,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                        registry=registry,
+                        model_manager=model_manager,
+                    ),
+                )
                 return
 
             if path == "/api/extensions":

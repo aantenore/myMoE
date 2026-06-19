@@ -95,11 +95,13 @@ The Compact action calls the configured local compaction expert, stores a durabl
 
 The Memory section stores append-only local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt.
 
-The Advanced drawer contains runtime commands, setup readiness, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+The Advanced drawer contains runtime commands, System Doctor, setup readiness, runtime health with a manual refresh action, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 
 Setup readiness is side-effect free. It reports the bootstrap command, configured model cache path, and whether each model asset appears present, missing, partial, or runtime-dependent.
 
 The Setup section also exposes a guarded "Prepare runtime" action backed by `/api/setup/run`. Without confirmation it reports `confirmation_required`; with confirmation it runs only the install and model-download commands derived from the active configuration. The same flow is available from CLI through `--prepare-runtime`.
+
+System Doctor calls `/api/doctor` and combines setup, health, model process reachability, extension audit, and cron state into one `ready`, `attention`, or `blocked` report with recommendations.
 
 The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server.
 

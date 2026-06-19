@@ -20,6 +20,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add local fallback-backed context compaction provider.
 - [x] Add guarded runtime self-configuration from CLI and UI.
 - [x] Add guarded model process management from CLI and UI.
+- [x] Add System Doctor readiness report from CLI, API, and UI.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
