@@ -108,6 +108,12 @@ or:
 make cli
 ```
 
+Inspect local setup readiness before starting the app:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
+```
+
 ## Visual Walkthrough
 
 The default UI is chat-first, with operational details hidden behind the Advanced drawer.
@@ -120,11 +126,11 @@ The composer supports normal chat usage, rendered Markdown responses, `Enter` to
 
 Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, exported, and deleted. Continued chats include recent turns in the next local model prompt.
 
-Advanced runtime, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
+Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-The Advanced drawer includes runtime health checks for every configured expert endpoint, so model-server issues are visible before the first prompt.
+The Advanced drawer includes setup status and runtime health checks for every configured expert endpoint, so missing model assets and model-server issues are visible before the first prompt.
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
 

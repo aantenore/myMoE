@@ -4,7 +4,7 @@ Generated: 2026-06-19
 
 ## Scope
 
-The test hardening pass covers configuration validation, routing evaluation, OpenAI-compatible provider contracts, runtime server specs, runtime health checks, CLI behavior, web UI endpoints, persisted local chat sessions, context assembly, file-backed memory, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, routing evaluation, OpenAI-compatible provider contracts, runtime server specs, runtime setup readiness, runtime health checks, CLI behavior, web UI endpoints, persisted local chat sessions, context assembly, file-backed memory, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -12,8 +12,9 @@ The test hardening pass covers configuration validation, routing evaluation, Ope
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, usage/timing parsing, invalid payload handling, invalid JSON handling, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading and accuracy/complexity aggregation.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
+- `tests/test_setup_status.py`: side-effect-free setup readiness for Hugging Face cache hits, missing local files, Ollama pull commands, and no-model fixture profiles.
 - `tests/test_health.py`: runtime health status for reachable, unreachable, malformed, path-prefixed, and skipped expert providers.
-- `tests/test_cli.py`: eval mode and prompt mode through the public CLI.
+- `tests/test_cli.py`: eval mode, setup readiness, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, export, and delete behavior.
 - `tests/test_web.py`: web config, generation, persisted chat sessions, chat management APIs, and eval endpoints over a local HTTP server.
 - `tests/test_tools.py`: allowlisted local tool execution, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
@@ -35,16 +36,18 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `114/114` passed
+- unit/contract tests: `119/119` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `26/26`, accuracy `1.0`
 - quality gate: passed
+- live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
 - live eval listener check on `127.0.0.1:8101`: passed
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed
 - real MCP filesystem `tools/call` through `list_allowed_directories`: passed
 - Playwright browser smoke for persisted chat sessions: passed
 - Playwright browser smoke for chat rename, search, and delete controls: passed
 - Playwright browser smoke for runtime health panel: passed
+- Playwright browser smoke for setup readiness panel: passed
 - live local-model dashboard screenshot regenerated with `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`: passed
 
 ## Notes

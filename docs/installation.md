@@ -42,6 +42,14 @@ Or let the bootstrap script run the safe install commands:
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --execute --download-models
 ```
 
+Before or after bootstrap, inspect setup readiness:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
+```
+
+The setup report lists the selected runtime backend, model cache path, model asset status, and the exact bootstrap command for the active config. Hugging Face snapshots are checked in the local cache, local GGUF paths are validated, and Ollama profiles report the required pull command.
+
 ## Start Models
 
 ```bash
@@ -118,3 +126,4 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 ```
 
 The doctor output reports platform, backend choice, install commands, model commands, configured tools, skills, plugins, MCP servers, and cron jobs.
+It also embeds the same setup readiness payload returned by `--setup` and `/api/setup`.
