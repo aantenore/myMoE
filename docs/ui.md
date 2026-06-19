@@ -88,6 +88,16 @@ curl -X POST http://127.0.0.1:8089/api/memory \
 curl 'http://127.0.0.1:8089/api/memory?scope=default&query=Antonio%20local-first'
 ```
 
+Import pasted local knowledge into the same retrieval path:
+
+```bash
+curl -X POST http://127.0.0.1:8089/api/knowledge \
+  -H 'Content-Type: application/json' \
+  --data '{"title":"Project notes","content":"Paste local reference text here.","scope":"default","confirm":true}'
+
+curl 'http://127.0.0.1:8089/api/knowledge?scope=default'
+```
+
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
 - left rail with a new chat action and starter prompts,
@@ -105,6 +115,8 @@ The Compact action calls the configured local compaction expert, stores a durabl
 
 The Memory section stores append-only local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt.
 
+The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same append-only memory file. It requires an explicit confirmation checkbox because it writes local records. It does not read arbitrary files from the browser.
+
 The Advanced drawer contains runtime commands, System Doctor, setup readiness, runtime health with a manual refresh action, configured models, latest performance decision, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 
 Setup readiness is side-effect free. It reports the bootstrap command, configured model cache path, and whether each model asset appears present, missing, partial, or runtime-dependent.
@@ -119,7 +131,7 @@ The Runtime section exposes configured model process state from `/api/models/pro
 
 The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
-The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` and `extension.configure` still require `confirm: true` before writing local registry files.
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `knowledge.ingest`, `plugin.create`, and `extension.configure` still require `confirm: true` before writing local files.
 
 `extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
 

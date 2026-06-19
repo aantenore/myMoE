@@ -582,6 +582,53 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["expert_id"], "general")
         self.assertGreater(_prompt_chars(result["content"]), len("Summarize Antonio preference."))
 
+    def test_knowledge_api_ingests_and_retrieves_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(
+                        base_url + "/api/knowledge",
+                        {
+                            "title": "Local Routing Notes",
+                            "content": "Semantic routing examples cover multilingual prompts.",
+                        },
+                    )
+                imported = _post_json(
+                    base_url + "/api/knowledge",
+                    {
+                        "title": "Local Routing Notes",
+                        "content": "Semantic routing examples cover multilingual prompts.",
+                        "scope": "default",
+                        "confirm": True,
+                    },
+                )
+                listed = _get_json(base_url + "/api/knowledge?scope=default")
+                result = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "What covers multilingual prompts?"},
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(imported["chunk_count"], 1)
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["records"][0]["kind"], "knowledge")
+        self.assertEqual(result["context"]["memory_ids"], imported["record_ids"])
+        self.assertIn("memory", result["context"]["sections"])
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -616,6 +663,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("runSetup", html)
         self.assertIn("setup-confirm", html)
         self.assertIn("extension.configure", html)
+        self.assertIn("Knowledge", html)
+        self.assertIn("/api/knowledge", html)
+        self.assertIn("importKnowledge", html)
+        self.assertIn("knowledge.ingest", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)

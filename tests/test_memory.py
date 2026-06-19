@@ -31,6 +31,27 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(results[0][0].text, "Use Qwen3 Coder for local coding tasks.")
         self.assertGreater(results[0][1], 0)
 
+    def test_ingests_knowledge_document_as_chunked_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileMemoryStore(Path(tmp) / "memory.jsonl")
+            report = store.ingest_document(
+                "Alpha routing note.\n\nBeta context note.\n\nGamma memory note.",
+                title="Architecture Notes",
+                scope="project",
+                chunk_chars=200,
+                metadata={"source": "test"},
+            )
+            results = store.search("gamma memory", scope="project")
+
+        self.assertEqual(report.title, "Architecture Notes")
+        self.assertEqual(report.scope, "project")
+        self.assertEqual(report.chunk_count, 1)
+        self.assertEqual(len(report.record_ids), 1)
+        self.assertEqual(results[0][0].kind, "knowledge")
+        self.assertEqual(results[0][0].metadata["document_id"], report.document_id)
+        self.assertEqual(results[0][0].metadata["title"], "Architecture Notes")
+        self.assertIn("Gamma memory note.", results[0][0].text)
+
     def test_filters_expired_temporal_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileMemoryStore(Path(tmp) / "memory.jsonl")

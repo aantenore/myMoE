@@ -32,6 +32,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `memory.search` | Searches the local append-only memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | Web memory API | Saves and searches append-only local memory records. | Writes only to `<runtime.work_dir>/memory.jsonl`; no arbitrary path input. | Web `/api/memory`, Advanced Memory panel. |
+| `knowledge.ingest` | Chunks pasted local notes or documentation into knowledge records in the append-only memory store. | Requires `confirm=true`; writes only to `<runtime.work_dir>/memory.jsonl`; does not read arbitrary local file paths. | CLI `--run-tool`, web `/api/tools/run`, web `/api/knowledge`, Advanced Knowledge panel. |
 | `context.compact` | Builds a compaction prompt and, by default, asks the configured local model to summarize it. | Compute-only; uses the configured MoE expert and does not call cloud APIs. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `extension.audit` | Validates the active extension registry and returns structured plugin reference issues. | Read-only; no filesystem writes or process execution. | CLI `--run-tool`, web `/api/tools/run`, web `/api/extensions/audit`, Advanced Extensions panel, cron. |
 | `extension.configure` | Adds, updates, or removes MCP server and cron job registry entries. | Requires `confirm=true`; writes only to the MCP and cron registry paths from the active app config; validates entries before writing; refreshes the running web registry and cron runner. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
@@ -61,6 +62,8 @@ The app config defaults to:
 The current implementation discovers and reports these surfaces. Cron jobs use a local allowlisted runner for supported actions such as `memory.maintenance`, `router.distill`, and `extension.audit`. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
 
 Enabled tools are also executed through a local allowlist in `src/local_moe/tool_runner.py`. The runner maps configured names to concrete Python functions and rejects arbitrary commands. Write-local operations require explicit confirmation in the tool payload or cron request.
+
+Local knowledge import is intentionally paste/API based. `knowledge.ingest` chunks caller-provided text, stores it as `knowledge` records with document id, title, and chunk metadata, and reuses the existing scoped memory retrieval path. This gives the app a local RAG layer without granting the browser broad filesystem read permission.
 
 Guarded self-configuration is exposed through `extension.configure`. It supports `mcp_server` and `cron_job` surfaces with `upsert` and `remove` modes. The tool never accepts arbitrary registry file paths from the caller; it uses `app.extensions.mcp_config` and `app.extensions.cron_config`, validates the entry with the same parser used by startup, writes the normalized JSON entry, reloads the extension registry, and updates the web process cron runner when invoked through `/api/tools/run`.
 

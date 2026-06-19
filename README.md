@@ -171,7 +171,9 @@ The composer supports normal chat usage, progressive streamed responses, rendere
 
 ![myMoE composer and response](docs/screenshots/composer.png)
 
-Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, and recent turns in the next local model prompt. The browser uses `/api/generate/stream` when available and falls back to `/api/generate` when streaming is unavailable.
+Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, imported knowledge chunks, and recent turns in the next local model prompt. The browser uses `/api/generate/stream` when available and falls back to `/api/generate` when streaming is unavailable.
+
+The Advanced drawer includes a Knowledge import panel. It chunks pasted local notes or documentation into the append-only memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
 
 Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 
@@ -335,6 +337,14 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create`, `{"confirm": true}` for `extension.configure`, or `--cron-confirm-writes` for CLI cron execution.
 
 The Advanced drawer also includes Plugin Studio for creating a local plugin scaffold without writing JSON by hand. It creates `plugin.json` plus plugin-local `SKILL.md`, requires confirmation, and refreshes the registry in the running web app.
+
+Import local knowledge through the guarded tool runner:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool knowledge.ingest \
+  --tool-input '{"title":"Project notes","content":"Paste local reference text here.","scope":"default","confirm":true}'
+```
 
 Use the same Extensions panel to run a registry audit. The audit validates plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes before the plugin is used by an agent workflow.
 
