@@ -47,10 +47,13 @@ The benchmark uses short prompts and `96` output tokens per prompt. It is a perf
 
 | Candidate | Status | Avg generation tok/s | Peak memory | Avg latency |
 | --- | --- | ---: | ---: | ---: |
-| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 93.02 | 17.29 GB | 5.09 s |
-| Gemma 4 E4B it MLX 4-bit | ok | 72.90 | 4.39 GB | 1.53 s |
-| Qwen3 4B MLX 4-bit | ok | 97.98 | 2.49 GB | 0.94 s |
-| Qwen3 1.7B MLX 4-bit | ok | 206.99 | 1.09 GB | 0.45 s |
+| Qwen3 30B-A3B Instruct 2507 MLX 4-bit | ok | 79.68 | 17.29 GB | 10.56 s |
+| Gemma 4 E4B it MLX 4-bit | ok | 70.47 | 4.39 GB | 1.66 s |
+| Qwen3 4B MLX 4-bit | ok | 93.89 | 2.49 GB | 1.03 s |
+| Qwen3 1.7B MLX 4-bit | ok | 191.18 | 1.09 GB | 0.54 s |
+| Qwen3.6 35B-A3B OptiQ MLX 4-bit | failed | - | Metal OOM | - |
+
+Qwen3.6 OptiQ was retried with a tighter `2048` KV cache and still failed with Metal OOM. It is not selected for this 24 GB hardware class. See `outputs/qwen36-optiq-low-kv-benchmark.json` and `outputs/qwen36-optiq-low-kv-decision.md`.
 
 ## Practical Requirements
 

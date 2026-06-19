@@ -83,6 +83,19 @@
       "notes": "Best first serious resident general expert candidate for a 24 GB Apple Silicon machine."
     },
     {
+      "id": "qwen36-35b-a3b-optiq-mlx-4bit",
+      "label": "Qwen3.6 35B-A3B OptiQ MLX 4-bit",
+      "role": "primary_general_stretch",
+      "runtime": "mlx_lm",
+      "repo": "mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
+      "estimated_size_gb": 21.0,
+      "estimated_memory_gb": 22.5,
+      "quality_prior": 0.9,
+      "speed_target_tps": 24.0,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
+      "notes": "Newest stretch candidate. It must beat Qwen3 30B locally while leaving enough 24 GB headroom before becoming the default."
+    },
+    {
       "id": "gemma4-26b-a4b-it-mlx-4bit",
       "label": "Gemma 4 26B-A4B it MLX 4-bit",
       "role": "primary_general_alternative",

@@ -15,9 +15,9 @@
   "recommendation": {
     "default_primary": "qwen3-30b-a3b-instruct-2507-mlx-4bit",
     "default_fast_fallback": "gemma4-e4b-it-mlx-4bit",
-    "stretch_primary": "qwen36-35b-a3b-optiq-mlx-4bit",
     "multimodal_alternative": "gemma4-26b-a4b-it-optiq-mlx-4bit",
-    "optional_coding_specialist": "qwen3-coder-30b-a3b-mlx-4bit"
+    "optional_coding_specialist": "qwen3-coder-30b-a3b-mlx-4bit",
+    "rejected_on_tested_24gb": "qwen36-35b-a3b-optiq-mlx-4bit"
   },
   "candidates": [
     {
@@ -54,7 +54,7 @@
       "format": "MLX OptiQ 4-bit",
       "approx_size_gb": 21.0,
       "source_url": "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
-      "purpose": "Preferred stretch candidate for Apple Silicon if the user wants to trade tighter memory headroom for a newer general/agentic model. Not the default on 24 GB until local eval and memory telemetry beat the Qwen3 30B profile."
+      "purpose": "Rejected on the tested Apple M5 Pro / 24 GiB machine after Metal OOM at both 8192 and 2048 KV cache sizes. Keep as a research candidate only for larger-memory Apple Silicon."
     },
     {
       "id": "gemma4-26b-a4b-it-mlx-4bit",

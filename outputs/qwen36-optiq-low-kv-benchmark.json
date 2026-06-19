@@ -1,0 +1,188 @@
+{
+  "created_at": "2026-06-19T11:19:49+0200",
+  "manifest": "configs/model-benchmark.json",
+  "hardware": {
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "memory_bytes": 25769803776,
+    "memory_gib": 24.0,
+    "recommended_strategy": "general_purpose_moe_single_resident",
+    "rationale": [
+      "Apple Silicon detected: MLX is the preferred runtime for heavy local experts.",
+      "24 GiB class memory: use a MoE harness with one strong resident general expert.",
+      "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
+    ]
+  },
+  "max_tokens": 96,
+  "max_kv_size": 2048,
+  "prompt_count": 4,
+  "results": [
+    {
+      "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+      "status": "failed",
+      "error_type": "subprocess_failed",
+      "error": "\nFetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]\nFetching 13 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 13/13 [00:00<00:00, 19849.27it/s]\nlibc++abi: terminating due to uncaught exception of type std::runtime_error: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)\n",
+      "stdout": "",
+      "total_seconds": 108.089
+    }
+  ],
+  "summary": {
+    "hardware_budget_gb": 24.0,
+    "ranked": [
+      {
+        "candidate_id": "qwen3-1.7b-mlx-4bit",
+        "label": "Qwen3 1.7B MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/Qwen3-1.7B-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.42,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "qwen3-1.7b-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "qwen3-4b-mlx-4bit",
+        "label": "Qwen3 4B MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/Qwen3-4B-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.55,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "qwen3-4b-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "gemma4-e4b-it-mlx-4bit",
+        "label": "Gemma 4 E4B it MLX 4-bit",
+        "role": "fast_compaction_or_fallback",
+        "repo": "mlx-community/gemma-4-e4b-it-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.62,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-e4b-it-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+        "label": "Qwen3 30B-A3B Instruct 2507 MLX 4-bit",
+        "role": "primary_general",
+        "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.86,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+        "label": "Qwen3.6 35B-A3B OptiQ MLX 4-bit",
+        "role": "primary_general_stretch",
+        "repo": "mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
+        "status": "failed",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.9,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+          "status": "failed",
+          "error_type": "subprocess_failed",
+          "error": "\nFetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]\nFetching 13 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 13/13 [00:00<00:00, 19849.27it/s]\nlibc++abi: terminating due to uncaught exception of type std::runtime_error: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)\n",
+          "stdout": "",
+          "total_seconds": 108.089
+        }
+      },
+      {
+        "candidate_id": "gemma4-26b-a4b-it-mlx-4bit",
+        "label": "Gemma 4 26B-A4B it MLX 4-bit",
+        "role": "primary_general_alternative",
+        "repo": "lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.84,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-26b-a4b-it-mlx-4bit",
+          "status": "not_run"
+        }
+      },
+      {
+        "candidate_id": "gemma4-26b-a4b-it-optiq-mlx-4bit",
+        "label": "Gemma 4 26B-A4B it OptiQ MLX 4-bit",
+        "role": "primary_general_alternative",
+        "repo": "mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit",
+        "status": "not_run",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.88,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "gemma4-26b-a4b-it-optiq-mlx-4bit",
+          "status": "not_run"
+        }
+      }
+    ],
+    "decision": {
+      "primary_general": null,
+      "fast_fallback": null,
+      "recommended_architecture": "one resident heavy general expert plus one small resident fallback/compaction expert; cold-load specialists only after eval wins"
+    },
+    "hardware": {
+      "machine": "arm64",
+      "cpu_brand": "Apple M5 Pro",
+      "memory_bytes": 25769803776,
+      "memory_gib": 24.0,
+      "recommended_strategy": "general_purpose_moe_single_resident",
+      "rationale": [
+        "Apple Silicon detected: MLX is the preferred runtime for heavy local experts.",
+        "24 GiB class memory: use a MoE harness with one strong resident general expert.",
+        "Run small summarizer/router experts resident; cold-load large specialists only when eval wins."
+      ]
+    }
+  }
+}

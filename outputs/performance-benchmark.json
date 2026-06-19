@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-19T09:25:41+0200",
+  "created_at": "2026-06-19T11:16:49+0200",
   "manifest": "configs/model-benchmark.json",
   "hardware": {
     "machine": "arm64",
@@ -14,6 +14,7 @@
     ]
   },
   "max_tokens": 96,
+  "max_kv_size": 8192,
   "prompt_count": 4,
   "results": [
     {
@@ -23,65 +24,65 @@
       "role": "fast_compaction_or_fallback",
       "runtime": "mlx_lm",
       "status": "ok",
-      "load_seconds": 0.676,
-      "total_seconds": 3.549,
+      "load_seconds": 1.255,
+      "total_seconds": 4.709,
       "aggregate": {
         "successful_prompts": 4,
         "failed_prompts": 0,
-        "latency_seconds_avg": 0.453,
-        "generation_tps_avg": 206.991,
-        "prompt_tps_avg": 2129.078,
-        "peak_memory_gb": 1.088,
-        "generation_tokens_total": 294
+        "latency_seconds_avg": 0.541,
+        "generation_tps_avg": 191.175,
+        "prompt_tps_avg": 1793.354,
+        "peak_memory_gb": 1.09,
+        "generation_tokens_total": 317
       },
       "records": [
         {
           "prompt_id": "product_strategy",
           "category": "planning",
           "status": "ok",
-          "latency_seconds": 0.5,
+          "latency_seconds": 0.714,
           "prompt_tokens": 74,
-          "generation_tokens": 81,
-          "prompt_tps": 1500.058,
-          "generation_tps": 207.721,
-          "peak_memory_gb": 1.088,
-          "content_excerpt": "Decision: Yes, the idea is feasible and aligns with modern AI trends.\n\nRisks: \n- Limited data access could impact model performance.\n- MoE routing may not be optimal for all tasks.\n- Technical complexity in implementation.\n\nMVP (Minimum Viable Product): \n- A simple app that uses local memory and basic MoE routing for a single task (e.g., answering questions)."
+          "generation_tokens": 96,
+          "prompt_tps": 439.775,
+          "generation_tps": 199.929,
+          "peak_memory_gb": 1.09,
+          "content_excerpt": "**Decision:**  \n- **Yes**, the idea is feasible and aligns with modern AI trends.  \n\n**Risks:**  \n- **Data privacy**: Using local memory could raise concerns about data security and compliance.  \n- **Technical complexity**: Implementing MoE (Model-Parallel Embedding) and compact context may be challenging.  \n- **Scalability**: Ensuring efficient routing and context management may be non-trivial.  \n\n**MVP (Minimum Viable Product"
         },
         {
           "prompt_id": "reasoning_policy",
           "category": "reasoning",
           "status": "ok",
-          "latency_seconds": 0.558,
+          "latency_seconds": 0.58,
           "prompt_tokens": 66,
           "generation_tokens": 96,
-          "prompt_tps": 1966.632,
-          "generation_tps": 204.105,
-          "peak_memory_gb": 1.088,
-          "content_excerpt": "A hybrid policy combines elements of sliding window, summary memory, and semantic retrieval to handle long context in local assistants. \n\n- **Sliding window** maintains a fixed-size history, which is efficient but may miss important context.\n- **Summary memory** reduces context size but may lose detail.\n- **Semantic retrieval** captures meaning but may be slow.\n\nA hybrid policy could use a sliding window for recent context, summary memory for key points, and semantic retrieval for context from t"
+          "prompt_tps": 2039.518,
+          "generation_tps": 199.267,
+          "peak_memory_gb": 1.09,
+          "content_excerpt": "A hybrid policy combines elements of sliding window, summary memory, and semantic retrieval to handle long context in local assistants. \n\n- **Sliding window** maintains a fixed-size history, which is efficient but may miss important context.\n- **Summary memory** reduces context size but may lose details.\n- **Semantic retrieval** captures meaning but may be slow.\n\nA hybrid policy could use a sliding window for recent context and a summary memory for historical context, with semantic retrieval for"
         },
         {
           "prompt_id": "writing_rewrite",
           "category": "writing",
           "status": "ok",
-          "latency_seconds": 0.205,
+          "latency_seconds": 0.247,
           "prompt_tokens": 80,
-          "generation_tokens": 21,
-          "prompt_tps": 2466.012,
-          "generation_tps": 212.041,
-          "peak_memory_gb": 1.088,
-          "content_excerpt": "I\u2019m not sure this architecture makes sense. Let me know if it can become a real product."
+          "generation_tokens": 29,
+          "prompt_tps": 2374.912,
+          "generation_tps": 185.677,
+          "peak_memory_gb": 1.09,
+          "content_excerpt": "I\u2019m not sure this architecture makes sense. Maybe we\u2019re complicating things unnecessarily\u2014let me know if it can become a real product."
         },
         {
           "prompt_id": "tool_reasoning",
           "category": "tool_use",
           "status": "ok",
-          "latency_seconds": 0.55,
+          "latency_seconds": 0.623,
           "prompt_tokens": 62,
           "generation_tokens": 96,
-          "prompt_tps": 2583.611,
-          "generation_tps": 204.096,
-          "peak_memory_gb": 1.088,
-          "content_excerpt": "A tool-using flow for a local assistant could involve the following steps:\n\n1. **Document Reading**: The assistant reads documents locally using a local database or file system, ensuring no data is sent to the cloud.\n\n2. **Preference Storage**: Preferences are stored locally in a secure, encrypted database or in-memory cache, allowing the assistant to recall user settings without cloud access.\n\n3. **Answer Generation**: The assistant uses local tools (e.g., a knowledge base, NLP model"
+          "prompt_tps": 2319.213,
+          "generation_tps": 179.827,
+          "peak_memory_gb": 1.09,
+          "content_excerpt": "A tool-using flow for a local assistant could involve the following steps:\n\n1. **Document Reading**: The assistant reads documents locally using a local database or file system, ensuring no sensitive data is sent to the cloud.\n\n2. **Preference Remembering**: The assistant stores user preferences locally, such as language settings, theme, or previous interactions, to provide personalized service without cloud storage.\n\n3. **Answer Generation**: The assistant uses local tools (e.g., a knowledge ba"
         }
       ]
     },
@@ -92,14 +93,14 @@
       "role": "fast_compaction_or_fallback",
       "runtime": "mlx_lm",
       "status": "ok",
-      "load_seconds": 0.913,
-      "total_seconds": 5.399,
+      "load_seconds": 1.896,
+      "total_seconds": 6.843,
       "aggregate": {
         "successful_prompts": 4,
         "failed_prompts": 0,
-        "latency_seconds_avg": 0.939,
-        "generation_tps_avg": 97.983,
-        "prompt_tps_avg": 957.528,
+        "latency_seconds_avg": 1.031,
+        "generation_tps_avg": 93.894,
+        "prompt_tps_avg": 826.442,
         "peak_memory_gb": 2.492,
         "generation_tokens_total": 311
       },
@@ -108,35 +109,35 @@
           "prompt_id": "product_strategy",
           "category": "planning",
           "status": "ok",
-          "latency_seconds": 1.151,
+          "latency_seconds": 1.455,
           "prompt_tokens": 74,
           "generation_tokens": 96,
-          "prompt_tps": 741.925,
-          "generation_tps": 97.285,
+          "prompt_tps": 261.729,
+          "generation_tps": 87.415,
           "peak_memory_gb": 2.473,
-          "content_excerpt": "**Decision:**  \nThe idea is feasible and aligns with current trends in AI personalization and efficiency. A personal app using local memory, compact context, and MoE (Mixture of Experts) routing can offer efficient, privacy-focused, and context-aware interactions.\n\n**Risks:**  \n- **Privacy Concerns:** Even with local memory, data leakage or misconfiguration could expose user information.  \n- **Complexity:** Implementing MoE routing and compact context management may require"
+          "content_excerpt": "**Decision:**  \nThe idea is feasible and aligns with current trends in AI personalization and efficiency. A personal app using local memory, compact context, and MoE (Mixture of Experts) routing can offer efficient, privacy-focused, and context-aware interactions.\n\n**Risks:**  \n- **Privacy Concerns:** Even with local processing, data leakage or misconfiguration could compromise user data.  \n- **Complexity:** Implementing MoE routing and compact context management may require"
         },
         {
           "prompt_id": "reasoning_policy",
           "category": "reasoning",
           "status": "ok",
-          "latency_seconds": 1.118,
+          "latency_seconds": 1.168,
           "prompt_tokens": 66,
           "generation_tokens": 96,
-          "prompt_tps": 920.582,
-          "generation_tps": 97.635,
+          "prompt_tps": 887.571,
+          "generation_tps": 94.371,
           "peak_memory_gb": 2.473,
-          "content_excerpt": "**Comparison of Strategies:**\n\n- **Sliding Window:** Maintains a fixed-size window of the conversation history. Useful for short contexts but loses older information, leading to potential inaccuracies.\n\n- **Summary Memory:** Stores condensed summaries of past interactions. Reduces memory load but may lose nuance and context details.\n\n- **Semantic Retrieval:** Retrieves relevant past messages based on semantic similarity. Efficient for long contexts but requires additional computation for similar"
+          "content_excerpt": "**Comparison of Strategies:**\n\n- **Sliding Window:** Keeps the most recent N tokens, discards older ones. Simple but loses historical context and may miss key information.\n\n- **Summary Memory:** Stores summaries of past interactions. Retains context but may lose fine-grained details and nuance.\n\n- **Semantic Retrieval:** Retrieves relevant past interactions based on semantic similarity. Preserves context and detail but is computationally heavier and requires more memory.\n\n**Hybrid Policy:** Comb"
         },
         {
           "prompt_id": "writing_rewrite",
           "category": "writing",
           "status": "ok",
-          "latency_seconds": 0.368,
+          "latency_seconds": 0.381,
           "prompt_tokens": 80,
           "generation_tokens": 23,
-          "prompt_tps": 1079.328,
-          "generation_tps": 100.577,
+          "prompt_tps": 1058.034,
+          "generation_tps": 97.839,
           "peak_memory_gb": 2.492,
           "content_excerpt": "I'm not sure this architecture works, but I want to understand if it can actually become a real product."
         },
@@ -147,10 +148,10 @@
           "latency_seconds": 1.12,
           "prompt_tokens": 62,
           "generation_tokens": 96,
-          "prompt_tps": 1088.277,
-          "generation_tps": 96.434,
+          "prompt_tps": 1098.433,
+          "generation_tps": 95.949,
           "peak_memory_gb": 2.492,
-          "content_excerpt": "**Tool-Using Flow for Local Assistant:**\n\n1. **Document Reading:** Use a local parser to extract text and structure from documents (e.g., PDF, DOCX) without cloud upload.\n\n2. **Preference Storage:** Store user preferences in a local database (e.g., SQLite, JSON) for quick access during interactions.\n\n3. **Context Processing:** Process user input and document content locally to generate responses, using NLP models trained on local data.\n\n4. **"
+          "content_excerpt": "**Tool-Using Flow for Local Assistant:**\n\n1. **Document Reading:** Use a local parser to extract text from documents (PDF, DOCX, etc.) without cloud upload.\n\n2. **Preference Storage:** Store user preferences in a local database (e.g., SQLite) for quick access.\n\n3. **Context Processing:** Process input with a local NLP model to understand context and intent.\n\n4. **Memory Retrieval:** Retrieve relevant documents and preferences from the local database"
         }
       ]
     },
@@ -161,14 +162,14 @@
       "role": "fast_compaction_or_fallback",
       "runtime": "mlx_lm",
       "status": "ok",
-      "load_seconds": 1.587,
-      "total_seconds": 8.504,
+      "load_seconds": 2.375,
+      "total_seconds": 9.829,
       "aggregate": {
         "successful_prompts": 4,
         "failed_prompts": 0,
-        "latency_seconds_avg": 1.53,
-        "generation_tps_avg": 72.896,
-        "prompt_tps_avg": 1048.525,
+        "latency_seconds_avg": 1.662,
+        "generation_tps_avg": 70.475,
+        "prompt_tps_avg": 888.192,
         "peak_memory_gb": 4.391,
         "generation_tokens_total": 384
       },
@@ -177,49 +178,49 @@
           "prompt_id": "product_strategy",
           "category": "planning",
           "status": "ok",
-          "latency_seconds": 1.538,
+          "latency_seconds": 1.984,
           "prompt_tokens": 73,
           "generation_tokens": 96,
-          "prompt_tps": 680.988,
-          "generation_tps": 75.543,
+          "prompt_tps": 170.876,
+          "generation_tps": 68.727,
           "peak_memory_gb": 4.384,
-          "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory management is poor, the app might feel fragmented or unable to generalize knowledge.\n*   **Contextual Drift:** Maintaining \"compact context\" while ensuring relevance is technically challenging; poor management leads to irrelevant outputs.\n*   **Scalability of MoE:** Scaling the MoE routing efficiently on a personal device without incurring high latency is critical."
+          "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory isn't managed well, the app becomes uselessly siloed.\n*   **Context Drift:** Maintaining \"compact context\" accurately across sessions is technically challenging.\n*   **Cold Start Latency:** Initializing the local memory/context might introduce noticeable delays.\n\n**MVP:**\nA mobile application that maintains a short-term,"
         },
         {
           "prompt_id": "reasoning_policy",
           "category": "reasoning",
           "status": "ok",
-          "latency_seconds": 1.496,
+          "latency_seconds": 1.501,
           "prompt_tokens": 63,
           "generation_tokens": 96,
-          "prompt_tps": 1217.179,
-          "generation_tps": 73.006,
+          "prompt_tps": 1156.33,
+          "generation_tps": 73.846,
           "peak_memory_gb": 4.384,
-          "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens/chunks of the conversation active in the context window. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with"
+          "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens in the active context buffer. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with distant dependencies. |\n"
         },
         {
           "prompt_id": "writing_rewrite",
           "category": "writing",
           "status": "ok",
-          "latency_seconds": 1.595,
+          "latency_seconds": 1.657,
           "prompt_tokens": 77,
           "generation_tokens": 96,
-          "prompt_tps": 1218.861,
-          "generation_tps": 69.228,
+          "prompt_tps": 1155.111,
+          "generation_tps": 66.051,
           "peak_memory_gb": 4.391,
-          "content_excerpt": "Here are a few options, depending on the nuance you want to convey:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if"
+          "content_excerpt": "Here are a few options, depending on the nuance you want:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if there'"
         },
         {
           "prompt_id": "tool_reasoning",
           "category": "tool_use",
           "status": "ok",
-          "latency_seconds": 1.493,
+          "latency_seconds": 1.507,
           "prompt_tokens": 61,
           "generation_tokens": 96,
-          "prompt_tps": 1077.072,
-          "generation_tps": 73.806,
+          "prompt_tps": 1070.449,
+          "generation_tps": 73.274,
           "peak_memory_gb": 4.391,
-          "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur entirely on the local device. Cloud interaction is strictly limited to necessary, non-sensitive updates or synchronization triggers.\n\n**Tools/Components:**\n\n1. **Local Document Indexer/Reader:** Handles ingestion and retrieval of documents.\n2. **Local Vector Database (Vector DB):"
+          "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur locally on the user's device. Cloud interaction is strictly for updates or non-sensitive, anonymized metadata if necessary.\n\n**Tools Required (Local Execution):**\n\n1. **Document Ingestion/Parsing Tool:** Handles reading various file types (PDF, DOCX, TX"
         }
       ]
     },
@@ -230,67 +231,75 @@
       "role": "primary_general",
       "runtime": "mlx_lm",
       "status": "ok",
-      "load_seconds": 4.046,
-      "total_seconds": 25.188,
+      "load_seconds": 6.991,
+      "total_seconds": 50.235,
       "aggregate": {
         "successful_prompts": 4,
         "failed_prompts": 0,
-        "latency_seconds_avg": 5.09,
-        "generation_tps_avg": 93.017,
-        "prompt_tps_avg": 246.018,
+        "latency_seconds_avg": 10.555,
+        "generation_tps_avg": 79.681,
+        "prompt_tps_avg": 224.717,
         "peak_memory_gb": 17.286,
-        "generation_tokens_total": 326
+        "generation_tokens_total": 334
       },
       "records": [
         {
           "prompt_id": "product_strategy",
           "category": "planning",
           "status": "ok",
-          "latency_seconds": 17.173,
+          "latency_seconds": 38.148,
           "prompt_tokens": 70,
           "generation_tokens": 96,
-          "prompt_tps": 4.392,
-          "generation_tps": 83.523,
+          "prompt_tps": 1.903,
+          "generation_tps": 80.017,
           "peak_memory_gb": 17.274,
-          "content_excerpt": "Decision: Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\nRisks:\n- Hardware limitations: On-device MoE (Mixture of Experts) routing may strain memory and compute on lower-end devices.\n- Context compression trade-offs: Aggressive compact context may lose nuance, reducing accuracy in complex tasks.\n- MoE routing complexity: Implementing efficient, low-latency expert selection locally adds engineering difficulty.\n- User adoption: Users may not perceive"
+          "content_excerpt": "**Decision:** Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\n**Risks:**\n1. **Hardware limitations:** MoE (Mixture of Experts) models require significant memory and compute; running efficiently on consumer devices may be challenging.\n2. **Context management:** Compact context with local memory risks losing long-term coherence without robust memory indexing.\n3. **MoE routing overhead:** Dynamic routing adds complexity; poor routing may degrade performance or "
         },
         {
           "prompt_id": "reasoning_policy",
           "category": "reasoning",
           "status": "ok",
-          "latency_seconds": 1.265,
+          "latency_seconds": 1.616,
           "prompt_tokens": 62,
           "generation_tokens": 96,
-          "prompt_tps": 297.619,
-          "generation_tps": 96.394,
+          "prompt_tps": 282.053,
+          "generation_tps": 85.099,
           "peak_memory_gb": 17.274,
-          "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n*Pros*: Simple, deterministic, low overhead.  \n*Cons*: Loses historical context; may discard important information.\n\n**Summary Memory**: Compresses prior context into a concise summary (e.g., via summarization or embedding clustering).  \n*Pros*: Preserves key information over long interactions; reduces token load.  \n*Cons*: Risk of losing nu"
+          "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n- *Pros*: Simple, deterministic, low overhead.  \n- *Cons*: Loses early context, poor for long-term reasoning or tracking evolving topics.\n\n**Summary Memory**: Compresses past context into a concise summary (e.g., via summarization or embedding clustering).  \n- *Pros*: Preserves key information over long sessions, reduces token load."
         },
         {
           "prompt_id": "writing_rewrite",
           "category": "writing",
           "status": "ok",
-          "latency_seconds": 0.638,
+          "latency_seconds": 0.97,
           "prompt_tokens": 76,
-          "generation_tokens": 38,
-          "prompt_tps": 386.23,
-          "generation_tps": 98.776,
+          "generation_tokens": 46,
+          "prompt_tps": 334.061,
+          "generation_tps": 72.866,
           "peak_memory_gb": 17.286,
-          "content_excerpt": "I'm not certain this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I'd love to understand if it could truly become a viable product."
+          "content_excerpt": "I'm not entirely sure this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I\u2019d love to explore whether it could actually become a viable product. Let\u2019s figure it out together."
         },
         {
           "prompt_id": "tool_reasoning",
           "category": "tool_use",
           "status": "ok",
-          "latency_seconds": 1.285,
+          "latency_seconds": 1.486,
           "prompt_tokens": 58,
           "generation_tokens": 96,
-          "prompt_tps": 295.829,
-          "generation_tps": 93.376,
+          "prompt_tps": 280.85,
+          "generation_tps": 80.744,
           "peak_memory_gb": 17.286,
-          "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Uses local OCR and text extraction tools (e.g., Tesseract, PDFMiner) to parse uploaded documents without sending data to the cloud.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with AES).  \n3. **Answer Generation**: Processes queries using a locally hosted LLM"
+          "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Opens files (PDF, DOCX, TXT) using local libraries (e.g., PyPDF2, python-docx) to extract text without uploading.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with encryption).  \n3. **On-Device Processing**: Uses a locally hosted"
         }
       ]
+    },
+    {
+      "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+      "status": "failed",
+      "error_type": "subprocess_failed",
+      "error": "\nFetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n\nFetching 13 files:  38%|\u2588\u2588\u2588\u258a      | 5/13 [39:43<1:03:33, 476.69s/it]\nFetching 13 files:  46%|\u2588\u2588\u2588\u2588\u258c     | 6/13 [55:57<1:08:30, 587.20s/it]\nFetching 13 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 13/13 [55:57<00:00, 258.26s/it] \nlibc++abi: terminating due to uncaught exception of type std::runtime_error: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)\n",
+      "stdout": "",
+      "total_seconds": 3416.577
     }
   ],
   "summary": {
@@ -306,9 +315,9 @@
           "quality_prior": 0.86,
           "speed": 1.0,
           "memory_headroom": 0.8392,
-          "load_time": 0.9775,
+          "load_time": 0.9612,
           "reliability": 1.0,
-          "overall": 0.9037
+          "overall": 0.9029
         },
         "result": {
           "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
@@ -317,65 +326,65 @@
           "role": "primary_general",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 4.046,
-          "total_seconds": 25.188,
+          "load_seconds": 6.991,
+          "total_seconds": 50.235,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 5.09,
-            "generation_tps_avg": 93.017,
-            "prompt_tps_avg": 246.018,
+            "latency_seconds_avg": 10.555,
+            "generation_tps_avg": 79.681,
+            "prompt_tps_avg": 224.717,
             "peak_memory_gb": 17.286,
-            "generation_tokens_total": 326
+            "generation_tokens_total": 334
           },
           "records": [
             {
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 17.173,
+              "latency_seconds": 38.148,
               "prompt_tokens": 70,
               "generation_tokens": 96,
-              "prompt_tps": 4.392,
-              "generation_tps": 83.523,
+              "prompt_tps": 1.903,
+              "generation_tps": 80.017,
               "peak_memory_gb": 17.274,
-              "content_excerpt": "Decision: Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\nRisks:\n- Hardware limitations: On-device MoE (Mixture of Experts) routing may strain memory and compute on lower-end devices.\n- Context compression trade-offs: Aggressive compact context may lose nuance, reducing accuracy in complex tasks.\n- MoE routing complexity: Implementing efficient, low-latency expert selection locally adds engineering difficulty.\n- User adoption: Users may not perceive"
+              "content_excerpt": "**Decision:** Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\n**Risks:**\n1. **Hardware limitations:** MoE (Mixture of Experts) models require significant memory and compute; running efficiently on consumer devices may be challenging.\n2. **Context management:** Compact context with local memory risks losing long-term coherence without robust memory indexing.\n3. **MoE routing overhead:** Dynamic routing adds complexity; poor routing may degrade performance or "
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 1.265,
+              "latency_seconds": 1.616,
               "prompt_tokens": 62,
               "generation_tokens": 96,
-              "prompt_tps": 297.619,
-              "generation_tps": 96.394,
+              "prompt_tps": 282.053,
+              "generation_tps": 85.099,
               "peak_memory_gb": 17.274,
-              "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n*Pros*: Simple, deterministic, low overhead.  \n*Cons*: Loses historical context; may discard important information.\n\n**Summary Memory**: Compresses prior context into a concise summary (e.g., via summarization or embedding clustering).  \n*Pros*: Preserves key information over long interactions; reduces token load.  \n*Cons*: Risk of losing nu"
+              "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n- *Pros*: Simple, deterministic, low overhead.  \n- *Cons*: Loses early context, poor for long-term reasoning or tracking evolving topics.\n\n**Summary Memory**: Compresses past context into a concise summary (e.g., via summarization or embedding clustering).  \n- *Pros*: Preserves key information over long sessions, reduces token load."
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 0.638,
+              "latency_seconds": 0.97,
               "prompt_tokens": 76,
-              "generation_tokens": 38,
-              "prompt_tps": 386.23,
-              "generation_tps": 98.776,
+              "generation_tokens": 46,
+              "prompt_tps": 334.061,
+              "generation_tps": 72.866,
               "peak_memory_gb": 17.286,
-              "content_excerpt": "I'm not certain this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I'd love to understand if it could truly become a viable product."
+              "content_excerpt": "I'm not entirely sure this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I\u2019d love to explore whether it could actually become a viable product. Let\u2019s figure it out together."
             },
             {
               "prompt_id": "tool_reasoning",
               "category": "tool_use",
               "status": "ok",
-              "latency_seconds": 1.285,
+              "latency_seconds": 1.486,
               "prompt_tokens": 58,
               "generation_tokens": 96,
-              "prompt_tps": 295.829,
-              "generation_tps": 93.376,
+              "prompt_tps": 280.85,
+              "generation_tps": 80.744,
               "peak_memory_gb": 17.286,
-              "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Uses local OCR and text extraction tools (e.g., Tesseract, PDFMiner) to parse uploaded documents without sending data to the cloud.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with AES).  \n3. **Answer Generation**: Processes queries using a locally hosted LLM"
+              "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Opens files (PDF, DOCX, TXT) using local libraries (e.g., PyPDF2, python-docx) to extract text without uploading.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with encryption).  \n3. **On-Device Processing**: Uses a locally hosted"
             }
           ]
         }
@@ -390,9 +399,9 @@
           "quality_prior": 0.62,
           "speed": 1.0,
           "memory_headroom": 1.0,
-          "load_time": 0.9912,
+          "load_time": 0.9868,
           "reliability": 1.0,
-          "overall": 0.8286
+          "overall": 0.8283
         },
         "result": {
           "candidate_id": "gemma4-e4b-it-mlx-4bit",
@@ -401,14 +410,14 @@
           "role": "fast_compaction_or_fallback",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 1.587,
-          "total_seconds": 8.504,
+          "load_seconds": 2.375,
+          "total_seconds": 9.829,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 1.53,
-            "generation_tps_avg": 72.896,
-            "prompt_tps_avg": 1048.525,
+            "latency_seconds_avg": 1.662,
+            "generation_tps_avg": 70.475,
+            "prompt_tps_avg": 888.192,
             "peak_memory_gb": 4.391,
             "generation_tokens_total": 384
           },
@@ -417,49 +426,49 @@
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 1.538,
+              "latency_seconds": 1.984,
               "prompt_tokens": 73,
               "generation_tokens": 96,
-              "prompt_tps": 680.988,
-              "generation_tps": 75.543,
+              "prompt_tps": 170.876,
+              "generation_tps": 68.727,
               "peak_memory_gb": 4.384,
-              "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory management is poor, the app might feel fragmented or unable to generalize knowledge.\n*   **Contextual Drift:** Maintaining \"compact context\" while ensuring relevance is technically challenging; poor management leads to irrelevant outputs.\n*   **Scalability of MoE:** Scaling the MoE routing efficiently on a personal device without incurring high latency is critical."
+              "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory isn't managed well, the app becomes uselessly siloed.\n*   **Context Drift:** Maintaining \"compact context\" accurately across sessions is technically challenging.\n*   **Cold Start Latency:** Initializing the local memory/context might introduce noticeable delays.\n\n**MVP:**\nA mobile application that maintains a short-term,"
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 1.496,
+              "latency_seconds": 1.501,
               "prompt_tokens": 63,
               "generation_tokens": 96,
-              "prompt_tps": 1217.179,
-              "generation_tps": 73.006,
+              "prompt_tps": 1156.33,
+              "generation_tps": 73.846,
               "peak_memory_gb": 4.384,
-              "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens/chunks of the conversation active in the context window. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with"
+              "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens in the active context buffer. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with distant dependencies. |\n"
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 1.595,
+              "latency_seconds": 1.657,
               "prompt_tokens": 77,
               "generation_tokens": 96,
-              "prompt_tps": 1218.861,
-              "generation_tps": 69.228,
+              "prompt_tps": 1155.111,
+              "generation_tps": 66.051,
               "peak_memory_gb": 4.391,
-              "content_excerpt": "Here are a few options, depending on the nuance you want to convey:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if"
+              "content_excerpt": "Here are a few options, depending on the nuance you want:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if there'"
             },
             {
               "prompt_id": "tool_reasoning",
               "category": "tool_use",
               "status": "ok",
-              "latency_seconds": 1.493,
+              "latency_seconds": 1.507,
               "prompt_tokens": 61,
               "generation_tokens": 96,
-              "prompt_tps": 1077.072,
-              "generation_tps": 73.806,
+              "prompt_tps": 1070.449,
+              "generation_tps": 73.274,
               "peak_memory_gb": 4.391,
-              "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur entirely on the local device. Cloud interaction is strictly limited to necessary, non-sensitive updates or synchronization triggers.\n\n**Tools/Components:**\n\n1. **Local Document Indexer/Reader:** Handles ingestion and retrieval of documents.\n2. **Local Vector Database (Vector DB):"
+              "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur locally on the user's device. Cloud interaction is strictly for updates or non-sensitive, anonymized metadata if necessary.\n\n**Tools Required (Local Execution):**\n\n1. **Document Ingestion/Parsing Tool:** Handles reading various file types (PDF, DOCX, TX"
             }
           ]
         }
@@ -474,9 +483,9 @@
           "quality_prior": 0.55,
           "speed": 1.0,
           "memory_headroom": 1.0,
-          "load_time": 0.9949,
+          "load_time": 0.9895,
           "reliability": 1.0,
-          "overall": 0.7972
+          "overall": 0.797
         },
         "result": {
           "candidate_id": "qwen3-4b-mlx-4bit",
@@ -485,14 +494,14 @@
           "role": "fast_compaction_or_fallback",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 0.913,
-          "total_seconds": 5.399,
+          "load_seconds": 1.896,
+          "total_seconds": 6.843,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 0.939,
-            "generation_tps_avg": 97.983,
-            "prompt_tps_avg": 957.528,
+            "latency_seconds_avg": 1.031,
+            "generation_tps_avg": 93.894,
+            "prompt_tps_avg": 826.442,
             "peak_memory_gb": 2.492,
             "generation_tokens_total": 311
           },
@@ -501,35 +510,35 @@
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 1.151,
+              "latency_seconds": 1.455,
               "prompt_tokens": 74,
               "generation_tokens": 96,
-              "prompt_tps": 741.925,
-              "generation_tps": 97.285,
+              "prompt_tps": 261.729,
+              "generation_tps": 87.415,
               "peak_memory_gb": 2.473,
-              "content_excerpt": "**Decision:**  \nThe idea is feasible and aligns with current trends in AI personalization and efficiency. A personal app using local memory, compact context, and MoE (Mixture of Experts) routing can offer efficient, privacy-focused, and context-aware interactions.\n\n**Risks:**  \n- **Privacy Concerns:** Even with local memory, data leakage or misconfiguration could expose user information.  \n- **Complexity:** Implementing MoE routing and compact context management may require"
+              "content_excerpt": "**Decision:**  \nThe idea is feasible and aligns with current trends in AI personalization and efficiency. A personal app using local memory, compact context, and MoE (Mixture of Experts) routing can offer efficient, privacy-focused, and context-aware interactions.\n\n**Risks:**  \n- **Privacy Concerns:** Even with local processing, data leakage or misconfiguration could compromise user data.  \n- **Complexity:** Implementing MoE routing and compact context management may require"
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 1.118,
+              "latency_seconds": 1.168,
               "prompt_tokens": 66,
               "generation_tokens": 96,
-              "prompt_tps": 920.582,
-              "generation_tps": 97.635,
+              "prompt_tps": 887.571,
+              "generation_tps": 94.371,
               "peak_memory_gb": 2.473,
-              "content_excerpt": "**Comparison of Strategies:**\n\n- **Sliding Window:** Maintains a fixed-size window of the conversation history. Useful for short contexts but loses older information, leading to potential inaccuracies.\n\n- **Summary Memory:** Stores condensed summaries of past interactions. Reduces memory load but may lose nuance and context details.\n\n- **Semantic Retrieval:** Retrieves relevant past messages based on semantic similarity. Efficient for long contexts but requires additional computation for similar"
+              "content_excerpt": "**Comparison of Strategies:**\n\n- **Sliding Window:** Keeps the most recent N tokens, discards older ones. Simple but loses historical context and may miss key information.\n\n- **Summary Memory:** Stores summaries of past interactions. Retains context but may lose fine-grained details and nuance.\n\n- **Semantic Retrieval:** Retrieves relevant past interactions based on semantic similarity. Preserves context and detail but is computationally heavier and requires more memory.\n\n**Hybrid Policy:** Comb"
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 0.368,
+              "latency_seconds": 0.381,
               "prompt_tokens": 80,
               "generation_tokens": 23,
-              "prompt_tps": 1079.328,
-              "generation_tps": 100.577,
+              "prompt_tps": 1058.034,
+              "generation_tps": 97.839,
               "peak_memory_gb": 2.492,
               "content_excerpt": "I'm not sure this architecture works, but I want to understand if it can actually become a real product."
             },
@@ -540,10 +549,10 @@
               "latency_seconds": 1.12,
               "prompt_tokens": 62,
               "generation_tokens": 96,
-              "prompt_tps": 1088.277,
-              "generation_tps": 96.434,
+              "prompt_tps": 1098.433,
+              "generation_tps": 95.949,
               "peak_memory_gb": 2.492,
-              "content_excerpt": "**Tool-Using Flow for Local Assistant:**\n\n1. **Document Reading:** Use a local parser to extract text and structure from documents (e.g., PDF, DOCX) without cloud upload.\n\n2. **Preference Storage:** Store user preferences in a local database (e.g., SQLite, JSON) for quick access during interactions.\n\n3. **Context Processing:** Process user input and document content locally to generate responses, using NLP models trained on local data.\n\n4. **"
+              "content_excerpt": "**Tool-Using Flow for Local Assistant:**\n\n1. **Document Reading:** Use a local parser to extract text from documents (PDF, DOCX, etc.) without cloud upload.\n\n2. **Preference Storage:** Store user preferences in a local database (e.g., SQLite) for quick access.\n\n3. **Context Processing:** Process input with a local NLP model to understand context and intent.\n\n4. **Memory Retrieval:** Retrieve relevant documents and preferences from the local database"
             }
           ]
         }
@@ -558,9 +567,9 @@
           "quality_prior": 0.42,
           "speed": 1.0,
           "memory_headroom": 1.0,
-          "load_time": 0.9962,
+          "load_time": 0.993,
           "reliability": 1.0,
-          "overall": 0.7388
+          "overall": 0.7387
         },
         "result": {
           "candidate_id": "qwen3-1.7b-mlx-4bit",
@@ -569,67 +578,90 @@
           "role": "fast_compaction_or_fallback",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 0.676,
-          "total_seconds": 3.549,
+          "load_seconds": 1.255,
+          "total_seconds": 4.709,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 0.453,
-            "generation_tps_avg": 206.991,
-            "prompt_tps_avg": 2129.078,
-            "peak_memory_gb": 1.088,
-            "generation_tokens_total": 294
+            "latency_seconds_avg": 0.541,
+            "generation_tps_avg": 191.175,
+            "prompt_tps_avg": 1793.354,
+            "peak_memory_gb": 1.09,
+            "generation_tokens_total": 317
           },
           "records": [
             {
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 0.5,
+              "latency_seconds": 0.714,
               "prompt_tokens": 74,
-              "generation_tokens": 81,
-              "prompt_tps": 1500.058,
-              "generation_tps": 207.721,
-              "peak_memory_gb": 1.088,
-              "content_excerpt": "Decision: Yes, the idea is feasible and aligns with modern AI trends.\n\nRisks: \n- Limited data access could impact model performance.\n- MoE routing may not be optimal for all tasks.\n- Technical complexity in implementation.\n\nMVP (Minimum Viable Product): \n- A simple app that uses local memory and basic MoE routing for a single task (e.g., answering questions)."
+              "generation_tokens": 96,
+              "prompt_tps": 439.775,
+              "generation_tps": 199.929,
+              "peak_memory_gb": 1.09,
+              "content_excerpt": "**Decision:**  \n- **Yes**, the idea is feasible and aligns with modern AI trends.  \n\n**Risks:**  \n- **Data privacy**: Using local memory could raise concerns about data security and compliance.  \n- **Technical complexity**: Implementing MoE (Model-Parallel Embedding) and compact context may be challenging.  \n- **Scalability**: Ensuring efficient routing and context management may be non-trivial.  \n\n**MVP (Minimum Viable Product"
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 0.558,
+              "latency_seconds": 0.58,
               "prompt_tokens": 66,
               "generation_tokens": 96,
-              "prompt_tps": 1966.632,
-              "generation_tps": 204.105,
-              "peak_memory_gb": 1.088,
-              "content_excerpt": "A hybrid policy combines elements of sliding window, summary memory, and semantic retrieval to handle long context in local assistants. \n\n- **Sliding window** maintains a fixed-size history, which is efficient but may miss important context.\n- **Summary memory** reduces context size but may lose detail.\n- **Semantic retrieval** captures meaning but may be slow.\n\nA hybrid policy could use a sliding window for recent context, summary memory for key points, and semantic retrieval for context from t"
+              "prompt_tps": 2039.518,
+              "generation_tps": 199.267,
+              "peak_memory_gb": 1.09,
+              "content_excerpt": "A hybrid policy combines elements of sliding window, summary memory, and semantic retrieval to handle long context in local assistants. \n\n- **Sliding window** maintains a fixed-size history, which is efficient but may miss important context.\n- **Summary memory** reduces context size but may lose details.\n- **Semantic retrieval** captures meaning but may be slow.\n\nA hybrid policy could use a sliding window for recent context and a summary memory for historical context, with semantic retrieval for"
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 0.205,
+              "latency_seconds": 0.247,
               "prompt_tokens": 80,
-              "generation_tokens": 21,
-              "prompt_tps": 2466.012,
-              "generation_tps": 212.041,
-              "peak_memory_gb": 1.088,
-              "content_excerpt": "I\u2019m not sure this architecture makes sense. Let me know if it can become a real product."
+              "generation_tokens": 29,
+              "prompt_tps": 2374.912,
+              "generation_tps": 185.677,
+              "peak_memory_gb": 1.09,
+              "content_excerpt": "I\u2019m not sure this architecture makes sense. Maybe we\u2019re complicating things unnecessarily\u2014let me know if it can become a real product."
             },
             {
               "prompt_id": "tool_reasoning",
               "category": "tool_use",
               "status": "ok",
-              "latency_seconds": 0.55,
+              "latency_seconds": 0.623,
               "prompt_tokens": 62,
               "generation_tokens": 96,
-              "prompt_tps": 2583.611,
-              "generation_tps": 204.096,
-              "peak_memory_gb": 1.088,
-              "content_excerpt": "A tool-using flow for a local assistant could involve the following steps:\n\n1. **Document Reading**: The assistant reads documents locally using a local database or file system, ensuring no data is sent to the cloud.\n\n2. **Preference Storage**: Preferences are stored locally in a secure, encrypted database or in-memory cache, allowing the assistant to recall user settings without cloud access.\n\n3. **Answer Generation**: The assistant uses local tools (e.g., a knowledge base, NLP model"
+              "prompt_tps": 2319.213,
+              "generation_tps": 179.827,
+              "peak_memory_gb": 1.09,
+              "content_excerpt": "A tool-using flow for a local assistant could involve the following steps:\n\n1. **Document Reading**: The assistant reads documents locally using a local database or file system, ensuring no sensitive data is sent to the cloud.\n\n2. **Preference Remembering**: The assistant stores user preferences locally, such as language settings, theme, or previous interactions, to provide personalized service without cloud storage.\n\n3. **Answer Generation**: The assistant uses local tools (e.g., a knowledge ba"
             }
           ]
+        }
+      },
+      {
+        "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+        "label": "Qwen3.6 35B-A3B OptiQ MLX 4-bit",
+        "role": "primary_general_stretch",
+        "repo": "mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
+        "status": "failed",
+        "score": {
+          "overall": 0.0,
+          "quality_prior": 0.9,
+          "speed": 0.0,
+          "memory_headroom": 0.0,
+          "load_time": 0.0,
+          "reliability": 0.0
+        },
+        "result": {
+          "candidate_id": "qwen36-35b-a3b-optiq-mlx-4bit",
+          "status": "failed",
+          "error_type": "subprocess_failed",
+          "error": "\nFetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n\nFetching 13 files:  38%|\u2588\u2588\u2588\u258a      | 5/13 [39:43<1:03:33, 476.69s/it]\nFetching 13 files:  46%|\u2588\u2588\u2588\u2588\u258c     | 6/13 [55:57<1:08:30, 587.20s/it]\nFetching 13 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 13/13 [55:57<00:00, 258.26s/it] \nlibc++abi: terminating due to uncaught exception of type std::runtime_error: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)\n",
+          "stdout": "",
+          "total_seconds": 3416.577
         }
       },
       {
@@ -682,9 +714,9 @@
           "quality_prior": 0.86,
           "speed": 1.0,
           "memory_headroom": 0.8392,
-          "load_time": 0.9775,
+          "load_time": 0.9612,
           "reliability": 1.0,
-          "overall": 0.9037
+          "overall": 0.9029
         },
         "result": {
           "candidate_id": "qwen3-30b-a3b-2507-mlx-4bit",
@@ -693,65 +725,65 @@
           "role": "primary_general",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 4.046,
-          "total_seconds": 25.188,
+          "load_seconds": 6.991,
+          "total_seconds": 50.235,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 5.09,
-            "generation_tps_avg": 93.017,
-            "prompt_tps_avg": 246.018,
+            "latency_seconds_avg": 10.555,
+            "generation_tps_avg": 79.681,
+            "prompt_tps_avg": 224.717,
             "peak_memory_gb": 17.286,
-            "generation_tokens_total": 326
+            "generation_tokens_total": 334
           },
           "records": [
             {
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 17.173,
+              "latency_seconds": 38.148,
               "prompt_tokens": 70,
               "generation_tokens": 96,
-              "prompt_tps": 4.392,
-              "generation_tps": 83.523,
+              "prompt_tps": 1.903,
+              "generation_tps": 80.017,
               "peak_memory_gb": 17.274,
-              "content_excerpt": "Decision: Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\nRisks:\n- Hardware limitations: On-device MoE (Mixture of Experts) routing may strain memory and compute on lower-end devices.\n- Context compression trade-offs: Aggressive compact context may lose nuance, reducing accuracy in complex tasks.\n- MoE routing complexity: Implementing efficient, low-latency expert selection locally adds engineering difficulty.\n- User adoption: Users may not perceive"
+              "content_excerpt": "**Decision:** Approve \u2014 the idea has strong potential for privacy-focused, efficient on-device AI.\n\n**Risks:**\n1. **Hardware limitations:** MoE (Mixture of Experts) models require significant memory and compute; running efficiently on consumer devices may be challenging.\n2. **Context management:** Compact context with local memory risks losing long-term coherence without robust memory indexing.\n3. **MoE routing overhead:** Dynamic routing adds complexity; poor routing may degrade performance or "
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 1.265,
+              "latency_seconds": 1.616,
               "prompt_tokens": 62,
               "generation_tokens": 96,
-              "prompt_tps": 297.619,
-              "generation_tps": 96.394,
+              "prompt_tps": 282.053,
+              "generation_tps": 85.099,
               "peak_memory_gb": 17.274,
-              "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n*Pros*: Simple, deterministic, low overhead.  \n*Cons*: Loses historical context; may discard important information.\n\n**Summary Memory**: Compresses prior context into a concise summary (e.g., via summarization or embedding clustering).  \n*Pros*: Preserves key information over long interactions; reduces token load.  \n*Cons*: Risk of losing nu"
+              "content_excerpt": "**Sliding Window**: Maintains a fixed-size context window by discarding the oldest tokens as new ones arrive.  \n- *Pros*: Simple, deterministic, low overhead.  \n- *Cons*: Loses early context, poor for long-term reasoning or tracking evolving topics.\n\n**Summary Memory**: Compresses past context into a concise summary (e.g., via summarization or embedding clustering).  \n- *Pros*: Preserves key information over long sessions, reduces token load."
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 0.638,
+              "latency_seconds": 0.97,
               "prompt_tokens": 76,
-              "generation_tokens": 38,
-              "prompt_tps": 386.23,
-              "generation_tps": 98.776,
+              "generation_tokens": 46,
+              "prompt_tps": 334.061,
+              "generation_tps": 72.866,
               "peak_memory_gb": 17.286,
-              "content_excerpt": "I'm not certain this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I'd love to understand if it could truly become a viable product."
+              "content_excerpt": "I'm not entirely sure this architecture is the right fit\u2014maybe we're overcomplicating things. That said, I\u2019d love to explore whether it could actually become a viable product. Let\u2019s figure it out together."
             },
             {
               "prompt_id": "tool_reasoning",
               "category": "tool_use",
               "status": "ok",
-              "latency_seconds": 1.285,
+              "latency_seconds": 1.486,
               "prompt_tokens": 58,
               "generation_tokens": 96,
-              "prompt_tps": 295.829,
-              "generation_tps": 93.376,
+              "prompt_tps": 280.85,
+              "generation_tps": 80.744,
               "peak_memory_gb": 17.286,
-              "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Uses local OCR and text extraction tools (e.g., Tesseract, PDFMiner) to parse uploaded documents without sending data to the cloud.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with AES).  \n3. **Answer Generation**: Processes queries using a locally hosted LLM"
+              "content_excerpt": "The local assistant uses a secure, on-device workflow:  \n1. **Document Reading**: Opens files (PDF, DOCX, TXT) using local libraries (e.g., PyPDF2, python-docx) to extract text without uploading.  \n2. **Preference Memory**: Stores user preferences (e.g., tone, format, recurring topics) in an encrypted local database (e.g., SQLite with encryption).  \n3. **On-Device Processing**: Uses a locally hosted"
             }
           ]
         }
@@ -766,9 +798,9 @@
           "quality_prior": 0.62,
           "speed": 1.0,
           "memory_headroom": 1.0,
-          "load_time": 0.9912,
+          "load_time": 0.9868,
           "reliability": 1.0,
-          "overall": 0.8286
+          "overall": 0.8283
         },
         "result": {
           "candidate_id": "gemma4-e4b-it-mlx-4bit",
@@ -777,14 +809,14 @@
           "role": "fast_compaction_or_fallback",
           "runtime": "mlx_lm",
           "status": "ok",
-          "load_seconds": 1.587,
-          "total_seconds": 8.504,
+          "load_seconds": 2.375,
+          "total_seconds": 9.829,
           "aggregate": {
             "successful_prompts": 4,
             "failed_prompts": 0,
-            "latency_seconds_avg": 1.53,
-            "generation_tps_avg": 72.896,
-            "prompt_tps_avg": 1048.525,
+            "latency_seconds_avg": 1.662,
+            "generation_tps_avg": 70.475,
+            "prompt_tps_avg": 888.192,
             "peak_memory_gb": 4.391,
             "generation_tokens_total": 384
           },
@@ -793,49 +825,49 @@
               "prompt_id": "product_strategy",
               "category": "planning",
               "status": "ok",
-              "latency_seconds": 1.538,
+              "latency_seconds": 1.984,
               "prompt_tokens": 73,
               "generation_tokens": 96,
-              "prompt_tps": 680.988,
-              "generation_tps": 75.543,
+              "prompt_tps": 170.876,
+              "generation_tps": 68.727,
               "peak_memory_gb": 4.384,
-              "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory management is poor, the app might feel fragmented or unable to generalize knowledge.\n*   **Contextual Drift:** Maintaining \"compact context\" while ensuring relevance is technically challenging; poor management leads to irrelevant outputs.\n*   **Scalability of MoE:** Scaling the MoE routing efficiently on a personal device without incurring high latency is critical."
+              "content_excerpt": "**Decision:** Proceed with high potential.\n\n**Risks:**\n*   **Data Siloing/Isolation:** If the local memory isn't managed well, the app becomes uselessly siloed.\n*   **Context Drift:** Maintaining \"compact context\" accurately across sessions is technically challenging.\n*   **Cold Start Latency:** Initializing the local memory/context might introduce noticeable delays.\n\n**MVP:**\nA mobile application that maintains a short-term,"
             },
             {
               "prompt_id": "reasoning_policy",
               "category": "reasoning",
               "status": "ok",
-              "latency_seconds": 1.496,
+              "latency_seconds": 1.501,
               "prompt_tokens": 63,
               "generation_tokens": 96,
-              "prompt_tps": 1217.179,
-              "generation_tps": 73.006,
+              "prompt_tps": 1156.33,
+              "generation_tps": 73.846,
               "peak_memory_gb": 4.384,
-              "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens/chunks of the conversation active in the context window. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with"
+              "content_excerpt": "Here is a comparison of the three strategies and an explanation of a hybrid policy:\n\n### Strategy Comparison\n\n| Strategy | Mechanism | Pros | Cons |\n| :--- | :--- | :--- | :--- |\n| **Sliding Window** | Only keeps the most recent $N$ tokens in the active context buffer. | Simple to implement; maintains immediate conversational flow. | Loses context from the beginning of a long conversation; struggles with distant dependencies. |\n"
             },
             {
               "prompt_id": "writing_rewrite",
               "category": "writing",
               "status": "ok",
-              "latency_seconds": 1.595,
+              "latency_seconds": 1.657,
               "prompt_tokens": 77,
               "generation_tokens": 96,
-              "prompt_tps": 1218.861,
-              "generation_tps": 69.228,
+              "prompt_tps": 1155.111,
+              "generation_tps": 66.051,
               "peak_memory_gb": 4.391,
-              "content_excerpt": "Here are a few options, depending on the nuance you want to convey:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if"
+              "content_excerpt": "Here are a few options, depending on the nuance you want:\n\n**Option 1 (Focus on viability):**\n> \"I'm questioning if this architecture is the most straightforward path to a viable product. Can we discuss how to simplify it while keeping its core potential?\"\n\n**Option 2 (More collaborative/gentle):**\n> \"I'm concerned this architecture might be overcomplicating things. I'd like to explore if there'"
             },
             {
               "prompt_id": "tool_reasoning",
               "category": "tool_use",
               "status": "ok",
-              "latency_seconds": 1.493,
+              "latency_seconds": 1.507,
               "prompt_tokens": 61,
               "generation_tokens": 96,
-              "prompt_tps": 1077.072,
-              "generation_tps": 73.806,
+              "prompt_tps": 1070.449,
+              "generation_tps": 73.274,
               "peak_memory_gb": 4.391,
-              "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur entirely on the local device. Cloud interaction is strictly limited to necessary, non-sensitive updates or synchronization triggers.\n\n**Tools/Components:**\n\n1. **Local Document Indexer/Reader:** Handles ingestion and retrieval of documents.\n2. **Local Vector Database (Vector DB):"
+              "content_excerpt": "Here is a tool-using flow for a local assistant operating with document reading, preference memory, and on-device processing:\n\n**Core Principle:** All processing, memory access, and inference occur locally on the user's device. Cloud interaction is strictly for updates or non-sensitive, anonymized metadata if necessary.\n\n**Tools Required (Local Execution):**\n\n1. **Document Ingestion/Parsing Tool:** Handles reading various file types (PDF, DOCX, TX"
             }
           ]
         }

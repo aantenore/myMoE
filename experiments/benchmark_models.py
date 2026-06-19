@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--include", default="", help="Comma-separated candidate ids.")
     parser.add_argument("--prompt-limit", type=int, default=0)
     parser.add_argument("--max-tokens", type=int, default=128)
+    parser.add_argument("--max-kv-size", type=int, default=8192)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--min-free-gb", type=float, default=25.0)
     parser.add_argument("--run-one", default="", help=argparse.SUPPRESS)
@@ -38,7 +39,7 @@ def main() -> None:
 
     if args.run_one:
         candidate = _find_candidate(manifest, args.run_one)
-        print(json.dumps(run_one_candidate(candidate, prompts, args.max_tokens), indent=2))
+        print(json.dumps(run_one_candidate(candidate, prompts, args.max_tokens, args.max_kv_size), indent=2))
         return
 
     include = {item.strip() for item in args.include.split(",") if item.strip()}
@@ -62,6 +63,7 @@ def main() -> None:
         "manifest": args.manifest,
         "hardware": hardware.__dict__,
         "max_tokens": args.max_tokens,
+        "max_kv_size": args.max_kv_size,
         "prompt_count": len(prompts),
         "results": results,
         "summary": summary,
@@ -79,16 +81,18 @@ def run_one_candidate(
     candidate: BenchmarkCandidate,
     prompts: list[Any],
     max_tokens: int,
+    max_kv_size: int,
 ) -> dict[str, Any]:
     if candidate.runtime == "mlx_vlm":
-        return _run_mlx_vlm_candidate(candidate, prompts, max_tokens)
-    return _run_mlx_lm_candidate(candidate, prompts, max_tokens)
+        return _run_mlx_vlm_candidate(candidate, prompts, max_tokens, max_kv_size)
+    return _run_mlx_lm_candidate(candidate, prompts, max_tokens, max_kv_size)
 
 
 def _run_mlx_lm_candidate(
     candidate: BenchmarkCandidate,
     prompts: list[Any],
     max_tokens: int,
+    max_kv_size: int,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -122,7 +126,7 @@ def _run_mlx_lm_candidate(
                 formatted,
                 max_tokens=max_tokens,
                 sampler=sampler,
-                max_kv_size=8192,
+                max_kv_size=max_kv_size,
             ):
                 text_parts.append(response.text)
                 last_response = response
@@ -170,6 +174,7 @@ def _run_mlx_vlm_candidate(
     candidate: BenchmarkCandidate,
     prompts: list[Any],
     max_tokens: int,
+    max_kv_size: int,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -198,7 +203,7 @@ def _run_mlx_vlm_candidate(
                 formatted,
                 max_tokens=max_tokens,
                 temperature=0.2,
-                max_kv_size=8192,
+                max_kv_size=max_kv_size,
                 verbose=False,
             )
             elapsed = time.perf_counter() - prompt_started
@@ -255,18 +260,31 @@ def _run_isolated(args: argparse.Namespace, candidate_id: str) -> dict[str, Any]
         str(args.prompt_limit),
         "--max-tokens",
         str(args.max_tokens),
+        "--max-kv-size",
+        str(args.max_kv_size),
         "--run-one",
         candidate_id,
     ]
     started = time.perf_counter()
-    completed = subprocess.run(
-        cmd,
-        cwd=Path.cwd(),
-        text=True,
-        capture_output=True,
-        timeout=args.timeout_seconds,
-        env={**os.environ, "PYTHONPATH": "src"},
-    )
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            timeout=args.timeout_seconds,
+            env={**os.environ, "PYTHONPATH": "src"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "candidate_id": candidate_id,
+            "status": "failed",
+            "error_type": "timeout",
+            "error": f"candidate benchmark timed out after {args.timeout_seconds} seconds",
+            "stdout": (exc.stdout or "")[-2000:] if isinstance(exc.stdout, str) else "",
+            "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+            "total_seconds": round(time.perf_counter() - started, 3),
+        }
     if completed.returncode != 0:
         return {
             "candidate_id": candidate_id,

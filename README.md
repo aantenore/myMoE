@@ -129,10 +129,10 @@ The layout has also been checked on a mobile viewport.
 For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpose app, so the default is not a coder model.
 
 - `primary general`: Qwen3-30B-A3B-Instruct-2507 MLX 4-bit.
-- `stretch general`: Qwen3.6-35B-A3B OptiQ MLX 4-bit with tighter context caps.
 - `multimodal alternative`: Gemma 4 26B-A4B OptiQ MLX 4-bit.
 - `fast fallback`: Qwen3 4B or Gemma 4 E4B, selected by local benchmark and task quality.
 - `optional specialist`: Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder-30B-A3B only for coding-heavy workflows.
+- `rejected stretch on tested 24 GB`: Qwen3.6-35B-A3B OptiQ MLX 4-bit failed with Metal OOM at both 8192 and 2048 KV cache sizes.
 - `judge/router-teacher`: use Codex/GPT-class teacher offline during dataset creation, not in runtime.
 
 The runtime must remain local. Distillation data can be created with a stronger teacher, then used to train a local router or small student.
