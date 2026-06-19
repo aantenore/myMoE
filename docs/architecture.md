@@ -50,7 +50,7 @@ Keep one heavy general model resident plus one small fast model for compaction/f
 
 ### Mode 3: Top-2 Expert Comparison
 
-Call two experts and synthesize or expose disagreement. More expensive, but useful for high-risk, ambiguous, or multimodal tasks.
+Call two experts in parallel and expose a deterministic disagreement report. More expensive, but useful for high-risk, ambiguous, or multimodal tasks. The current report compares lexical overlap, length delta, and expert-specific terms; it does not call another model to judge the answers.
 
 ### Mode 4: Distilled Router
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import sys
 
@@ -116,6 +117,7 @@ def _response_metadata(response: object) -> dict[str, object]:
         "selected": [item.__dict__ for item in response.route.selected],
         "fallback_order": list(response.route.fallback_order),
         "errors": list(response.errors),
+        "disagreement": asdict(response.disagreement) if response.disagreement else None,
     }
 
 

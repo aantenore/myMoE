@@ -19,7 +19,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add automatic model download planning for MLX, Ollama, and GGUF profiles.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
-- [ ] Add top-2 routing plus deterministic disagreement reporting.
+- [x] Add top-2 routing plus deterministic disagreement reporting.
 - [ ] Generate route-label dataset with a strong teacher.
 - [ ] Train or implement a distilled local router.
 

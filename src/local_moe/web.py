@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -238,6 +239,7 @@ def _response_payload(response: object) -> dict[str, object]:
         },
         "results": [item.__dict__ for item in response.results],
         "errors": list(response.errors),
+        "disagreement": asdict(response.disagreement) if response.disagreement else None,
     }
 
 

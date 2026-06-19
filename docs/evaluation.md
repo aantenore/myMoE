@@ -16,6 +16,7 @@ Always compare at least:
 | Latency | wall-clock seconds and tokens/sec | must be acceptable interactively |
 | Completeness | rubric per task family | no regression vs single model |
 | Failure transparency | errors preserve correlation id and expert id | required |
+| Compare transparency | top-k compare responses expose deterministic disagreement metadata | required for `aggregation = compare` |
 | Local footprint | RAM/VRAM/disk | must fit target machine |
 
 ## Current Eval Sets

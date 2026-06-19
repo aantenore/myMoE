@@ -87,6 +87,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)
+        self.assertIn("result.disagreement", html)
         self.assertIn("hidden", html)
 
 

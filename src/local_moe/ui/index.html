@@ -1082,7 +1082,10 @@
         const model = (result.results || [])[0]?.model || first.expert_id;
         const speed = (result.results || [])[0]?.predicted_tokens_per_second;
         const speedCopy = speed ? ` · ${Number(speed).toFixed(1)} tok/s` : "";
-        return `Routed to ${first.expert_id} · ${shortModel(model)}${speedCopy}`;
+        const disagreementCopy = result.disagreement
+          ? ` · Compare ${result.disagreement.status}`
+          : "";
+        return `Routed to ${first.expert_id} · ${shortModel(model)}${speedCopy}${disagreementCopy}`;
       }
 
       function renderLastRoute(result) {
@@ -1100,8 +1103,18 @@
               </div>`,
           )
           .join("");
-        if (routes) {
-          el("routing").innerHTML = routes + el("routing").innerHTML;
+        const disagreement = result.disagreement
+          ? `<div class="kv-row">
+              <span>Compare</span>
+              <span>${escapeHtml(
+                `${result.disagreement.status} · min overlap ${Number(
+                  result.disagreement.minimum_lexical_overlap,
+                ).toFixed(3)}`,
+              )}</span>
+            </div>`
+          : "";
+        if (routes || disagreement) {
+          el("routing").innerHTML = routes + disagreement + el("routing").innerHTML;
         }
       }
 

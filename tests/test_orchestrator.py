@@ -27,6 +27,10 @@ class OrchestratorTests(unittest.TestCase):
         moe = LocalMoE(config)
         response = moe.generate("Design Python architecture", correlation_id="case-2")
         self.assertEqual(len(response.results), 2)
+        self.assertIsNotNone(response.disagreement)
+        self.assertIn("Deterministic disagreement report", response.content)
+        self.assertEqual(len(response.disagreement.pairwise_overlaps), 1)
+        self.assertIn(response.disagreement.status, {"agreement_likely", "review_recommended"})
 
 
 if __name__ == "__main__":
