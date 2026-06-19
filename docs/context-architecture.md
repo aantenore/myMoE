@@ -49,6 +49,28 @@ For the 24 GB machine:
 
 Do not start at 256K context. The model may advertise it, but KV cache and app responsiveness will suffer on 24 GB.
 
+## Chat History
+
+The first durable conversation layer is `src/local_moe/chat_store.py`. It stores web chat sessions in:
+
+```text
+<runtime.work_dir>/chats.json
+```
+
+Chat history is intentionally separate from semantic memory. Chat history preserves what happened in a UI session, while memory stores selected durable facts, decisions, and reusable context.
+
+When `/api/generate` receives a `session_id`, the web layer includes up to eight recent chat messages in a bounded continuation prompt before calling the local MoE runtime. This gives normal chat continuity without making the browser responsible for prompt assembly.
+
+## Context Pipeline
+
+1. collect active conversation turns,
+2. persist conversation turns in the local chat store,
+3. merge durable memory records,
+4. add the current session summary,
+5. add relevant artifacts or tool output,
+6. fit context to the selected expert budget,
+7. compact when the budget is near exhaustion.
+
 ## Compression
 
 Use anchored iterative summarization:

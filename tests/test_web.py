@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+from urllib.error import HTTPError
 from urllib import request
 import unittest
 
@@ -175,6 +176,74 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["payload"]["tool_name"], "echo")
         self.assertEqual(result["payload"]["content"][0]["text"], "echo:hi")
 
+    def test_persists_chat_sessions_over_web_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                initial = _get_json(base_url + "/api/chats")
+                first = _post_json(base_url + "/api/generate", {"prompt": "Summarize this note."})
+                session_id = str(first["session_id"])
+                listed = _get_json(base_url + "/api/chats")
+                loaded = _get_json(base_url + f"/api/chats/{session_id}")
+                second = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "Continue the same chat.", "session_id": session_id},
+                )
+                deleted = _delete_json(base_url + f"/api/chats/{session_id}")
+                final = _get_json(base_url + "/api/chats")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(initial["count"], 0)
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["sessions"][0]["id"], session_id)
+        self.assertEqual(loaded["messages"][0]["role"], "user")
+        self.assertEqual(loaded["messages"][1]["role"], "assistant")
+        self.assertIn("route", loaded["messages"][1]["meta"])
+        self.assertEqual(second["session"]["message_count"], 4)
+        self.assertGreater(
+            _prompt_chars(second["content"]),
+            _prompt_chars(first["content"]) + len("Continue the same chat."),
+        )
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual(final["count"], 0)
+
+    def test_generate_rejects_missing_chat_session_before_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(
+                        base_url + "/api/generate",
+                        {"prompt": "This should not generate.", "session_id": "missing"},
+                    )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, 404)
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -200,6 +269,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("cron-confirm-writes", html)
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
+        self.assertIn("/api/chats", html)
+        self.assertIn("session-list", html)
+        self.assertIn("activeSessionId", html)
         self.assertIn("mcp.list_tools", html)
         self.assertIn("mcp.call_tool", html)
         self.assertIn("confirm_process_execution", html)
@@ -231,6 +303,27 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
     )
     with request.urlopen(http_req, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _delete_json(url: str) -> dict[str, object]:
+    http_req = request.Request(url, method="DELETE")
+    with request.urlopen(http_req, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _write_temp_app_config(root: Path) -> Path:
+    raw = json.loads(Path("configs/app.json").read_text(encoding="utf-8"))
+    raw["default_moe_config"] = "tests/fixtures/moe.synthetic.json"
+    raw["runtime"]["work_dir"] = str(root / "runtime")
+    path = root / "app.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
+
+
+def _prompt_chars(content: object) -> int:
+    marker = "prompt_chars="
+    text = str(content)
+    return int(text.split(marker, 1)[1].split()[0])
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,8 @@ The composer supports normal chat usage, rendered Markdown responses, `Enter` to
 
 ![myMoE composer and response](docs/screenshots/composer.png)
 
+Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Continued chats include recent turns in the next local model prompt.
+
 Advanced runtime, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
@@ -189,6 +191,7 @@ src/local_moe/
   evaluator.py
   distilled_router.py
   text_features.py
+  chat_store.py
   context.py
   compaction.py
   hardware.py

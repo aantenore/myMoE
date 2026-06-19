@@ -22,13 +22,30 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 PYTHONPATH=src .venv/bin/python -m local_moe.web --port 8089
 ```
 
+List saved chat sessions:
+
+```bash
+curl http://127.0.0.1:8089/api/chats
+```
+
+Continue a saved chat by passing the returned session id:
+
+```bash
+curl -X POST http://127.0.0.1:8089/api/generate \
+  -H 'Content-Type: application/json' \
+  --data '{"session_id":"<session-id>","prompt":"Continue this plan."}'
+```
+
 The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
 - left rail with a new chat action and starter prompts,
+- persisted local chat sessions,
 - central chat transcript,
 - sticky composer,
 - concise model status,
 - Advanced drawer hidden by default.
+
+Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. When a saved session continues, the web API includes recent turns as bounded local context for the model.
 
 The Advanced drawer contains runtime commands, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 

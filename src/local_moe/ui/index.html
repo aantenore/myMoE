@@ -145,6 +145,43 @@
         gap: 0.5rem;
       }
 
+      .session-list {
+        display: grid;
+        gap: 0.45rem;
+        max-height: 28vh;
+        overflow-y: auto;
+        padding-right: 0.15rem;
+      }
+
+      .session-item {
+        width: 100%;
+        min-height: 3.25rem;
+        padding: 0.65rem 0.7rem;
+        display: grid;
+        gap: 0.2rem;
+        text-align: left;
+        background: transparent;
+      }
+
+      .session-item.active {
+        border-color: var(--border-strong);
+        background: var(--surface-strong);
+      }
+
+      .session-title {
+        color: var(--text);
+        font-size: 0.86rem;
+        line-height: 1.2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-meta {
+        color: var(--subtle);
+        font-size: 0.72rem;
+      }
+
       .prompt-item {
         width: 100%;
         text-align: left;
@@ -764,6 +801,13 @@
         <button class="new-chat" id="new-chat" type="button">New chat</button>
 
         <div class="sidebar-section">
+          <div class="section-label">Chats</div>
+          <div class="session-list" id="session-list">
+            <span class="session-meta">No saved chats yet.</span>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
           <div class="section-label">Starters</div>
           <div class="prompt-list" id="starter-list"></div>
         </div>
@@ -886,6 +930,8 @@
         runtime: null,
         extensions: null,
         messages: [],
+        sessions: [],
+        activeSessionId: null,
       };
 
       const starters = [
@@ -934,6 +980,7 @@
         renderStarters();
         bindEvents();
         loadMeta();
+        loadChats(!new URLSearchParams(window.location.search).has("new_chat"));
       }
 
       function bindEvents() {
@@ -983,6 +1030,53 @@
             error: true,
           });
         }
+      }
+
+      async function loadChats(autoSelect = false) {
+        try {
+          const result = await api("/api/chats");
+          state.sessions = result.sessions || [];
+          renderSessions();
+          if (autoSelect && !state.activeSessionId && state.sessions.length > 0) {
+            await loadSession(state.sessions[0].id);
+          }
+        } catch (error) {
+          el("session-list").innerHTML = `<span class="session-meta">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function loadSession(sessionId) {
+        const session = await api(`/api/chats/${encodeURIComponent(sessionId)}`);
+        state.activeSessionId = session.id;
+        state.messages = [];
+        el("messages").innerHTML = "";
+        el("welcome").hidden = (session.messages || []).length > 0;
+        (session.messages || []).forEach((message) => {
+          appendMessage(message.role, message.content, { meta: messageMeta(message) });
+        });
+        renderSessions();
+        scrollChat();
+      }
+
+      function renderSessions() {
+        if (!state.sessions.length) {
+          el("session-list").innerHTML = '<span class="session-meta">No saved chats yet.</span>';
+          return;
+        }
+        el("session-list").innerHTML = state.sessions
+          .map(
+            (session) => `
+              <button class="session-item${
+                session.id === state.activeSessionId ? " active" : ""
+              }" type="button" data-session="${escapeHtml(session.id)}">
+                <span class="session-title">${escapeHtml(session.title || "New chat")}</span>
+                <span class="session-meta">${Number(session.message_count || 0)} messages</span>
+              </button>`,
+          )
+          .join("");
+        document.querySelectorAll("[data-session]").forEach((button) => {
+          button.addEventListener("click", () => loadSession(button.dataset.session));
+        });
       }
 
       function renderStarters() {
@@ -1143,11 +1237,13 @@
         el("overlay").hidden = !open;
       }
 
-      function newChat() {
+      async function newChat() {
         state.messages = [];
+        state.activeSessionId = null;
         el("messages").innerHTML = "";
         el("welcome").hidden = false;
         el("prompt").value = "";
+        renderSessions();
         el("prompt").focus();
       }
 
@@ -1163,14 +1259,23 @@
         try {
           const result = await api("/api/generate", {
             method: "POST",
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({ prompt, session_id: state.activeSessionId }),
           });
+          if (result.session_id) {
+            state.activeSessionId = result.session_id;
+          }
           updateMessage(
             pendingId,
             result.content || "",
             routeMeta(result),
           );
           renderLastRoute(result);
+          if (result.session) {
+            upsertSessionSummary(result.session);
+            renderSessions();
+          } else {
+            loadChats(false);
+          }
         } catch (error) {
           updateMessage(pendingId, error.message, "", true);
         } finally {
@@ -1189,7 +1294,9 @@
           <div class="avatar">${avatar}</div>
           <div>
             <div class="message-body markdown">${renderMarkdown(markdown)}</div>
-            <div class="message-meta"${options.pending ? "" : " hidden"}>Working locally</div>
+            <div class="message-meta"${
+              options.pending || options.meta ? "" : " hidden"
+            }>${escapeHtml(options.meta || "Working locally")}</div>
           </div>`;
         el("messages").appendChild(wrapper);
         scrollChat();
@@ -1219,6 +1326,25 @@
           ? ` · Compare ${result.disagreement.status}`
           : "";
         return `Routed to ${first.expert_id} · ${shortModel(model)}${speedCopy}${disagreementCopy}`;
+      }
+
+      function messageMeta(message) {
+        if (message.role !== "assistant") return "";
+        return routeMeta(message.meta || {});
+      }
+
+      function upsertSessionSummary(session) {
+        const summary = {
+          id: session.id,
+          title: session.title,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          message_count: session.message_count,
+        };
+        state.sessions = [
+          summary,
+          ...state.sessions.filter((item) => item.id !== session.id),
+        ].sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
       }
 
       function renderLastRoute(result) {
