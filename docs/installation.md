@@ -32,6 +32,7 @@ This pin is intentional. Newer MLX packages were observed to reject the current 
 
 Optional extras:
 
+- `.[gguf]`: installs the Python-side downloader dependencies for llama.cpp/GGUF profiles. The `llama-server` binary is still installed from llama.cpp releases.
 - `.[mlx-current]`: tracks the latest `mlx-lm` stack for experiments.
 - `.[mlx-vlm]`: installs `mlx-vlm` for future multimodal server experiments. Do not use it as the default Gemma E4B path until the upstream compatibility issue is resolved.
 
@@ -80,9 +81,15 @@ Optional Gemma 4 12B GGUF coding/agentic specialist:
 ```bash
 # Install llama.cpp first:
 # https://github.com/ggml-org/llama.cpp/releases
+uv pip install --python .venv/bin/python ".[gguf]"
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
+  --config configs/moe.live.gemma-12b-agentic-gguf.example.json \
+  --download-models
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.gemma-12b-agentic-gguf.example.json
 ```
+
+For Hugging Face GGUF specs such as `owner/repo:Q4_K_M`, bootstrap downloads only matching `*.gguf` files instead of cloning the whole repository. Local `.gguf` file paths are validated and reused.
 
 The older `configs/moe.live.gemma-12b-coder-gguf.example.json` profile is retained for the v1 model that was evaluated during research. Prefer the v2 agentic profile for new coding/tool-use experiments.
 

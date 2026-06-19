@@ -6,6 +6,10 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+gguf = [
+  "huggingface-hub",
+  "psutil"
+]
 mlx = [
   "mlx==0.31.1",
   "mlx-metal==0.31.1; platform_system == 'Darwin'",
