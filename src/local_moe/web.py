@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from .app_config import app_config_payload, load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
+from .compaction import LocalCompactionProvider
 from .config import load_config
 from .context import ContextBundle, ConversationTurn, build_context_bundle
 from .context_policy import load_context_policy
@@ -251,6 +252,73 @@ def _make_handler(
                 payload = _read_json(self)
                 session = chat_store.create_session(title=_optional_str(payload.get("title")))
                 _send_json(self, chat_session_payload(session), status=HTTPStatus.CREATED)
+                return
+
+            if path.startswith("/api/chats/") and path.endswith("/compact"):
+                session_id = _path_tail(path[: -len("/compact")], "/api/chats/")
+                session = chat_store.get_session(session_id)
+                if session is None:
+                    _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                turns = _conversation_turns(session)
+                if not turns:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "Chat session has no turns to compact."},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                payload = _read_json(self)
+                try:
+                    compacted = LocalCompactionProvider(
+                        config,
+                        expert_id=_optional_str(payload.get("expert_id")),
+                    ).compact(
+                        turns=turns,
+                        existing_summary=session.summary,
+                        correlation_id=_optional_str(payload.get("correlation_id")),
+                    )
+                except ProviderError as exc:
+                    _send_json(
+                        self,
+                        {"error": "provider_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_GATEWAY,
+                    )
+                    return
+                try:
+                    updated = chat_store.update_summary(
+                        session.id,
+                        compacted.summary,
+                        meta={
+                            "expert_id": compacted.expert_id,
+                            "model": compacted.model,
+                            "correlation_id": compacted.correlation_id,
+                            "input_messages": len(turns),
+                            "previous_summary_present": bool(session.summary.strip()),
+                        },
+                    )
+                except ValueError as exc:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(
+                    self,
+                    {
+                        "session": chat_session_payload(updated),
+                        "summary": updated.summary,
+                        "summary_updated_at": updated.summary_updated_at,
+                        "compaction": {
+                            "expert_id": compacted.expert_id,
+                            "model": compacted.model,
+                            "correlation_id": compacted.correlation_id,
+                            "input_messages": len(turns),
+                            "previous_summary_present": bool(session.summary.strip()),
+                        },
+                    },
+                )
                 return
 
             if path == "/api/evaluate":
@@ -514,11 +582,7 @@ def _build_model_context(
         )
         return {"prompt": prompt, "payload": _context_payload(bundle)}
 
-    turns = tuple(
-        ConversationTurn(role=message.role, content=message.content)
-        for message in session.messages
-        if message.role in {"user", "assistant"}
-    )
+    turns = _conversation_turns(session)
     bundle = build_context_bundle(
         system_prompt=(
             "You are continuing a local chat session. "
@@ -526,6 +590,7 @@ def _build_model_context(
         ),
         current_prompt=f"Current user message:\n{prompt}",
         turns=turns,
+        summary=session.summary,
         policy=context_policy,
     )
     return {"prompt": bundle.as_prompt(), "payload": _context_payload(bundle)}
@@ -539,6 +604,14 @@ def _context_payload(bundle: ContextBundle) -> dict[str, object]:
         "dropped_turns": bundle.dropped_turns,
         "sections": bundle.by_section(),
     }
+
+
+def _conversation_turns(session: ChatSession) -> tuple[ConversationTurn, ...]:
+    return tuple(
+        ConversationTurn(role=message.role, content=message.content)
+        for message in session.messages
+        if message.role in {"user", "assistant"}
+    )
 
 
 def _optional_str(raw: object) -> str | None:

@@ -61,6 +61,8 @@ Chat history is intentionally separate from semantic memory. Chat history preser
 
 When `/api/generate` receives a `session_id`, the web layer builds a `ContextBundle` with the configured policy profile before calling the local MoE runtime. This gives normal chat continuity without making the browser responsible for prompt assembly. The bundle reports estimated tokens, section totals, dropped turns, and whether compaction is needed.
 
+Saved sessions include a durable `summary` field. `POST /api/chats/<session-id>/compact` calls the configured local compaction expert, updates that summary, appends a system metadata event, and reuses the summary in later context bundles.
+
 The active policy is configured through the app runtime fields:
 
 ```json

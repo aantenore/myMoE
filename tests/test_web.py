@@ -305,6 +305,44 @@ class WebTests(unittest.TestCase):
         self.assertTrue(second["context"]["compaction_needed"])
         self.assertGreater(second["context"]["dropped_turns"], 0)
 
+    def test_compacts_chat_session_and_uses_summary_in_next_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                first = _post_json(base_url + "/api/generate", {"prompt": "Discuss context compaction."})
+                compacted = _post_json(
+                    base_url + f"/api/chats/{first['session_id']}/compact",
+                    {},
+                )
+                loaded = _get_json(base_url + f"/api/chats/{first['session_id']}")
+                second = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "Continue with the summary.", "session_id": first["session_id"]},
+                )
+                exported = _get_text(base_url + f"/api/chats/{first['session_id']}/export.md")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertIn("synthetic-general", compacted["summary"])
+        self.assertEqual(compacted["compaction"]["expert_id"], "general")
+        self.assertIn("summary_updated_at", compacted)
+        self.assertTrue(loaded["summary"])
+        self.assertEqual(loaded["messages"][-1]["role"], "system")
+        self.assertEqual(loaded["messages"][-1]["meta"]["kind"], "summary_update")
+        self.assertIn("summary", second["context"]["sections"])
+        self.assertIn("## Summary", exported)
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -342,6 +380,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("activeSessionId", html)
         self.assertIn("Search chats", html)
         self.assertIn("renameSession", html)
+        self.assertIn("compactSession", html)
+        self.assertIn("/compact", html)
         self.assertIn("exportSession", html)
         self.assertIn("deleteSession", html)
         self.assertIn("mcp.list_tools", html)
