@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
@@ -57,6 +57,10 @@ class McpServerDefinition:
     enabled: bool
     risk_class: str
     capabilities: tuple[str, ...]
+    transport: str = "stdio"
+    cwd: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    timeout_seconds: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -129,6 +133,17 @@ def load_mcp_servers(path: str | Path) -> list[McpServerDefinition]:
         _validate_id(str(item["name"]))
         risk_class = str(item.get("risk_class", "read_only"))
         _validate_risk(risk_class)
+        env_raw = item.get("env", {})
+        if env_raw is None:
+            env_raw = {}
+        if not isinstance(env_raw, dict):
+            raise ExtensionError(f"MCP server {item['name']} env must be an object.")
+        try:
+            timeout_seconds = float(item.get("timeout_seconds", 8.0))
+        except (TypeError, ValueError) as exc:
+            raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be numeric.") from exc
+        if timeout_seconds <= 0:
+            raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be positive.")
         servers.append(
             McpServerDefinition(
                 name=str(item["name"]),
@@ -138,6 +153,10 @@ def load_mcp_servers(path: str | Path) -> list[McpServerDefinition]:
                 enabled=bool(item.get("enabled", False)),
                 risk_class=risk_class,
                 capabilities=tuple(str(capability) for capability in item.get("capabilities", [])),
+                transport=str(item.get("transport", "stdio")),
+                cwd=str(item["cwd"]) if item.get("cwd") is not None else None,
+                env={str(key): str(value) for key, value in env_raw.items()},
+                timeout_seconds=timeout_seconds,
             )
         )
     return servers

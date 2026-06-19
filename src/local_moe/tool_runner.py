@@ -9,9 +9,11 @@ from .compaction import LocalCompactionProvider
 from .context import ConversationTurn, build_compaction_prompt, estimate_tokens
 from .extensions import (
     ExtensionRegistry,
+    McpServerDefinition,
     ToolDefinition,
     create_plugin_scaffold,
 )
+from .mcp_client import McpClientError, StdioMcpClient, mcp_tool_list_payload
 from .memory import FileMemoryStore
 
 
@@ -37,6 +39,7 @@ class LocalToolRunner:
         "context.compact",
         "plugin.create",
         "mcp.search_capabilities",
+        "mcp.list_tools",
     }
 
     def __init__(
@@ -47,9 +50,15 @@ class LocalToolRunner:
         moe_config: object | None = None,
         memory_path: str | Path | None = None,
         plugins_dir: str | Path | None = None,
+        allow_process_execution: bool | None = None,
     ):
         self._registry = registry
         self._moe_config = moe_config
+        self._allow_process_execution = (
+            bool(allow_process_execution)
+            if allow_process_execution is not None
+            else bool(getattr(getattr(app_config, "permissions", None), "allow_process_execution", False))
+        )
         self._memory_path = (
             Path(memory_path)
             if memory_path is not None
@@ -71,6 +80,8 @@ class LocalToolRunner:
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
             return self._mcp_search_capabilities(tool, tool_payload)
+        if tool.name == "mcp.list_tools":
+            return self._mcp_list_tools(tool, tool_payload)
 
         raise ToolExecutionError(f"Unsupported tool: {tool.name}")
 
@@ -202,6 +213,34 @@ class LocalToolRunner:
                 "servers": servers,
             },
         )
+
+    def _mcp_list_tools(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if not self._allow_process_execution:
+            raise ToolExecutionError(
+                "mcp.list_tools is disabled by app permissions; set allow_process_execution=true in the app config."
+            )
+        if payload.get("confirm_process_execution") is not True:
+            raise ToolExecutionError(
+                "mcp.list_tools requires confirm_process_execution=true because it starts an MCP server process."
+            )
+        server = self._mcp_server(_required_text(payload, "server"))
+        try:
+            timeout = float(payload.get("timeout_seconds", server.timeout_seconds))
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("timeout_seconds must be a number.") from exc
+        if timeout <= 0 or timeout > 30:
+            raise ToolExecutionError("timeout_seconds must be greater than 0 and at most 30.")
+        try:
+            result = StdioMcpClient(server, timeout_seconds=timeout).list_tools()
+        except McpClientError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return _ok(tool, "MCP tools listed.", mcp_tool_list_payload(result))
+
+    def _mcp_server(self, name: str) -> McpServerDefinition:
+        for server in self._registry.mcp_servers:
+            if server.name == name:
+                return server
+        raise ToolExecutionError(f"MCP server is not configured: {name}")
 
 
 def tool_result_payload(result: ToolRunResult) -> dict[str, Any]:

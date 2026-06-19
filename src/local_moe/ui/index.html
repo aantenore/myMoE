@@ -1115,6 +1115,11 @@
           "mcp.search_capabilities": {
             query: "filesystem",
           },
+          "mcp.list_tools": {
+            server: "filesystem",
+            confirm_process_execution: false,
+            timeout_seconds: 8,
+          },
         };
         el("tool-input").value = JSON.stringify(defaults[name] || {}, null, 2);
       }

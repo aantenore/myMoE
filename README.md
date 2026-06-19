@@ -265,6 +265,17 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 
 Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create` or `--cron-confirm-writes` for CLI cron execution.
 
+MCP stdio discovery is also available for trusted, enabled MCP servers:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --app-config configs/app.mcp-enabled.local.example.json \
+  --run-tool mcp.list_tools \
+  --tool-input '{"server":"filesystem","confirm_process_execution":true}'
+```
+
+The default app config keeps `allow_process_execution=false`, so MCP process startup requires an explicit local app config override plus per-call confirmation.
+
 For the Gemma E4B regression benchmark:
 
 ```bash

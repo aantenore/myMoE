@@ -27,6 +27,13 @@
       "risk_class": "read_only",
       "side_effects": "none",
       "enabled": true
+    },
+    {
+      "name": "mcp.list_tools",
+      "description": "Start an enabled MCP stdio server and list its exposed tools.",
+      "risk_class": "process_execution",
+      "side_effects": "starts_process",
+      "enabled": true
     }
   ]
 }

@@ -51,6 +51,28 @@ class ExtensionTests(unittest.TestCase):
         with self.assertRaises(ExtensionError):
             create_plugin_scaffold("Bad_Plugin", root=Path("/tmp"))
 
+    def test_rejects_invalid_mcp_env_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "mcp.json"
+            config.write_text(
+                '{"servers":[{"name":"bad","command":"python","env":[],"risk_class":"read_only"}]}',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ExtensionError):
+                load_extension_registry(mcp_config=config)
+
+    def test_rejects_invalid_mcp_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "mcp.json"
+            config.write_text(
+                '{"servers":[{"name":"bad","command":"python","timeout_seconds":0,"risk_class":"read_only"}]}',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ExtensionError):
+                load_extension_registry(mcp_config=config)
+
     def test_scheduler_returns_due_interval_jobs(self) -> None:
         registry = load_extension_registry()
         due = due_jobs(registry.cron_jobs, {"memory-maintenance": 0}, now_epoch=90000)
