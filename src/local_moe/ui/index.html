@@ -153,19 +153,45 @@
         padding-right: 0.15rem;
       }
 
-      .session-item {
+      .session-search {
         width: 100%;
-        min-height: 3.25rem;
-        padding: 0.65rem 0.7rem;
+        min-height: 2.25rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        padding: 0 0.7rem;
+        outline: none;
+      }
+
+      .session-card {
         display: grid;
-        gap: 0.2rem;
-        text-align: left;
+        gap: 0.35rem;
+        padding: 0.65rem 0.7rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
         background: transparent;
       }
 
-      .session-item.active {
+      .session-card.active {
         border-color: var(--border-strong);
         background: var(--surface-strong);
+      }
+
+      .session-main {
+        width: 100%;
+        min-height: 2.1rem;
+        display: grid;
+        gap: 0.2rem;
+        text-align: left;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .session-main:hover {
+        background: transparent;
       }
 
       .session-title {
@@ -180,6 +206,20 @@
       .session-meta {
         color: var(--subtle);
         font-size: 0.72rem;
+      }
+
+      .session-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+
+      .session-action {
+        min-height: 1.75rem;
+        padding: 0 0.45rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+        background: var(--surface);
       }
 
       .prompt-item {
@@ -802,6 +842,13 @@
 
         <div class="sidebar-section">
           <div class="section-label">Chats</div>
+          <input
+            class="session-search"
+            id="chat-search"
+            type="search"
+            placeholder="Search chats"
+            autocomplete="off"
+          />
           <div class="session-list" id="session-list">
             <span class="session-meta">No saved chats yet.</span>
           </div>
@@ -932,6 +979,7 @@
         messages: [],
         sessions: [],
         activeSessionId: null,
+        chatSearchTimer: null,
       };
 
       const starters = [
@@ -1008,6 +1056,10 @@
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
         el("tool-select").addEventListener("change", setDefaultToolInput);
+        el("chat-search").addEventListener("input", () => {
+          window.clearTimeout(state.chatSearchTimer);
+          state.chatSearchTimer = window.setTimeout(() => loadChats(false), 160);
+        });
       }
 
       async function loadMeta() {
@@ -1034,7 +1086,9 @@
 
       async function loadChats(autoSelect = false) {
         try {
-          const result = await api("/api/chats");
+          const query = el("chat-search").value.trim();
+          const path = query ? `/api/chats?query=${encodeURIComponent(query)}` : "/api/chats";
+          const result = await api(path);
           state.sessions = result.sessions || [];
           renderSessions();
           if (autoSelect && !state.activeSessionId && state.sessions.length > 0) {
@@ -1066,17 +1120,61 @@
         el("session-list").innerHTML = state.sessions
           .map(
             (session) => `
-              <button class="session-item${
+              <div class="session-card${
                 session.id === state.activeSessionId ? " active" : ""
-              }" type="button" data-session="${escapeHtml(session.id)}">
-                <span class="session-title">${escapeHtml(session.title || "New chat")}</span>
-                <span class="session-meta">${Number(session.message_count || 0)} messages</span>
-              </button>`,
+              }">
+                <button class="session-main" type="button" data-session="${escapeHtml(session.id)}">
+                  <span class="session-title">${escapeHtml(session.title || "New chat")}</span>
+                  <span class="session-meta">${Number(session.message_count || 0)} messages</span>
+                </button>
+                <div class="session-actions">
+                  <button class="session-action" type="button" data-rename="${escapeHtml(session.id)}">Rename</button>
+                  <button class="session-action" type="button" data-export="${escapeHtml(session.id)}">Export</button>
+                  <button class="session-action" type="button" data-delete="${escapeHtml(session.id)}">Delete</button>
+                </div>
+              </div>`,
           )
           .join("");
         document.querySelectorAll("[data-session]").forEach((button) => {
           button.addEventListener("click", () => loadSession(button.dataset.session));
         });
+        document.querySelectorAll("[data-rename]").forEach((button) => {
+          button.addEventListener("click", () => renameSession(button.dataset.rename));
+        });
+        document.querySelectorAll("[data-export]").forEach((button) => {
+          button.addEventListener("click", () => exportSession(button.dataset.export));
+        });
+        document.querySelectorAll("[data-delete]").forEach((button) => {
+          button.addEventListener("click", () => deleteSession(button.dataset.delete));
+        });
+      }
+
+      async function renameSession(sessionId) {
+        const current = state.sessions.find((session) => session.id === sessionId);
+        const title = window.prompt("Rename chat", current?.title || "New chat");
+        if (!title || !title.trim()) return;
+        const session = await api(`/api/chats/${encodeURIComponent(sessionId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: title.trim() }),
+        });
+        upsertSessionSummary(session);
+        renderSessions();
+      }
+
+      function exportSession(sessionId) {
+        window.open(`/api/chats/${encodeURIComponent(sessionId)}/export.md`, "_blank", "noreferrer");
+      }
+
+      async function deleteSession(sessionId) {
+        const current = state.sessions.find((session) => session.id === sessionId);
+        if (!window.confirm(`Delete "${current?.title || "this chat"}"?`)) return;
+        await api(`/api/chats/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+        state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+        if (state.activeSessionId === sessionId) {
+          await newChat();
+        } else {
+          renderSessions();
+        }
       }
 
       function renderStarters() {

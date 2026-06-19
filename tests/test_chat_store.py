@@ -46,6 +46,28 @@ class ChatStoreTests(unittest.TestCase):
         self.assertEqual(chat_session_payload(session)["message_count"], 0)
         self.assertTrue(deleted)
 
+    def test_searches_renames_and_exports_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileChatStore(Path(tmp) / "chats.json")
+            session = store.append_exchange(
+                session_id=None,
+                user_content="Design a plugin lifecycle for local tools.",
+                assistant_content="Use allowlists and explicit confirmations.",
+                assistant_meta={"route": {"selected": [{"expert_id": "general"}]}},
+            )
+            renamed = store.rename_session(session.id, "Plugin Lifecycle")
+            search_by_title = store.search_sessions("plugin lifecycle")
+            search_by_message = store.search_sessions("allowlists confirmations")
+            markdown = store.export_markdown(session.id)
+
+        self.assertEqual(renamed.title, "Plugin Lifecycle")
+        self.assertEqual(search_by_title[0].id, session.id)
+        self.assertEqual(search_by_message[0].id, session.id)
+        self.assertIn("# Plugin Lifecycle", markdown)
+        self.assertIn("## User", markdown)
+        self.assertIn("## Assistant", markdown)
+        self.assertIn("Routed to", markdown)
+
     def test_rejects_unknown_session_on_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileChatStore(Path(tmp) / "chats.json")
