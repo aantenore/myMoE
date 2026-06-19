@@ -182,6 +182,7 @@ src/local_moe/
   cli.py
   evaluator.py
   context.py
+  compaction.py
   hardware.py
   memory.py
   router.py
