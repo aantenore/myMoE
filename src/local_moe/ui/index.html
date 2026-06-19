@@ -1050,6 +1050,80 @@
             <pre class="eval-output" id="extension-audit-output">Not run yet.</pre>
           </div>
           <div class="tool-controls">
+            <div class="section-label">Extension Studio</div>
+            <div class="tool-row">
+              <select class="tool-select" id="extension-surface" aria-label="Extension surface"></select>
+              <select class="tool-select" id="extension-preset" aria-label="Extension preset"></select>
+            </div>
+            <div class="tool-row">
+              <select class="tool-select" id="extension-mode" aria-label="Extension mode">
+                <option value="upsert">Save or update</option>
+                <option value="remove">Remove</option>
+              </select>
+              <button class="ghost-button" id="load-extension-preset" type="button">Load preset</button>
+            </div>
+            <div class="tool-row">
+              <input class="tool-select" id="extension-id" aria-label="Extension id" placeholder="local-docs" />
+              <select class="tool-select" id="extension-risk" aria-label="Extension risk class"></select>
+            </div>
+            <input class="tool-select" id="extension-description" aria-label="Extension description" placeholder="What this entry does" />
+            <label class="check-row">
+              <input id="extension-enabled" type="checkbox" />
+              <span>Enable entry</span>
+            </label>
+            <div class="tool-controls" id="extension-mcp-fields">
+              <input class="tool-select mono" id="extension-mcp-command" aria-label="MCP command" placeholder="npx" />
+              <textarea
+                class="tool-input mono"
+                id="extension-mcp-args"
+                rows="4"
+                spellcheck="false"
+                aria-label="MCP args"
+                placeholder="One argument per line"
+              ></textarea>
+              <div class="tool-row">
+                <input class="tool-select mono" id="extension-mcp-cwd" aria-label="MCP cwd" placeholder="." />
+                <input class="tool-number mono" id="extension-mcp-timeout" type="number" min="1" max="30" step="1" value="8" aria-label="MCP timeout seconds" />
+              </div>
+              <textarea
+                class="tool-input mono"
+                id="extension-mcp-allowed-tools"
+                rows="3"
+                spellcheck="false"
+                aria-label="MCP allowed tools"
+                placeholder="Comma or newline separated allowed tools"
+              ></textarea>
+              <input class="tool-select mono" id="extension-mcp-capabilities" aria-label="MCP capabilities" placeholder="resources, tools" />
+            </div>
+            <div class="tool-controls" id="extension-cron-fields" hidden>
+              <div class="tool-row">
+                <select class="tool-select" id="extension-cron-schedule" aria-label="Cron schedule">
+                  <option value="startup">Startup</option>
+                  <option value="interval">Interval</option>
+                  <option value="manual">Manual</option>
+                </select>
+                <input class="tool-number mono" id="extension-cron-seconds" type="number" min="60" step="60" value="86400" aria-label="Cron interval seconds" />
+              </div>
+              <textarea
+                class="tool-input mono"
+                id="extension-cron-command"
+                rows="4"
+                spellcheck="false"
+                aria-label="Cron command"
+                placeholder="One command token per line"
+              ></textarea>
+            </div>
+            <label class="check-row">
+              <input id="extension-config-confirm" type="checkbox" />
+              <span>Confirm registry file update</span>
+            </label>
+            <div class="tool-row">
+              <button class="ghost-button" id="save-extension-entry" type="button">Save entry</button>
+              <button class="ghost-button" id="remove-extension-entry" type="button">Remove entry</button>
+            </div>
+            <pre class="eval-output" id="extension-config-output">Not run yet.</pre>
+          </div>
+          <div class="tool-controls">
             <div class="section-label">Plugin Studio</div>
             <div class="tool-row">
               <input class="tool-select" id="plugin-id" aria-label="Plugin id" placeholder="sample-plugin" />
@@ -1194,6 +1268,7 @@
         health: null,
         performance: null,
         extensions: null,
+        extensionTemplates: null,
         extensionAudit: null,
         audit: null,
         cron: null,
@@ -1298,6 +1373,15 @@
         el("forget-knowledge").addEventListener("click", forgetKnowledge);
         el("refresh-health").addEventListener("click", refreshHealth);
         el("run-extension-audit").addEventListener("click", runExtensionAudit);
+        el("extension-surface").addEventListener("change", () => {
+          renderExtensionPresetOptions();
+          loadExtensionPreset();
+          updateExtensionSurface();
+        });
+        el("extension-preset").addEventListener("change", loadExtensionPreset);
+        el("load-extension-preset").addEventListener("click", loadExtensionPreset);
+        el("save-extension-entry").addEventListener("click", () => configureExtensionEntry());
+        el("remove-extension-entry").addEventListener("click", () => configureExtensionEntry("remove"));
         el("create-plugin").addEventListener("click", createPlugin);
         el("tool-select").addEventListener("change", setDefaultToolInput);
         el("chat-search").addEventListener("input", () => {
@@ -1308,7 +1392,7 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
@@ -1318,6 +1402,7 @@
             api("/api/health"),
             api("/api/performance"),
             api("/api/extensions"),
+            api("/api/extensions/templates"),
             api("/api/extensions/audit"),
             api("/api/audit?limit=20"),
             api("/api/cron"),
@@ -1331,6 +1416,7 @@
           state.health = health;
           state.performance = performance;
           state.extensions = extensions;
+          state.extensionTemplates = extensionTemplates;
           state.extensionAudit = extensionAudit.audit;
           state.audit = audit;
           state.cron = cron;
@@ -1343,6 +1429,7 @@
           renderHealth(health);
           renderPerformance(performance);
           renderExtensions(extensions);
+          renderExtensionStudioTemplates(extensionTemplates);
           renderExtensionAudit(extensionAudit.audit);
           renderAudit(audit);
           renderToolRunner(extensions);
@@ -2005,6 +2092,156 @@
         } catch (error) {
           el("extension-audit-output").textContent = error.message;
         }
+      }
+
+      function renderExtensionStudioTemplates(templates) {
+        const surfaces = templates?.surfaces || [];
+        const risks = templates?.risk_classes || [];
+        el("extension-surface").innerHTML = surfaces
+          .map((surface) => `<option value="${escapeHtml(surface.id)}">${escapeHtml(surface.label || surface.id)}</option>`)
+          .join("");
+        el("extension-risk").innerHTML = risks
+          .map((risk) => `<option value="${escapeHtml(risk)}">${escapeHtml(risk)}</option>`)
+          .join("");
+        renderExtensionPresetOptions();
+        loadExtensionPreset();
+        updateExtensionSurface();
+      }
+
+      function renderExtensionPresetOptions() {
+        const surface = el("extension-surface").value || "mcp_server";
+        const presets = state.extensionTemplates?.presets?.[surface] || [];
+        el("extension-preset").innerHTML = presets
+          .map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.label || preset.id)}</option>`)
+          .join("");
+      }
+
+      function selectedExtensionPreset() {
+        const surface = el("extension-surface").value || "mcp_server";
+        const presetId = el("extension-preset").value;
+        return (state.extensionTemplates?.presets?.[surface] || []).find((preset) => preset.id === presetId);
+      }
+
+      function loadExtensionPreset() {
+        const preset = selectedExtensionPreset();
+        const definition = preset?.definition || {};
+        const surface = el("extension-surface").value || "mcp_server";
+        const id = surface === "cron_job" ? definition.id : definition.name;
+        el("extension-id").value = id || "";
+        el("extension-description").value = definition.description || "";
+        el("extension-risk").value = definition.risk_class || "read_only";
+        el("extension-enabled").checked = Boolean(definition.enabled);
+
+        if (surface === "cron_job") {
+          const schedule = definition.schedule || {};
+          el("extension-cron-schedule").value = schedule.type || "startup";
+          el("extension-cron-seconds").value = schedule.seconds || 86400;
+          el("extension-cron-command").value = listToLines(definition.command || []);
+        } else {
+          el("extension-mcp-command").value = definition.command || "";
+          el("extension-mcp-args").value = listToLines(definition.args || []);
+          el("extension-mcp-cwd").value = definition.cwd || ".";
+          el("extension-mcp-timeout").value = definition.timeout_seconds || 8;
+          el("extension-mcp-allowed-tools").value = listToLines(definition.allowed_tools || []);
+          el("extension-mcp-capabilities").value = listToCsv(definition.capabilities || []);
+        }
+        updateExtensionSurface();
+      }
+
+      function updateExtensionSurface() {
+        const surface = el("extension-surface").value || "mcp_server";
+        el("extension-mcp-fields").hidden = surface !== "mcp_server";
+        el("extension-cron-fields").hidden = surface !== "cron_job";
+        el("extension-id").placeholder = surface === "cron_job" ? "daily-audit" : "local-docs";
+      }
+
+      async function configureExtensionEntry(modeOverride) {
+        const mode = modeOverride || el("extension-mode").value || "upsert";
+        el("extension-config-output").textContent = mode === "remove" ? "Removing..." : "Saving...";
+        try {
+          const result = await api("/api/extensions/configure", {
+            method: "POST",
+            body: JSON.stringify({
+              surface: el("extension-surface").value,
+              mode,
+              definition: buildExtensionDefinition(mode),
+              confirm: el("extension-config-confirm").checked,
+            }),
+          });
+          el("extension-config-output").textContent = JSON.stringify(result, null, 2);
+          state.extensions = result.extensions;
+          state.extensionAudit = result.audit;
+          renderExtensions(result.extensions);
+          renderExtensionAudit(result.audit);
+          renderToolRunner(result.extensions);
+          const cron = await api("/api/cron");
+          state.cron = cron;
+          renderCronStatus(cron);
+          await refreshAudit({ quiet: true });
+        } catch (error) {
+          el("extension-config-output").textContent = error.message;
+          await refreshAudit({ quiet: true });
+        }
+      }
+
+      function buildExtensionDefinition(mode) {
+        const surface = el("extension-surface").value || "mcp_server";
+        const id = el("extension-id").value.trim();
+        if (mode === "remove") {
+          return surface === "cron_job" ? { id } : { name: id };
+        }
+        const shared = {
+          description: el("extension-description").value.trim(),
+          enabled: el("extension-enabled").checked,
+          risk_class: el("extension-risk").value,
+        };
+        if (surface === "cron_job") {
+          const scheduleType = el("extension-cron-schedule").value;
+          const schedule = { type: scheduleType };
+          if (scheduleType === "interval") {
+            schedule.seconds = Number.parseInt(el("extension-cron-seconds").value || "86400", 10);
+          }
+          return {
+            id,
+            ...shared,
+            schedule,
+            command: linesToList(el("extension-cron-command").value),
+          };
+        }
+        return {
+          name: id,
+          ...shared,
+          command: el("extension-mcp-command").value.trim(),
+          args: linesToList(el("extension-mcp-args").value),
+          capabilities: csvToList(el("extension-mcp-capabilities").value),
+          transport: "stdio",
+          cwd: el("extension-mcp-cwd").value.trim() || ".",
+          env: {},
+          timeout_seconds: Number.parseFloat(el("extension-mcp-timeout").value || "8"),
+          allowed_tools: csvToList(el("extension-mcp-allowed-tools").value),
+        };
+      }
+
+      function linesToList(value) {
+        return String(value || "")
+          .split(/\n+/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function csvToList(value) {
+        return String(value || "")
+          .split(/[,\n]+/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function listToLines(value) {
+        return (value || []).join("\n");
+      }
+
+      function listToCsv(value) {
+        return (value || []).join(", ");
       }
 
       async function createPlugin() {

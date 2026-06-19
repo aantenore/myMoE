@@ -28,7 +28,9 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import (
     ExtensionError,
     audit_extension_registry,
+    configure_extension_entry,
     create_plugin_scaffold,
+    extension_configuration_templates,
     load_extension_registry,
     registry_payload,
 )
@@ -236,6 +238,10 @@ def _make_handler(
 
             if path == "/api/extensions":
                 _send_json(self, registry_payload(registry))
+                return
+
+            if path == "/api/extensions/templates":
+                _send_json(self, extension_configuration_templates())
                 return
 
             if path == "/api/extensions/audit":
@@ -960,6 +966,92 @@ def _make_handler(
                         "extensions": registry_payload(registry),
                     },
                     status=HTTPStatus.CREATED,
+                )
+                return
+
+            if path == "/api/extensions/configure":
+                payload = _read_json(self)
+                surface = str(payload.get("surface", "")).strip()
+                mode = str(payload.get("mode", "upsert")).strip() or "upsert"
+                definition = payload.get("definition", {})
+                if payload.get("confirm") is not True:
+                    _audit(
+                        audit_store,
+                        "extension.configure",
+                        "confirmation_required",
+                        risk_class="write_local",
+                        subject=surface or None,
+                    )
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Extension configuration requires confirm=true because it writes registry files.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                if not isinstance(definition, dict):
+                    _audit(
+                        audit_store,
+                        "extension.configure",
+                        "bad_request",
+                        risk_class="write_local",
+                        subject=surface or None,
+                        metadata={"message": "definition must be a JSON object"},
+                    )
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "definition must be a JSON object"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    result = configure_extension_entry(
+                        surface,
+                        definition,
+                        mode=mode,
+                        mcp_config=app_config.extensions.mcp_config,
+                        cron_config=app_config.extensions.cron_config,
+                    )
+                except (ExtensionError, ValueError) as exc:
+                    _audit(
+                        audit_store,
+                        "extension.configure",
+                        "error",
+                        risk_class="write_local",
+                        subject=surface or None,
+                        metadata={"message": str(exc)},
+                    )
+                    _send_json(
+                        self,
+                        {"error": "extension_configure_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                registry = _load_registry(app_config)
+                cron_runner.replace_registry(registry)
+                audit = audit_extension_registry(registry)
+                _audit(
+                    audit_store,
+                    "extension.configure",
+                    "ok",
+                    risk_class="write_local",
+                    subject=result["id"],
+                    metadata={
+                        "surface": result["surface"],
+                        "mode": result["mode"],
+                        "action": result["action"],
+                    },
+                )
+                _send_json(
+                    self,
+                    {
+                        "configured": True,
+                        **result,
+                        "audit": audit,
+                        "extensions": registry_payload(registry),
+                    },
                 )
                 return
 

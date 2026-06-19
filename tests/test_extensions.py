@@ -11,6 +11,7 @@ from local_moe.extensions import (
     ExtensionError,
     audit_extension_registry,
     create_plugin_scaffold,
+    extension_configuration_templates,
     load_extension_registry,
 )
 from local_moe.scheduler import due_jobs
@@ -39,6 +40,19 @@ class ExtensionTests(unittest.TestCase):
 
         self.assertTrue(audit["checked"])
         self.assertEqual(audit["issue_count"], 0)
+
+    def test_exposes_guided_extension_configuration_templates(self) -> None:
+        templates = extension_configuration_templates()
+        mcp_presets = templates["presets"]["mcp_server"]
+        cron_presets = templates["presets"]["cron_job"]
+
+        self.assertIn("mcp_server", {surface["id"] for surface in templates["surfaces"]})
+        self.assertIn("cron_job", {surface["id"] for surface in templates["surfaces"]})
+        self.assertIn("write_local", templates["risk_classes"])
+        self.assertEqual(mcp_presets[0]["definition"]["transport"], "stdio")
+        self.assertIn("read_text_file", mcp_presets[0]["definition"]["allowed_tools"])
+        self.assertEqual(cron_presets[0]["definition"]["command"], ["extension.audit"])
+        self.assertIn("router.distill", {action["id"] for action in templates["cron_actions"]})
 
     def test_creates_plugin_scaffold_with_valid_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
