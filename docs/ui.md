@@ -151,11 +151,11 @@ Performance calls `/api/performance` and shows the current benchmark status, mea
 
 The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server.
 
-The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
+The Extensions section includes registry audit, Extension Studio, and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Extension Studio reads safe starter templates from `/api/extensions/templates`, lets operators configure MCP server and cron job entries through form controls, then writes through `/api/extensions/configure` only after explicit confirmation. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
 The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `data.export`, `data.import`, `knowledge.ingest`, `memory.prune_expired`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before returning private data or writing/deleting local files.
 
-`extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
+`extension.configure` is the lower-level self-configuration tool for operators who prefer JSON payloads or CLI automation. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately. Extension Studio uses the same validation path but avoids hand-editing registry JSON for common MCP and cron setup work.
 
 MCP tool discovery is available through `mcp.list_tools`. It starts an enabled stdio MCP server and lists its declared tools, but only when the app config has `permissions.allow_process_execution=true` and the tool input includes `confirm_process_execution: true`. The default app config blocks process execution, so the UI can show the tool contract without silently launching processes.
 
@@ -201,6 +201,10 @@ Runtime process controls require confirmation before starting or stopping config
 Plugin Studio creates local plugin scaffolds with an explicit confirmation guard:
 
 ![myMoE plugin studio](screenshots/plugin-studio.png)
+
+Extension Studio configures MCP server and cron job entries from guarded presets without editing JSON files by hand:
+
+![myMoE extension studio](screenshots/extension-studio.png)
 
 Guarded runtime preparation is available from the same Advanced drawer. Without confirmation, the action returns a structured `confirmation_required` result and performs no installs or downloads:
 

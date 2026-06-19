@@ -69,6 +69,7 @@ class WebTests(unittest.TestCase):
             doctor = _get_json(base_url + "/api/doctor")
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
+            extension_templates = _get_json(base_url + "/api/extensions/templates")
             audit = _get_json(base_url + "/api/extensions/audit")
             support_bundle = _get_json(base_url + "/api/support-bundle")
             downloaded_bundle = json.loads(_get_text(base_url + "/api/support-bundle/download.json"))
@@ -95,6 +96,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
+        self.assertIn("mcp_server", {surface["id"] for surface in extension_templates["surfaces"]})
+        self.assertIn("filesystem-docs", {preset["id"] for preset in extension_templates["presets"]["mcp_server"]})
+        self.assertIn("daily-memory-maintenance", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
         self.assertEqual(audit["audit"]["issue_count"], 0)
         self.assertIn("extensions", audit)
         self.assertEqual(support_bundle["schema_version"], "1.0")
@@ -287,6 +291,83 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["payload"]["action"], "created")
         self.assertIn("daily-audit", [job["id"] for job in cron["jobs"]])
+
+    def test_guided_extension_configure_endpoint_updates_registry_and_cron(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            mcp_path = root / "mcp.json"
+            cron_path = root / "cron.json"
+            mcp_path.write_text('{"servers": []}', encoding="utf-8")
+            cron_path.write_text('{"jobs": []}', encoding="utf-8")
+            raw = json.loads(app_config.read_text(encoding="utf-8"))
+            raw["extensions"]["mcp_config"] = str(mcp_path)
+            raw["extensions"]["cron_config"] = str(cron_path)
+            app_config.write_text(json.dumps(raw), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as guarded_raised:
+                    _post_json(
+                        base_url + "/api/extensions/configure",
+                        {
+                            "surface": "mcp_server",
+                            "definition": {"name": "docs", "command": "npx"},
+                        },
+                    )
+                mcp = _post_json(
+                    base_url + "/api/extensions/configure",
+                    {
+                        "surface": "mcp_server",
+                        "definition": {
+                            "name": "docs",
+                            "description": "Read documentation files.",
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-filesystem", "docs"],
+                            "enabled": False,
+                            "risk_class": "write_local",
+                            "capabilities": ["resources", "tools"],
+                            "transport": "stdio",
+                            "allowed_tools": ["list_directory", "read_text_file"],
+                        },
+                        "confirm": True,
+                    },
+                )
+                cron_created = _post_json(
+                    base_url + "/api/extensions/configure",
+                    {
+                        "surface": "cron_job",
+                        "definition": {
+                            "id": "daily-audit",
+                            "description": "Run extension audit once per day.",
+                            "enabled": True,
+                            "schedule": {"type": "interval", "seconds": 86400},
+                            "command": ["extension.audit"],
+                            "risk_class": "compute_only",
+                        },
+                        "confirm": True,
+                    },
+                )
+                cron = _get_json(base_url + "/api/cron")
+                audit = _get_json(base_url + "/api/audit?action=extension.configure&limit=10")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(guarded_raised.exception.code, 400)
+        self.assertTrue(mcp["configured"])
+        self.assertEqual(mcp["action"], "created")
+        self.assertIn("docs", [server["name"] for server in mcp["extensions"]["mcp_servers"]])
+        self.assertEqual(cron_created["action"], "created")
+        self.assertIn("daily-audit", [job["id"] for job in cron["jobs"]])
+        self.assertEqual({event["status"] for event in audit["events"]}, {"ok", "confirmation_required"})
 
     def test_runs_mcp_list_tools_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -927,6 +1008,14 @@ class WebTests(unittest.TestCase):
         self.assertIn("confirm_tool_call", html)
         self.assertIn("/api/plugins", html)
         self.assertIn("/api/extensions/audit", html)
+        self.assertIn("/api/extensions/templates", html)
+        self.assertIn("/api/extensions/configure", html)
+        self.assertIn("Extension Studio", html)
+        self.assertIn("renderExtensionStudioTemplates", html)
+        self.assertIn("configureExtensionEntry", html)
+        self.assertIn("extension-config-confirm", html)
+        self.assertIn("save-extension-entry", html)
+        self.assertIn("remove-extension-entry", html)
         self.assertIn("Plugin Studio", html)
         self.assertIn("Registry Audit", html)
         self.assertIn("runExtensionAudit", html)

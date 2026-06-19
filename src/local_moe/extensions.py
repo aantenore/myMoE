@@ -30,6 +30,25 @@ RISK_CLASSES = {
     "privileged_admin",
 }
 
+CRON_ACTION_PRESETS = {
+    "extension.audit": {
+        "description": "Validate configured extension surfaces.",
+        "risk_class": "compute_only",
+    },
+    "memory.maintenance": {
+        "description": "Report local memory store health.",
+        "risk_class": "compute_only",
+    },
+    "memory.prune_expired": {
+        "description": "Delete expired local memory records after explicit confirmation.",
+        "risk_class": "write_local",
+    },
+    "router.distill": {
+        "description": "Refresh the local distilled router artifact from curated labels.",
+        "risk_class": "write_local",
+    },
+}
+
 
 @dataclass(frozen=True)
 class ToolDefinition:
@@ -356,6 +375,132 @@ def audit_extension_registry(registry: ExtensionRegistry) -> dict[str, Any]:
         "plugin_count": len(registry.plugins),
         "issue_count": len(issues),
         "issues": [issue.__dict__ for issue in issues],
+    }
+
+
+def extension_configuration_templates() -> dict[str, Any]:
+    """Return safe starter templates for guided extension configuration."""
+
+    return {
+        "risk_classes": sorted(RISK_CLASSES),
+        "surfaces": [
+            {
+                "id": "mcp_server",
+                "label": "MCP Server",
+                "identity_key": "name",
+                "description": "Register a guarded stdio MCP server and its allowlisted tools.",
+            },
+            {
+                "id": "cron_job",
+                "label": "Cron Job",
+                "identity_key": "id",
+                "description": "Register a local scheduled job from the allowlisted cron actions.",
+            },
+        ],
+        "presets": {
+            "mcp_server": [
+                {
+                    "id": "filesystem-docs",
+                    "label": "Local Docs Filesystem",
+                    "description": "Disabled read/write-local filesystem MCP bridge scoped to docs by default.",
+                    "definition": {
+                        "name": "local-docs",
+                        "description": "Read docs through allowlisted MCP.",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "docs"],
+                        "enabled": False,
+                        "risk_class": "write_local",
+                        "capabilities": ["resources", "tools"],
+                        "transport": "stdio",
+                        "cwd": ".",
+                        "env": {},
+                        "timeout_seconds": 8,
+                        "allowed_tools": [
+                            "list_allowed_directories",
+                            "list_directory",
+                            "directory_tree",
+                            "get_file_info",
+                            "search_files",
+                            "read_text_file",
+                        ],
+                    },
+                },
+                {
+                    "id": "custom-stdio",
+                    "label": "Custom Stdio MCP",
+                    "description": "Blank stdio MCP server starter with process execution disabled by default.",
+                    "definition": {
+                        "name": "custom-mcp",
+                        "description": "Custom local stdio MCP server.",
+                        "command": "python",
+                        "args": ["server.py"],
+                        "enabled": False,
+                        "risk_class": "process_execution",
+                        "capabilities": ["tools"],
+                        "transport": "stdio",
+                        "cwd": ".",
+                        "env": {},
+                        "timeout_seconds": 8,
+                        "allowed_tools": [],
+                    },
+                },
+            ],
+            "cron_job": [
+                {
+                    "id": "startup-extension-audit",
+                    "label": "Startup Extension Audit",
+                    "description": "Run a read-only extension registry audit once when the app starts.",
+                    "definition": {
+                        "id": "extension-audit",
+                        "description": "Validate configured extension surfaces at startup.",
+                        "enabled": True,
+                        "schedule": {"type": "startup"},
+                        "command": ["extension.audit"],
+                        "risk_class": "compute_only",
+                    },
+                },
+                {
+                    "id": "daily-memory-maintenance",
+                    "label": "Daily Memory Maintenance",
+                    "description": "Report memory health and expired-record counts once per day.",
+                    "definition": {
+                        "id": "memory-maintenance",
+                        "description": "Report local memory store health and expired-record counts.",
+                        "enabled": True,
+                        "schedule": {"type": "interval", "seconds": 86400},
+                        "command": ["memory.maintenance", "--memory-path", "work/runtime/memory.jsonl"],
+                        "risk_class": "compute_only",
+                    },
+                },
+                {
+                    "id": "weekly-router-distillation",
+                    "label": "Weekly Router Distillation",
+                    "description": "Refresh the distilled router artifact from the curated live eval labels.",
+                    "definition": {
+                        "id": "router-distillation-refresh",
+                        "description": "Regenerate local route-label data and distilled router artifact.",
+                        "enabled": True,
+                        "schedule": {"type": "interval", "seconds": 604800},
+                        "command": [
+                            "router.distill",
+                            "--eval",
+                            "experiments/eval_set_live_general.jsonl",
+                            "--labels",
+                            "experiments/route_labels_live_general.jsonl",
+                            "--artifact",
+                            "outputs/router-distilled-live-general.json",
+                            "--teacher-source",
+                            "curated_live_eval",
+                        ],
+                        "risk_class": "write_local",
+                    },
+                },
+            ],
+        },
+        "cron_actions": [
+            {"id": name, **details}
+            for name, details in sorted(CRON_ACTION_PRESETS.items())
+        ],
     }
 
 
