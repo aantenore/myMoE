@@ -38,6 +38,7 @@ flowchart LR
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.
 - `Local Data Bundle`: confirmed export/import path for user-owned chat sessions and memory records, scoped to the configured runtime work directory.
+- `Audit Trail`: local JSONL metadata log for sensitive host-side actions, intentionally excluding chat and memory text.
 
 ## Runtime Modes
 

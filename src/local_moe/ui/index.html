@@ -985,6 +985,12 @@
           </div>
         </section>
         <section class="advanced-section">
+          <h2>Audit Trail</h2>
+          <div class="kv" id="audit"></div>
+          <button class="ghost-button" id="refresh-audit" type="button">Refresh audit</button>
+          <pre class="eval-output" id="audit-output">Not loaded yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Health</h2>
           <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
           <div class="kv" id="health"></div>
@@ -1152,6 +1158,7 @@
         performance: null,
         extensions: null,
         extensionAudit: null,
+        audit: null,
         cron: null,
         messages: [],
         sessions: [],
@@ -1237,6 +1244,7 @@
         el("export-data").addEventListener("click", exportData);
         el("download-data").addEventListener("click", downloadData);
         el("import-data").addEventListener("click", importData);
+        el("refresh-audit").addEventListener("click", refreshAudit);
         el("refresh-performance").addEventListener("click", refreshPerformance);
         el("download-performance-report").addEventListener("click", downloadPerformanceReport);
         el("run-eval").addEventListener("click", runEval);
@@ -1260,7 +1268,7 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, doctor, health, performance, extensions, extensionAudit, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, doctor, health, performance, extensions, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
@@ -1270,6 +1278,7 @@
             api("/api/performance"),
             api("/api/extensions"),
             api("/api/extensions/audit"),
+            api("/api/audit?limit=20"),
             api("/api/cron"),
           ]);
           state.config = config;
@@ -1281,6 +1290,7 @@
           state.performance = performance;
           state.extensions = extensions;
           state.extensionAudit = extensionAudit.audit;
+          state.audit = audit;
           state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
@@ -1291,6 +1301,7 @@
           renderPerformance(performance);
           renderExtensions(extensions);
           renderExtensionAudit(extensionAudit.audit);
+          renderAudit(audit);
           renderToolRunner(extensions);
           renderCronStatus(cron);
         } catch (error) {
@@ -1705,6 +1716,7 @@
             2,
           );
           el("data-export-confirm").checked = false;
+          await refreshAudit({ quiet: true });
         } catch (error) {
           el("data-output").textContent = error.message;
         }
@@ -1746,6 +1758,7 @@
           el("data-output").textContent = JSON.stringify(result, null, 2);
           el("data-import-confirm").checked = false;
           loadChats(false);
+          await refreshAudit({ quiet: true });
         } catch (error) {
           el("data-output").textContent = error.message;
         }
@@ -1800,6 +1813,43 @@
 
       function downloadPerformanceReport() {
         window.open("/api/performance/report.md", "_blank", "noreferrer");
+      }
+
+      function renderAudit(audit) {
+        const events = audit?.events || [];
+        const latest = events.slice(0, 8);
+        el("audit").innerHTML =
+          kvRows({
+            Events: audit?.count || 0,
+            Latest: latest[0]?.created_at || "None",
+          }) +
+          (latest.length
+            ? latest
+                .map(
+                  (event) => `
+                    <div class="kv-row">
+                      <span>${escapeHtml(event.status)}</span>
+                      <span>
+                        <strong>${escapeHtml(event.action)}</strong><br>
+                        <span class="mono">${escapeHtml(event.created_at)}</span><br>
+                        <span class="muted">${escapeHtml(event.subject || event.risk_class || "")}</span>
+                      </span>
+                    </div>`,
+                )
+                .join("")
+            : '<span class="muted">No audited actions yet.</span>');
+        el("audit-output").textContent = JSON.stringify(latest, null, 2);
+      }
+
+      async function refreshAudit(options = {}) {
+        if (!options.quiet) el("audit-output").textContent = "Loading...";
+        try {
+          const audit = await api("/api/audit?limit=20");
+          state.audit = audit;
+          renderAudit(audit);
+        } catch (error) {
+          el("audit-output").textContent = error.message;
+        }
       }
 
       function renderExtensions(extensions) {
