@@ -7,7 +7,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .app_config import app_config_payload, load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
@@ -80,7 +80,8 @@ def _make_handler(
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            path = urlparse(self.path).path
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path
             if path in {"/", "/index.html"}:
                 _send(
                     self,
@@ -114,7 +115,8 @@ def _make_handler(
                 return
 
             if path == "/api/chats":
-                sessions = chat_store.list_sessions()
+                query = _optional_str(parse_qs(parsed_url.query).get("query", [""])[0])
+                sessions = chat_store.search_sessions(query) if query else chat_store.list_sessions()
                 _send_json(
                     self,
                     {
@@ -125,6 +127,20 @@ def _make_handler(
                 return
 
             if path.startswith("/api/chats/"):
+                if path.endswith("/export.md"):
+                    session_id = _path_tail(path[: -len("/export.md")], "/api/chats/")
+                    try:
+                        markdown = chat_store.export_markdown(session_id)
+                    except KeyError:
+                        _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    _send_download(
+                        self,
+                        markdown.encode("utf-8"),
+                        content_type="text/markdown; charset=utf-8",
+                        filename=f"{_safe_filename(session_id)}.md",
+                    )
+                    return
                 session_id = _path_tail(path, "/api/chats/")
                 session = chat_store.get_session(session_id)
                 if session is None:
@@ -260,6 +276,36 @@ def _make_handler(
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
+        def do_PATCH(self) -> None:
+            path = urlparse(self.path).path
+            if path.startswith("/api/chats/"):
+                session_id = _path_tail(path, "/api/chats/")
+                payload = _read_json(self)
+                title = _optional_str(payload.get("title"))
+                if not title:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "title is required"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    session = chat_store.rename_session(session_id, title)
+                except KeyError:
+                    _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                except ValueError as exc:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(self, chat_session_payload(session))
+                return
+
+            _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
             if path.startswith("/api/chats/"):
@@ -319,6 +365,21 @@ def _send(
     handler.wfile.write(body)
 
 
+def _send_download(
+    handler: BaseHTTPRequestHandler,
+    body: bytes,
+    *,
+    content_type: str,
+    filename: str,
+) -> None:
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 def _config_payload(config_path: str, config: object, app_config: object) -> dict[str, object]:
     return {
         "app": app_config_payload(app_config),
@@ -351,6 +412,11 @@ def _chat_store_path(app_config: object) -> str:
 
 def _path_tail(path: str, prefix: str) -> str:
     return unquote(path[len(prefix) :]).strip("/")
+
+
+def _safe_filename(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value).strip("-")
+    return safe or "chat"
 
 
 def _routing_payload(routing: object) -> dict[str, object]:

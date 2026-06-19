@@ -13,8 +13,8 @@ The test hardening pass covers configuration validation, routing evaluation, Ope
 - `tests/test_evaluator.py`: JSONL eval loading and accuracy/complexity aggregation.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
 - `tests/test_cli.py`: eval mode and prompt mode through the public CLI.
-- `tests/test_chat_store.py`: local chat session create, append, reload, list, and delete behavior.
-- `tests/test_web.py`: web config, generation, persisted chat sessions, and eval endpoints over a local HTTP server.
+- `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, export, and delete behavior.
+- `tests/test_web.py`: web config, generation, persisted chat sessions, chat management APIs, and eval endpoints over a local HTTP server.
 - `tests/test_tools.py`: allowlisted local tool execution, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
 - `tests/test_scheduler.py`: cron dry runs, allowlisted actions, unsupported command rejection, and write-local confirmation.
@@ -34,7 +34,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `108/108` passed
+- unit/contract tests: `109/109` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `26/26`, accuracy `1.0`
 - quality gate: passed
@@ -42,6 +42,7 @@ Result:
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed
 - real MCP filesystem `tools/call` through `list_allowed_directories`: passed
 - Playwright browser smoke for persisted chat sessions: passed
+- Playwright browser smoke for chat rename, search, and delete controls: passed
 - live local-model dashboard screenshot regenerated with `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`: passed
 
 ## Notes

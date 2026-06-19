@@ -198,6 +198,12 @@ class WebTests(unittest.TestCase):
                     base_url + "/api/generate",
                     {"prompt": "Continue the same chat.", "session_id": session_id},
                 )
+                renamed = _patch_json(
+                    base_url + f"/api/chats/{session_id}",
+                    {"title": "Local Session Notes"},
+                )
+                searched = _get_json(base_url + "/api/chats?query=local%20session")
+                exported = _get_text(base_url + f"/api/chats/{session_id}/export.md")
                 deleted = _delete_json(base_url + f"/api/chats/{session_id}")
                 final = _get_json(base_url + "/api/chats")
             finally:
@@ -216,6 +222,10 @@ class WebTests(unittest.TestCase):
             _prompt_chars(second["content"]),
             _prompt_chars(first["content"]) + len("Continue the same chat."),
         )
+        self.assertEqual(renamed["title"], "Local Session Notes")
+        self.assertEqual(searched["sessions"][0]["id"], session_id)
+        self.assertIn("# Local Session Notes", exported)
+        self.assertIn("## Assistant", exported)
         self.assertTrue(deleted["deleted"])
         self.assertEqual(final["count"], 0)
 
@@ -272,6 +282,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/chats", html)
         self.assertIn("session-list", html)
         self.assertIn("activeSessionId", html)
+        self.assertIn("Search chats", html)
+        self.assertIn("renameSession", html)
+        self.assertIn("exportSession", html)
+        self.assertIn("deleteSession", html)
         self.assertIn("mcp.list_tools", html)
         self.assertIn("mcp.call_tool", html)
         self.assertIn("confirm_process_execution", html)
@@ -300,6 +314,17 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
+    )
+    with request.urlopen(http_req, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _patch_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+    http_req = request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="PATCH",
     )
     with request.urlopen(http_req, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))

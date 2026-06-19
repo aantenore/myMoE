@@ -46,18 +46,46 @@ class FileChatStore:
     def list_sessions(self, *, limit: int = 50) -> list[ChatSessionSummary]:
         with self._lock:
             sessions = self._read_unlocked()
-        summaries = [
-            ChatSessionSummary(
-                id=session.id,
-                title=session.title,
-                created_at=session.created_at,
-                updated_at=session.updated_at,
-                message_count=len(session.messages),
-            )
+        return _summaries(sessions, limit=limit)
+
+    def search_sessions(self, query: str, *, limit: int = 50) -> list[ChatSessionSummary]:
+        terms = _terms(query)
+        if not terms:
+            return self.list_sessions(limit=limit)
+        with self._lock:
+            sessions = self._read_unlocked()
+        matched = [
+            session
             for session in sessions
+            if terms <= _terms(session.title)
+            or any(terms <= _terms(message.content) for message in session.messages)
         ]
-        summaries.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        return summaries[:limit]
+        return _summaries(matched, limit=limit)
+
+    def rename_session(self, session_id: str, title: str) -> ChatSession:
+        clean_title = _clean_title(title)
+        if not clean_title:
+            raise ValueError("Chat title is required.")
+        with self._lock:
+            sessions = self._read_unlocked()
+            index = _find_session_index(sessions, session_id)
+            current = sessions[index]
+            session = ChatSession(
+                id=current.id,
+                title=clean_title,
+                created_at=current.created_at,
+                updated_at=_now_iso(),
+                messages=current.messages,
+            )
+            sessions[index] = session
+            self._write_unlocked(sessions)
+        return session
+
+    def export_markdown(self, session_id: str) -> str:
+        session = self.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        return chat_session_markdown(session)
 
     def get_session(self, session_id: str) -> ChatSession | None:
         with self._lock:
@@ -152,6 +180,21 @@ class FileChatStore:
         tmp_path.replace(self.path)
 
 
+def _summaries(sessions: list[ChatSession], *, limit: int) -> list[ChatSessionSummary]:
+    summaries = [
+        ChatSessionSummary(
+            id=session.id,
+            title=session.title,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            message_count=len(session.messages),
+        )
+        for session in sessions
+    ]
+    summaries.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
+    return summaries[:limit]
+
+
 def chat_summary_payload(summary: ChatSessionSummary) -> dict[str, Any]:
     return {
         "id": summary.id,
@@ -180,6 +223,39 @@ def chat_session_payload(session: ChatSession) -> dict[str, Any]:
             for message in session.messages
         ],
     }
+
+
+def chat_session_markdown(session: ChatSession) -> str:
+    lines = [
+        f"# {session.title}",
+        "",
+        f"- Session id: `{session.id}`",
+        f"- Created: `{session.created_at}`",
+        f"- Updated: `{session.updated_at}`",
+        f"- Messages: `{len(session.messages)}`",
+        "",
+    ]
+    for message in session.messages:
+        heading = "User" if message.role == "user" else "Assistant"
+        lines.extend(
+            [
+                f"## {heading}",
+                "",
+                message.content.strip() or "_Empty message_",
+                "",
+            ]
+        )
+        route = message.meta.get("route") if isinstance(message.meta, dict) else None
+        if isinstance(route, dict):
+            selected = route.get("selected", [])
+            if selected and isinstance(selected, list) and isinstance(selected[0], dict):
+                lines.extend(
+                    [
+                        f"_Routed to: `{selected[0].get('expert_id', 'unknown')}`_",
+                        "",
+                    ]
+                )
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _parse_session(raw: object) -> ChatSession:
@@ -230,6 +306,14 @@ def _title_from_prompt(prompt: str) -> str:
 
 def _clean_title(title: str | None) -> str:
     return " ".join(str(title or "").strip().split())
+
+
+def _terms(text: str) -> set[str]:
+    return {
+        token.strip(".,:;!?()[]{}\"'`").lower()
+        for token in str(text).split()
+        if token.strip(".,:;!?()[]{}\"'`")
+    }
 
 
 def _now_iso() -> str:
