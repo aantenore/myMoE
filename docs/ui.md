@@ -30,7 +30,11 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 - concise model status,
 - Advanced drawer hidden by default.
 
-The Advanced drawer contains runtime commands, configured models, last routing metadata, extension registry, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+The Advanced drawer contains runtime commands, configured models, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
+
+The Cron section runs due allowlisted jobs through `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
 Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting.
 
@@ -49,7 +53,7 @@ Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime, model, routing, extension, MCP, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
+Advanced runtime, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 
@@ -94,3 +98,19 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 ```
 
 Eval mode can run against any live local config. Normal UI and CLI usage should use a live local model config.
+
+Run an allowlisted tool:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool mcp.search_capabilities \
+  --tool-input '{"query":"filesystem"}'
+```
+
+Run cron jobs that write local artifacts:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-cron \
+  --cron-confirm-writes
+```

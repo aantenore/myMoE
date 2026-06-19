@@ -12,6 +12,7 @@ from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
 def main() -> None:
@@ -26,9 +27,12 @@ def main() -> None:
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--list-extensions", action="store_true")
     parser.add_argument("--create-plugin")
+    parser.add_argument("--run-tool")
+    parser.add_argument("--tool-input", default="{}")
     parser.add_argument("--cron-status", action="store_true")
     parser.add_argument("--run-cron", action="store_true")
     parser.add_argument("--cron-dry-run", action="store_true")
+    parser.add_argument("--cron-confirm-writes", action="store_true")
     args = parser.parse_args()
 
     app_config = load_app_config(args.app_config)
@@ -71,6 +75,8 @@ def main() -> None:
             registry.cron_jobs,
             state_path=_cron_state_path(app_config),
             dry_run=args.cron_dry_run,
+            confirm_writes=args.cron_confirm_writes,
+            registry=registry,
         )
         print(json.dumps(cron_summary_payload(summary), indent=2))
         return
@@ -78,6 +84,20 @@ def main() -> None:
     if args.create_plugin:
         path = create_plugin_scaffold(args.create_plugin, root=app_config.extensions.plugins_dir)
         print(json.dumps({"created": str(path)}, indent=2))
+        return
+
+    if args.run_tool:
+        try:
+            tool_input = json.loads(args.tool_input)
+            result = LocalToolRunner(
+                _registry(app_config),
+                app_config=app_config,
+                moe_config=config,
+            ).run(args.run_tool, tool_input)
+        except (json.JSONDecodeError, ToolExecutionError) as exc:
+            print(json.dumps({"error": "tool_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(json.dumps(tool_result_payload(result), indent=2))
         return
 
     if args.eval:

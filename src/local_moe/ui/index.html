@@ -47,6 +47,8 @@
       }
 
       button,
+      input,
+      select,
       textarea {
         font: inherit;
       }
@@ -630,6 +632,52 @@
         color: var(--muted);
       }
 
+      .tool-controls {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .tool-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.5rem;
+      }
+
+      .tool-select,
+      .tool-input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        color: var(--text);
+      }
+
+      .tool-select {
+        min-height: 2.3rem;
+        padding: 0 0.7rem;
+      }
+
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .check-row input {
+        width: 1rem;
+        height: 1rem;
+        accent-color: var(--accent);
+      }
+
+      .tool-input {
+        min-height: 7rem;
+        padding: 0.75rem;
+        resize: vertical;
+        line-height: 1.45;
+      }
+
       [hidden] {
         display: none !important;
       }
@@ -689,6 +737,10 @@
 
         .send-button {
           width: 100%;
+        }
+
+        .tool-row {
+          grid-template-columns: 1fr;
         }
 
         .kv-row {
@@ -794,7 +846,28 @@
           <div id="extensions"></div>
         </section>
         <section class="advanced-section">
+          <h2>Tools</h2>
+          <div class="tool-controls">
+            <div class="tool-row">
+              <select class="tool-select" id="tool-select" aria-label="Tool"></select>
+              <button class="ghost-button" id="run-tool" type="button">Run tool</button>
+            </div>
+            <textarea
+              class="tool-input mono"
+              id="tool-input"
+              rows="7"
+              spellcheck="false"
+              aria-label="Tool JSON input"
+            >{}</textarea>
+            <pre class="eval-output" id="tool-output">Not run yet.</pre>
+          </div>
+        </section>
+        <section class="advanced-section">
           <h2>Cron</h2>
+          <label class="check-row">
+            <input id="cron-confirm-writes" type="checkbox" />
+            <span>Confirm local write jobs</span>
+          </label>
           <button class="ghost-button" id="run-cron" type="button">Run due jobs</button>
           <pre class="eval-output" id="cron-output">Not run yet.</pre>
         </section>
@@ -886,6 +959,8 @@
         el("overlay").addEventListener("click", () => setAdvanced(false));
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
+        el("run-tool").addEventListener("click", runTool);
+        el("tool-select").addEventListener("change", setDefaultToolInput);
       }
 
       async function loadMeta() {
@@ -901,6 +976,7 @@
           renderConfig(config);
           renderRuntime(runtime);
           renderExtensions(extensions);
+          renderToolRunner(extensions);
         } catch (error) {
           setStatus("Configuration error", error.message, false);
           appendMessage("assistant", `Unable to load configuration: ${error.message}`, {
@@ -1006,6 +1082,41 @@
             }</div>`;
           })
           .join("");
+      }
+
+      function renderToolRunner(extensions) {
+        const tools = (extensions.tools || []).filter((tool) => tool.enabled);
+        el("tool-select").innerHTML = tools
+          .map((tool) => `<option value="${escapeHtml(tool.name)}">${escapeHtml(tool.name)}</option>`)
+          .join("");
+        setDefaultToolInput();
+      }
+
+      function setDefaultToolInput() {
+        const name = el("tool-select").value;
+        const defaults = {
+          "memory.search": {
+            query: "local model",
+            scope: "default",
+            limit: 5,
+          },
+          "context.compact": {
+            turns: [
+              { role: "user", content: "We selected a local-first MoE architecture." },
+              { role: "assistant", content: "The router should stay lightweight and configurable." },
+            ],
+            existing_summary: "",
+            use_model: true,
+          },
+          "plugin.create": {
+            plugin_id: "sample-local-plugin",
+            confirm: false,
+          },
+          "mcp.search_capabilities": {
+            query: "filesystem",
+          },
+        };
+        el("tool-input").value = JSON.stringify(defaults[name] || {}, null, 2);
       }
 
       function setStatus(title, subtitle, ready) {
@@ -1145,11 +1256,26 @@
         try {
           const result = await api("/api/cron/run", {
             method: "POST",
-            body: JSON.stringify({}),
+            body: JSON.stringify({ confirm_writes: el("cron-confirm-writes").checked }),
           });
           el("cron-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("cron-output").textContent = error.message;
+        }
+      }
+
+      async function runTool() {
+        const name = el("tool-select").value;
+        el("tool-output").textContent = "Running...";
+        try {
+          const input = JSON.parse(el("tool-input").value || "{}");
+          const result = await api("/api/tools/run", {
+            method: "POST",
+            body: JSON.stringify({ name, input }),
+          });
+          el("tool-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("tool-output").textContent = error.message;
         }
       }
 

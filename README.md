@@ -252,7 +252,18 @@ Inspect and run allowlisted local cron jobs with:
 ```bash
 make cron-status
 make run-cron
+make run-cron-writes
 ```
+
+Run an allowlisted local tool from the CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool mcp.search_capabilities \
+  --tool-input '{"query":"filesystem"}'
+```
+
+Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create` or `--cron-confirm-writes` for CLI cron execution.
 
 For the Gemma E4B regression benchmark:
 

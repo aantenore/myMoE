@@ -83,6 +83,24 @@ class WebTests(unittest.TestCase):
         self.assertIn("results", result)
         self.assertTrue(all(item["status"] == "dry_run" for item in result["results"]))
 
+    def test_runs_tool_endpoint(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            result = _post_json(
+                base_url + "/api/tools/run",
+                {"name": "mcp.search_capabilities", "input": {"query": "filesystem"}},
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"]["servers"][0]["name"], "filesystem")
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -105,6 +123,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("runCron", html)
         self.assertIn("/api/cron/run", html)
+        self.assertIn("cron-confirm-writes", html)
+        self.assertIn("runTool", html)
+        self.assertIn("/api/tools/run", html)
+        self.assertIn("Confirm local write jobs", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)
         self.assertIn("config.routing?.distilled?.enabled", html)

@@ -1,4 +1,4 @@
-.PHONY: check test eval distill-router cron-status run-cron ui cli doctor setup-models start-models benchmark-small benchmark-gemma
+.PHONY: check test eval distill-router cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	./scripts/run_all_checks.sh
@@ -26,6 +26,9 @@ cron-status:
 
 run-cron:
 	@PYTHONPATH=src python3 -m local_moe.cli --run-cron
+
+run-cron-writes:
+	@PYTHONPATH=src python3 -m local_moe.cli --run-cron --cron-confirm-writes
 
 ui:
 	PYTHONPATH=src python3 -m local_moe.web \

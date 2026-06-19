@@ -92,6 +92,14 @@ class ExtensionRegistry:
     plugins: tuple[PluginManifest, ...]
 
 
+@dataclass(frozen=True)
+class ExtensionAuditIssue:
+    plugin_id: str
+    surface: str
+    reference: str
+    message: str
+
+
 def load_extension_registry(
     *,
     plugins_dir: str | Path = "plugins",
@@ -240,6 +248,37 @@ def registry_payload(registry: ExtensionRegistry) -> dict[str, Any]:
     }
 
 
+def audit_extension_registry(registry: ExtensionRegistry) -> dict[str, Any]:
+    tool_names = {tool.name for tool in registry.tools}
+    skill_refs = _skill_reference_set(registry.skills)
+    mcp_names = {server.name for server in registry.mcp_servers}
+    cron_ids = {job.id for job in registry.cron_jobs}
+    issues: list[ExtensionAuditIssue] = []
+
+    for plugin in registry.plugins:
+        issues.extend(_missing_refs(plugin, "tool", plugin.tools, tool_names))
+        issues.extend(_missing_refs(plugin, "skill", plugin.skills, skill_refs))
+        issues.extend(_missing_refs(plugin, "mcp_server", plugin.mcp_servers, mcp_names))
+        issues.extend(_missing_refs(plugin, "cron_job", plugin.cron_jobs, cron_ids))
+        risk_class = str(plugin.permissions.get("risk_class", "read_only"))
+        if risk_class not in RISK_CLASSES:
+            issues.append(
+                ExtensionAuditIssue(
+                    plugin_id=plugin.id,
+                    surface="permission",
+                    reference=risk_class,
+                    message=f"Unknown plugin risk class: {risk_class}",
+                )
+            )
+
+    return {
+        "checked": True,
+        "plugin_count": len(registry.plugins),
+        "issue_count": len(issues),
+        "issues": [issue.__dict__ for issue in issues],
+    }
+
+
 def _parse_tool(item: dict[str, Any]) -> ToolDefinition:
     name = str(item["name"])
     if "." not in name:
@@ -253,6 +292,38 @@ def _parse_tool(item: dict[str, Any]) -> ToolDefinition:
         side_effects=str(item.get("side_effects", "none")),
         enabled=bool(item.get("enabled", True)),
     )
+
+
+def _skill_reference_set(skills: tuple[SkillDefinition, ...]) -> set[str]:
+    refs: set[str] = set()
+    for skill in skills:
+        path = Path(skill.path)
+        refs.add(skill.name)
+        refs.add(str(path))
+        refs.add(str(path.parent))
+        refs.add(path.parent.name)
+    return refs
+
+
+def _missing_refs(
+    plugin: PluginManifest,
+    surface: str,
+    references: tuple[str, ...],
+    available: set[str],
+) -> list[ExtensionAuditIssue]:
+    issues = []
+    for reference in references:
+        if reference in available:
+            continue
+        issues.append(
+            ExtensionAuditIssue(
+                plugin_id=plugin.id,
+                surface=surface,
+                reference=reference,
+                message=f"Plugin references unknown {surface}: {reference}",
+            )
+        )
+    return issues
 
 
 def _read_json_if_exists(path: str | Path, default: dict[str, Any]) -> dict[str, Any]:

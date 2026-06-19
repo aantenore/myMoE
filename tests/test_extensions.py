@@ -9,6 +9,7 @@ from local_moe.bootstrap import build_runtime_plan
 from local_moe.config import load_config
 from local_moe.extensions import (
     ExtensionError,
+    audit_extension_registry,
     create_plugin_scaffold,
     load_extension_registry,
 )
@@ -31,6 +32,13 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(registry.skills)
         self.assertTrue(registry.plugins)
         self.assertTrue(registry.cron_jobs)
+
+    def test_extension_audit_validates_plugin_references(self) -> None:
+        registry = load_extension_registry()
+        audit = audit_extension_registry(registry)
+
+        self.assertTrue(audit["checked"])
+        self.assertEqual(audit["issue_count"], 0)
 
     def test_creates_plugin_scaffold_with_valid_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

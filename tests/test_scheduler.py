@@ -69,6 +69,45 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(summary.results[0].status, "error")
         self.assertIn("Unsupported cron action", summary.results[0].message)
 
+    def test_write_local_jobs_require_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            eval_path = Path(tmp) / "eval.jsonl"
+            labels_path = Path(tmp) / "labels.jsonl"
+            artifact_path = Path(tmp) / "router.json"
+            eval_path.write_text(
+                json.dumps(
+                    {
+                        "id": "case-1",
+                        "prompt": "Summarize this note",
+                        "expected_expert": "general",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            job = CronJobDefinition(
+                id="router-distillation-refresh",
+                description="Router distillation",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=(
+                    "router.distill",
+                    "--eval",
+                    str(eval_path),
+                    "--labels",
+                    str(labels_path),
+                    "--artifact",
+                    str(artifact_path),
+                ),
+                risk_class="write_local",
+            )
+
+            summary = run_due_jobs((job,), state_path=Path(tmp) / "cron-state.json", now_epoch=120)
+
+        self.assertEqual(summary.results[0].status, "needs_confirmation")
+        self.assertFalse(labels_path.exists())
+        self.assertFalse(artifact_path.exists())
+
     def test_runs_extension_audit_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             job = CronJobDefinition(
@@ -118,7 +157,12 @@ class SchedulerTests(unittest.TestCase):
                 risk_class="write_local",
             )
 
-            summary = run_due_jobs((job,), state_path=Path(tmp) / "cron-state.json", now_epoch=120)
+            summary = run_due_jobs(
+                (job,),
+                state_path=Path(tmp) / "cron-state.json",
+                now_epoch=120,
+                confirm_writes=True,
+            )
             labels_exists = labels_path.exists()
             artifact_exists = artifact_path.exists()
 

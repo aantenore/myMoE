@@ -121,6 +121,30 @@ class CliTests(unittest.TestCase):
         self.assertIn("results", payload)
         self.assertTrue(all(item["status"] == "dry_run" for item in payload["results"]))
 
+    def test_run_tool_prints_tool_result(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--run-tool",
+                "mcp.search_capabilities",
+                "--tool-input",
+                '{"query":"filesystem"}',
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["payload"]["servers"][0]["name"], "filesystem")
+
 
 if __name__ == "__main__":
     unittest.main()
