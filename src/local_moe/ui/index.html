@@ -1120,6 +1120,14 @@
             confirm_process_execution: false,
             timeout_seconds: 8,
           },
+          "mcp.call_tool": {
+            server: "filesystem",
+            tool_name: "list_allowed_directories",
+            arguments: {},
+            confirm_process_execution: false,
+            confirm_tool_call: false,
+            timeout_seconds: 8,
+          },
         };
         el("tool-input").value = JSON.stringify(defaults[name] || {}, null, 2);
       }

@@ -8,7 +8,7 @@ from queue import Empty, Queue
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from .extensions import McpServerDefinition
 
@@ -32,8 +32,21 @@ class McpToolList:
     protocol_version: str
 
 
+@dataclass(frozen=True)
+class McpToolCallResult:
+    server: str
+    tool_name: str
+    content: tuple[dict[str, Any], ...]
+    is_error: bool
+    structured_content: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+McpSessionOperation = Callable[[subprocess.Popen[str], Queue[str]], dict[str, Any]]
+
+
 class StdioMcpClient:
-    """Small MCP stdio client for capability discovery only."""
+    """Small MCP stdio client for guarded tool discovery and calls."""
 
     def __init__(
         self,
@@ -47,6 +60,40 @@ class StdioMcpClient:
         self._protocol_version = protocol_version
 
     def list_tools(self) -> McpToolList:
+        initialize, tools_result = self._run_session(
+            lambda process, stdout_queue: self._request(process, stdout_queue, 2, "tools/list", {})
+        )
+        negotiated = str(
+            initialize.get("protocolVersion")
+            or initialize.get("serverInfo", {}).get("protocolVersion")
+            or self._protocol_version
+        )
+        tools = tuple(_parse_tool(item) for item in tools_result.get("tools", []))
+        return McpToolList(server=self._server.name, tools=tools, protocol_version=negotiated)
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> McpToolCallResult:
+        _, result = self._run_session(
+            lambda process, stdout_queue: self._request(
+                process,
+                stdout_queue,
+                2,
+                "tools/call",
+                {"name": tool_name, "arguments": arguments},
+            )
+        )
+        content = result.get("content", [])
+        structured_content = result.get("structuredContent", {})
+        meta = result.get("_meta", {})
+        return McpToolCallResult(
+            server=self._server.name,
+            tool_name=tool_name,
+            content=tuple(item for item in content if isinstance(item, dict)) if isinstance(content, list) else (),
+            is_error=bool(result.get("isError", False)),
+            structured_content=structured_content if isinstance(structured_content, dict) else {},
+            meta=meta if isinstance(meta, dict) else {},
+        )
+
+    def _run_session(self, operation: McpSessionOperation) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self._server.enabled:
             raise McpClientError(f"MCP server is disabled: {self._server.name}")
         if self._server.transport != "stdio":
@@ -90,17 +137,10 @@ class StdioMcpClient:
                 },
             )
             self._notify(process, "notifications/initialized", {})
-            tools_result = self._request(process, stdout_queue, 2, "tools/list", {})
+            result = operation(process, stdout_queue)
         finally:
             _close_process(process)
-
-        negotiated = str(
-            initialize.get("protocolVersion")
-            or initialize.get("serverInfo", {}).get("protocolVersion")
-            or self._protocol_version
-        )
-        tools = tuple(_parse_tool(item) for item in tools_result.get("tools", []))
-        return McpToolList(server=self._server.name, tools=tools, protocol_version=negotiated)
+        return initialize, result
 
     def _request(
         self,
@@ -160,6 +200,17 @@ def mcp_tool_list_payload(result: McpToolList) -> dict[str, Any]:
             }
             for tool in result.tools
         ],
+    }
+
+
+def mcp_tool_call_payload(result: McpToolCallResult) -> dict[str, Any]:
+    return {
+        "server": result.server,
+        "tool_name": result.tool_name,
+        "is_error": result.is_error,
+        "content": list(result.content),
+        "structured_content": result.structured_content,
+        "meta": result.meta,
     }
 
 

@@ -92,6 +92,7 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["count"], 1)
         self.assertEqual(result.payload["servers"][0]["name"], "filesystem")
         self.assertFalse(result.payload["servers"][0]["enabled"])
+        self.assertIn("allowed_tools", result.payload["servers"][0])
 
     def test_mcp_list_tools_requires_confirmation_and_lists_enabled_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,6 +117,7 @@ class ToolRunnerTests(unittest.TestCase):
                         enabled=True,
                         risk_class="read_only",
                         capabilities=("tools",),
+                        allowed_tools=("echo",),
                     ),
                 ),
                 cron_jobs=(),
@@ -150,6 +152,99 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.payload["server"], "fake")
         self.assertEqual(result.payload["tools"][0]["name"], "echo")
+
+    def test_mcp_call_tool_requires_allowlist_and_confirmations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            script = write_fake_mcp_server(Path(tmp) / "fake_mcp.py")
+            registry = ExtensionRegistry(
+                tools=(
+                    ToolDefinition(
+                        name="mcp.call_tool",
+                        description="Call MCP tool",
+                        risk_class="process_execution",
+                        side_effects="starts_process_and_calls_tool",
+                        enabled=True,
+                    ),
+                ),
+                skills=(),
+                mcp_servers=(
+                    McpServerDefinition(
+                        name="fake",
+                        description="Fake MCP server",
+                        command=sys.executable,
+                        args=(str(script),),
+                        enabled=True,
+                        risk_class="read_only",
+                        capabilities=("tools",),
+                        allowed_tools=("echo",),
+                    ),
+                ),
+                cron_jobs=(),
+                plugins=(),
+            )
+            blocked_runner = LocalToolRunner(registry)
+            with self.assertRaises(ToolExecutionError):
+                blocked_runner.run(
+                    "mcp.call_tool",
+                    {
+                        "server": "fake",
+                        "tool_name": "echo",
+                        "arguments": {"text": "hello"},
+                        "confirm_process_execution": True,
+                        "confirm_tool_call": True,
+                    },
+                )
+
+            runner = LocalToolRunner(registry, allow_process_execution=True)
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "mcp.call_tool",
+                    {
+                        "server": "fake",
+                        "tool_name": "echo",
+                        "arguments": {"text": "hello"},
+                        "confirm_process_execution": True,
+                    },
+                )
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "mcp.call_tool",
+                    {
+                        "server": "fake",
+                        "tool_name": "not-allowed",
+                        "arguments": {},
+                        "confirm_process_execution": True,
+                        "confirm_tool_call": True,
+                    },
+                )
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "mcp.call_tool",
+                    {
+                        "server": "fake",
+                        "tool_name": "echo",
+                        "arguments": [],
+                        "confirm_process_execution": True,
+                        "confirm_tool_call": True,
+                    },
+                )
+
+            result = runner.run(
+                "mcp.call_tool",
+                {
+                    "server": "fake",
+                    "tool_name": "echo",
+                    "arguments": {"text": "hello"},
+                    "confirm_process_execution": True,
+                    "confirm_tool_call": True,
+                    "timeout_seconds": 3,
+                },
+            )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["server"], "fake")
+        self.assertEqual(result.payload["tool_name"], "echo")
+        self.assertEqual(result.payload["content"][0]["text"], "echo:hello")
 
 
 if __name__ == "__main__":

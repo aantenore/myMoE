@@ -34,6 +34,13 @@
       "risk_class": "process_execution",
       "side_effects": "starts_process",
       "enabled": true
+    },
+    {
+      "name": "mcp.call_tool",
+      "description": "Call an explicitly allowlisted tool on an enabled MCP stdio server.",
+      "risk_class": "process_execution",
+      "side_effects": "starts_process_and_calls_tool",
+      "enabled": true
     }
   ]
 }

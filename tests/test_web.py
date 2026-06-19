@@ -138,6 +138,43 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["payload"]["server"], "fake")
         self.assertEqual(result["payload"]["tools"][0]["name"], "echo")
 
+    def test_runs_mcp_call_tool_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            server_script = write_fake_mcp_server(root / "fake_mcp.py")
+            app_config = write_temp_mcp_app_config(root, server_script)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                result = _post_json(
+                    base_url + "/api/tools/run",
+                    {
+                        "name": "mcp.call_tool",
+                        "input": {
+                            "server": "fake",
+                            "tool_name": "echo",
+                            "arguments": {"text": "hi"},
+                            "confirm_process_execution": True,
+                            "confirm_tool_call": True,
+                            "timeout_seconds": 3,
+                        },
+                    },
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"]["tool_name"], "echo")
+        self.assertEqual(result["payload"]["content"][0]["text"], "echo:hi")
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -164,7 +201,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
         self.assertIn("mcp.list_tools", html)
+        self.assertIn("mcp.call_tool", html)
         self.assertIn("confirm_process_execution", html)
+        self.assertIn("confirm_tool_call", html)
         self.assertIn("Confirm local write jobs", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)

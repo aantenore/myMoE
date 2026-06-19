@@ -11,7 +11,8 @@
       "transport": "stdio",
       "cwd": ".",
       "env": {},
-      "timeout_seconds": 8
+      "timeout_seconds": 8,
+      "allowed_tools": ["list_allowed_directories", "list_directory", "directory_tree", "get_file_info", "search_files", "read_text_file"]
     }
   ]
 }
