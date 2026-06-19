@@ -114,7 +114,7 @@ The default provider system message instructs the model to reply in the user's l
 
 Actual multilingual quality depends on the selected model. Qwen3 30B-A3B 2507 is preferred partly because its public model description emphasizes broad multilingual and instruction-following capability.
 
-Routing language coverage depends on route examples and eval coverage. The current live profile includes routing examples for English, Italian, French, Spanish, German, and Portuguese intent families. Additional languages should be added by configuration plus matching eval cases, or by swapping the semantic matcher for a local multilingual embedding backend.
+Routing language coverage depends on route examples and eval coverage. The current live profile includes routing examples and eval cases for English, Italian, French, Spanish, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese intent families. Additional languages should be added by configuration plus matching eval cases, or by swapping the semantic matcher for a local multilingual embedding backend.
 
 The application UI and documentation are written in English. Model responses follow the user prompt language and the provider system instruction; this keeps the product surface consistent while still allowing multilingual interaction.
 

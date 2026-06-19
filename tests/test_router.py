@@ -69,6 +69,22 @@ class RouterTests(unittest.TestCase):
 
         self.assertEqual(decision.selected[0].expert_id, "general")
 
+    def test_hybrid_router_routes_chinese_summary_to_fast_fallback(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        router = RuleRouter(config)
+
+        decision = router.route("请把这条项目备注总结成三个简短要点。")
+
+        self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
+
+    def test_hybrid_router_routes_japanese_comparison_to_general(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        router = RuleRouter(config)
+
+        decision = router.route("ローカルルーティングと単一モデルの選択肢を比較してください。")
+
+        self.assertEqual(decision.selected[0].expert_id, "general")
+
     def test_live_router_uses_distilled_artifact(self) -> None:
         config = load_config("configs/moe.live.general-mlx.example.json")
         router = RuleRouter(config)

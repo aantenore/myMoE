@@ -15,7 +15,7 @@ This keeps runtime routing cheap and offline. The heavy general model is not use
 
 ## Multilingual Behavior
 
-The router is multilingual where it has configured route examples or close lexical overlap. The live general profile currently includes routing examples for English, Italian, French, Spanish, German, and Portuguese intent families.
+The router is multilingual where it has configured route examples or close lexical overlap. The live general profile currently includes routing examples and eval cases for English, Italian, French, Spanish, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese intent families.
 
 The model response language is a separate concern. The provider system instruction tells the selected model to answer in the user's language unless asked otherwise. Actual answer quality still depends on the selected model.
 
@@ -99,5 +99,5 @@ Router changes must pass:
 
 - unit tests for config parsing and route decisions,
 - deterministic base and extended eval sets,
-- the live general routing eval, including multilingual prompts,
+- the live general routing eval with at least 50 multilingual prompts,
 - browser/API checks for `/api/config`, `/api/generate`, and `/api/evaluate`.

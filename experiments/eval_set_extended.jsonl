@@ -24,3 +24,33 @@
 {"id":"ext-mix-002","prompt":"Explain the tradeoff for a scalable gateway before writing any production code.","expected_expert":"architect","complexity":"very_complex"}
 {"id":"ext-mix-003","prompt":"Rewrite the incident email and summarize the timeline for leadership.","expected_expert":"general","complexity":"medium"}
 {"id":"ext-mix-004","prompt":"Implement a configurable API client with Python tests, but keep the architecture provider agnostic.","expected_expert":"coder","complexity":"very_complex"}
+{"id":"ext-code-009","prompt":"Write a Python adapter that parses JSON responses and add unit tests for invalid payloads.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-010","prompt":"Fix a bug in an async TypeScript client and add regression tests around timeout handling.","expected_expert":"coder","complexity":"complex"}
+{"id":"ext-code-011","prompt":"Create TypeScript interfaces for a plugin API and test how the runner loads them.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-012","prompt":"Refactor this class into small functions without changing behavior, then write focused tests.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-013","prompt":"Implement a Python function that validates a config object and returns useful error messages.","expected_expert":"coder","complexity":"simple"}
+{"id":"ext-code-014","prompt":"Write tests for a provider adapter that preserves correlation ids across function calls.","expected_expert":"coder","complexity":"medium"}
+{"id":"ext-code-015","prompt":"Debug why this retry function retries forever when the API returns a malformed response.","expected_expert":"coder","complexity":"complex"}
+{"id":"ext-code-016","prompt":"Build a runner that loads plugin definitions from JSON and rejects unknown tool names.","expected_expert":"coder","complexity":"complex"}
+{"id":"ext-arch-009","prompt":"Design the component boundaries for a local assistant that supports plugins and MCP servers.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-010","prompt":"Compare API gateway tradeoffs for latency, scalability, observability, and fallback behavior.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-011","prompt":"Plan scalability changes for a gateway that may route requests to several local model servers.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-012","prompt":"Review system architecture risks before adding a second resident expert model.","expected_expert":"architect","complexity":"very_complex"}
+{"id":"ext-arch-013","prompt":"Define API contracts for a service that manages model downloads, health checks, and routing.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-014","prompt":"Choose a design for separating chat persistence, memory retrieval, and model orchestration.","expected_expert":"architect","complexity":"complex"}
+{"id":"ext-arch-015","prompt":"Explain the component tradeoff between a monolithic assistant server and separated runtime services.","expected_expert":"architect","complexity":"medium"}
+{"id":"ext-arch-016","prompt":"Create an architecture decision record for using local model endpoints behind a routing gateway.","expected_expert":"architect","complexity":"medium"}
+{"id":"ext-gen-007","prompt":"Summarize this deployment note into three plain-language bullets.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-008","prompt":"Translate this product announcement into Spanish and keep the tone concise.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-009","prompt":"Rewrite this support reply so it sounds calmer and more direct.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-010","prompt":"Explain this roadmap in plain language for a nontechnical stakeholder.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-gen-011","prompt":"Compare these two onboarding notes and summarize only the practical differences.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-gen-012","prompt":"Summarize the release decision and translate the short version into Italian.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-gen-013","prompt":"Rewrite the support email and shorten the final paragraph.","expected_expert":"general","complexity":"simple"}
+{"id":"ext-gen-014","prompt":"Explain the incident timeline without implementation details or blame.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-mix-005","prompt":"Design component boundaries, then write TypeScript interfaces, adapter code, and tests for the runner.","expected_expert":"coder","complexity":"very_complex"}
+{"id":"ext-mix-006","prompt":"Compare gateway tradeoffs and draft architecture risks before selecting a scalable design.","expected_expert":"architect","complexity":"very_complex"}
+{"id":"ext-mix-007","prompt":"Rewrite the decision note and summarize it for leadership in a neutral tone.","expected_expert":"general","complexity":"medium"}
+{"id":"ext-mix-008","prompt":"Implement a Python plugin runner with adapter classes, tests, and a short API tradeoff note.","expected_expert":"coder","complexity":"very_complex"}
+{"id":"ext-mix-009","prompt":"Explain the system design first, then decide whether an API gateway should own model health checks.","expected_expert":"architect","complexity":"very_complex"}
+{"id":"ext-mix-010","prompt":"Write code for a config validator, then summarize the failure modes for the release note.","expected_expert":"coder","complexity":"complex"}

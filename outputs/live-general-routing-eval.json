@@ -1,0 +1,428 @@
+{
+  "accuracy": 1.0,
+  "total": 52,
+  "by_complexity": {
+    "medium": 1.0,
+    "complex": 1.0,
+    "simple": 1.0,
+    "very_complex": 1.0
+  },
+  "results": [
+    {
+      "id": "live-general-analyze",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-compare",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-decide",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-plan",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-research",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-summarize",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-compress",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-rewrite",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-translate",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-it-analyze",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-it-summarize",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-it-one-sentence",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-es-compare",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-es-rewrite",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-fr-plan",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-fr-translate",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-de-decide",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-pt-summarize",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-en-plugin-risk",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-en-thinking-policy",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-en-cross-platform-roadmap",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-en-mcp-evidence",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-en-release-shortening",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-en-incident-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-en-rollout-plan",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-en-context-compress",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-it-thinking",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-it-rewrite",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-it-translate",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-es-risk",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-es-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-fr-compare",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-fr-shorten",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-de-analyze",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-de-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-pt-decide",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-pt-rewrite",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-nl-analyze",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-nl-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-pl-compare",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-pl-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-ar-analyze",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-ar-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-hi-plan",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-hi-rewrite",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-ja-compare",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-ja-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-ko-risk",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-ko-translate",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "live-general-zh-decision",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "live-fallback-zh-summary",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    }
+  ]
+}

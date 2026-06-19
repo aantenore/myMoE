@@ -39,16 +39,17 @@ The live general eval set validates the default app profile:
 
 - `general` for analysis, comparison, decisions, planning, and research-style prompts,
 - `fast_fallback` for summarization, compression, rewriting, and translation prompts.
-- multilingual route coverage across English, Italian, Spanish, French, German, and Portuguese prompts.
+- multilingual route coverage across English, Italian, Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese prompts.
 
-Do not overfit to it. The next set should have at least 50 examples stratified by simple, medium, complex and very complex tasks.
+Do not overfit to it. Both the extended fixture eval and the live general eval now have at least 50 examples stratified by simple, medium, complex, and very complex tasks.
 
 ## Current Results
 
 - Deterministic routing fixture eval: `8/8` after config adjustment.
+- Extended deterministic routing eval: `56/56` across coding, architecture, general writing, and mixed prompts.
 - Live small-model benchmark: `196.47 tok/s` generation on Qwen2.5-Coder-1.5B Q4_K_M.
 - Live single-expert eval: 6 real calls, average latency `0.585 s`, average server-reported generation speed `194.93 tok/s`.
-- Live distilled routing eval: `19/19` route cases across the default general/fallback live profile.
+- Live distilled routing eval: `52/52` route cases across the default general/fallback live profile, including non-Latin scripts. The current artifact is stored in `outputs/live-general-routing-eval.json`.
 
 Interpretation: the harness is working, and the machine is fast enough for local inference. The current small model is not quality-optimal; it is a smoke expert. The next decision should be based on a stronger single expert before real multi-model MoE.
 
@@ -66,5 +67,6 @@ The automated gate checks:
 - unit tests for config, router, provider contracts, runtime, evaluator, CLI, and orchestrator,
 - base and extended routing eval,
 - minimum extended routing accuracy of `0.90`,
+- minimum extended routing eval size of `50`,
 - required project files,
 - no leftover local live eval listener on `127.0.0.1:8101`.

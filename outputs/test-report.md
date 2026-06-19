@@ -4,13 +4,13 @@ Generated: 2026-06-19
 
 ## Scope
 
-The test hardening pass covers configuration validation, routing evaluation, OpenAI-compatible provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, runtime health checks, CLI behavior, web UI endpoints, persisted local chat sessions, context assembly, file-backed memory, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, runtime health checks, CLI behavior, web UI endpoints, persisted local chat sessions, context assembly, file-backed memory, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
 - `tests/test_config.py`: duplicate expert ids, missing experts, invalid `top_k`, unsupported aggregation, unknown rule/fallback experts.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, usage/timing parsing, invalid payload handling, invalid JSON handling, transport error wrapping.
-- `tests/test_evaluator.py`: JSONL eval loading and accuracy/complexity aggregation.
+- `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
 - `tests/test_setup_status.py`: side-effect-free setup readiness for Hugging Face cache hits, missing local files, Ollama pull commands, and no-model fixture profiles.
 - `tests/test_health.py`: runtime health status for reachable, unreachable, malformed, path-prefixed, and skipped expert providers.
@@ -29,7 +29,10 @@ The test hardening pass covers configuration validation, routing evaluation, Ope
 - `tests/test_context.py`: cache-friendly context section ordering, policy loading, budget truncation, memory snippet ranking, compaction prompt requirements.
 - `tests/test_orchestrator.py`: correlation propagation, compare mode, and separated routing/generation prompts.
 - `tests/test_memory.py`: append-only local memory writes, scoped listing, temporal validity, keyword retrieval.
-- `experiments/eval_set_extended.jsonl`: 26 router cases across coding, architecture, general writing, and mixed prompts.
+- `experiments/eval_set_extended.jsonl`: 56 router cases across coding, architecture, general writing, and mixed prompts.
+- `experiments/eval_set_live_general.jsonl`: 52 live general-purpose routing cases across English, Italian, Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese prompts.
+- `experiments/route_labels_extended.jsonl`: 56 regenerated distilled router labels from the curated extended eval.
+- `experiments/route_labels_live_general.jsonl`: 52 regenerated distilled router labels for the live general-purpose router.
 - `experiments/run_quality_gate.py`: project-level quality gate.
 
 ## Verification
@@ -43,12 +46,13 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `148/148` passed
+- unit/contract tests: `150/150` passed
 - base routing eval: `8/8`, accuracy `1.0`
-- extended routing eval: `26/26`, accuracy `1.0`
+- extended routing eval: `56/56`, accuracy `1.0`
+- live general routing eval: `52/52`, accuracy `1.0`
 - quality gate: passed
 - live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
-- live eval listener check on `127.0.0.1:8101`: passed
+- forbidden listener check on `127.0.0.1:8101`: passed, no active listener during quality gate
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed
 - real MCP filesystem `tools/call` through `list_allowed_directories`: passed
 - Playwright browser smoke for persisted chat sessions: passed
@@ -70,6 +74,8 @@ Result:
 ## Notes
 
 The router remains intentionally configurable and deterministic. During the extended eval, a broad `implement` keyword created a false positive by matching `implementation`; it was removed from config and replaced with more specific coding signals such as `client` and `adapter`.
+
+The live general-purpose router now has a balanced multilingual fixture for `general` and `fast_fallback` decisions. Its generated report is stored in `outputs/live-general-routing-eval.json` and is required by the quality gate.
 
 The hardware recommendation is now general-purpose MoE with one strong resident general expert, one small resident fallback/compaction expert, and cold-loaded specialists only when evals justify them.
 
