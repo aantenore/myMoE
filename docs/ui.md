@@ -34,6 +34,10 @@ The Advanced drawer contains runtime commands, configured models, last routing m
 
 The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
 
+MCP tool discovery is available through `mcp.list_tools`. It starts an enabled stdio MCP server and lists its declared tools, but only when the app config has `permissions.allow_process_execution=true` and the tool input includes `confirm_process_execution: true`. The default app config blocks process execution, so the UI can show the tool contract without silently launching processes.
+
+The bundled MCP-enabled example uses the local filesystem MCP server. It is useful for verifying integration, but it is marked `write_local` because the upstream server advertises write/edit tools.
+
 The Cron section runs due allowlisted jobs through `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
 Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting.
@@ -105,6 +109,15 @@ Run an allowlisted tool:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool mcp.search_capabilities \
   --tool-input '{"query":"filesystem"}'
+```
+
+List tools from an enabled MCP server after explicitly enabling process execution in a separate app config:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --app-config configs/app.mcp-enabled.local.example.json \
+  --run-tool mcp.list_tools \
+  --tool-input '{"server":"filesystem","confirm_process_execution":true}'
 ```
 
 Run cron jobs that write local artifacts:

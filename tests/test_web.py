@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import tempfile
 import threading
 from urllib import request
 import unittest
 
 from local_moe.web import build_server
+from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
 
 class WebTests(unittest.TestCase):
@@ -101,6 +104,40 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["payload"]["servers"][0]["name"], "filesystem")
 
+    def test_runs_mcp_list_tools_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            server_script = write_fake_mcp_server(root / "fake_mcp.py")
+            app_config = write_temp_mcp_app_config(root, server_script)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                result = _post_json(
+                    base_url + "/api/tools/run",
+                    {
+                        "name": "mcp.list_tools",
+                        "input": {
+                            "server": "fake",
+                            "confirm_process_execution": True,
+                            "timeout_seconds": 3,
+                        },
+                    },
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"]["server"], "fake")
+        self.assertEqual(result["payload"]["tools"][0]["name"], "echo")
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -126,6 +163,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("cron-confirm-writes", html)
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
+        self.assertIn("mcp.list_tools", html)
+        self.assertIn("confirm_process_execution", html)
         self.assertIn("Confirm local write jobs", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)
@@ -153,7 +192,6 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
     )
     with request.urlopen(http_req, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,34 @@
+{
+  "name": "myMoE",
+  "mode": "local_model_required",
+  "default_moe_config": "configs/moe.live.general-mlx.example.json",
+  "language": {
+    "mode": "auto",
+    "reply_in_user_language": true,
+    "supported": ["auto", "it", "en", "fr", "de", "es", "pt", "nl", "pl", "ar", "hi", "ja", "ko", "zh"]
+  },
+  "runtime": {
+    "auto_configure": true,
+    "preferred_backends": {
+      "darwin_arm64": "mlx_lm",
+      "windows": "ollama",
+      "linux": "ollama",
+      "fallback": "llama_cpp"
+    },
+    "model_cache_dir": "~/.cache/huggingface",
+    "work_dir": "work/runtime"
+  },
+  "extensions": {
+    "plugins_dir": "plugins",
+    "skills_dir": "skills",
+    "tools_config": "configs/tools.json",
+    "mcp_config": "configs/mcp.filesystem.enabled.example.json",
+    "cron_config": "configs/cron.json"
+  },
+  "permissions": {
+    "default_write_policy": "approval_required",
+    "allow_process_execution": true,
+    "connector_install_policy": "approval_required",
+    "external_communication_policy": "draft_only"
+  }
+}

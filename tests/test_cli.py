@@ -5,7 +5,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
+
+from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,6 +148,37 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["payload"]["servers"][0]["name"], "filesystem")
 
+    def test_run_tool_lists_enabled_mcp_server_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            server_script = write_fake_mcp_server(root / "fake_mcp.py")
+            app_config = write_temp_mcp_app_config(root, server_script)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--run-tool",
+                    "mcp.list_tools",
+                    "--tool-input",
+                    '{"server":"fake","confirm_process_execution":true,"timeout_seconds":3}',
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["payload"]["server"], "fake")
+        self.assertEqual(payload["payload"]["tools"][0]["name"], "echo")
 
 if __name__ == "__main__":
     unittest.main()

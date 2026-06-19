@@ -2,10 +2,10 @@
   "servers": [
     {
       "name": "filesystem",
-      "description": "Optional local filesystem MCP bridge; disabled until explicitly configured.",
+      "description": "Example enabled local filesystem MCP bridge. Use only for trusted local testing.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-      "enabled": false,
+      "enabled": true,
       "risk_class": "write_local",
       "capabilities": ["resources", "tools"],
       "transport": "stdio",
