@@ -109,6 +109,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["models"], [])
         self.assertIn("scripts/bootstrap_runtime.py", payload["download_command_display"])
 
+    def test_prepare_runtime_preview_prints_setup_run(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-runtime",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "planned")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["setup_before"]["status"], "ready")
+        self.assertEqual(payload["steps"], [])
+
     def test_cron_status_prints_jobs(self) -> None:
         completed = subprocess.run(
             [

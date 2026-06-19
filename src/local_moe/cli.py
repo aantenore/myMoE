@@ -13,6 +13,7 @@ from .extensions import create_plugin_scaffold, load_extension_registry, registr
 from .orchestrator import LocalMoE
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
+from .setup_runner import run_runtime_setup, setup_run_payload
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -27,6 +28,10 @@ def main() -> None:
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--setup", action="store_true")
+    parser.add_argument("--prepare-runtime", action="store_true")
+    parser.add_argument("--prepare-execute", action="store_true")
+    parser.add_argument("--prepare-download-models", action="store_true")
+    parser.add_argument("--prepare-confirm", action="store_true")
     parser.add_argument("--list-extensions", action="store_true")
     parser.add_argument("--create-plugin")
     parser.add_argument("--run-tool")
@@ -75,6 +80,19 @@ def main() -> None:
 
     if args.bootstrap:
         print(json.dumps(runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)), indent=2))
+        return
+
+    if args.prepare_runtime:
+        result = run_runtime_setup(
+            config_path=config_path,
+            app_config_path=args.app_config,
+            execute=args.prepare_execute,
+            download_models=args.prepare_download_models,
+            confirm=args.prepare_confirm,
+        )
+        print(json.dumps(setup_run_payload(result), indent=2))
+        if not result.ok and result.status not in {"planned", "needs_setup"}:
+            raise SystemExit(2)
         return
 
     if args.list_extensions:

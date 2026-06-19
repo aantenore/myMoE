@@ -21,6 +21,12 @@ uv pip install --python .venv/bin/python ".[mlx]"
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
 
+You can also run the same guarded preparation flow through the app CLI:
+
+```bash
+make prepare-runtime
+```
+
 The `.[mlx]` extra intentionally pins the MLX stack that was validated with both Qwen and Gemma E4B on the tested machine. Use `.[mlx-current]` only when you explicitly want to track the newest MLX packages.
 
 Start the configured local model server:
@@ -112,6 +118,17 @@ Inspect local setup readiness before starting the app:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
+```
+
+Preview or run runtime preparation from the CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --prepare-runtime
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prepare-runtime \
+  --prepare-execute \
+  --prepare-download-models \
+  --prepare-confirm
 ```
 
 ## Visual Walkthrough

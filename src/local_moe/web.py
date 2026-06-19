@@ -24,6 +24,7 @@ from .orchestrator import LocalMoE
 from .providers import ProviderError
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
+from .setup_runner import run_runtime_setup, setup_run_payload
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
@@ -410,6 +411,18 @@ def _make_handler(
                 eval_path = str(payload.get("eval_path", "experiments/eval_set.jsonl"))
                 result = evaluate_router(config, load_eval_cases(eval_path))
                 _send_json(self, result)
+                return
+
+            if path == "/api/setup/run":
+                payload = _read_json(self)
+                result = run_runtime_setup(
+                    config_path=config_path,
+                    app_config_path=app_config_path,
+                    execute=bool(payload.get("execute", False)),
+                    download_models=bool(payload.get("download_models", False)),
+                    confirm=bool(payload.get("confirm", False)),
+                )
+                _send_json(self, setup_run_payload(result))
                 return
 
             if path == "/api/cron/run":

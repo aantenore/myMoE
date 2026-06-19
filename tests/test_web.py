@@ -79,6 +79,26 @@ class WebTests(unittest.TestCase):
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
 
+    def test_runs_setup_endpoint_preview_and_confirmation_guard(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            preview = _post_json(base_url + "/api/setup/run", {})
+            guarded = _post_json(base_url + "/api/setup/run", {"execute": True})
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(preview["status"], "planned")
+        self.assertTrue(preview["ok"])
+        self.assertEqual(preview["setup_before"]["status"], "ready")
+        self.assertEqual(guarded["status"], "confirmation_required")
+        self.assertFalse(guarded["ok"])
+        self.assertEqual(guarded["steps"][0]["status"], "confirmation_required")
+
     def test_serves_and_runs_cron_endpoint(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -405,7 +425,11 @@ class WebTests(unittest.TestCase):
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("/api/setup", html)
+        self.assertIn("/api/setup/run", html)
         self.assertIn("renderSetup", html)
+        self.assertIn("runSetup", html)
+        self.assertIn("setup-confirm", html)
+        self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
         self.assertIn("runCron", html)

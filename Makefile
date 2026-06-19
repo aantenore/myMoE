@@ -1,4 +1,4 @@
-.PHONY: check test eval distill-router cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
+.PHONY: check test eval distill-router prepare-runtime cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	./scripts/run_all_checks.sh
@@ -20,6 +20,9 @@ distill-router:
 	PYTHONPATH=src python3 experiments/train_distilled_router.py \
 		--labels experiments/route_labels_live_general.jsonl \
 		--out outputs/router-distilled-live-general.json
+
+prepare-runtime:
+	@PYTHONPATH=src python3 -m local_moe.cli --prepare-runtime --prepare-execute --prepare-download-models --prepare-confirm
 
 cron-status:
 	@PYTHONPATH=src python3 -m local_moe.cli --cron-status

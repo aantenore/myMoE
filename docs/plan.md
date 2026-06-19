@@ -18,6 +18,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Plug real local GGUF specialist profiles into the live config set.
 - [x] Add automatic model download planning for MLX, Ollama, and GGUF profiles.
 - [x] Add local fallback-backed context compaction provider.
+- [x] Add guarded runtime self-configuration from CLI and UI.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
 - [x] Add top-2 routing plus deterministic disagreement reporting.
