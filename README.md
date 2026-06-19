@@ -179,6 +179,10 @@ Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details 
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
+Audit Trail includes guarded retention pruning for older operational events.
+
+![myMoE audit trail](docs/screenshots/audit-trail.png)
+
 The Advanced drawer includes System Doctor, setup status, performance decision, and runtime health checks for every configured expert endpoint, so missing model assets, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
 
 Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.

@@ -184,6 +184,10 @@ Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval d
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 
+Audit Trail exposes recent operational events plus guarded retention pruning:
+
+![myMoE audit trail](screenshots/audit-trail.png)
+
 Runtime process controls require confirmation before starting or stopping configured model servers:
 
 ![myMoE model processes](screenshots/model-processes.png)

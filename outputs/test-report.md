@@ -66,6 +66,7 @@ Result:
 - Playwright browser smoke for model process controls: passed
 - Playwright browser smoke for Plugin Studio confirmation guard: passed
 - Playwright browser smoke for extension registry audit: passed
+- Playwright browser screenshot for Audit Trail pruning controls: passed
 - Playwright browser smoke for setup readiness panel: passed
 - Playwright browser smoke for guarded setup preparation controls: passed
 - Playwright browser smoke for chat compaction action: passed
