@@ -42,7 +42,7 @@ class EvaluatorTests(unittest.TestCase):
         result = evaluate_router(config, cases)
 
         self.assertEqual(result["accuracy"], 1.0)
-        self.assertEqual(result["total"], 10)
+        self.assertEqual(result["total"], 18)
         self.assertEqual({item["selected_expert"] for item in result["results"]}, {"general", "fast_fallback"})
 
 

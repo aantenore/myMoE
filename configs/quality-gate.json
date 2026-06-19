@@ -41,6 +41,7 @@
     "docs/gemma-e4b-runtime.md",
     "docs/installation.md",
     "docs/performance-benchmarking.md",
+    "docs/router.md",
     "docs/tested-performance.md",
     "docs/ui.md",
     "docs/screenshots/dashboard.png",

@@ -43,11 +43,19 @@ The user-facing default is `configs/moe.live.general-mlx.example.json`. Public c
 
 The runtime planner reads each expert's `params.runtime_backend`. MLX experts generate `mlx_lm.server` commands, GGUF experts generate `llama-server -hf ...` commands, and mixed configs are represented as mixed runtime plans instead of hardcoding one global backend.
 
+## Routing Policy
+
+The live general profile uses hybrid routing. It combines expert base weights, explicit rules, and local semantic route examples. The semantic matcher is intentionally lightweight: it uses normalized character n-grams, so it is cross platform and does not require a third model server.
+
+The heavy general model is not used as the default request classifier. That model is reserved for actual general-purpose answers, while routing stays cheap enough to run before every request. A stronger teacher model can still be used offline to label route datasets for later distillation.
+
 ## Multilingual Policy
 
 The default provider system message instructs the model to response in the user's language unless the user asks otherwise. The app config uses `language.mode = auto` and documents supported language hints.
 
 Actual multilingual quality depends on the selected model. Qwen3 30B-A3B 2507 is preferred partly because its public model description emphasizes broad multilingual and instruction-following capability.
+
+Routing language coverage depends on route examples and eval coverage. The current live profile includes routing examples for English, Italian, French, Spanish, German, and Portuguese intent families. Additional languages should be added by configuration plus matching eval cases, or by swapping the semantic matcher for a local multilingual embedding backend.
 
 The application UI and documentation are written in English. Model responses follow the user prompt language and the provider system instruction; this keeps the product surface consistent while still allowing multilingual interaction.
 

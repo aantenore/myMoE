@@ -952,7 +952,11 @@
           .join("");
 
         el("routing").innerHTML = kvRows({
-          Strategy: config.routing?.aggregation || "best",
+          Strategy: config.routing?.strategy || "rules",
+          Aggregation: config.routing?.aggregation || "best",
+          Semantic: config.routing?.semantic?.enabled
+            ? `${config.routing.semantic.method} · ${config.routing.semantic.examples?.length || 0} routes`
+            : "Disabled",
           "Top K": config.routing?.top_k ?? 1,
           Fallbacks: (config.routing?.fallback_order || []).join(", ") || "None",
           Config: config.config_path,

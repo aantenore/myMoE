@@ -99,6 +99,66 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "Unsupported aggregation"):
             parse_config(raw)
 
+    def test_rejects_unknown_routing_strategy(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {"strategy": "llm_judge"}
+
+        with self.assertRaisesRegex(ConfigError, "Unsupported routing strategy"):
+            parse_config(raw)
+
+    def test_rejects_unknown_semantic_route_expert(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {
+            "strategy": "hybrid",
+            "semantic": {
+                "enabled": True,
+                "examples": [
+                    {
+                        "expert_id": "missing",
+                        "utterances": ["analyze this"],
+                    }
+                ],
+            },
+        }
+
+        with self.assertRaisesRegex(ConfigError, "Semantic route references unknown expert"):
+            parse_config(raw)
+
+    def test_rejects_invalid_semantic_examples_shape(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {
+            "strategy": "hybrid",
+            "semantic": {
+                "enabled": True,
+                "examples": "general",
+            },
+        }
+
+        with self.assertRaisesRegex(ConfigError, "semantic.examples"):
+            parse_config(raw)
+
+    def test_parses_hybrid_semantic_routing(self) -> None:
+        raw = _base_config()
+        raw["routing"] = {
+            "strategy": "hybrid",
+            "semantic": {
+                "enabled": True,
+                "examples": [
+                    {
+                        "expert_id": "general",
+                        "utterances": ["riassumi questa nota"],
+                        "weight": 1.2,
+                    }
+                ],
+            },
+        }
+
+        config = parse_config(raw)
+
+        self.assertEqual(config.routing.strategy, "hybrid")
+        self.assertTrue(config.routing.semantic.enabled)
+        self.assertEqual(config.routing.semantic.examples[0].expert_id, "general")
+
 
 if __name__ == "__main__":
     unittest.main()

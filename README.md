@@ -9,6 +9,8 @@ This project does not try to train a monolithic MoE from scratch. That would be 
 3. optionally synthesize multiple expert answers,
 4. distill routing decisions and/or expert outputs later.
 
+The current live profile uses a hybrid local router: base expert weights plus explicit rules plus multilingual semantic route examples. See `docs/router.md`.
+
 ## Quick Start
 
 Install and download the configured local model:
@@ -162,6 +164,7 @@ docs/
   installation.md
   model-selection.md
   performance-benchmarking.md
+  router.md
   tested-performance.md
   ui.md
 experiments/

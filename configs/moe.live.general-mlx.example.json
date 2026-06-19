@@ -2,7 +2,88 @@
   "routing": {
     "top_k": 1,
     "fallback_order": ["fast_fallback"],
-    "aggregation": "best"
+    "aggregation": "best",
+    "strategy": "hybrid",
+    "semantic": {
+      "enabled": true,
+      "method": "char_ngrams",
+      "min_score": 0.16,
+      "margin": 0.02,
+      "weight": 2.4,
+      "ngram_min": 3,
+      "ngram_max": 5,
+      "examples": [
+        {
+          "expert_id": "general",
+          "utterances": [
+            "analyze this decision",
+            "compare these options",
+            "decide the best approach",
+            "explain the tradeoffs",
+            "plan the next steps",
+            "research the evidence",
+            "analizza questa decisione",
+            "confronta queste opzioni",
+            "decidi l'approccio migliore",
+            "spiega i compromessi",
+            "pianifica i prossimi passi",
+            "cerca le evidenze",
+            "analyse cette decision",
+            "compare ces options",
+            "decide la meilleure approche",
+            "explique les compromis",
+            "planifie les prochaines etapes",
+            "analyse la evidencia",
+            "compara estas opciones",
+            "decide el mejor enfoque",
+            "explica las ventajas y desventajas",
+            "planifica los siguientes pasos",
+            "analysiere diese entscheidung",
+            "vergleiche diese optionen",
+            "entscheide den besten ansatz",
+            "erklaere die kompromisse",
+            "plane die naechsten schritte",
+            "analise esta decisao",
+            "compare estas opcoes",
+            "decida a melhor abordagem"
+          ]
+        },
+        {
+          "expert_id": "fast_fallback",
+          "utterances": [
+            "summarize this note",
+            "create a short summary",
+            "compress this context",
+            "rewrite this message",
+            "shorten this text",
+            "translate this update",
+            "riassumi questa nota",
+            "sintetizza questo testo",
+            "comprimi questo contesto",
+            "riscrivi questo messaggio",
+            "accorcia questo testo",
+            "traduci questo aggiornamento",
+            "resume cette note",
+            "synthetise ce texte",
+            "reecris ce message",
+            "raccourcis ce texte",
+            "traduis cette mise a jour",
+            "resume esta nota",
+            "sintetiza este texto",
+            "reescribe este mensaje",
+            "acorta este texto",
+            "traduce esta actualizacion",
+            "fasse diese notiz zusammen",
+            "kuerze diesen text",
+            "schreibe diese nachricht um",
+            "uebersetze diese aktualisierung",
+            "resuma esta nota",
+            "sintetize este texto",
+            "traduza esta atualizacao"
+          ]
+        }
+      ]
+    }
   },
   "experts": [
     {
