@@ -4,12 +4,12 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
 - `tests/test_config.py`: duplicate expert ids, missing experts, invalid `top_k`, unsupported aggregation, unknown rule/fallback experts.
-- `tests/test_config_profiles.py`: read-only runtime profile discovery, setup readiness summary, active/default flags, and active profile inclusion outside `configs/`.
+- `tests/test_config_profiles.py`: read-only runtime profile discovery, setup readiness summary, active/default flags, launch hint payloads, and active profile inclusion outside `configs/`.
 - `tests/test_audit.py`: local JSONL audit event writes, latest-first listing, action/status filtering, metadata truncation, and latest-event retention pruning.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, streaming SSE parsing, usage/timing parsing, invalid payload handling, invalid JSON handling, reasoning-channel stripping, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
@@ -92,7 +92,7 @@ Local knowledge import now chunks pasted documents into `knowledge` memory recor
 
 Memory maintenance now reports active, pending, and expired temporal records separately. Expired-memory pruning is a separate guarded action through `memory.prune_expired`, `/api/memory/prune-expired`, the Advanced Memory panel, and optional write-local cron jobs; future `valid_from` records are preserved.
 
-Runtime profile discovery now exposes `/api/config/profiles` and the Advanced Profiles panel. It scans runnable public profiles, includes the active config even when it is outside `configs/`, and reports setup readiness, backend, expert count, and model names without switching profiles or starting model processes.
+Runtime profile discovery now exposes `/api/config/profiles` and the Advanced Profiles panel. It scans runnable public profiles, includes the active config even when it is outside `configs/`, and reports setup readiness, backend, expert count, model names, and side-effect-labelled launch hints without switching profiles or starting model processes.
 
 Model log diagnostics now expose bounded, sanitized model server log tails through CLI `--models-logs`, web `/api/models/logs`, and the Advanced Runtime Model Logs panel. The reader only opens runtime-plan-generated log paths and redacts secret-looking values before returning text.
 
