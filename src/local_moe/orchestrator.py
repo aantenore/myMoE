@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 import re
+from typing import Iterator
 from uuid import uuid4
 
 from .config import MoEConfig
@@ -24,6 +25,15 @@ class MoEResponse:
     results: tuple[ExpertResult, ...]
     errors: tuple[str, ...]
     disagreement: DisagreementReport | None = None
+
+
+@dataclass(frozen=True)
+class MoEStreamEvent:
+    kind: str
+    content: str = ""
+    response: MoEResponse | None = None
+    route: RouteDecision | None = None
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,6 +99,72 @@ class LocalMoE:
             errors=tuple(errors),
             disagreement=disagreement,
         )
+
+    def generate_stream(
+        self,
+        prompt: str,
+        correlation_id: str | None = None,
+        *,
+        route_prompt: str | None = None,
+    ) -> Iterator[MoEStreamEvent]:
+        cid = correlation_id or str(uuid4())
+        route = self._router.route(route_prompt or prompt)
+        yield MoEStreamEvent(kind="route", route=route)
+
+        if self._config.routing.aggregation in {"concat", "compare"}:
+            response = self.generate(prompt, correlation_id=cid, route_prompt=route_prompt)
+            yield MoEStreamEvent(kind="content", content=response.content)
+            yield MoEStreamEvent(kind="final", content=response.content, response=response)
+            return
+
+        req = GenerationRequest(prompt=prompt, correlation_id=cid)
+        expert_order = [score.expert_id for score in route.selected]
+        for fallback in route.fallback_order:
+            if fallback not in expert_order:
+                expert_order.append(fallback)
+
+        errors: list[str] = []
+        experts_by_id = self._config.experts_by_id
+        for expert_id in expert_order:
+            expert = experts_by_id[expert_id]
+            provider = self._providers[expert_id]
+            stream_generate = getattr(provider, "stream_generate", None)
+            try:
+                if callable(stream_generate):
+                    final_result = None
+                    for event in stream_generate(expert, req):
+                        if event.result is not None:
+                            final_result = event.result
+                            continue
+                        yield MoEStreamEvent(kind="content", content=event.content)
+                    if final_result is None:
+                        raise ProviderError(f"Expert {expert_id} stream ended without a final result.")
+                    response = MoEResponse(
+                        content=final_result.content,
+                        correlation_id=cid,
+                        route=route,
+                        results=(final_result,),
+                        errors=tuple(errors),
+                    )
+                    yield MoEStreamEvent(kind="final", content=response.content, response=response)
+                    return
+
+                result = provider.generate(expert, req)
+                response = MoEResponse(
+                    content=result.content,
+                    correlation_id=cid,
+                    route=route,
+                    results=(result,),
+                    errors=tuple(errors),
+                )
+                yield MoEStreamEvent(kind="content", content=response.content)
+                yield MoEStreamEvent(kind="final", content=response.content, response=response)
+                return
+            except ProviderError as exc:
+                errors.append(f"{expert_id}: {exc}")
+                continue
+
+        raise ProviderError("; ".join(errors) or "No expert produced a stream result.")
 
     def _generate_best(
         self, expert_order: list[str], req: GenerationRequest

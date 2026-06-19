@@ -18,6 +18,7 @@ from local_moe.providers import (
 
 class _FakeOpenAIHandler(BaseHTTPRequestHandler):
     response_body: str = "{}"
+    response_chunks: tuple[str, ...] = ()
     status_code: int = 200
     last_path: str | None = None
     last_payload: dict[str, object] | None = None
@@ -31,6 +32,11 @@ class _FakeOpenAIHandler(BaseHTTPRequestHandler):
         self.send_response(type(self).status_code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
+        if type(self).response_chunks:
+            for chunk in type(self).response_chunks:
+                self.wfile.write(chunk.encode("utf-8"))
+                self.wfile.flush()
+            return
         self.wfile.write(type(self).response_body.encode("utf-8"))
 
     def log_message(self, format: str, *args: object) -> None:
@@ -42,6 +48,26 @@ def _fake_openai_server(response: dict[str, object] | str, status: int = 200):
     _FakeOpenAIHandler.response_body = (
         response if isinstance(response, str) else json.dumps(response)
     )
+    _FakeOpenAIHandler.response_chunks = ()
+    _FakeOpenAIHandler.status_code = status
+    _FakeOpenAIHandler.last_path = None
+    _FakeOpenAIHandler.last_payload = None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOpenAIHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@contextmanager
+def _fake_openai_stream(chunks: tuple[str, ...], status: int = 200):
+    _FakeOpenAIHandler.response_body = "{}"
+    _FakeOpenAIHandler.response_chunks = chunks
     _FakeOpenAIHandler.status_code = status
     _FakeOpenAIHandler.last_path = None
     _FakeOpenAIHandler.last_payload = None
@@ -102,6 +128,34 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.2)
         system = _FakeOpenAIHandler.last_payload["messages"][0]["content"]
         self.assertIn("response in the user's language", system)
+
+    def test_openai_provider_streams_sse_content_and_final_result(self) -> None:
+        chunks = (
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"lo"}}],"usage":{"prompt_tokens":5,"completion_tokens":2},"timings":{"predicted_per_second":42.5}}\n\n',
+            "data: [DONE]\n\n",
+        )
+
+        with _fake_openai_stream(chunks) as server:
+            host, port = server.server_address
+            provider = OpenAICompatibleProvider()
+            events = list(
+                provider.stream_generate(
+                    _expert(f"http://{host}:{port}/v1"),
+                    GenerationRequest(prompt="Say hello", correlation_id="case-stream"),
+                )
+            )
+
+        self.assertEqual(_FakeOpenAIHandler.last_payload["stream"], True)
+        self.assertEqual([event.content for event in events], ["Hel", "Hello", "Hello"])
+        self.assertEqual(events[-1].result.content, "Hello")
+        self.assertEqual(events[-1].result.prompt_tokens, 5)
+        self.assertEqual(events[-1].result.completion_tokens, 2)
+        self.assertEqual(events[-1].result.predicted_tokens_per_second, 42.5)
+
+    def test_streaming_strip_hides_open_thinking_block(self) -> None:
+        self.assertEqual(strip_reasoning_content("<think>private partial"), "")
+        self.assertEqual(strip_reasoning_content("<think>private</think>Public"), "Public")
 
     def test_openai_provider_does_not_send_local_runtime_params(self) -> None:
         response = {"choices": [{"message": {"content": "ok"}}]}

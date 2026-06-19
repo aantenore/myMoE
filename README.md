@@ -167,11 +167,11 @@ The default UI is chat-first, with operational details hidden behind the Advance
 
 ![myMoE chat-first UI](docs/screenshots/dashboard.png)
 
-The composer supports normal chat usage, rendered Markdown responses, `Enter` to send, and `Alt+Enter` for multiline prompts.
+The composer supports normal chat usage, progressive streamed responses, rendered Markdown responses, `Enter` to send, and `Alt+Enter` for multiline prompts.
 
 ![myMoE composer and response](docs/screenshots/composer.png)
 
-Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, and recent turns in the next local model prompt.
+Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, and recent turns in the next local model prompt. The browser uses `/api/generate/stream` when available and falls back to `/api/generate` when streaming is unavailable.
 
 Advanced runtime, setup, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
 

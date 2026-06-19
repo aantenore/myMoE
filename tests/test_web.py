@@ -410,6 +410,36 @@ class WebTests(unittest.TestCase):
         self.assertTrue(deleted["deleted"])
         self.assertEqual(final["count"], 0)
 
+    def test_stream_generation_endpoint_persists_chat_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                raw = _post_text(
+                    base_url + "/api/generate/stream",
+                    {"prompt": "Summarize this streamed note."},
+                )
+                listed = _get_json(base_url + "/api/chats")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertIn("event: route", raw)
+        self.assertIn("event: content", raw)
+        self.assertIn("event: final", raw)
+        self.assertIn('"session_id"', raw)
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["sessions"][0]["message_count"], 2)
+
     def test_generate_rejects_missing_chat_session_before_model_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -568,6 +598,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("function renderMarkdown", html)
         self.assertIn("^[*-] (.+)", html)
         self.assertIn("event.altKey", html)
+        self.assertIn("/api/generate/stream", html)
+        self.assertIn("generateStream", html)
+        self.assertIn("consumeSseEvents", html)
         self.assertIn("What should we work on?", html)
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
@@ -658,6 +691,17 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
     )
     with request.urlopen(http_req, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _post_text(url: str, payload: dict[str, object]) -> str:
+    http_req = request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(http_req, timeout=5) as response:
+        return response.read().decode("utf-8")
 
 
 def _patch_json(url: str, payload: dict[str, object]) -> dict[str, object]:

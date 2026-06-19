@@ -1848,31 +1848,129 @@
         appendMessage("user", prompt);
         const pendingId = appendMessage("assistant", "Thinking...", { pending: true });
         setBusy(true);
+        let streamStarted = false;
         try {
-          const result = await api("/api/generate", {
-            method: "POST",
-            body: JSON.stringify({ prompt, session_id: state.activeSessionId }),
-          });
-          if (result.session_id) {
-            state.activeSessionId = result.session_id;
-          }
-          updateMessage(
-            pendingId,
-            result.content || "",
-            routeMeta(result),
-          );
-          renderLastRoute(result);
-          if (result.session) {
-            upsertSessionSummary(result.session);
-            renderSessions();
-          } else {
-            loadChats(false);
-          }
+          const result = supportsStreaming()
+            ? await generateStream(prompt, pendingId, () => {
+                streamStarted = true;
+              })
+            : await generateOnce(prompt);
+          finishGeneration(pendingId, result);
         } catch (error) {
-          updateMessage(pendingId, error.message, "", true);
+          if (!streamStarted && supportsStreaming()) {
+            try {
+              const result = await generateOnce(prompt);
+              finishGeneration(pendingId, result);
+            } catch (fallbackError) {
+              updateMessage(pendingId, fallbackError.message, "", true);
+            }
+          } else {
+            updateMessage(pendingId, error.message, "", true);
+          }
         } finally {
           setBusy(false);
         }
+      }
+
+      async function generateOnce(prompt) {
+        return api("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({ prompt, session_id: state.activeSessionId }),
+        });
+      }
+
+      function finishGeneration(pendingId, result) {
+        if (result.session_id) {
+          state.activeSessionId = result.session_id;
+        }
+        updateMessage(pendingId, result.content || "", routeMeta(result));
+        renderLastRoute(result);
+        if (result.session) {
+          upsertSessionSummary(result.session);
+          renderSessions();
+        } else {
+          loadChats(false);
+        }
+      }
+
+      function supportsStreaming() {
+        return Boolean(window.ReadableStream && window.TextDecoder);
+      }
+
+      async function generateStream(prompt, pendingId, onStarted) {
+        const response = await fetch("/api/generate/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, session_id: state.activeSessionId }),
+        });
+        if (!response.ok || !response.body) {
+          const detail = await response.text();
+          throw new Error(detail || `Request failed with status ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult = null;
+        let currentRoute = null;
+        let sawContent = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          buffer = consumeSseEvents(buffer, (eventName, data) => {
+            if (eventName === "route") {
+              currentRoute = data.route || null;
+              return;
+            }
+            if (eventName === "content") {
+              sawContent = true;
+              onStarted();
+              updateMessage(
+                pendingId,
+                data.content || "",
+                currentRoute ? routeMeta({ route: currentRoute, results: [] }) : "Streaming locally",
+              );
+              return;
+            }
+            if (eventName === "final") {
+              finalResult = data;
+              return;
+            }
+            if (eventName === "error") {
+              const error = new Error(data.message || data.error || "Streaming failed.");
+              error.streamStarted = sawContent;
+              throw error;
+            }
+          });
+        }
+        buffer = consumeSseEvents(buffer, (eventName, data) => {
+          if (eventName === "final") finalResult = data;
+        });
+        if (!finalResult) throw new Error("Streaming ended without a final response.");
+        return finalResult;
+      }
+
+      function consumeSseEvents(buffer, onEvent) {
+        const blocks = buffer.split(/\n\n/);
+        const remainder = blocks.pop() || "";
+        blocks.forEach((block) => {
+          const parsed = parseSseEvent(block);
+          if (parsed) onEvent(parsed.event, parsed.data);
+        });
+        return remainder;
+      }
+
+      function parseSseEvent(block) {
+        let eventName = "message";
+        const dataLines = [];
+        block.split(/\n/).forEach((line) => {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+        });
+        if (!dataLines.length) return null;
+        return { event: eventName, data: JSON.parse(dataLines.join("\n")) };
       }
 
       function appendMessage(role, markdown, options = {}) {
