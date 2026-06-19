@@ -322,6 +322,22 @@ def _make_handler(
                 )
                 return
 
+            if path == "/api/knowledge":
+                scope = _optional_str(parse_qs(parsed_url.query).get("scope", ["default"])[0])
+                records = [
+                    record
+                    for record in memory_store.list(scope=scope)
+                    if record.kind == "knowledge"
+                ]
+                _send_json(
+                    self,
+                    {
+                        "count": len(records),
+                        "records": [memory_record_payload(record) for record in records],
+                    },
+                )
+                return
+
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
@@ -512,6 +528,54 @@ def _make_handler(
                     valid_until=_optional_str(payload.get("valid_until")),
                 )
                 _send_json(self, memory_record_payload(record), status=HTTPStatus.CREATED)
+                return
+
+            if path == "/api/knowledge":
+                payload = _read_json(self)
+                if payload.get("confirm") is not True:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Knowledge import requires confirm=true because it writes local memory records.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                metadata = payload.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "metadata must be a JSON object"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    report = memory_store.ingest_document(
+                        _required_payload_text(payload, "content"),
+                        title=_required_payload_text(payload, "title"),
+                        scope=_optional_str(payload.get("scope")) or "default",
+                        chunk_chars=int(payload.get("chunk_chars", 1200)),
+                        metadata=metadata,
+                    )
+                except (ValueError, TypeError) as exc:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(
+                    self,
+                    {
+                        "document_id": report.document_id,
+                        "title": report.title,
+                        "scope": report.scope,
+                        "chunk_count": report.chunk_count,
+                        "record_ids": list(report.record_ids),
+                    },
+                    status=HTTPStatus.CREATED,
+                )
                 return
 
             if path.startswith("/api/chats/") and path.endswith("/compact"):

@@ -36,6 +36,7 @@ flowchart LR
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, model process reachability, extension audit, and cron state.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
+- `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into append-only scoped memory records without granting browser filesystem access.
 
 ## Runtime Modes
 

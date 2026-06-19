@@ -45,6 +45,7 @@ class LocalToolRunner:
 
     _SUPPORTED = {
         "memory.search",
+        "knowledge.ingest",
         "context.compact",
         "extension.audit",
         "extension.configure",
@@ -87,6 +88,8 @@ class LocalToolRunner:
 
         if tool.name == "memory.search":
             return self._memory_search(tool, tool_payload)
+        if tool.name == "knowledge.ingest":
+            return self._knowledge_ingest(tool, tool_payload)
         if tool.name == "context.compact":
             return self._context_compact(tool, tool_payload)
         if tool.name == "extension.audit":
@@ -143,6 +146,39 @@ class LocalToolRunner:
                     }
                     for record, score in results
                 ],
+            },
+        )
+
+    def _knowledge_ingest(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError("knowledge.ingest requires confirm=true because it writes local memory records.")
+        title = _required_text(payload, "title")
+        content = _required_text(payload, "content")
+        scope = _optional_text(payload, "scope") or "default"
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ToolExecutionError("metadata must be a JSON object.")
+        chunk_chars = _int_in_range(payload.get("chunk_chars", 1200), "chunk_chars", minimum=200, maximum=8000)
+        try:
+            report = FileMemoryStore(self._memory_path).ingest_document(
+                content,
+                title=title,
+                scope=scope,
+                chunk_chars=chunk_chars,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return _ok(
+            tool,
+            "Knowledge document ingested into local memory.",
+            {
+                "document_id": report.document_id,
+                "title": report.title,
+                "scope": report.scope,
+                "chunk_count": report.chunk_count,
+                "record_ids": list(report.record_ids),
+                "memory_path": str(self._memory_path),
             },
         )
 

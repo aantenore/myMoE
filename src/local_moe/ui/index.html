@@ -1033,6 +1033,32 @@
           </div>
         </section>
         <section class="advanced-section">
+          <h2>Knowledge</h2>
+          <div class="tool-controls">
+            <div class="tool-row">
+              <input class="tool-select" id="knowledge-title" aria-label="Knowledge title" placeholder="Document title" />
+              <input class="tool-select" id="knowledge-scope" aria-label="Knowledge scope" value="default" />
+            </div>
+            <textarea
+              class="tool-input"
+              id="knowledge-content"
+              rows="6"
+              spellcheck="true"
+              aria-label="Knowledge content"
+              placeholder="Paste local notes, documentation, or reference text..."
+            ></textarea>
+            <label class="check-row">
+              <input id="knowledge-confirm" type="checkbox" />
+              <span>Confirm local knowledge import</span>
+            </label>
+            <div class="tool-row">
+              <button class="ghost-button" id="import-knowledge" type="button">Import knowledge</button>
+              <button class="ghost-button" id="list-knowledge" type="button">List knowledge</button>
+            </div>
+            <pre class="eval-output" id="knowledge-output">No knowledge action yet.</pre>
+          </div>
+        </section>
+        <section class="advanced-section">
           <h2>Tools</h2>
           <div class="tool-controls">
             <div class="tool-row">
@@ -1168,6 +1194,8 @@
         el("run-tool").addEventListener("click", runTool);
         el("save-memory").addEventListener("click", saveMemory);
         el("search-memory").addEventListener("click", searchMemory);
+        el("import-knowledge").addEventListener("click", importKnowledge);
+        el("list-knowledge").addEventListener("click", listKnowledge);
         el("refresh-health").addEventListener("click", refreshHealth);
         el("run-extension-audit").addEventListener("click", runExtensionAudit);
         el("create-plugin").addEventListener("click", createPlugin);
@@ -1766,6 +1794,14 @@
             scope: "default",
             limit: 5,
           },
+          "knowledge.ingest": {
+            title: "Local notes",
+            content: "Paste local reference text here.",
+            scope: "default",
+            chunk_chars: 1200,
+            metadata: { source: "tool-runner" },
+            confirm: false,
+          },
           "context.compact": {
             turns: [
               { role: "user", content: "We selected a local-first MoE architecture." },
@@ -2153,6 +2189,41 @@
           el("memory-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("memory-output").textContent = error.message;
+        }
+      }
+
+      async function importKnowledge() {
+        const title = el("knowledge-title").value.trim();
+        const content = el("knowledge-content").value.trim();
+        if (!title || !content) return;
+        el("knowledge-output").textContent = "Importing...";
+        try {
+          const result = await api("/api/knowledge", {
+            method: "POST",
+            body: JSON.stringify({
+              title,
+              content,
+              scope: el("knowledge-scope").value.trim() || "default",
+              chunk_chars: 1200,
+              metadata: { source: "ui" },
+              confirm: el("knowledge-confirm").checked,
+            }),
+          });
+          el("knowledge-output").textContent = JSON.stringify(result, null, 2);
+          el("knowledge-content").value = "";
+        } catch (error) {
+          el("knowledge-output").textContent = error.message;
+        }
+      }
+
+      async function listKnowledge() {
+        const scope = el("knowledge-scope").value.trim() || "default";
+        el("knowledge-output").textContent = "Loading...";
+        try {
+          const result = await api(`/api/knowledge?scope=${encodeURIComponent(scope)}`);
+          el("knowledge-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("knowledge-output").textContent = error.message;
         }
       }
 

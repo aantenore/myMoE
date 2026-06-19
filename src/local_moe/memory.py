@@ -28,6 +28,15 @@ class MemoryMaintenanceReport:
     expired_records: int
 
 
+@dataclass(frozen=True)
+class KnowledgeIngestReport:
+    document_id: str
+    title: str
+    scope: str
+    chunk_count: int
+    record_ids: tuple[str, ...]
+
+
 def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": record.id,
@@ -99,6 +108,50 @@ class FileMemoryStore:
         scored.sort(key=lambda item: (-item[1], item[0].created_at, item[0].id))
         return scored[:limit]
 
+    def ingest_document(
+        self,
+        content: str,
+        *,
+        title: str,
+        scope: str = "default",
+        chunk_chars: int = 1200,
+        metadata: dict[str, object] | None = None,
+    ) -> KnowledgeIngestReport:
+        clean_title = _clean_text(title)
+        clean_content = _clean_text(content)
+        if not clean_title:
+            raise ValueError("title is required.")
+        if not clean_content:
+            raise ValueError("content is required.")
+        if chunk_chars < 200 or chunk_chars > 8000:
+            raise ValueError("chunk_chars must be between 200 and 8000.")
+
+        document_id = str(uuid4())
+        chunks = _chunk_text(clean_content, chunk_chars=chunk_chars)
+        records = []
+        base_metadata = dict(metadata or {})
+        for index, chunk in enumerate(chunks, start=1):
+            record = self.add(
+                f"{clean_title}\n\n{chunk}",
+                scope=scope,
+                kind="knowledge",
+                metadata={
+                    **base_metadata,
+                    "document_id": document_id,
+                    "title": clean_title,
+                    "chunk_index": index,
+                    "chunk_count": len(chunks),
+                },
+            )
+            records.append(record)
+        return KnowledgeIngestReport(
+            document_id=document_id,
+            title=clean_title,
+            scope=scope,
+            chunk_count=len(records),
+            record_ids=tuple(record.id for record in records),
+        )
+
     def maintenance_report(self, *, now: str | None = None) -> MemoryMaintenanceReport:
         records = self.list()
         active = [record for record in records if _is_valid_at(record, now)]
@@ -146,6 +199,55 @@ def _score(query_terms: Iterable[str], text_terms: set[str]) -> float:
     if not query:
         return 0.0
     return len(query & text_terms) / len(query)
+
+
+def _chunk_text(text: str, *, chunk_chars: int) -> list[str]:
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs or [text]:
+        if len(paragraph) > chunk_chars:
+            if current:
+                chunks.append(current.strip())
+                current = ""
+            chunks.extend(_hard_wrap(paragraph, chunk_chars=chunk_chars))
+            continue
+        candidate = f"{current}\n\n{paragraph}".strip() if current else paragraph
+        if len(candidate) <= chunk_chars:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current.strip())
+            current = paragraph
+    if current:
+        chunks.append(current.strip())
+    return chunks or [text[:chunk_chars]]
+
+
+def _hard_wrap(text: str, *, chunk_chars: int) -> list[str]:
+    words = text.split()
+    chunks: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= chunk_chars:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        current = word[:chunk_chars]
+        remainder = word[chunk_chars:]
+        while remainder:
+            chunks.append(current)
+            current = remainder[:chunk_chars]
+            remainder = remainder[chunk_chars:]
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _clean_text(value: str) -> str:
+    return "\n".join(line.rstrip() for line in str(value).strip().splitlines()).strip()
 
 
 def _is_valid_at(record: MemoryRecord, now: str | None) -> bool:

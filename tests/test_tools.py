@@ -43,6 +43,38 @@ class ToolRunnerTests(unittest.TestCase):
             "Local model routing should stay configurable.",
         )
 
+    def test_knowledge_ingest_requires_confirmation_and_writes_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "memory.jsonl"
+            runner = LocalToolRunner(load_extension_registry(), memory_path=memory_path)
+
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "knowledge.ingest",
+                    {
+                        "title": "Router Notes",
+                        "content": "Local router labels should stay configurable.",
+                    },
+                )
+
+            result = runner.run(
+                "knowledge.ingest",
+                {
+                    "title": "Router Notes",
+                    "content": "Local router labels should stay configurable.",
+                    "scope": "project",
+                    "metadata": {"source": "test"},
+                    "confirm": True,
+                },
+            )
+            search = FileMemoryStore(memory_path).search("router labels", scope="project")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["title"], "Router Notes")
+        self.assertEqual(result.payload["chunk_count"], 1)
+        self.assertEqual(search[0][0].kind, "knowledge")
+        self.assertEqual(search[0][0].metadata["source"], "test")
+
     def test_context_compact_can_use_configured_model(self) -> None:
         runner = LocalToolRunner(
             load_extension_registry(),
