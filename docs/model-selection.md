@@ -44,6 +44,7 @@ Why:
 - The MLX 4-bit artifact is listed at about `17.2 GB`, which leaves some headroom on a 24 GB Mac.
 - LM Studio describes it as improved in instruction following, logical reasoning, text comprehension, math, science, coding, and tool usage.
 - It supports up to `262,144` context tokens, but this app should cap runtime context much lower at first.
+- Its model card explicitly describes this release as non-thinking mode, so myMoE does not enable thinking for this primary expert.
 
 Start it with:
 
@@ -66,7 +67,25 @@ configs/moe.live.general-mlx.example.json
 | Multimodal general | `Gemma 4 26B-A4B-it-MLX-4bit` | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
 | Fast fallback | `Gemma 4 E4B it MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Requires pinned MLX package profile for the current artifact |
 | Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
+| Optional GGUF coding/agentic specialist | `Gemma 4 12B Agentic Fable5 Composer 2.5 v2` GGUF | Local coding, terminal, and tool-use experiments through llama.cpp | Newly published; benchmark locally before enabling as default route |
+| Legacy GGUF coding specialist | `Gemma 4 12B Coder Fable5 Composer 2.5 v1` GGUF | Python/coding specialist requested during research | Superseded by the same author's v2 for agentic/coding tasks |
 | Rejected for this machine | `Qwen3-Coder-Next` | Strong but too large | 4-bit wants >45 GB; even good low-bit paths want >30 GB |
+
+## Why The Linked Gemma 12B Coder GGUF Is Not The Default
+
+The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not automatically worse than the selected default. It is simply optimized for a different job:
+
+- The card describes it as a focused fine-tune for verifiable Python coding tasks.
+- It is English-centric, while this app is meant to be general-purpose and multilingual.
+- It is GGUF-first, so it runs through llama.cpp/LM Studio/Ollama rather than the current MLX benchmark harness.
+- The same model card now points to a v2 agentic/coding successor published on 2026-06-19.
+
+myMoE therefore adds both:
+
+- `configs/moe.live.gemma-12b-coder-gguf.example.json` for the v1 model,
+- `configs/moe.live.gemma-12b-agentic-gguf.example.json` for the preferred v2 successor.
+
+Neither replaces Qwen3 30B-A3B as the general-purpose default until it wins local evals against the default on non-coding prompts. For coding/terminal/tool-use slices, the v2 GGUF profile is the more interesting candidate to benchmark next.
 
 ## MoE Runtime Policy
 
@@ -92,4 +111,6 @@ This still gives you MoE behavior at the application level without pretending th
 - Gemma E4B MLX compatibility issue: https://github.com/ml-explore/mlx-lm/issues/1242
 - Gemma 4 26B A4B MLX 4-bit: https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit
 - Qwen3-Coder 30B A3B official/GGUF reference: https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+- Gemma 4 12B Coder Fable5 Composer 2.5 v1 GGUF: https://huggingface.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF
+- Gemma 4 12B Agentic Fable5 Composer 2.5 v2 GGUF: https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF
 - Qwen3-Coder-Next GGUF requirements: https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF

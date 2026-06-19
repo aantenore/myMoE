@@ -24,12 +24,17 @@ Smallest fast demo model:
 
 - `mlx-community/Qwen3-4B-4bit`
 
+Optional GGUF coding/agentic specialist:
+
+- `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF`
+
 Why:
 
 - Qwen3 30B-A3B passed the local MLX benchmark and produced the best risk-adjusted score.
 - Gemma 4 E4B failed on the newest MLX stack but passed with the pinned profile and is now the selected fallback/compaction model.
 - Qwen3 4B is dramatically smaller and remains the best practical low-memory first-run model.
 - Gemma 26B variants remain stretch candidates; one quick run was too slow for the default benchmark loop and should be evaluated separately before making them defaults.
+- The Gemma 12B GGUF specialist is documented and launchable through llama.cpp, but it was not selected as the general default because it is coding/agentic-specialized and has not yet beaten the Qwen general baseline on Antonio's general-purpose eval set.
 
 ## Latest Benchmark Snapshot
 

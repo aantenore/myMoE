@@ -9,24 +9,24 @@
   },
   "prompts": [
     {
-      "id": "it_product_strategy",
+      "id": "product_strategy",
       "category": "planning",
-      "prompt": "Sei un assistente locale general purpose. Valuta questa idea: una app personale che usa memoria locale, contesto compatto e routing MoE. Dammi decisione, rischi e MVP in italiano."
+      "prompt": "You are a local general-purpose assistant. Evaluate this idea: a personal app that uses local memory, compact context, and MoE routing. Give a decision, risks, and an MVP in English."
     },
     {
       "id": "reasoning_policy",
       "category": "reasoning",
-      "prompt": "Confronta tre strategie per gestire un contesto lungo in un assistente locale: sliding window, summary memory e retrieval semantico. Scegli una policy ibrida e spiega i tradeoff."
+      "prompt": "Compare three strategies for handling long context in a local assistant: sliding window, summary memory, and semantic retrieval. Choose a hybrid policy and explain the tradeoffs."
     },
     {
       "id": "writing_rewrite",
       "category": "writing",
-      "prompt": "Riscrivi questo messaggio in modo chiaro, sintetico e caldo: 'non so se questa architettura abbia senso, forse ci stiamo complicando la vita ma voglio capire se puo diventare un prodotto reale'."
+      "prompt": "Rewrite this message in a clear, concise, and warm tone: 'I am not sure this architecture makes sense. Maybe we are making life harder than necessary, but I want to understand whether it can become a real product.'"
     },
     {
       "id": "tool_reasoning",
       "category": "tool_use",
-      "prompt": "Disegna a parole un flusso tool-using per un assistente locale che deve leggere documenti, ricordare preferenze e rispondere senza mandare dati sensibili al cloud."
+      "prompt": "Describe a tool-using flow for a local assistant that needs to read documents, remember preferences, and answer without sending sensitive data to the cloud."
     }
   ],
   "candidates": [

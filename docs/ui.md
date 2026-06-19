@@ -5,7 +5,7 @@
 Run the local UI with the default live config:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.web \
+PYTHONPATH=src .venv/bin/python -m local_moe.web \
   --port 8089
 ```
 
@@ -15,18 +15,24 @@ Then open:
 http://127.0.0.1:8089
 ```
 
-For a live local model, start the model server first and pass a live config:
+Start the configured local model server first:
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
-PYTHONPATH=src python3 -m local_moe.web --port 8089
+PYTHONPATH=src .venv/bin/python -m local_moe.web --port 8089
 ```
 
-The UI is a dependency-free shadcn/new-york inspired surface: zinc dark theme, thin borders, small radius, badges, cards, and compact operator panels.
+The UI is a dependency-free shadcn/new-york inspired chat surface. The default view is intentionally simple for non-technical users:
 
-It now exposes runtime and extension status so you can see the selected backend, model commands, tools, skills, plugins, MCP servers, and cron jobs.
+- left rail with a new chat action and starter prompts,
+- central chat transcript,
+- sticky composer,
+- concise model status,
+- Advanced drawer hidden by default.
 
-Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, and bullet lists while escaping model-provided HTML before formatting.
+The Advanced drawer contains runtime commands, configured models, last routing metadata, extension registry, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+
+Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting.
 
 Keyboard behavior:
 
@@ -35,19 +41,19 @@ Keyboard behavior:
 
 ## Screenshots
 
-Dashboard with live model-required config and extension registry:
+Chat-first empty state:
 
-![myMoE dashboard](screenshots/dashboard.png)
+![myMoE chat](screenshots/dashboard.png)
 
-Composer view with the prompt library and runtime panels visible:
+Chat composer and rendered response:
 
-![myMoE composer](screenshots/composer.png)
+![myMoE response](screenshots/composer.png)
 
-Extension registry tab:
+Advanced runtime and model drawer:
 
-![myMoE extensions](screenshots/extensions.png)
+![myMoE advanced runtime](screenshots/extensions.png)
 
-Live generation through `Gemma 4 E4B`:
+Live generation through a local model:
 
 ![myMoE live generation](screenshots/live-generation.png)
 
@@ -55,27 +61,19 @@ Mobile layout check:
 
 ![myMoE mobile layout](screenshots/mobile.png)
 
-The UI exposes:
-
-- prompt generation,
-- selected route,
-- provider errors,
-- expert list,
-- router eval against the extended eval set.
-
 ## CLI
 
 Single prompt:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --prompt "Analyze the tradeoff between a single local model and a routed MoE."
 ```
 
 JSON output:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --prompt "Summarize this plan." \
   --json
 ```
@@ -83,16 +81,16 @@ PYTHONPATH=src python3 -m local_moe.cli \
 Interactive shell:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --interactive
 ```
 
 Eval mode:
 
 ```bash
-PYTHONPATH=src python3 -m local_moe.cli \
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --config configs/moe.mock.json \
   --eval experiments/eval_set_extended.jsonl
 ```
 
-Eval mode intentionally uses the mock fixture because it validates deterministic routing rather than model quality.
+Eval mode uses the mock fixture because it validates deterministic routing rather than model quality. Normal UI and CLI usage should use a live local model config.

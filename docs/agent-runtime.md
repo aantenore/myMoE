@@ -41,6 +41,8 @@ The current implementation discovers and reports these surfaces. Execution of hi
 
 The user-facing default is `configs/moe.live.general-mlx.example.json`, not a mock config. The mock config remains only for deterministic tests and CI-style routing checks.
 
+The runtime planner reads each expert's `params.runtime_backend`. MLX experts generate `mlx_lm.server` commands, GGUF experts generate `llama-server -hf ...` commands, and mixed configs are represented as mixed runtime plans instead of hardcoding one global backend.
+
 ## Multilingual Policy
 
 The default provider system message instructs the model to reply in the user's language unless the user asks otherwise. The app config uses `language.mode = auto` and documents supported language hints.
@@ -54,3 +56,14 @@ The application UI and documentation are written in English. Model responses fol
 Gemma 4 E4B is supported through `configs/moe.live.gemma-e4b-mlx.example.json` and the pinned `.[mlx]` dependency profile. The newer MLX package set tested during development reproduced an upstream artifact/runtime mismatch, so the stable profile is deliberately pinned until the upstream issue is resolved.
 
 See `docs/gemma-e4b-runtime.md` for the exact versions, commands, and benchmark result.
+
+## Thinking Policy
+
+Experts can declare:
+
+```json
+"supports_thinking": true,
+"thinking_policy": "auto"
+```
+
+For supported models, `auto` enables thinking only for complex prompts and strips raw thinking/channel tokens from the returned answer. Qwen3 30B-A3B Instruct 2507 remains configured as non-thinking because its public model card says that release supports only non-thinking mode.

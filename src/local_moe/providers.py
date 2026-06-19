@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Protocol
 from urllib import request, error
 
 from .config import ExpertConfig
 
-LOCAL_PROVIDER_PARAMS = {"runtime_backend"}
+LOCAL_PROVIDER_PARAMS = {"runtime_backend", "supports_thinking", "thinking_policy"}
 
 
 class ProviderError(RuntimeError):
@@ -74,7 +75,7 @@ class OpenAICompatibleProvider:
                 {"role": "user", "content": req.prompt},
             ],
         }
-        payload.update({key: value for key, value in expert.params.items() if key not in LOCAL_PROVIDER_PARAMS})
+        payload.update(_remote_params(expert, req.prompt))
 
         data = json.dumps(payload).encode("utf-8")
         http_req = request.Request(
@@ -106,7 +107,7 @@ class OpenAICompatibleProvider:
         return ExpertResult(
             expert_id=expert.id,
             model=expert.model,
-            content=str(content),
+            content=strip_reasoning_content(str(content)),
             correlation_id=req.correlation_id,
             prompt_tokens=_maybe_int(usage, "prompt_tokens"),
             completion_tokens=_maybe_int(usage, "completion_tokens"),
@@ -138,3 +139,92 @@ def _maybe_float(raw: object, key: str) -> float | None:
         return float(raw[key])
     except (TypeError, ValueError):
         return None
+
+
+def _remote_params(expert: ExpertConfig, prompt: str) -> dict[str, object]:
+    params = {
+        key: value
+        for key, value in expert.params.items()
+        if key not in LOCAL_PROVIDER_PARAMS
+    }
+    if not _supports_thinking(expert.params):
+        return params
+
+    policy = str(expert.params.get("thinking_policy", "off")).strip().lower()
+    if policy in {"on", "always", "true", "1"}:
+        enable_thinking = True
+    elif policy == "auto":
+        enable_thinking = _prompt_needs_thinking(prompt)
+    else:
+        enable_thinking = False
+
+    chat_template_kwargs = dict(params.get("chat_template_kwargs", {}))
+    chat_template_kwargs["enable_thinking"] = enable_thinking
+    params["chat_template_kwargs"] = chat_template_kwargs
+    return params
+
+
+def _supports_thinking(params: dict[str, object]) -> bool:
+    raw = params.get("supports_thinking", False)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _prompt_needs_thinking(prompt: str) -> bool:
+    normalized = prompt.lower()
+    hard_markers = (
+        "analyze",
+        "architecture",
+        "compare",
+        "debug",
+        "decide",
+        "derive",
+        "diagnose",
+        "evaluate",
+        "multi-step",
+        "optimize",
+        "plan",
+        "prove",
+        "reason",
+        "research",
+        "tradeoff",
+        "why",
+    )
+    simple_markers = (
+        "summarize",
+        "translate",
+        "rewrite",
+        "shorten",
+        "format",
+        "fix grammar",
+    )
+    if any(marker in normalized for marker in simple_markers):
+        return False
+    if any(marker in normalized for marker in hard_markers):
+        return True
+    return len(prompt) > 600 or prompt.count("?") >= 2
+
+
+def strip_reasoning_content(content: str) -> str:
+    cleaned = re.sub(r"(?is)<think>.*?</think>", "", content)
+    cleaned = re.sub(
+        r"(?is)<\|channel\|>analysis.*?(?=<\|channel\|>final|$)",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?is)<\|channel>\s*(?:analysis|thought)\b.*?<channel\|>",
+        "",
+        cleaned,
+    )
+    if "<|channel|>final" in cleaned:
+        cleaned = cleaned.split("<|channel|>final", maxsplit=1)[-1]
+    if "<|channel>final" in cleaned:
+        cleaned = cleaned.split("<|channel>final", maxsplit=1)[-1]
+    cleaned = re.sub(r"(?is)<\|[^>]+?\|>", "", cleaned)
+    cleaned = re.sub(r"(?is)<[^>]*\|>", "", cleaned)
+    cleaned = re.sub(r"(?is)</?(?:start_of_turn|end_of_turn|eos)>", "", cleaned)
+    return cleaned.strip()

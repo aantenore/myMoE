@@ -12,6 +12,7 @@ from local_moe.providers import (
     OpenAICompatibleProvider,
     ProviderError,
     build_provider,
+    strip_reasoning_content,
 )
 
 
@@ -116,6 +117,8 @@ class ProviderTests(unittest.TestCase):
                 timeout_seconds=1,
                 params={
                     "runtime_backend": "mlx_lm",
+                    "supports_thinking": True,
+                    "thinking_policy": "off",
                     "temperature": 0.1,
                     "chat_template_kwargs": {"enable_thinking": False},
                 },
@@ -123,11 +126,107 @@ class ProviderTests(unittest.TestCase):
             provider.generate(expert, GenerationRequest(prompt="hello", correlation_id="case-local"))
 
         self.assertNotIn("runtime_backend", _FakeOpenAIHandler.last_payload)
+        self.assertNotIn("supports_thinking", _FakeOpenAIHandler.last_payload)
+        self.assertNotIn("thinking_policy", _FakeOpenAIHandler.last_payload)
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.1)
         self.assertEqual(
             _FakeOpenAIHandler.last_payload["chat_template_kwargs"],
             {"enable_thinking": False},
         )
+
+    def test_openai_provider_auto_enables_thinking_for_complex_prompts(self) -> None:
+        response = {"choices": [{"message": {"content": "final answer"}}]}
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            provider = OpenAICompatibleProvider()
+            expert = ExpertConfig(
+                id="reasoner",
+                provider="openai_compatible",
+                model="thinking-model",
+                role="general",
+                base_url=f"http://{host}:{port}/v1",
+                timeout_seconds=1,
+                params={
+                    "supports_thinking": True,
+                    "thinking_policy": "auto",
+                    "temperature": 0.4,
+                },
+            )
+            provider.generate(
+                expert,
+                GenerationRequest(
+                    prompt="Analyze the architecture tradeoff and decide a plan.",
+                    correlation_id="case-thinking-on",
+                ),
+            )
+
+        self.assertEqual(
+            _FakeOpenAIHandler.last_payload["chat_template_kwargs"],
+            {"enable_thinking": True},
+        )
+
+    def test_openai_provider_auto_disables_thinking_for_simple_prompts(self) -> None:
+        response = {"choices": [{"message": {"content": "final answer"}}]}
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            provider = OpenAICompatibleProvider()
+            expert = ExpertConfig(
+                id="reasoner",
+                provider="openai_compatible",
+                model="thinking-model",
+                role="general",
+                base_url=f"http://{host}:{port}/v1",
+                timeout_seconds=1,
+                params={
+                    "supports_thinking": True,
+                    "thinking_policy": "auto",
+                    "temperature": 0.4,
+                },
+            )
+            provider.generate(
+                expert,
+                GenerationRequest(
+                    prompt="Summarize this in two bullets.",
+                    correlation_id="case-thinking-off",
+                ),
+            )
+
+        self.assertEqual(
+            _FakeOpenAIHandler.last_payload["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
+
+    def test_openai_provider_strips_reasoning_channels_from_content(self) -> None:
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "<think>private reasoning</think>\n"
+                            "<|channel|>analysis more private text"
+                            "<|channel|>final Public **answer**."
+                        )
+                    }
+                }
+            ]
+        }
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            provider = OpenAICompatibleProvider()
+            result = provider.generate(
+                _expert(f"http://{host}:{port}/v1"),
+                GenerationRequest(prompt="hello", correlation_id="case-strip"),
+            )
+
+        self.assertEqual(result.content, "Public **answer**.")
+
+    def test_strip_reasoning_content_handles_plain_answers(self) -> None:
+        self.assertEqual(strip_reasoning_content("Just the answer."), "Just the answer.")
+
+    def test_strip_reasoning_content_handles_gemma_channel_tokens(self) -> None:
+        raw = "<|channel>thought\nprivate steps\n<channel|>\n<|channel>final\nVisible answer."
+
+        self.assertEqual(strip_reasoning_content(raw), "Visible answer.")
 
     def test_openai_provider_rejects_invalid_payload_shape(self) -> None:
         with _fake_openai_server({"choices": []}) as server:

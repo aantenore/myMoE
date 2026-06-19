@@ -15,6 +15,8 @@
       "timeout_seconds": 120,
       "params": {
         "runtime_backend": "mlx_lm",
+        "supports_thinking": false,
+        "thinking_policy": "off",
         "temperature": 0.7,
         "top_p": 0.8,
         "max_tokens": 2048
@@ -30,12 +32,11 @@
       "timeout_seconds": 60,
       "params": {
         "runtime_backend": "mlx_lm",
+        "supports_thinking": true,
+        "thinking_policy": "auto",
         "temperature": 0.3,
         "top_p": 0.9,
-        "max_tokens": 1024,
-        "chat_template_kwargs": {
-          "enable_thinking": false
-        }
+        "max_tokens": 1024
       }
     }
   ],

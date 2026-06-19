@@ -54,7 +54,7 @@ class ExtensionTests(unittest.TestCase):
         moe_config = load_config(app_config.default_moe_config)
         plan = build_runtime_plan(moe_config, app_config.runtime.preferred_backends)
 
-        self.assertIn(plan.backend, {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertIn(plan.backend, {"mlx_lm", "ollama", "llama_cpp", "mixed"})
         self.assertTrue(plan.install_commands)
 
     def test_builds_runtime_plan_for_gemma_pinned_mlx_config(self) -> None:
@@ -65,6 +65,24 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(any("mlx_lm.server" in command for command in flattened))
         self.assertTrue(any("gemma-4-e4b-it-4bit" in command for command in flattened))
         self.assertTrue(any(".[mlx]" in command for command in (" ".join(item) for item in plan.install_commands)))
+
+    def test_builds_runtime_plan_for_huggingface_gguf_config(self) -> None:
+        moe_config = load_config("configs/moe.live.gemma-12b-coder-gguf.example.json")
+        plan = build_runtime_plan(moe_config, {"darwin_arm64": "mlx_lm", "fallback": "mlx_lm"})
+        flattened = [" ".join(command) for command in plan.model_commands]
+
+        self.assertEqual(plan.backend, "llama_cpp")
+        self.assertTrue(any("llama-server" in command for command in flattened))
+        self.assertTrue(any("-hf yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF:Q4_K_M" in command for command in flattened))
+
+    def test_builds_runtime_plan_for_huggingface_agentic_gguf_config(self) -> None:
+        moe_config = load_config("configs/moe.live.gemma-12b-agentic-gguf.example.json")
+        plan = build_runtime_plan(moe_config, {"darwin_arm64": "mlx_lm", "fallback": "mlx_lm"})
+        flattened = [" ".join(command) for command in plan.model_commands]
+
+        self.assertEqual(plan.backend, "llama_cpp")
+        self.assertTrue(any("llama-server" in command for command in flattened))
+        self.assertTrue(any("-hf yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF:Q4_K_M" in command for command in flattened))
 
 
 if __name__ == "__main__":

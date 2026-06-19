@@ -1,0 +1,35 @@
+{
+  "routing": {
+    "top_k": 1,
+    "fallback_order": [],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "gemma_12b_coder",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8103/v1",
+      "model": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF:Q4_K_M",
+      "role": "optional-coding-specialist",
+      "weight": 1.0,
+      "timeout_seconds": 120,
+      "params": {
+        "runtime_backend": "llama_cpp",
+        "supports_thinking": true,
+        "thinking_policy": "auto",
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+        "context_size": 32768,
+        "gpu_layers": 999
+      }
+    }
+  ],
+  "rules": [
+    {
+      "expert_id": "gemma_12b_coder",
+      "keywords": ["code", "python", "debug", "algorithm", "tests", "complexity", "implementation"],
+      "weight": 2.0
+    }
+  ]
+}

@@ -30,15 +30,15 @@ flowchart LR
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight.
 - `RoutingRule`: configured keyword/weight mapping to expert ids.
 - `Router`: pure deterministic scorer, no provider names in code.
-- `Provider`: local inference boundary, currently mock or OpenAI-compatible HTTP.
+- `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; the mock provider exists only as a deterministic test fixture.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation.
 - `Evaluator`: deterministic routing and behavior checks.
 
 ## Runtime Modes
 
-### Mode 0: Mock
+### Mode 0: Deterministic Test Fixture
 
-No model required. Validates config, router behavior, evaluator and CLI.
+No model required. Validates config, router behavior, evaluator, provider contracts, and CLI in tests. This is not a user-facing application mode.
 
 ### Mode 1: Top-1 Resident General Expert
 
