@@ -111,6 +111,28 @@ or:
 make cli
 ```
 
+## Visual Walkthrough
+
+The default UI is chat-first, with operational details hidden behind the Advanced drawer.
+
+![myMoE chat-first UI](docs/screenshots/dashboard.png)
+
+The composer supports normal chat usage, rendered Markdown responses, `Enter` to send, and `Alt+Enter` for multiline prompts.
+
+![myMoE composer and response](docs/screenshots/composer.png)
+
+Advanced runtime, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer.
+
+![myMoE advanced drawer](docs/screenshots/extensions.png)
+
+Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
+
+![myMoE live local generation](docs/screenshots/live-generation.png)
+
+The layout has also been checked on a mobile viewport.
+
+![myMoE mobile layout](docs/screenshots/mobile.png)
+
 ## Recommended Local Model Path
 
 For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpose app, so the default is not a coder model.

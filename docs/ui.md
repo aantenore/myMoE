@@ -45,19 +45,19 @@ Chat-first empty state:
 
 ![myMoE chat](screenshots/dashboard.png)
 
-Chat composer and rendered response:
+Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime and model drawer:
+Advanced runtime, model, routing, extension, MCP, cron, and eval drawer:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 
-Live generation through a local model:
+Live generation through a local Gemma 4 E4B model, including Markdown rendering and route metadata:
 
 ![myMoE live generation](screenshots/live-generation.png)
 
-Mobile layout check:
+Mobile layout check for the same chat-first flow:
 
 ![myMoE mobile layout](screenshots/mobile.png)
 
