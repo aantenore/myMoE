@@ -66,6 +66,23 @@ class WebTests(unittest.TestCase):
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
         self.assertTrue(extensions["tools"])
 
+    def test_serves_and_runs_cron_endpoint(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            status = _get_json(base_url + "/api/cron")
+            result = _post_json(base_url + "/api/cron/run", {"dry_run": True})
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertIn("jobs", status)
+        self.assertIn("results", result)
+        self.assertTrue(all(item["status"] == "dry_run" for item in result["results"]))
+
     def test_ui_supports_markdown_rendering_and_enter_shortcut(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -86,6 +103,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
+        self.assertIn("runCron", html)
+        self.assertIn("/api/cron/run", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)
         self.assertIn("config.routing?.distilled?.enabled", html)

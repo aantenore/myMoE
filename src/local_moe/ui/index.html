@@ -794,6 +794,11 @@
           <div id="extensions"></div>
         </section>
         <section class="advanced-section">
+          <h2>Cron</h2>
+          <button class="ghost-button" id="run-cron" type="button">Run due jobs</button>
+          <pre class="eval-output" id="cron-output">Not run yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Evaluation</h2>
           <button class="ghost-button" id="run-eval" type="button">Run eval</button>
           <pre class="eval-output" id="eval-output">Not run yet.</pre>
@@ -880,6 +885,7 @@
         el("advanced-close").addEventListener("click", () => setAdvanced(false));
         el("overlay").addEventListener("click", () => setAdvanced(false));
         el("run-eval").addEventListener("click", runEval);
+        el("run-cron").addEventListener("click", runCron);
       }
 
       async function loadMeta() {
@@ -1131,6 +1137,19 @@
           el("eval-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("eval-output").textContent = error.message;
+        }
+      }
+
+      async function runCron() {
+        el("cron-output").textContent = "Running...";
+        try {
+          const result = await api("/api/cron/run", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          el("cron-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("cron-output").textContent = error.message;
         }
       }
 

@@ -20,6 +20,14 @@ class MemoryRecord:
     valid_until: str | None = None
 
 
+@dataclass(frozen=True)
+class MemoryMaintenanceReport:
+    path: str
+    total_records: int
+    active_records: int
+    expired_records: int
+
+
 class FileMemoryStore:
     """Append-only local memory store; simple first layer before vector/graph backends."""
 
@@ -74,6 +82,16 @@ class FileMemoryStore:
                 scored.append((record, score))
         scored.sort(key=lambda item: (-item[1], item[0].created_at, item[0].id))
         return scored[:limit]
+
+    def maintenance_report(self, *, now: str | None = None) -> MemoryMaintenanceReport:
+        records = self.list()
+        active = [record for record in records if _is_valid_at(record, now)]
+        return MemoryMaintenanceReport(
+            path=str(self.path),
+            total_records=len(records),
+            active_records=len(active),
+            expired_records=len(records) - len(active),
+        )
 
 
 def _read_records(path: Path) -> list[MemoryRecord]:

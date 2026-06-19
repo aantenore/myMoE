@@ -11,6 +11,7 @@ from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .orchestrator import LocalMoE
+from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 
 
 def main() -> None:
@@ -25,6 +26,9 @@ def main() -> None:
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--list-extensions", action="store_true")
     parser.add_argument("--create-plugin")
+    parser.add_argument("--cron-status", action="store_true")
+    parser.add_argument("--run-cron", action="store_true")
+    parser.add_argument("--cron-dry-run", action="store_true")
     args = parser.parse_args()
 
     app_config = load_app_config(args.app_config)
@@ -46,6 +50,29 @@ def main() -> None:
 
     if args.list_extensions:
         print(json.dumps(registry_payload(_registry(app_config)), indent=2))
+        return
+
+    if args.cron_status:
+        registry = _registry(app_config)
+        print(
+            json.dumps(
+                cron_status(
+                    registry.cron_jobs,
+                    state_path=_cron_state_path(app_config),
+                ),
+                indent=2,
+            )
+        )
+        return
+
+    if args.run_cron:
+        registry = _registry(app_config)
+        summary = run_due_jobs(
+            registry.cron_jobs,
+            state_path=_cron_state_path(app_config),
+            dry_run=args.cron_dry_run,
+        )
+        print(json.dumps(cron_summary_payload(summary), indent=2))
         return
 
     if args.create_plugin:
@@ -129,6 +156,10 @@ def _registry(app_config: object) -> object:
         mcp_config=app_config.extensions.mcp_config,
         cron_config=app_config.extensions.cron_config,
     )
+
+
+def _cron_state_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/cron-state.json"
 
 
 if __name__ == "__main__":

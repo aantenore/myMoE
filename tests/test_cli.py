@@ -82,6 +82,45 @@ class CliTests(unittest.TestCase):
         self.assertIn("runtime", payload)
         self.assertTrue(payload["extensions"]["tools"])
 
+    def test_cron_status_prints_jobs(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--cron-status",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertIn("jobs", payload)
+        self.assertIn("memory-maintenance", {item["id"] for item in payload["jobs"]})
+
+    def test_run_cron_dry_run_prints_due_jobs(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--run-cron",
+                "--cron-dry-run",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertIn("results", payload)
+        self.assertTrue(all(item["status"] == "dry_run" for item in payload["results"]))
+
 
 if __name__ == "__main__":
     unittest.main()
