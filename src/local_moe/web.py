@@ -327,6 +327,88 @@ def _make_handler(
         def do_POST(self) -> None:
             nonlocal registry
             path = urlparse(self.path).path
+            if path == "/api/generate/stream":
+                payload = _read_json(self)
+                prompt = str(payload.get("prompt", "")).strip()
+                if not prompt:
+                    _send_json(
+                        self,
+                        {"error": "prompt is required"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                session_id = _optional_str(payload.get("session_id"))
+                session = None
+                if session_id:
+                    session = chat_store.get_session(session_id)
+                    if session is None:
+                        _send_json(
+                            self,
+                            {"error": "not_found", "message": "Chat session not found."},
+                            status=HTTPStatus.NOT_FOUND,
+                        )
+                        return
+                model_context = _build_model_context(
+                    session,
+                    prompt,
+                    context_policy,
+                    memory_store=memory_store,
+                )
+
+                _send_sse_headers(self)
+                try:
+                    for event in moe.generate_stream(
+                        model_context["prompt"],
+                        correlation_id=_optional_str(payload.get("correlation_id")),
+                        route_prompt=prompt,
+                    ):
+                        if event.kind == "route" and event.route is not None:
+                            _send_sse_event(self, "route", {"route": _route_payload(event.route)})
+                            continue
+                        if event.kind == "content":
+                            _send_sse_event(self, "content", {"content": event.content})
+                            continue
+                        if event.kind == "final" and event.response is not None:
+                            response_payload = _response_payload(event.response)
+                            response_payload["context"] = model_context["payload"]
+                            try:
+                                session = chat_store.append_exchange(
+                                    session_id=session_id,
+                                    user_content=prompt,
+                                    assistant_content=event.response.content,
+                                    assistant_meta={
+                                        "correlation_id": response_payload["correlation_id"],
+                                        "route": response_payload["route"],
+                                        "results": response_payload["results"],
+                                        "errors": response_payload["errors"],
+                                        "disagreement": response_payload["disagreement"],
+                                        "context": response_payload["context"],
+                                    },
+                                )
+                            except KeyError:
+                                _send_sse_event(
+                                    self,
+                                    "error",
+                                    {"error": "not_found", "message": "Chat session not found."},
+                                )
+                                return
+                            response_payload["session_id"] = session.id
+                            response_payload["session"] = chat_session_payload(session)
+                            _send_sse_event(self, "final", response_payload)
+                            return
+                    _send_sse_event(
+                        self,
+                        "error",
+                        {"error": "provider_error", "message": "Stream ended without a final response."},
+                    )
+                except ProviderError as exc:
+                    _send_sse_event(
+                        self,
+                        "error",
+                        {"error": "provider_error", "message": str(exc)},
+                    )
+                return
+
             if path == "/api/generate":
                 payload = _read_json(self)
                 prompt = str(payload.get("prompt", "")).strip()
@@ -744,6 +826,20 @@ def _send_download(
     handler.wfile.write(body)
 
 
+def _send_sse_headers(handler: BaseHTTPRequestHandler) -> None:
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.end_headers()
+
+
+def _send_sse_event(handler: BaseHTTPRequestHandler, event: str, payload: object) -> None:
+    body = f"event: {event}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+    handler.wfile.write(body.encode("utf-8"))
+    handler.wfile.flush()
+
+
 def _config_payload(config_path: str, config: object, app_config: object) -> dict[str, object]:
     return {
         "app": app_config_payload(app_config),
@@ -833,6 +929,13 @@ def _response_payload(response: object) -> dict[str, object]:
         "errors": list(response.errors),
         "disagreement": asdict(response.disagreement) if response.disagreement else None,
         "context": {},
+    }
+
+
+def _route_payload(route: object) -> dict[str, object]:
+    return {
+        "selected": [item.__dict__ for item in route.selected],
+        "fallback_order": list(route.fallback_order),
     }
 
 

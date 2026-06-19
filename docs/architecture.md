@@ -30,8 +30,8 @@ flowchart LR
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight.
 - `RoutingRule`: configured keyword/weight mapping to expert ids.
 - `Router`: pure deterministic scorer with rules and optional local semantic examples, no provider names in code.
-- `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures.
-- `Orchestrator`: applies route, fallback, timeout, correlation id propagation.
+- `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures. Providers can expose streaming generation while preserving the same final result contract.
+- `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, model process reachability, extension audit, and cron state.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
@@ -114,5 +114,6 @@ The practical policy is:
 1. Config loads and validates.
 2. Router selects expected experts on known prompts.
 3. Provider boundary preserves `correlation_id`.
-4. Local endpoint smoke test returns valid text under timeout.
-5. MoE beats single-model baseline on a small rubric before adding complexity.
+4. Streaming and non-streaming generation return the same persisted chat contract.
+5. Local endpoint smoke test returns valid text under timeout.
+6. MoE beats single-model baseline on a small rubric before adding complexity.

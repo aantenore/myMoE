@@ -42,6 +42,14 @@ curl -X POST http://127.0.0.1:8089/api/generate \
   --data '{"session_id":"<session-id>","prompt":"Continue this plan."}'
 ```
 
+Stream a saved chat response progressively:
+
+```bash
+curl -N -X POST http://127.0.0.1:8089/api/generate/stream \
+  -H 'Content-Type: application/json' \
+  --data '{"session_id":"<session-id>","prompt":"Continue this plan."}'
+```
+
 Rename, compact, export, or delete a saved chat:
 
 ```bash
@@ -91,6 +99,8 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 
 Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy, retrieved local memories, and returns context telemetry with the generation response.
 
+The browser prefers `/api/generate/stream`, a server-sent event response with `route`, `content`, `final`, and `error` events. The chat bubble updates as content arrives, then the `final` event persists the exchange and refreshes the session list. If streaming is unavailable before content starts, the UI falls back to the regular `/api/generate` JSON endpoint.
+
 The Compact action calls the configured local compaction expert, stores a durable session summary, and reuses that summary in later context bundles. Exported Markdown includes the current summary.
 
 The Memory section stores append-only local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt.
@@ -121,7 +131,7 @@ The bundled MCP-enabled example uses the local filesystem MCP server. It is usef
 
 The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
-Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting.
+Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting. Streaming updates use the same renderer, so partial Markdown remains escaped while the answer is still arriving.
 
 Keyboard behavior:
 

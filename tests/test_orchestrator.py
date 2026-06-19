@@ -45,6 +45,18 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(response.results[0].expert_id, "general")
         self.assertIn("prompt_chars=", response.content)
 
+    def test_generate_stream_emits_route_content_and_final_response(self) -> None:
+        moe = LocalMoE(load_config("tests/fixtures/moe.synthetic.json"))
+
+        events = list(moe.generate_stream("Summarize this note.", correlation_id="case-stream"))
+
+        self.assertEqual(events[0].kind, "route")
+        self.assertEqual(events[0].route.selected[0].expert_id, "general")
+        self.assertTrue(any(event.kind == "content" for event in events))
+        self.assertEqual(events[-1].kind, "final")
+        self.assertEqual(events[-1].response.correlation_id, "case-stream")
+        self.assertEqual(events[-1].response.results[0].correlation_id, "case-stream")
+
 
 if __name__ == "__main__":
     unittest.main()

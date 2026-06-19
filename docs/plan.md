@@ -23,6 +23,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add System Doctor readiness report from CLI, API, and UI.
 - [x] Add privacy-safe support bundle export from CLI, API, and UI.
 - [x] Add sanitized performance decision report from CLI, API, and UI.
+- [x] Add progressive streamed chat responses with non-streaming fallback.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Add guarded extension self-configuration for MCP server and cron job entries.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Protocol
+from typing import Iterator, Protocol
 from urllib import request, error
 
 from .config import ExpertConfig
@@ -32,6 +32,12 @@ class ExpertResult:
     predicted_tokens_per_second: float | None = None
 
 
+@dataclass(frozen=True)
+class ProviderStreamEvent:
+    content: str
+    result: ExpertResult | None = None
+
+
 class Provider(Protocol):
     def generate(self, expert: ExpertConfig, req: GenerationRequest) -> ExpertResult:
         ...
@@ -53,37 +59,22 @@ class SyntheticProvider:
             predicted_tokens_per_second=None,
         )
 
+    def stream_generate(
+        self,
+        expert: ExpertConfig,
+        req: GenerationRequest,
+    ) -> Iterator[ProviderStreamEvent]:
+        result = self.generate(expert, req)
+        yield ProviderStreamEvent(content=result.content)
+        yield ProviderStreamEvent(content=result.content, result=result)
+
 
 class OpenAICompatibleProvider:
     def generate(self, expert: ExpertConfig, req: GenerationRequest) -> ExpertResult:
         if not expert.base_url:
             raise ProviderError(f"Expert {expert.id} has no base_url.")
 
-        url = expert.base_url.rstrip("/") + "/chat/completions"
-        payload = {
-            "model": expert.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a local expert in a system-level MoE. "
-                        "Return useful, direct answers. Reply in the user's language "
-                        "unless they explicitly ask for another language. Preserve "
-                        "correlation context."
-                    ),
-                },
-                {"role": "user", "content": req.prompt},
-            ],
-        }
-        payload.update(_remote_params(expert, req.prompt))
-
-        data = json.dumps(payload).encode("utf-8")
-        http_req = request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        http_req = _chat_request(expert, req)
 
         try:
             with request.urlopen(http_req, timeout=expert.timeout_seconds) as response:
@@ -114,6 +105,73 @@ class OpenAICompatibleProvider:
             predicted_tokens_per_second=_maybe_float(timings, "predicted_per_second"),
         )
 
+    def stream_generate(
+        self,
+        expert: ExpertConfig,
+        req: GenerationRequest,
+    ) -> Iterator[ProviderStreamEvent]:
+        if not expert.base_url:
+            raise ProviderError(f"Expert {expert.id} has no base_url.")
+
+        http_req = _chat_request(expert, req, stream=True)
+        raw_content = ""
+        prompt_tokens: int | None = None
+        completion_tokens: int | None = None
+        predicted_tokens_per_second: float | None = None
+        saw_sse = False
+        non_sse_lines: list[str] = []
+
+        try:
+            with request.urlopen(http_req, timeout=expert.timeout_seconds) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        non_sse_lines.append(line)
+                        continue
+                    saw_sse = True
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        parsed = json.loads(data)
+                    except json.JSONDecodeError as exc:
+                        raise ProviderError(f"Expert {expert.id} returned invalid stream JSON.") from exc
+
+                    delta = _stream_delta(parsed)
+                    if delta:
+                        raw_content += delta
+                        yield ProviderStreamEvent(content=strip_reasoning_content(raw_content))
+
+                    usage = parsed.get("usage") if isinstance(parsed, dict) else None
+                    timings = parsed.get("timings") if isinstance(parsed, dict) else None
+                    prompt_tokens = _maybe_int(usage, "prompt_tokens") or prompt_tokens
+                    completion_tokens = _maybe_int(usage, "completion_tokens") or completion_tokens
+                    predicted_tokens_per_second = (
+                        _maybe_float(timings, "predicted_per_second")
+                        or predicted_tokens_per_second
+                    )
+        except error.URLError as exc:
+            raise ProviderError(f"Expert {expert.id} stream request failed: {exc}") from exc
+
+        if not saw_sse and non_sse_lines:
+            result = _parse_non_streaming_result(expert, req, "\n".join(non_sse_lines))
+            yield ProviderStreamEvent(content=result.content)
+            yield ProviderStreamEvent(content=result.content, result=result)
+            return
+
+        result = ExpertResult(
+            expert_id=expert.id,
+            model=expert.model,
+            content=strip_reasoning_content(raw_content),
+            correlation_id=req.correlation_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            predicted_tokens_per_second=predicted_tokens_per_second,
+        )
+        yield ProviderStreamEvent(content=result.content, result=result)
+
 
 def build_provider(provider_name: str) -> Provider:
     if provider_name == "synthetic":
@@ -121,6 +179,87 @@ def build_provider(provider_name: str) -> Provider:
     if provider_name == "openai_compatible":
         return OpenAICompatibleProvider()
     raise ProviderError(f"Unsupported provider type: {provider_name}")
+
+
+def _chat_request(
+    expert: ExpertConfig,
+    req: GenerationRequest,
+    *,
+    stream: bool = False,
+) -> request.Request:
+    url = str(expert.base_url).rstrip("/") + "/chat/completions"
+    payload = {
+        "model": expert.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a local expert in a system-level MoE. "
+                    "Return useful, direct answers. Reply in the user's language "
+                    "unless they explicitly ask for another language. Preserve "
+                    "correlation context."
+                ),
+            },
+            {"role": "user", "content": req.prompt},
+        ],
+    }
+    payload.update(_remote_params(expert, req.prompt))
+    if stream:
+        payload["stream"] = True
+
+    return request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+
+def _parse_non_streaming_result(
+    expert: ExpertConfig,
+    req: GenerationRequest,
+    raw: str,
+) -> ExpertResult:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(f"Expert {expert.id} returned invalid JSON.") from exc
+
+    try:
+        content = parsed["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"Expert {expert.id} returned invalid payload.") from exc
+
+    usage = parsed.get("usage") if isinstance(parsed, dict) else None
+    timings = parsed.get("timings") if isinstance(parsed, dict) else None
+    return ExpertResult(
+        expert_id=expert.id,
+        model=expert.model,
+        content=strip_reasoning_content(str(content)),
+        correlation_id=req.correlation_id,
+        prompt_tokens=_maybe_int(usage, "prompt_tokens"),
+        completion_tokens=_maybe_int(usage, "completion_tokens"),
+        predicted_tokens_per_second=_maybe_float(timings, "predicted_per_second"),
+    )
+
+
+def _stream_delta(parsed: object) -> str:
+    if not isinstance(parsed, dict):
+        return ""
+    choices = parsed.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if isinstance(delta, dict) and delta.get("content") is not None:
+        return str(delta["content"])
+    message = first.get("message")
+    if isinstance(message, dict) and message.get("content") is not None:
+        return str(message["content"])
+    text = first.get("text")
+    return str(text) if text is not None else ""
 
 
 def _maybe_int(raw: object, key: str) -> int | None:
@@ -210,6 +349,7 @@ def _prompt_needs_thinking(prompt: str) -> bool:
 
 def strip_reasoning_content(content: str) -> str:
     cleaned = re.sub(r"(?is)<think>.*?</think>", "", content)
+    cleaned = re.sub(r"(?is)<think>.*$", "", cleaned)
     cleaned = re.sub(
         r"(?is)<\|channel\|>analysis.*?(?=<\|channel\|>final|$)",
         "",
