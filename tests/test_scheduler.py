@@ -38,6 +38,7 @@ class SchedulerTests(unittest.TestCase):
         payload = cron_summary_payload(summary)
         self.assertEqual(payload["results"][0]["status"], "ok")
         self.assertEqual(payload["results"][0]["payload"]["total_records"], 2)
+        self.assertEqual(payload["results"][0]["payload"]["expired_records"], 1)
         self.assertEqual(payload["last_run_epoch"]["memory-maintenance"], 120)
 
     def test_dry_run_does_not_persist_state(self) -> None:
@@ -176,6 +177,36 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(summary.results[0].payload["labels"], 1)
         self.assertTrue(labels_exists)
         self.assertTrue(artifact_exists)
+
+    def test_memory_prune_expired_requires_write_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "memory.jsonl"
+            state_path = Path(tmp) / "cron-state.json"
+            store = FileMemoryStore(memory_path)
+            store.add("Current fact")
+            expired = store.add("Expired fact", valid_until="2026-01-01T00:00:00+00:00")
+            job = CronJobDefinition(
+                id="memory-prune-expired",
+                description="Memory prune expired",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=("memory.prune_expired", "--memory-path", str(memory_path)),
+                risk_class="write_local",
+            )
+
+            guarded = run_due_jobs((job,), state_path=state_path, now_epoch=120)
+            confirmed = run_due_jobs(
+                (job,),
+                state_path=state_path,
+                now_epoch=121,
+                confirm_writes=True,
+            )
+            remaining = FileMemoryStore(memory_path).list()
+
+        self.assertEqual(guarded.results[0].status, "needs_confirmation")
+        self.assertEqual(confirmed.results[0].status, "ok")
+        self.assertEqual(confirmed.results[0].payload["removed_ids"], [expired.id])
+        self.assertEqual([record.text for record in remaining], ["Current fact"])
 
     def test_auto_runnable_jobs_skip_write_risk_without_confirmation(self) -> None:
         safe_job = CronJobDefinition(

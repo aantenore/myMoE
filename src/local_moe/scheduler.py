@@ -8,7 +8,7 @@ import threading
 from typing import Callable
 
 from .extensions import CronJobDefinition, ExtensionRegistry
-from .memory import FileMemoryStore
+from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
 
 
 WRITE_CONFIRMATION_RISK_CLASSES = frozenset(
@@ -257,7 +257,7 @@ def run_due_jobs(
                 message="Job is due but was not executed.",
             )
         elif not _is_allowlisted_action(job):
-            result = _run_allowed_job(job, registry=registry)
+            result = _cron_error(job, f"Unsupported cron action: {job.command[0] if job.command else ''}")
         elif requires_write_confirmation(job.risk_class) and not confirm_writes:
             result = CronRunResult(
                 id=job.id,
@@ -319,7 +319,19 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
             reason=job.reason,
             command=job.command,
             message="Memory maintenance completed.",
-            payload=report.__dict__,
+            payload=memory_maintenance_payload(report),
+        )
+
+    if action == "memory.prune_expired":
+        memory_path = args.get("memory-path", "work/runtime/memory.jsonl")
+        report = FileMemoryStore(memory_path).prune_expired(now=_now_iso())
+        return CronRunResult(
+            id=job.id,
+            status="ok",
+            reason=job.reason,
+            command=job.command,
+            message="Expired memory records pruned.",
+            payload=memory_prune_payload(report),
         )
 
     if action == "extension.audit":
@@ -343,7 +355,7 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
 def _is_allowlisted_action(job: DueJob) -> bool:
     if not job.command:
         return False
-    return job.command[0] in {"memory.maintenance", "extension.audit", "router.distill"}
+    return job.command[0] in {"memory.maintenance", "memory.prune_expired", "extension.audit", "router.distill"}
 
 
 def _run_router_distill(job: DueJob, args: dict[str, str]) -> CronRunResult:

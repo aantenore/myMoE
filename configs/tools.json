@@ -8,6 +8,20 @@
       "enabled": true
     },
     {
+      "name": "memory.maintenance",
+      "description": "Report local memory store health, active records, pending temporal records, and expired records.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
+      "name": "memory.prune_expired",
+      "description": "Delete expired local memory records from the local memory store.",
+      "risk_class": "write_local",
+      "side_effects": "deletes_expired_memory_records",
+      "enabled": true
+    },
+    {
       "name": "memory.forget",
       "description": "Delete a local memory record or imported knowledge document from the local memory store.",
       "risk_class": "write_local",

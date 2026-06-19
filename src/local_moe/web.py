@@ -32,7 +32,12 @@ from .extensions import (
     registry_payload,
 )
 from .health import check_runtime_health, runtime_health_payload
-from .memory import FileMemoryStore, memory_record_payload
+from .memory import (
+    FileMemoryStore,
+    memory_maintenance_payload,
+    memory_prune_payload,
+    memory_record_payload,
+)
 from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
 from .performance_report import (
@@ -346,6 +351,10 @@ def _make_handler(
                         "records": [memory_record_payload(record) for record in records],
                     },
                 )
+                return
+
+            if path == "/api/memory/maintenance":
+                _send_json(self, memory_maintenance_payload(memory_store.maintenance_report()))
                 return
 
             if path == "/api/knowledge":
@@ -729,6 +738,38 @@ def _make_handler(
                     metadata=local_data_restore_payload(report),
                 )
                 _send_json(self, local_data_restore_payload(report))
+                return
+
+            if path == "/api/memory/prune-expired":
+                payload = _read_json(self)
+                if payload.get("confirm") is not True:
+                    _audit(
+                        audit_store,
+                        "memory.prune_expired",
+                        "confirmation_required",
+                        risk_class="write_local",
+                    )
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Expired memory pruning requires confirm=true because it deletes local memory records.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                report = memory_store.prune_expired()
+                _audit(
+                    audit_store,
+                    "memory.prune_expired",
+                    "ok",
+                    risk_class="write_local",
+                    metadata={
+                        "removed_count": report.removed_count,
+                        "remaining_count": report.remaining_count,
+                    },
+                )
+                _send_json(self, memory_prune_payload(report))
                 return
 
             if path == "/api/audit/prune":

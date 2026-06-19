@@ -133,7 +133,7 @@ The Local Data section exports and restores a portable JSON bundle with chat ses
 
 The Audit Trail section reads `/api/audit` and shows recent sensitive host-side actions with status, action name, timestamp, risk class, subject id, and compact metadata. It can also call `/api/audit/prune` to keep the latest configured number of audit events after an explicit confirmation. The prune action writes its own `audit.prune` event, so the trail still records that older entries were removed. It is an operational trail, not a content archive: chat text, memory text, environment variables, and model log bodies are not written to the audit file.
 
-The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can forget one record by id after the user checks the deletion confirmation box.
+The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can check memory maintenance totals, prune only expired temporal records after confirmation, and forget one record by id after the user checks the deletion confirmation box.
 
 The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same memory file. It requires an explicit confirmation checkbox because it writes local records, and its forget action requires a separate confirmation before deleting all chunks for a document id. It does not read arbitrary files from the browser.
 
@@ -151,7 +151,7 @@ The Runtime section exposes configured model process state from `/api/models/pro
 
 The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
-The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `data.export`, `data.import`, `knowledge.ingest`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before returning private data or writing/deleting local files.
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `data.export`, `data.import`, `knowledge.ingest`, `memory.prune_expired`, `memory.forget`, `plugin.create`, and `extension.configure` still require `confirm: true` before returning private data or writing/deleting local files.
 
 `extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
 
@@ -161,7 +161,7 @@ MCP tool calls are available through `mcp.call_tool`. Calls require the same pro
 
 The bundled MCP-enabled example uses the local filesystem MCP server. It is useful for verifying integration, but it is marked `write_local` because the upstream server advertises write/edit tools.
 
-The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Write-local jobs require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
+The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Read-only memory maintenance can run automatically; expired-memory pruning is a separate write-local job and requires the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
 Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting. Streaming updates use the same renderer, so partial Markdown remains escaped while the answer is still arriving.
 
