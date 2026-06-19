@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+from local_moe.chat_store import FileChatStore
 from local_moe.config import load_config
 from local_moe.extensions import (
     ExtensionRegistry,
@@ -99,6 +100,52 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["removed_count"], 1)
         self.assertEqual(result.payload["removed_ids"], list(report.record_ids))
         self.assertEqual(remaining, [])
+
+    def test_data_export_import_requires_confirmation_and_restores_local_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_chat_path = root / "source" / "chats.json"
+            source_memory_path = root / "source" / "memory.jsonl"
+            target_chat_path = root / "target" / "chats.json"
+            target_memory_path = root / "target" / "memory.jsonl"
+            source_chats = FileChatStore(source_chat_path)
+            source_memory = FileMemoryStore(source_memory_path)
+            session = source_chats.append_exchange(
+                session_id=None,
+                user_content="Plan portable local data backups.",
+                assistant_content="Use a confirmed JSON bundle.",
+            )
+            source_memory.add("Portable backups preserve memory.", scope="project")
+            source_runner = LocalToolRunner(
+                load_extension_registry(),
+                chat_path=source_chat_path,
+                memory_path=source_memory_path,
+            )
+
+            with self.assertRaises(ToolExecutionError):
+                source_runner.run("data.export", {})
+
+            exported = source_runner.run("data.export", {"confirm": True})
+            target_runner = LocalToolRunner(
+                load_extension_registry(),
+                chat_path=target_chat_path,
+                memory_path=target_memory_path,
+            )
+            with self.assertRaises(ToolExecutionError):
+                target_runner.run("data.import", {"bundle": exported.payload["bundle"]})
+            imported = target_runner.run(
+                "data.import",
+                {"bundle": exported.payload["bundle"], "mode": "merge", "confirm": True},
+            )
+            restored_session = FileChatStore(target_chat_path).get_session(session.id)
+            restored_memory = FileMemoryStore(target_memory_path).search("portable backups", scope="project")
+
+        self.assertEqual(exported.status, "ok")
+        self.assertEqual(exported.payload["counts"]["chat_sessions"], 1)
+        self.assertEqual(imported.status, "ok")
+        self.assertEqual(imported.payload["chats"]["imported_count"], 1)
+        self.assertIsNotNone(restored_session)
+        self.assertEqual(restored_memory[0][0].text, "Portable backups preserve memory.")
 
     def test_context_compact_can_use_configured_model(self) -> None:
         runner = LocalToolRunner(

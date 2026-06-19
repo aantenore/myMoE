@@ -620,6 +620,56 @@ class WebTests(unittest.TestCase):
         self.assertEqual(deleted["removed_ids"], [memory["id"]])
         self.assertEqual(searched["records"], [])
 
+    def test_data_export_import_api_is_confirmation_guarded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                _post_json(base_url + "/api/chats", {"title": "Backup Test"})
+                _post_json(
+                    base_url + "/api/memory",
+                    {
+                        "text": "Local backup API memory.",
+                        "scope": "default",
+                        "kind": "fact",
+                    },
+                )
+                with self.assertRaises(HTTPError) as export_raised:
+                    _post_json(base_url + "/api/data/export", {})
+                bundle = _post_json(base_url + "/api/data/export", {"confirm": True})
+                with self.assertRaises(HTTPError) as import_raised:
+                    _post_json(base_url + "/api/data/import", {"bundle": bundle})
+                restored = _post_json(
+                    base_url + "/api/data/import",
+                    {"bundle": bundle, "mode": "merge", "confirm": True},
+                )
+                chats = _get_json(base_url + "/api/chats")
+                memories = _get_json(base_url + "/api/memory?scope=default")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(export_raised.exception.code, 400)
+        self.assertEqual(import_raised.exception.code, 400)
+        self.assertEqual(bundle["schema_version"], "mymoe.local-data.v1")
+        self.assertTrue(bundle["privacy"]["contains_user_content"])
+        self.assertEqual(bundle["counts"]["chat_sessions"], 1)
+        self.assertEqual(bundle["counts"]["memory_records"], 1)
+        self.assertEqual(restored["mode"], "merge")
+        self.assertEqual(restored["chats"]["updated_count"], 1)
+        self.assertEqual(restored["memory"]["updated_count"], 1)
+        self.assertEqual(chats["count"], 1)
+        self.assertEqual(memories["count"], 1)
+
     def test_knowledge_api_ingests_and_retrieves_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -719,6 +769,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("forgetMemory", html)
         self.assertIn("/api/memory/", html)
         self.assertIn("/api/knowledge/", html)
+        self.assertIn("Local Data", html)
+        self.assertIn("/api/data/export", html)
+        self.assertIn("/api/data/import", html)
+        self.assertIn("exportData", html)
+        self.assertIn("importData", html)
+        self.assertIn("data.export", html)
+        self.assertIn("data.import", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)

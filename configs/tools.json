@@ -22,6 +22,20 @@
       "enabled": true
     },
     {
+      "name": "data.export",
+      "description": "Export local chat sessions and memory records as a portable JSON backup bundle.",
+      "risk_class": "read_only",
+      "side_effects": "returns_private_local_data",
+      "enabled": true
+    },
+    {
+      "name": "data.import",
+      "description": "Restore local chat sessions and memory records from a portable JSON backup bundle.",
+      "risk_class": "write_local",
+      "side_effects": "writes_chats_and_memory",
+      "enabled": true
+    },
+    {
       "name": "context.compact",
       "description": "Create a structured handoff summary when context approaches its budget.",
       "risk_class": "compute_only",

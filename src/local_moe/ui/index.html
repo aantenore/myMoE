@@ -954,6 +954,37 @@
           <pre class="eval-output" id="doctor-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>Local Data</h2>
+          <div class="tool-controls">
+            <div class="tool-row">
+              <button class="ghost-button" id="export-data" type="button">Export data</button>
+              <button class="ghost-button" id="download-data" type="button">Download JSON</button>
+              <select class="tool-select" id="data-import-mode" aria-label="Data import mode">
+                <option value="merge">Merge</option>
+                <option value="replace">Replace</option>
+              </select>
+              <button class="ghost-button" id="import-data" type="button">Restore data</button>
+            </div>
+            <label class="check-row">
+              <input id="data-export-confirm" type="checkbox" />
+              <span>Confirm private data export</span>
+            </label>
+            <label class="check-row">
+              <input id="data-import-confirm" type="checkbox" />
+              <span>Confirm local data restore</span>
+            </label>
+            <textarea
+              class="tool-input mono"
+              id="data-bundle"
+              rows="8"
+              spellcheck="false"
+              aria-label="Local data bundle JSON"
+              placeholder="Export or paste a myMoE local data bundle..."
+            ></textarea>
+            <pre class="eval-output" id="data-output">No local data action yet.</pre>
+          </div>
+        </section>
+        <section class="advanced-section">
           <h2>Health</h2>
           <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
           <div class="kv" id="health"></div>
@@ -1203,6 +1234,9 @@
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-support-bundle").addEventListener("click", downloadSupportBundle);
+        el("export-data").addEventListener("click", exportData);
+        el("download-data").addEventListener("click", downloadData);
+        el("import-data").addEventListener("click", importData);
         el("refresh-performance").addEventListener("click", refreshPerformance);
         el("download-performance-report").addEventListener("click", downloadPerformanceReport);
         el("run-eval").addEventListener("click", runEval);
@@ -1653,6 +1687,77 @@
         window.open("/api/support-bundle/download.json", "_blank", "noreferrer");
       }
 
+      async function exportData() {
+        el("data-output").textContent = "Exporting...";
+        try {
+          const bundle = await api("/api/data/export", {
+            method: "POST",
+            body: JSON.stringify({ confirm: el("data-export-confirm").checked }),
+          });
+          el("data-bundle").value = JSON.stringify(bundle, null, 2);
+          el("data-output").textContent = JSON.stringify(
+            {
+              schema_version: bundle.schema_version,
+              counts: bundle.counts,
+              contains_user_content: bundle.privacy?.contains_user_content === true,
+            },
+            null,
+            2,
+          );
+          el("data-export-confirm").checked = false;
+        } catch (error) {
+          el("data-output").textContent = error.message;
+        }
+      }
+
+      function downloadData() {
+        const raw = el("data-bundle").value.trim();
+        if (!raw) return;
+        try {
+          const bundle = JSON.parse(raw);
+          const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = dataBundleFilename(bundle);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          el("data-output").textContent = error.message;
+        }
+      }
+
+      async function importData() {
+        const raw = el("data-bundle").value.trim();
+        if (!raw) return;
+        el("data-output").textContent = "Restoring...";
+        try {
+          const bundle = JSON.parse(raw);
+          const result = await api("/api/data/import", {
+            method: "POST",
+            body: JSON.stringify({
+              bundle,
+              mode: el("data-import-mode").value,
+              confirm: el("data-import-confirm").checked,
+            }),
+          });
+          el("data-output").textContent = JSON.stringify(result, null, 2);
+          el("data-import-confirm").checked = false;
+          loadChats(false);
+        } catch (error) {
+          el("data-output").textContent = error.message;
+        }
+      }
+
+      function dataBundleFilename(bundle) {
+        const stamp = String(bundle?.created_at || new Date().toISOString())
+          .replace(/[^0-9A-Za-z]+/g, "")
+          .slice(0, 15);
+        return `mymoe-local-data-${stamp || "export"}.json`;
+      }
+
       function renderPerformance(performance) {
         const decision = performance?.decision || {};
         const primary = decision.primary_general;
@@ -1823,6 +1928,14 @@
             scope: "default",
             chunk_chars: 1200,
             metadata: { source: "tool-runner" },
+            confirm: false,
+          },
+          "data.export": {
+            confirm: false,
+          },
+          "data.import": {
+            mode: "merge",
+            bundle: {},
             confirm: false,
           },
           "context.compact": {

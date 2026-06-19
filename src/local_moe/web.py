@@ -16,6 +16,11 @@ from .compaction import LocalCompactionProvider
 from .config import load_config
 from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
+from .data_bundle import (
+    build_local_data_bundle,
+    local_data_restore_payload,
+    restore_local_data_bundle,
+)
 from .doctor import build_doctor_report
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import (
@@ -576,6 +581,61 @@ def _make_handler(
                     },
                     status=HTTPStatus.CREATED,
                 )
+                return
+
+            if path == "/api/data/export":
+                payload = _read_json(self)
+                if payload.get("confirm") is not True:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Local data export requires confirm=true because it returns private chat and memory data.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(
+                    self,
+                    build_local_data_bundle(chat_store=chat_store, memory_store=memory_store),
+                )
+                return
+
+            if path == "/api/data/import":
+                payload = _read_json(self)
+                if payload.get("confirm") is not True:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Local data import requires confirm=true because it writes chat and memory data.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                bundle = payload.get("bundle", {})
+                if not isinstance(bundle, dict):
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": "bundle must be a JSON object."},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    report = restore_local_data_bundle(
+                        bundle,
+                        chat_store=chat_store,
+                        memory_store=memory_store,
+                        mode=_optional_str(payload.get("mode")) or "merge",
+                    )
+                except ValueError as exc:
+                    _send_json(
+                        self,
+                        {"error": "bad_request", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _send_json(self, local_data_restore_payload(report))
                 return
 
             if path.startswith("/api/chats/") and path.endswith("/compact"):

@@ -38,6 +38,15 @@ class ChatSessionSummary:
     message_count: int
 
 
+@dataclass(frozen=True)
+class ChatRestoreReport:
+    mode: str
+    imported_count: int
+    updated_count: int
+    skipped_count: int
+    total_sessions: int
+
+
 class FileChatStore:
     """Small local JSON chat store for the web UI."""
 
@@ -49,6 +58,10 @@ class FileChatStore:
         with self._lock:
             sessions = self._read_unlocked()
         return _summaries(sessions, limit=limit)
+
+    def list_full_sessions(self) -> list[ChatSession]:
+        with self._lock:
+            return list(self._read_unlocked())
 
     def search_sessions(self, query: str, *, limit: int = 50) -> list[ChatSessionSummary]:
         terms = _terms(query)
@@ -210,6 +223,39 @@ class FileChatStore:
                 return False
             self._write_unlocked(kept)
         return True
+
+    def restore_sessions(self, raw_sessions: list[object], *, mode: str = "merge") -> ChatRestoreReport:
+        if mode not in {"merge", "replace"}:
+            raise ValueError("mode must be merge or replace.")
+        if not isinstance(raw_sessions, list):
+            raise ValueError("sessions must be a JSON array.")
+        imported = [_parse_session(item) for item in raw_sessions]
+        seen: set[str] = set()
+        for session in imported:
+            if session.id in seen:
+                raise ValueError(f"Duplicate chat session id in bundle: {session.id}")
+            seen.add(session.id)
+
+        with self._lock:
+            existing = [] if mode == "replace" else self._read_unlocked()
+            by_id = {session.id: index for index, session in enumerate(existing)}
+            updated_count = 0
+            imported_count = 0
+            for session in imported:
+                if session.id in by_id:
+                    existing[by_id[session.id]] = session
+                    updated_count += 1
+                else:
+                    existing.append(session)
+                    imported_count += 1
+            self._write_unlocked(existing)
+        return ChatRestoreReport(
+            mode=mode,
+            imported_count=imported_count,
+            updated_count=updated_count,
+            skipped_count=0,
+            total_sessions=len(existing),
+        )
 
     def _read_unlocked(self) -> list[ChatSession]:
         if not self.path.exists():

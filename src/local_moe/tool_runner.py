@@ -5,8 +5,14 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .chat_store import FileChatStore
 from .compaction import LocalCompactionProvider
 from .context import ConversationTurn, build_compaction_prompt, estimate_tokens
+from .data_bundle import (
+    build_local_data_bundle,
+    local_data_restore_payload,
+    restore_local_data_bundle,
+)
 from .extensions import (
     ExtensionRegistry,
     McpServerDefinition,
@@ -47,6 +53,8 @@ class LocalToolRunner:
         "memory.search",
         "memory.forget",
         "knowledge.ingest",
+        "data.export",
+        "data.import",
         "context.compact",
         "extension.audit",
         "extension.configure",
@@ -63,6 +71,7 @@ class LocalToolRunner:
         app_config: object | None = None,
         moe_config: object | None = None,
         memory_path: str | Path | None = None,
+        chat_path: str | Path | None = None,
         plugins_dir: str | Path | None = None,
         allow_process_execution: bool | None = None,
     ):
@@ -79,6 +88,7 @@ class LocalToolRunner:
             if memory_path is not None
             else _runtime_path(app_config, "memory.jsonl")
         )
+        self._chat_path = Path(chat_path) if chat_path is not None else _runtime_path(app_config, "chats.json")
         self._plugins_dir = Path(plugins_dir) if plugins_dir is not None else _plugins_dir(app_config)
 
     def run(self, name: str, payload: dict[str, Any] | None = None) -> ToolRunResult:
@@ -93,6 +103,10 @@ class LocalToolRunner:
             return self._memory_forget(tool, tool_payload)
         if tool.name == "knowledge.ingest":
             return self._knowledge_ingest(tool, tool_payload)
+        if tool.name == "data.export":
+            return self._data_export(tool, tool_payload)
+        if tool.name == "data.import":
+            return self._data_import(tool, tool_payload)
         if tool.name == "context.compact":
             return self._context_compact(tool, tool_payload)
         if tool.name == "extension.audit":
@@ -205,6 +219,49 @@ class LocalToolRunner:
                 "scope": report.scope,
                 "chunk_count": report.chunk_count,
                 "record_ids": list(report.record_ids),
+                "memory_path": str(self._memory_path),
+            },
+        )
+
+    def _data_export(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError("data.export requires confirm=true because it returns private local data.")
+        bundle = build_local_data_bundle(
+            chat_store=FileChatStore(self._chat_path),
+            memory_store=FileMemoryStore(self._memory_path),
+        )
+        return _ok(
+            tool,
+            "Local chat and memory data exported.",
+            {
+                "bundle": bundle,
+                "counts": bundle["counts"],
+                "chat_path": str(self._chat_path),
+                "memory_path": str(self._memory_path),
+            },
+        )
+
+    def _data_import(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError("data.import requires confirm=true because it writes local chat and memory data.")
+        bundle = payload.get("bundle", {})
+        if not isinstance(bundle, dict):
+            raise ToolExecutionError("bundle must be a JSON object.")
+        try:
+            report = restore_local_data_bundle(
+                bundle,
+                chat_store=FileChatStore(self._chat_path),
+                memory_store=FileMemoryStore(self._memory_path),
+                mode=_optional_text(payload, "mode") or "merge",
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return _ok(
+            tool,
+            "Local chat and memory data restored.",
+            {
+                **local_data_restore_payload(report),
+                "chat_path": str(self._chat_path),
                 "memory_path": str(self._memory_path),
             },
         )

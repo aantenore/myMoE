@@ -37,6 +37,7 @@ flowchart LR
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.
+- `Local Data Bundle`: confirmed export/import path for user-owned chat sessions and memory records, scoped to the configured runtime work directory.
 
 ## Runtime Modes
 
