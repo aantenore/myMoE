@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .app_config import app_config_payload, load_app_config
-from .audit import AuditLogStore, audit_log_payload
+from .audit import AuditLogStore, audit_log_payload, audit_prune_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .compaction import LocalCompactionProvider
@@ -731,6 +731,30 @@ def _make_handler(
                 _send_json(self, local_data_restore_payload(report))
                 return
 
+            if path == "/api/audit/prune":
+                payload = _read_json(self)
+                keep = _bounded_int(payload.get("keep"), default=500, minimum=1, maximum=50000)
+                if payload.get("confirm") is not True:
+                    _audit(
+                        audit_store,
+                        "audit.prune",
+                        "confirmation_required",
+                        risk_class="write_local",
+                        metadata={"keep": keep},
+                    )
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Audit pruning requires confirm=true because it permanently removes older audit events.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                report = audit_store.prune(keep=keep)
+                _send_json(self, audit_prune_payload(report))
+                return
+
             if path.startswith("/api/chats/") and path.endswith("/compact"):
                 session_id = _path_tail(path[: -len("/compact")], "/api/chats/")
                 session = chat_store.get_session(session_id)
@@ -1298,6 +1322,14 @@ def _query_limit(raw: object, *, default: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, min(value, maximum))
+
+
+def _bounded_int(raw: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(value, maximum))
 
 
 def _audit(

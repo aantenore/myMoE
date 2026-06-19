@@ -131,7 +131,7 @@ The Compact action calls the configured local compaction expert, stores a durabl
 
 The Local Data section exports and restores a portable JSON bundle with chat sessions and memory records. Export and restore both require explicit confirmation because the bundle contains private user content. Restore defaults to `merge`; `replace` is available for deliberate migration or reset workflows.
 
-The Audit Trail section reads `/api/audit` and shows recent sensitive host-side actions with status, action name, timestamp, risk class, subject id, and compact metadata. It is an operational trail, not a content archive: chat text, memory text, environment variables, and model log bodies are not written to the audit file.
+The Audit Trail section reads `/api/audit` and shows recent sensitive host-side actions with status, action name, timestamp, risk class, subject id, and compact metadata. It can also call `/api/audit/prune` to keep the latest configured number of audit events after an explicit confirmation. The prune action writes its own `audit.prune` event, so the trail still records that older entries were removed. It is an operational trail, not a content archive: chat text, memory text, environment variables, and model log bodies are not written to the audit file.
 
 The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can forget one record by id after the user checks the deletion confirmation box.
 

@@ -678,6 +678,42 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("Local backup API memory.", json.dumps(export_audit))
         self.assertNotIn("Local backup API memory.", json.dumps(import_audit))
 
+    def test_audit_prune_api_is_confirmation_guarded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                for index in range(3):
+                    _post_json(base_url + "/api/chats", {"title": f"Audit {index}"})
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(base_url + "/api/audit/prune", {"keep": 2})
+                pruned = _post_json(
+                    base_url + "/api/audit/prune",
+                    {"keep": 2, "confirm": True},
+                )
+                audit = _get_json(base_url + "/api/audit?limit=10")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(pruned["keep"], 2)
+        self.assertEqual(pruned["before_count"], 4)
+        self.assertEqual(pruned["after_count"], 2)
+        self.assertEqual(pruned["removed_count"], 3)
+        self.assertEqual(audit["count"], 2)
+        self.assertEqual([event["action"] for event in audit["events"]], ["audit.prune", "audit.prune"])
+        self.assertEqual([event["status"] for event in audit["events"]], ["ok", "confirmation_required"])
+
     def test_knowledge_api_ingests_and_retrieves_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -786,7 +822,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("data.import", html)
         self.assertIn("Audit Trail", html)
         self.assertIn("/api/audit", html)
+        self.assertIn("/api/audit/prune", html)
         self.assertIn("refreshAudit", html)
+        self.assertIn("pruneAudit", html)
+        self.assertIn("audit-prune-confirm", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)

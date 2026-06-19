@@ -20,6 +20,16 @@ class AuditEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class AuditPruneReport:
+    keep: int
+    before_count: int
+    after_count: int
+    removed_count: int
+    path: str
+    event: AuditEvent
+
+
 class AuditLogStore:
     """Local JSONL audit trail for sensitive host-side actions."""
 
@@ -36,14 +46,12 @@ class AuditLogStore:
         subject: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> AuditEvent:
-        event = AuditEvent(
-            id=str(uuid4()),
-            created_at=_now_iso(),
-            action=_clean(action),
-            status=_clean(status),
-            risk_class=_clean(risk_class) or "read_only",
-            subject=_clean(subject),
-            metadata=_safe_metadata(metadata or {}),
+        event = _build_event(
+            action,
+            status,
+            risk_class=risk_class,
+            subject=subject,
+            metadata=metadata,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
@@ -69,6 +77,36 @@ class AuditLogStore:
         events.reverse()
         return events[: max(1, min(limit, 500))]
 
+    def prune(self, *, keep: int = 500) -> AuditPruneReport:
+        bounded_keep = max(1, min(int(keep), 50000))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            events = _read_events(self.path)
+            before_count = len(events)
+            after_count = min(before_count + 1, bounded_keep)
+            removed_count = before_count + 1 - after_count
+            event = _build_event(
+                "audit.prune",
+                "ok",
+                risk_class="write_local",
+                metadata={
+                    "keep": bounded_keep,
+                    "before_count": before_count,
+                    "after_count": after_count,
+                    "removed_count": removed_count,
+                },
+            )
+            kept_events = [*events, event][-bounded_keep:]
+            _write_events(self.path, kept_events)
+        return AuditPruneReport(
+            keep=bounded_keep,
+            before_count=before_count,
+            after_count=after_count,
+            removed_count=removed_count,
+            path=str(self.path),
+            event=event,
+        )
+
 
 def audit_event_payload(event: AuditEvent) -> dict[str, Any]:
     return {
@@ -86,6 +124,17 @@ def audit_log_payload(events: list[AuditEvent]) -> dict[str, Any]:
     return {
         "count": len(events),
         "events": [audit_event_payload(event) for event in events],
+    }
+
+
+def audit_prune_payload(report: AuditPruneReport) -> dict[str, Any]:
+    return {
+        "keep": report.keep,
+        "before_count": report.before_count,
+        "after_count": report.after_count,
+        "removed_count": report.removed_count,
+        "path": report.path,
+        "event": audit_event_payload(report.event),
     }
 
 
@@ -112,6 +161,32 @@ def _read_events(path: Path) -> list[AuditEvent]:
             )
         )
     return events
+
+
+def _write_events(path: Path, events: list[AuditEvent]) -> None:
+    payload = "".join(json.dumps(audit_event_payload(event), ensure_ascii=True) + "\n" for event in events)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(payload, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _build_event(
+    action: str,
+    status: str,
+    *,
+    risk_class: str = "read_only",
+    subject: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> AuditEvent:
+    return AuditEvent(
+        id=str(uuid4()),
+        created_at=_now_iso(),
+        action=_clean(action),
+        status=_clean(status),
+        risk_class=_clean(risk_class) or "read_only",
+        subject=_clean(subject),
+        metadata=_safe_metadata(metadata or {}),
+    )
 
 
 def _safe_metadata(raw: dict[str, Any]) -> dict[str, Any]:

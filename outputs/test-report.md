@@ -4,12 +4,12 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, local audit trail logging, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, runtime setup readiness, System Doctor readiness reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
 - `tests/test_config.py`: duplicate expert ids, missing experts, invalid `top_k`, unsupported aggregation, unknown rule/fallback experts.
-- `tests/test_audit.py`: local JSONL audit event writes, latest-first listing, action/status filtering, and metadata truncation.
+- `tests/test_audit.py`: local JSONL audit event writes, latest-first listing, action/status filtering, metadata truncation, and latest-event retention pruning.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, streaming SSE parsing, usage/timing parsing, invalid payload handling, invalid JSON handling, reasoning-channel stripping, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
@@ -21,7 +21,7 @@ The test hardening pass covers configuration validation, routing evaluation, mul
 - `tests/test_cli.py`: eval mode, setup readiness, performance report output, guarded runtime preparation preview, model process status, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
 - `tests/test_data_bundle.py`: portable local data export and restore for chat sessions plus memory records, including merge and replace behavior.
-- `tests/test_web.py`: web config, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, plugin creation APIs, extension audit APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
+- `tests/test_web.py`: web config, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, plugin creation APIs, extension audit APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
 - `tests/test_setup_runner.py`: runtime preparation preview, confirmation guard, injected install runner, and local-file model validation without network access.
 - `tests/test_tools.py`: allowlisted local tool execution, knowledge ingestion, guarded memory/document deletion, confirmed local data export/import, extension audit, guarded extension self-configuration for MCP/cron registries, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
@@ -48,7 +48,7 @@ Command:
 Result:
 
 - compileall: passed
-- unit/contract tests: `169/169` passed
+- unit/contract tests: `171/171` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`
@@ -87,7 +87,7 @@ Local knowledge import now chunks pasted documents into `knowledge` memory recor
 
 Local data backup now exports chat sessions and memory records into a schema-versioned JSON bundle through `data.export`, `/api/data/export`, and the Advanced Local Data panel. Restore through `data.import` or `/api/data/import` supports `merge` and `replace` modes and requires confirmation before writing local stores.
 
-Local audit trail logging now records sensitive host-side actions in `<runtime.work_dir>/audit.jsonl` and exposes recent events through `/api/audit` plus the Advanced Audit Trail panel. Audit events intentionally store metadata only, not prompt text, chat transcripts, memory text, environment variables, or model log bodies.
+Local audit trail logging now records sensitive host-side actions in `<runtime.work_dir>/audit.jsonl` and exposes recent events through `/api/audit` plus the Advanced Audit Trail panel. Guarded retention pruning through `/api/audit/prune` and the same panel keeps the latest configured number of events, requires confirmation, and records its own `audit.prune` event. Audit events intentionally store metadata only, not prompt text, chat transcripts, memory text, environment variables, or model log bodies.
 
 The hardware recommendation is now general-purpose MoE with one strong resident general expert, one small resident fallback/compaction expert, and cold-loaded specialists only when evals justify them.
 
