@@ -310,6 +310,8 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 
 Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create` or `--cron-confirm-writes` for CLI cron execution.
 
+The Advanced drawer also includes Plugin Studio for creating a local plugin scaffold without writing JSON by hand. It creates `plugin.json` plus plugin-local `SKILL.md`, requires confirmation, and refreshes the registry in the running web app.
+
 MCP stdio discovery is also available for trusted, enabled MCP servers:
 
 ```bash

@@ -35,13 +35,13 @@ flowchart LR
 | `context.compact` | Builds a compaction prompt and, by default, asks the configured local model to summarize it. | Compute-only; uses the configured MoE expert and does not call cloud APIs. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | Runtime setup | Runs configured install commands and model downloads from the runtime plan. | Requires explicit confirmation; executes only app-generated commands, never arbitrary user input. | CLI `--prepare-runtime`, web `/api/setup/run`, Advanced Setup panel. |
 | Model process manager | Starts configured local model server commands and tracks processes started by the web server. | Requires explicit confirmation; skips already reachable endpoints; stops only managed child processes. | CLI `--models-status`, web `/api/models/processes`, `/api/models/start`, `/api/models/stop`, Advanced Runtime panel. |
-| `plugin.create` | Scaffolds a local plugin manifest and `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `plugin.create` | Scaffolds a local plugin manifest and plugin-local `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, web `/api/plugins`, Advanced Plugin Studio. |
 | `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.list_tools` | Starts an enabled stdio MCP server, performs the MCP `initialize` handshake, and calls `tools/list`. | Requires `app.permissions.allow_process_execution=true` and `confirm_process_execution=true`; it lists tools only and does not call them. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.call_tool` | Starts an enabled stdio MCP server and calls `tools/call` for a configured tool. | Requires app process permission, process confirmation, tool-call confirmation, and the tool name in the server `allowed_tools` list. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | Cron jobs | Runs due allowlisted actions such as memory maintenance, extension audit, and router distillation. The web process can auto-run safe jobs in the background. | `write_local` jobs require `confirm_writes=true`; dry runs never persist state; background auto-run skips write-risk jobs unless configured otherwise. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
 | MCP servers | Parsed from config and exposed for discovery; enabled stdio servers can be inspected for tool metadata. | Disabled by default; process startup requires both app policy and per-call confirmation. | Extension registry, `mcp.search_capabilities`, and `mcp.list_tools`. |
-| Plugins | Discovered from manifests and scaffolded locally. | Plugin references are metadata until a tool/skill/MCP/cron entry is configured and allowlisted. | Extension registry and `plugin.create`. |
+| Plugins | Discovered from manifests and scaffolded locally. Plugin-local `SKILL.md` files are loaded into the skill registry. | Plugin references are metadata until a tool/skill/MCP/cron entry is configured and allowlisted. | Extension registry, `plugin.create`, and Advanced Plugin Studio. |
 
 ## Permission Policy
 
@@ -55,6 +55,8 @@ The app config defaults to:
 The current implementation discovers and reports these surfaces. Cron jobs use a local allowlisted runner for supported actions such as `memory.maintenance`, `router.distill`, and `extension.audit`. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
 
 Enabled tools are also executed through a local allowlist in `src/local_moe/tool_runner.py`. The runner maps configured names to concrete Python functions and rejects arbitrary commands. Write-local operations require explicit confirmation in the tool payload or cron request.
+
+Plugin scaffolding is exposed through `plugin.create` and web `/api/plugins`. The scaffold creates `plugin.json` plus a plugin-local `SKILL.md`, then refreshes the extension registry so the new plugin and skill are visible without restarting the web server.
 
 MCP stdio integration lives in `src/local_moe/mcp_client.py`. It follows MCP JSON-RPC lifecycle basics: `initialize`, `notifications/initialized`, then `tools/list` or `tools/call`. Calls are intentionally narrow: myMoE only invokes tools listed in the server-level `allowed_tools` configuration.
 

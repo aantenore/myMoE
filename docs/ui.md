@@ -103,6 +103,8 @@ The Setup section also exposes a guarded "Prepare runtime" action backed by `/ap
 
 The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server.
 
+The Extensions section includes Plugin Studio. It writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, and refreshes the extension registry immediately after creation.
+
 The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
 
 MCP tool discovery is available through `mcp.list_tools`. It starts an enabled stdio MCP server and lists its declared tools, but only when the app config has `permissions.allow_process_execution=true` and the tool input includes `confirm_process_execution: true`. The default app config blocks process execution, so the UI can show the tool contract without silently launching processes.
@@ -137,6 +139,10 @@ Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval d
 Runtime process controls require confirmation before starting or stopping configured model servers:
 
 ![myMoE model processes](screenshots/model-processes.png)
+
+Plugin Studio creates local plugin scaffolds with an explicit confirmation guard:
+
+![myMoE plugin studio](screenshots/plugin-studio.png)
 
 Guarded runtime preparation is available from the same Advanced drawer. Without confirmation, the action returns a structured `confirmation_required` result and performs no installs or downloads:
 

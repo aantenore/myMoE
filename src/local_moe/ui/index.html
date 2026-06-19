@@ -960,6 +960,32 @@
         <section class="advanced-section">
           <h2>Extensions</h2>
           <div id="extensions"></div>
+          <div class="tool-controls">
+            <div class="section-label">Plugin Studio</div>
+            <div class="tool-row">
+              <input class="tool-select" id="plugin-id" aria-label="Plugin id" placeholder="sample-plugin" />
+              <select class="tool-select" id="plugin-risk" aria-label="Plugin risk class">
+                <option value="read_only">read_only</option>
+                <option value="compute_only">compute_only</option>
+                <option value="write_local">write_local</option>
+              </select>
+            </div>
+            <input class="tool-select" id="plugin-name" aria-label="Plugin name" placeholder="Plugin display name" />
+            <textarea
+              class="tool-input"
+              id="plugin-description"
+              rows="3"
+              spellcheck="true"
+              aria-label="Plugin description"
+              placeholder="What this plugin adds..."
+            ></textarea>
+            <label class="check-row">
+              <input id="plugin-confirm" type="checkbox" />
+              <span>Confirm local plugin scaffold</span>
+            </label>
+            <button class="ghost-button" id="create-plugin" type="button">Create plugin</button>
+            <pre class="eval-output" id="plugin-output">Not run yet.</pre>
+          </div>
         </section>
         <section class="advanced-section">
           <h2>Memory</h2>
@@ -1113,6 +1139,7 @@
         el("save-memory").addEventListener("click", saveMemory);
         el("search-memory").addEventListener("click", searchMemory);
         el("refresh-health").addEventListener("click", refreshHealth);
+        el("create-plugin").addEventListener("click", createPlugin);
         el("tool-select").addEventListener("change", setDefaultToolInput);
         el("chat-search").addEventListener("input", () => {
           window.clearTimeout(state.chatSearchTimer);
@@ -1509,6 +1536,28 @@
             }</div>`;
           })
           .join("");
+      }
+
+      async function createPlugin() {
+        el("plugin-output").textContent = "Creating...";
+        try {
+          const result = await api("/api/plugins", {
+            method: "POST",
+            body: JSON.stringify({
+              plugin_id: el("plugin-id").value.trim(),
+              name: el("plugin-name").value.trim(),
+              description: el("plugin-description").value.trim(),
+              risk_class: el("plugin-risk").value,
+              confirm: el("plugin-confirm").checked,
+            }),
+          });
+          el("plugin-output").textContent = JSON.stringify(result, null, 2);
+          state.extensions = result.extensions;
+          renderExtensions(result.extensions);
+          renderToolRunner(result.extensions);
+        } catch (error) {
+          el("plugin-output").textContent = error.message;
+        }
       }
 
       function renderToolRunner(extensions) {
