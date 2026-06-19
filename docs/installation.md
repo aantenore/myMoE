@@ -42,6 +42,19 @@ Or let the bootstrap script run the safe install commands:
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --execute --download-models
 ```
 
+The same guarded flow is available through the app CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --prepare-runtime
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prepare-runtime \
+  --prepare-execute \
+  --prepare-download-models \
+  --prepare-confirm
+```
+
+`--prepare-runtime` without side-effect flags is a preview. Installs and model downloads require `--prepare-confirm`, and the web UI uses the same confirmation policy in the Advanced Setup panel.
+
 Before or after bootstrap, inspect setup readiness:
 
 ```bash

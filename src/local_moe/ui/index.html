@@ -927,6 +927,12 @@
         <section class="advanced-section">
           <h2>Setup</h2>
           <div class="kv" id="setup"></div>
+          <label class="check-row">
+            <input id="setup-confirm" type="checkbox" />
+            <span>Confirm installs and model downloads</span>
+          </label>
+          <button class="ghost-button" id="run-setup" type="button">Prepare runtime</button>
+          <pre class="eval-output" id="setup-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
           <h2>Health</h2>
@@ -1087,6 +1093,7 @@
         el("advanced-toggle").addEventListener("click", () => setAdvanced(true));
         el("advanced-close").addEventListener("click", () => setAdvanced(false));
         el("overlay").addEventListener("click", () => setAdvanced(false));
+        el("run-setup").addEventListener("click", runSetup);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
@@ -1384,6 +1391,31 @@
           renderHealth(health);
         } catch (error) {
           el("health").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function runSetup() {
+        el("setup-output").textContent = "Preparing...";
+        try {
+          const result = await api("/api/setup/run", {
+            method: "POST",
+            body: JSON.stringify({
+              execute: true,
+              download_models: true,
+              confirm: el("setup-confirm").checked,
+            }),
+          });
+          el("setup-output").textContent = JSON.stringify(result, null, 2);
+          if (result.setup_after) {
+            state.setup = result.setup_after;
+            renderSetup(result.setup_after);
+          } else {
+            const setup = await api("/api/setup");
+            state.setup = setup;
+            renderSetup(setup);
+          }
+        } catch (error) {
+          el("setup-output").textContent = error.message;
         }
       }
 
