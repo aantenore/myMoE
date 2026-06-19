@@ -54,6 +54,10 @@ Run the optional Gemma 4 12B GGUF coding/agentic specialist through llama.cpp:
 ```bash
 # Install llama.cpp first:
 # https://github.com/ggml-org/llama.cpp/releases
+uv pip install --python .venv/bin/python ".[gguf]"
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
+  --config configs/moe.live.gemma-12b-agentic-gguf.example.json \
+  --download-models
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.gemma-12b-agentic-gguf.example.json
 ```
@@ -184,6 +188,7 @@ src/local_moe/
   providers.py
   orchestrator.py
   runtime.py
+  model_downloads.py
   web.py
 tests/
   test_cli.py

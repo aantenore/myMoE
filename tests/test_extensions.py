@@ -74,6 +74,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(plan.backend, "llama_cpp")
         self.assertTrue(any("llama-server" in command for command in flattened))
         self.assertTrue(any("-hf yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF:Q4_K_M" in command for command in flattened))
+        self.assertTrue(any(".[gguf]" in command for command in (" ".join(item) for item in plan.install_commands)))
 
     def test_builds_runtime_plan_for_huggingface_agentic_gguf_config(self) -> None:
         moe_config = load_config("configs/moe.live.gemma-12b-agentic-gguf.example.json")
@@ -83,6 +84,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(plan.backend, "llama_cpp")
         self.assertTrue(any("llama-server" in command for command in flattened))
         self.assertTrue(any("-hf yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF:Q4_K_M" in command for command in flattened))
+        self.assertTrue(any(".[gguf]" in command for command in (" ".join(item) for item in plan.install_commands)))
 
 
 if __name__ == "__main__":

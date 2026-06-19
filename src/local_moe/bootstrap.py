@@ -71,7 +71,12 @@ def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | N
         commands = tuple(("ollama", "pull", _ollama_model_name(model)) for model in models)
         notes = ("Cross-platform fallback for Windows/Linux/macOS. Uses Ollama OpenAI-compatible API at port 11434.",)
     else:
-        install = (_llama_cpp_install_command(platform_key),)
+        venv_python = _venv_python(platform_key)
+        install = (
+            ("uv", "venv", "--python", "3.12", ".venv"),
+            ("uv", "pip", "install", "--python", venv_python, ".[gguf]"),
+            _llama_cpp_install_command(platform_key),
+        )
         commands = tuple(_llama_server_command(expert, _expert_port(expert, 8101 + index)) for index, expert in enumerate(experts))
         notes = ("GGUF backend through llama.cpp. Prefer quantized models that fit local RAM/VRAM headroom.",)
 
@@ -210,6 +215,14 @@ def _mixed_install_commands(
             ]
         )
     if "llama_cpp" in configured_backends:
+        if not ({"mlx_lm", "mlx_vlm"} & configured_backends):
+            venv_python = _venv_python(platform_key)
+            commands.extend(
+                [
+                    ("uv", "venv", "--python", "3.12", ".venv"),
+                    ("uv", "pip", "install", "--python", venv_python, ".[gguf]"),
+                ]
+            )
         commands.append(_llama_cpp_install_command(platform_key))
     if "ollama" in configured_backends:
         commands.append(("install", "ollama", "from", "https://ollama.com/download"))
