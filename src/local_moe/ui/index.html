@@ -720,8 +720,13 @@
         gap: 0.5rem;
       }
 
+      .audit-row {
+        grid-template-columns: auto minmax(8rem, 1fr) auto;
+      }
+
       .tool-select,
-      .tool-input {
+      .tool-input,
+      .tool-number {
         width: 100%;
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -729,7 +734,8 @@
         color: var(--text);
       }
 
-      .tool-select {
+      .tool-select,
+      .tool-number {
         min-height: 2.3rem;
         padding: 0 0.7rem;
       }
@@ -987,7 +993,26 @@
         <section class="advanced-section">
           <h2>Audit Trail</h2>
           <div class="kv" id="audit"></div>
-          <button class="ghost-button" id="refresh-audit" type="button">Refresh audit</button>
+          <div class="tool-controls">
+            <div class="tool-row audit-row">
+              <button class="ghost-button" id="refresh-audit" type="button">Refresh audit</button>
+              <input
+                class="tool-number mono"
+                id="audit-keep"
+                type="number"
+                min="1"
+                max="50000"
+                step="50"
+                value="500"
+                aria-label="Audit events to keep"
+              />
+              <button class="ghost-button" id="prune-audit" type="button">Prune audit</button>
+            </div>
+            <label class="check-row">
+              <input id="audit-prune-confirm" type="checkbox" />
+              <span>Confirm audit pruning</span>
+            </label>
+          </div>
           <pre class="eval-output" id="audit-output">Not loaded yet.</pre>
         </section>
         <section class="advanced-section">
@@ -1245,6 +1270,7 @@
         el("download-data").addEventListener("click", downloadData);
         el("import-data").addEventListener("click", importData);
         el("refresh-audit").addEventListener("click", refreshAudit);
+        el("prune-audit").addEventListener("click", pruneAudit);
         el("refresh-performance").addEventListener("click", refreshPerformance);
         el("download-performance-report").addEventListener("click", downloadPerformanceReport);
         el("run-eval").addEventListener("click", runEval);
@@ -1848,6 +1874,31 @@
           state.audit = audit;
           renderAudit(audit);
         } catch (error) {
+          el("audit-output").textContent = error.message;
+        }
+      }
+
+      function auditKeepValue() {
+        const value = Number.parseInt(el("audit-keep").value || "500", 10);
+        if (!Number.isFinite(value)) return 500;
+        return Math.max(1, Math.min(value, 50000));
+      }
+
+      async function pruneAudit() {
+        el("audit-output").textContent = "Pruning...";
+        try {
+          const result = await api("/api/audit/prune", {
+            method: "POST",
+            body: JSON.stringify({
+              keep: auditKeepValue(),
+              confirm: el("audit-prune-confirm").checked,
+            }),
+          });
+          el("audit-prune-confirm").checked = false;
+          await refreshAudit({ quiet: true });
+          el("audit-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          await refreshAudit({ quiet: true });
           el("audit-output").textContent = error.message;
         }
       }
