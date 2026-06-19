@@ -60,6 +60,7 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("[coding:synthetic-coder]", completed.stdout)
         self.assertIn('"correlation_id"', completed.stdout)
+        self.assertIn('"disagreement": null', completed.stdout)
 
     def test_doctor_prints_runtime_and_extensions(self) -> None:
         completed = subprocess.run(
