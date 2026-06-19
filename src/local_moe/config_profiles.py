@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -124,9 +125,105 @@ def _profile_payload(
                 "download_command_display": setup_payload["download_command_display"],
                 "error": setup_payload["error"],
             },
+            "launch_commands": _launch_commands(
+                display_path,
+                app_config_path=app_config_path,
+            ),
         }
     )
     return payload
+
+
+def _launch_commands(config_path: str, *, app_config_path: str) -> list[dict[str, Any]]:
+    python = ".venv/bin/python"
+    env = {"PYTHONPATH": "src"}
+    commands = [
+        {
+            "id": "inspect_setup",
+            "label": "Inspect setup",
+            "description": "Preview setup readiness for this profile without side effects.",
+            "argv": [
+                python,
+                "-m",
+                "local_moe.cli",
+                "--app-config",
+                app_config_path,
+                "--config",
+                config_path,
+                "--setup",
+            ],
+            "side_effects": "none",
+            "requires_confirmation": False,
+        },
+        {
+            "id": "prepare_runtime",
+            "label": "Prepare runtime",
+            "description": "Install runtime dependencies and download configured model assets.",
+            "argv": [
+                python,
+                "scripts/bootstrap_runtime.py",
+                "--app-config",
+                app_config_path,
+                "--config",
+                config_path,
+                "--execute",
+                "--download-models",
+            ],
+            "side_effects": "installs_dependencies_and_downloads_models",
+            "requires_confirmation": True,
+        },
+        {
+            "id": "start_models",
+            "label": "Start models",
+            "description": "Start the model servers configured by this profile in the foreground.",
+            "argv": [
+                python,
+                "scripts/start_local_models.py",
+                "--app-config",
+                app_config_path,
+                "--config",
+                config_path,
+            ],
+            "side_effects": "starts_local_model_processes",
+            "requires_confirmation": True,
+        },
+        {
+            "id": "start_ui",
+            "label": "Start UI",
+            "description": "Run the web UI with this profile.",
+            "argv": [
+                python,
+                "-m",
+                "local_moe.web",
+                "--app-config",
+                app_config_path,
+                "--config",
+                config_path,
+                "--port",
+                "8089",
+            ],
+            "side_effects": "starts_local_web_server",
+            "requires_confirmation": False,
+        },
+        {
+            "id": "open_cli",
+            "label": "Open CLI",
+            "description": "Open an interactive CLI session with this profile.",
+            "argv": [
+                python,
+                "-m",
+                "local_moe.cli",
+                "--app-config",
+                app_config_path,
+                "--config",
+                config_path,
+                "--interactive",
+            ],
+            "side_effects": "starts_interactive_cli",
+            "requires_confirmation": False,
+        },
+    ]
+    return [{**command, "env": env, "display": _display_command(command["argv"], env=env)} for command in commands]
 
 
 def _contains_path(paths: list[Path], target: Path) -> bool:
@@ -146,3 +243,15 @@ def _display_path(path: str | Path) -> str:
         return candidate.resolve().relative_to(Path.cwd().resolve()).as_posix()
     except (OSError, ValueError):
         return candidate.as_posix()
+
+
+def _display_command(argv: list[str], *, env: dict[str, str]) -> str:
+    prefix = " ".join(f"{key}={value}" for key, value in env.items())
+    body = " ".join(_quote_arg(item) for item in argv)
+    return f"{prefix} {body}".strip()
+
+
+def _quote_arg(value: str) -> str:
+    if not value or any(char.isspace() for char in value):
+        return json.dumps(value)
+    return value

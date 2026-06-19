@@ -58,6 +58,17 @@ class ConfigProfileTests(unittest.TestCase):
         self.assertEqual(profile["setup"]["status"], "ready")
         self.assertEqual(profile["expert_count"], 1)
         self.assertEqual(profile["experts"][0]["model"], "synthetic-general")
+        command_ids = {command["id"] for command in profile["launch_commands"]}
+        self.assertIn("inspect_setup", command_ids)
+        self.assertIn("prepare_runtime", command_ids)
+        self.assertIn("start_models", command_ids)
+        self.assertIn("start_ui", command_ids)
+        prepare = next(command for command in profile["launch_commands"] if command["id"] == "prepare_runtime")
+        self.assertTrue(prepare["requires_confirmation"])
+        self.assertEqual(prepare["env"]["PYTHONPATH"], "src")
+        self.assertIn("--config", prepare["argv"])
+        self.assertIn(profile["path"], prepare["argv"])
+        self.assertIn("PYTHONPATH=src", prepare["display"])
 
     def test_includes_active_profile_outside_config_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +88,7 @@ class ConfigProfileTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertTrue(payload["profiles"][0]["active"])
         self.assertEqual(payload["profiles"][0]["status"], "valid")
+        self.assertTrue(payload["profiles"][0]["launch_commands"])
 
 
 if __name__ == "__main__":

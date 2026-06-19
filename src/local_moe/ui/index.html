@@ -703,6 +703,31 @@
         background: var(--surface-strong);
       }
 
+      .command-list {
+        display: grid;
+        gap: 0.45rem;
+        margin-top: 0.55rem;
+        max-height: 14rem;
+        overflow: auto;
+      }
+
+      .command-line {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.55rem;
+        background: var(--surface-strong);
+        overflow-wrap: anywhere;
+      }
+
+      .command-details {
+        margin-top: 0.55rem;
+      }
+
+      .command-details summary {
+        cursor: pointer;
+        color: var(--muted);
+      }
+
       .eval-output {
         margin: 0;
         white-space: pre-wrap;
@@ -1765,6 +1790,16 @@
               profile.status === "valid"
                 ? `${profile.backend || "unknown"} · ${profile.expert_count || 0} expert(s) · ${experts || "No experts"}`
                 : profile.error || "Invalid profile";
+            const commands = (profile.launch_commands || [])
+              .map(
+                (command) => `
+                  <div class="command-line">
+                    <strong>${escapeHtml(command.label || command.id)}</strong>
+                    <span class="muted"> · ${escapeHtml(formatSideEffects(command.side_effects))}</span><br>
+                    <span class="mono">${escapeHtml(command.display || "")}</span>
+                  </div>`,
+              )
+              .join("");
             return `
               <div class="kv-row">
                 <span>${escapeHtml(flags.join(" · ") || "profile")}</span>
@@ -1772,6 +1807,11 @@
                   <strong>${escapeHtml(profile.name || profile.path)}</strong><br>
                   <span class="mono">${escapeHtml(profile.path || "")}</span><br>
                   <span class="muted">${escapeHtml(detail)}</span>
+                  ${
+                    commands
+                      ? `<details class="command-details" ${profile.active ? "open" : ""}><summary>Launch hints</summary><div class="command-list">${commands}</div></details>`
+                      : ""
+                  }
                 </span>
               </div>`;
           })
@@ -1808,6 +1848,10 @@
             Status: health.status || "unknown",
             Checked: health.checked_at || "unknown",
           }) + (experts || '<span class="muted">No experts to check.</span>');
+      }
+
+      function formatSideEffects(value) {
+        return String(value || "none").replaceAll("_", " ");
       }
 
       async function refreshHealth() {
