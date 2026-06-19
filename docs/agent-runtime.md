@@ -47,6 +47,7 @@ flowchart LR
 | Support Bundle | Exports a privacy-safe diagnostic bundle for issue reports or handoff. | Read-only; excludes chat transcripts, memory records, environment variables, secrets, benchmark response excerpts, and log contents. | CLI `--support-bundle`, web `/api/support-bundle`, web `/api/support-bundle/download.json`, Advanced System Doctor panel. |
 | Streaming generation | Streams local model output as server-sent events and persists the exchange only after the final response is available. | Uses the same routing, context, provider, and chat-store contracts as non-streaming generation; hides reasoning-channel content before emitting visible text. | Web `/api/generate/stream`, chat UI with `/api/generate` fallback. |
 | Runtime setup | Runs configured install commands and model downloads from the runtime plan. | Requires explicit confirmation; executes only app-generated commands, never arbitrary user input. | CLI `--prepare-runtime`, web `/api/setup/run`, Advanced Setup panel. |
+| Runtime profile discovery | Lists runnable local model config profiles and setup readiness summaries. | Read-only; does not switch profiles, start processes, download models, or edit config files. | Web `/api/config/profiles`, Advanced Profiles panel. |
 | Model process manager | Starts configured local model server commands and tracks processes started by the web server. | Requires explicit confirmation; skips already reachable endpoints; stops only managed child processes. | CLI `--models-status`, web `/api/models/processes`, `/api/models/start`, `/api/models/stop`, Advanced Runtime panel. |
 | `plugin.create` | Scaffolds a local plugin manifest and plugin-local `SKILL.md`. | Requires `confirm=true` because it writes local files. | CLI `--run-tool`, web `/api/tools/run`, web `/api/plugins`, Advanced Plugin Studio. |
 | `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
@@ -104,6 +105,8 @@ The `extension.audit` cron action validates the active registry: plugin referenc
 ## Local Model Requirement
 
 The user-facing default is `configs/moe.live.general-mlx.example.json`. Public configs are live local-model profiles or templates for live local-model profiles; synthetic providers are confined to automated test fixtures.
+
+Runtime profile discovery lives in `src/local_moe/config_profiles.py`. It scans runnable `moe.*.json` and `single.*.json` config files, includes the active config even when it is outside `configs/`, and reuses setup readiness checks to summarize whether model assets are cached, missing, runtime-dependent, or local-file based. It intentionally does not hot-swap the running MoE instance.
 
 The runtime planner reads each expert's `params.runtime_backend`. MLX experts generate `mlx_lm.server` commands, GGUF experts generate `llama-server -hf ...` commands, and mixed configs are represented as mixed runtime plans instead of hardcoding one global backend.
 

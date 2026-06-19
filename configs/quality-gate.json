@@ -7,6 +7,7 @@
   },
   "required_files": [
     "src/local_moe/config.py",
+    "src/local_moe/config_profiles.py",
     "src/local_moe/audit.py",
     "src/local_moe/router.py",
     "src/local_moe/distilled_router.py",
@@ -50,6 +51,7 @@
     "configs/model-benchmark.json",
     "tests/fixtures/moe.synthetic.json",
     "tests/test_audit.py",
+    "tests/test_config_profiles.py",
     "tests/test_model_downloads.py",
     "tests/test_data_bundle.py",
     "tests/test_compaction.py",

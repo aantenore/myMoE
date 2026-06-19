@@ -63,6 +63,7 @@ class WebTests(unittest.TestCase):
         try:
             base_url = f"http://127.0.0.1:{server.server_address[1]}"
             runtime = _get_json(base_url + "/api/runtime")
+            profiles = _get_json(base_url + "/api/config/profiles")
             processes = _get_json(base_url + "/api/models/processes")
             setup = _get_json(base_url + "/api/setup")
             doctor = _get_json(base_url + "/api/doctor")
@@ -79,6 +80,9 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertIn(runtime["backend"], {"mlx_lm", "ollama", "llama_cpp"})
+        self.assertGreaterEqual(profiles["count"], 1)
+        self.assertIn("tests/fixtures/moe.synthetic.json", {item["path"] for item in profiles["profiles"]})
+        self.assertTrue(any(item["active"] for item in profiles["profiles"]))
         self.assertEqual(processes["count"], 0)
         self.assertEqual(processes["servers"], [])
         self.assertEqual(setup["status"], "ready")
@@ -848,7 +852,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("Stop managed", html)
         self.assertIn("/api/setup", html)
         self.assertIn("/api/setup/run", html)
+        self.assertIn("/api/config/profiles", html)
         self.assertIn("renderSetup", html)
+        self.assertIn("renderConfigProfiles", html)
+        self.assertIn("Profiles", html)
         self.assertIn("runSetup", html)
         self.assertIn("setup-confirm", html)
         self.assertIn("extension.configure", html)

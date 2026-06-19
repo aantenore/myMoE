@@ -143,6 +143,8 @@ Setup readiness is side-effect free. It reports the bootstrap command, configure
 
 The Setup section also exposes a guarded "Prepare runtime" action backed by `/api/setup/run`. Without confirmation it reports `confirmation_required`; with confirmation it runs only the install and model-download commands derived from the active configuration. The same flow is available from CLI through `--prepare-runtime`.
 
+The Profiles section calls `/api/config/profiles` and lists runnable config profiles discovered from `configs/`, plus the currently active config even when it lives elsewhere. It is read-only: it shows active/default flags, setup readiness, backend, expert count, and model names so operators can decide which profile to launch or prepare without editing JSON blindly.
+
 System Doctor calls `/api/doctor` and combines setup, health, model process reachability, extension audit, and cron state into one `ready`, `attention`, or `blocked` report with recommendations. The same panel can download a privacy-safe support bundle from `/api/support-bundle/download.json`.
 
 Performance calls `/api/performance` and shows the current benchmark status, measured candidate coverage, selected primary general expert, selected fallback/compaction expert, and top ranked model scores. It is read-only and does not start a benchmark. The Markdown handoff report is available from `/api/performance/report.md`.
@@ -183,6 +185,10 @@ Composer with multiline prompt support before sending:
 Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes background automation status plus a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
+
+Runtime profile discovery shows runnable local model profiles and setup readiness without mutating runtime state:
+
+![myMoE runtime profiles](screenshots/profiles.png)
 
 Audit Trail exposes recent operational events plus guarded retention pruning:
 
