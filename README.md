@@ -292,7 +292,7 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
 The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile, adds v2 as the preferred GGUF coding/agentic profile, and leaves Qwen3 30B-A3B as the general-purpose default.
 
-The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 34 deterministic routing cases across the base and extended sets, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
+The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 64 deterministic routing cases across the base and extended sets, verifies the 52-case live general routing report, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
 
 Run local model performance benchmarks with:
 
@@ -332,11 +332,21 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --tool-input '{"query":"filesystem"}'
 ```
 
-Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create` or `--cron-confirm-writes` for CLI cron execution.
+Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create`, `{"confirm": true}` for `extension.configure`, or `--cron-confirm-writes` for CLI cron execution.
 
 The Advanced drawer also includes Plugin Studio for creating a local plugin scaffold without writing JSON by hand. It creates `plugin.json` plus plugin-local `SKILL.md`, requires confirmation, and refreshes the registry in the running web app.
 
 Use the same Extensions panel to run a registry audit. The audit validates plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes before the plugin is used by an agent workflow.
+
+The `extension.configure` tool lets the app self-configure MCP server and cron job registry entries through the allowlisted tool runner. It writes only to the registry files declared by the active app config, validates entries with the same parsers used at startup, requires `confirm: true`, then refreshes the running web registry and cron state.
+
+Example guarded cron configuration:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool extension.configure \
+  --tool-input '{"surface":"cron_job","definition":{"id":"daily-audit","description":"Run extension audit once per day.","enabled":true,"schedule":{"type":"interval","seconds":86400},"command":["extension.audit"],"risk_class":"compute_only"},"confirm":true}'
+```
 
 MCP stdio discovery is also available for trusted, enabled MCP servers:
 

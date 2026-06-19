@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 from local_moe.config import load_config
@@ -10,7 +12,9 @@ from local_moe.extensions import (
     ExtensionRegistry,
     McpServerDefinition,
     ToolDefinition,
+    load_cron_jobs,
     load_extension_registry,
+    load_mcp_servers,
 )
 from local_moe.memory import FileMemoryStore
 from local_moe.tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
@@ -92,6 +96,97 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertTrue(result.payload["checked"])
         self.assertEqual(result.payload["issue_count"], 0)
         self.assertGreaterEqual(result.payload["plugin_count"], 1)
+
+    def test_extension_configure_requires_confirmation_and_updates_mcp_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mcp_path = root / "mcp.json"
+            cron_path = root / "cron.json"
+            mcp_path.write_text('{"servers": []}', encoding="utf-8")
+            cron_path.write_text('{"jobs": []}', encoding="utf-8")
+            runner = LocalToolRunner(
+                _extension_configure_registry(),
+                app_config=_app_config_for_extensions(root, mcp_path, cron_path),
+            )
+
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "extension.configure",
+                    {
+                        "surface": "mcp_server",
+                        "definition": {"name": "docs", "command": "npx"},
+                    },
+                )
+
+            result = runner.run(
+                "extension.configure",
+                {
+                    "surface": "mcp_server",
+                    "definition": {
+                        "name": "docs",
+                        "description": "Read documentation files.",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "docs"],
+                        "enabled": False,
+                        "risk_class": "write_local",
+                        "capabilities": ["resources", "tools"],
+                        "transport": "stdio",
+                        "allowed_tools": ["list_directory", "read_text_file"],
+                    },
+                    "confirm": True,
+                },
+            )
+
+            configured = load_mcp_servers(mcp_path)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["action"], "created")
+        self.assertEqual(result.payload["id"], "docs")
+        self.assertEqual(configured[0].name, "docs")
+        self.assertEqual(configured[0].allowed_tools, ("list_directory", "read_text_file"))
+        self.assertEqual(result.payload["audit"]["issue_count"], 0)
+
+    def test_extension_configure_updates_cron_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mcp_path = root / "mcp.json"
+            cron_path = root / "cron.json"
+            mcp_path.write_text('{"servers": []}', encoding="utf-8")
+            cron_path.write_text('{"jobs": []}', encoding="utf-8")
+            runner = LocalToolRunner(
+                _extension_configure_registry(),
+                app_config=_app_config_for_extensions(root, mcp_path, cron_path),
+            )
+
+            created = runner.run(
+                "extension.configure",
+                {
+                    "surface": "cron_job",
+                    "definition": {
+                        "id": "daily-audit",
+                        "description": "Run extension audit once per day.",
+                        "enabled": True,
+                        "schedule": {"type": "interval", "seconds": 86400},
+                        "command": ["extension.audit"],
+                        "risk_class": "compute_only",
+                    },
+                    "confirm": True,
+                },
+            )
+            removed = runner.run(
+                "extension.configure",
+                {
+                    "surface": "cron_job",
+                    "mode": "remove",
+                    "definition": {"id": "daily-audit"},
+                    "confirm": True,
+                },
+            )
+            remaining = load_cron_jobs(cron_path)
+
+        self.assertEqual(created.payload["action"], "created")
+        self.assertEqual(removed.payload["action"], "removed")
+        self.assertEqual(remaining, [])
 
     def test_mcp_search_capabilities_returns_declared_servers(self) -> None:
         runner = LocalToolRunner(load_extension_registry())
@@ -255,6 +350,58 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["server"], "fake")
         self.assertEqual(result.payload["tool_name"], "echo")
         self.assertEqual(result.payload["content"][0]["text"], "echo:hello")
+
+
+def _extension_configure_registry() -> ExtensionRegistry:
+    return ExtensionRegistry(
+        tools=(
+            ToolDefinition(
+                name="extension.configure",
+                description="Configure extension entries",
+                risk_class="write_local",
+                side_effects="writes_registry_files",
+                enabled=True,
+            ),
+        ),
+        skills=(),
+        mcp_servers=(),
+        cron_jobs=(),
+        plugins=(),
+    )
+
+
+def _app_config_for_extensions(root: Path, mcp_path: Path, cron_path: Path) -> object:
+    tools_path = root / "tools.json"
+    tools_path.write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "name": "extension.configure",
+                        "description": "Configure extension entries",
+                        "risk_class": "write_local",
+                        "side_effects": "writes_registry_files",
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    skills_dir = root / "skills"
+    plugins_dir = root / "plugins"
+    skills_dir.mkdir()
+    plugins_dir.mkdir()
+    return SimpleNamespace(
+        permissions=SimpleNamespace(allow_process_execution=False),
+        extensions=SimpleNamespace(
+            plugins_dir=str(plugins_dir),
+            skills_dir=str(skills_dir),
+            tools_config=str(tools_path),
+            mcp_config=str(mcp_path),
+            cron_config=str(cron_path),
+        ),
+    )
 
 
 if __name__ == "__main__":

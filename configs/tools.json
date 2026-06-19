@@ -29,6 +29,13 @@
       "enabled": true
     },
     {
+      "name": "extension.configure",
+      "description": "Guarded self-configuration for MCP server and cron job registry entries.",
+      "risk_class": "write_local",
+      "side_effects": "writes_registry_files",
+      "enabled": true
+    },
+    {
       "name": "mcp.search_capabilities",
       "description": "List configured MCP servers and their declared capability domains.",
       "risk_class": "read_only",

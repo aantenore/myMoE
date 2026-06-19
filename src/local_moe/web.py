@@ -619,7 +619,13 @@ def _make_handler(
                         status=HTTPStatus.BAD_GATEWAY,
                     )
                     return
-                _send_json(self, tool_result_payload(result))
+                payload = tool_result_payload(result)
+                if result.name == "extension.configure":
+                    registry = _load_registry(app_config)
+                    cron_runner.replace_registry(registry)
+                    payload["payload"]["audit"] = audit_extension_registry(registry)
+                    payload["payload"]["extensions"] = registry_payload(registry)
+                _send_json(self, payload)
                 return
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)

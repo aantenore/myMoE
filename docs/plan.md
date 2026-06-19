@@ -25,6 +25,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add sanitized performance decision report from CLI, API, and UI.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
+- [x] Add guarded extension self-configuration for MCP server and cron job entries.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
 - [x] Add top-2 routing plus deterministic disagreement reporting.

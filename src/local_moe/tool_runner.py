@@ -12,7 +12,10 @@ from .extensions import (
     McpServerDefinition,
     ToolDefinition,
     audit_extension_registry,
+    configure_extension_entry,
     create_plugin_scaffold,
+    load_extension_registry,
+    registry_payload,
 )
 from .mcp_client import (
     McpClientError,
@@ -44,6 +47,7 @@ class LocalToolRunner:
         "memory.search",
         "context.compact",
         "extension.audit",
+        "extension.configure",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -61,6 +65,7 @@ class LocalToolRunner:
         allow_process_execution: bool | None = None,
     ):
         self._registry = registry
+        self._app_config = app_config
         self._moe_config = moe_config
         self._allow_process_execution = (
             bool(allow_process_execution)
@@ -86,6 +91,8 @@ class LocalToolRunner:
             return self._context_compact(tool, tool_payload)
         if tool.name == "extension.audit":
             return self._extension_audit(tool, tool_payload)
+        if tool.name == "extension.configure":
+            return self._extension_configure(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -180,6 +187,42 @@ class LocalToolRunner:
             "Extension registry audit completed.",
             audit_extension_registry(self._registry),
         )
+
+    def _extension_configure(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError(
+                "extension.configure requires confirm=true because it writes local registry files."
+            )
+        if self._app_config is None:
+            raise ToolExecutionError("extension.configure requires an app config.")
+        extensions = getattr(self._app_config, "extensions", None)
+        if extensions is None:
+            raise ToolExecutionError("extension.configure requires configured extension paths.")
+        definition = payload.get("definition", {})
+        if not isinstance(definition, dict):
+            raise ToolExecutionError("definition must be a JSON object.")
+
+        result = configure_extension_entry(
+            _required_text(payload, "surface"),
+            definition,
+            mode=_optional_text(payload, "mode") or "upsert",
+            mcp_config=getattr(extensions, "mcp_config"),
+            cron_config=getattr(extensions, "cron_config"),
+        )
+        registry = load_extension_registry(
+            plugins_dir=getattr(extensions, "plugins_dir"),
+            skills_dir=getattr(extensions, "skills_dir"),
+            tools_config=getattr(extensions, "tools_config"),
+            mcp_config=getattr(extensions, "mcp_config"),
+            cron_config=getattr(extensions, "cron_config"),
+        )
+        result.update(
+            {
+                "audit": audit_extension_registry(registry),
+                "extensions": registry_payload(registry),
+            }
+        )
+        return _ok(tool, "Extension registry configuration updated.", result)
 
     def _plugin_create(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
         if payload.get("confirm") is not True:

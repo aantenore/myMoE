@@ -1779,6 +1779,25 @@
             confirm: false,
           },
           "extension.audit": {},
+          "extension.configure": {
+            surface: "mcp_server",
+            mode: "upsert",
+            definition: {
+              name: "local-docs",
+              description: "Read-only local documentation MCP server.",
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-filesystem", "docs"],
+              enabled: false,
+              risk_class: "write_local",
+              capabilities: ["resources", "tools"],
+              transport: "stdio",
+              cwd: ".",
+              env: {},
+              timeout_seconds: 8,
+              allowed_tools: ["list_allowed_directories", "list_directory", "read_text_file", "search_files"],
+            },
+            confirm: false,
+          },
           "mcp.search_capabilities": {
             query: "filesystem",
           },
@@ -1989,6 +2008,15 @@
             body: JSON.stringify({ name, input }),
           });
           el("tool-output").textContent = JSON.stringify(result, null, 2);
+          if (result.payload?.extensions) {
+            state.extensions = result.payload.extensions;
+            renderExtensions(state.extensions);
+            renderToolRunner(state.extensions);
+          }
+          if (result.payload?.audit) {
+            state.extensionAudit = result.payload.audit;
+            renderExtensionAudit(state.extensionAudit);
+          }
         } catch (error) {
           el("tool-output").textContent = error.message;
         }

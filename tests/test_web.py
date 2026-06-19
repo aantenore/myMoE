@@ -235,6 +235,55 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["payload"]["servers"][0]["name"], "filesystem")
 
+    def test_extension_configure_tool_refreshes_web_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            mcp_path = root / "mcp.json"
+            cron_path = root / "cron.json"
+            mcp_path.write_text('{"servers": []}', encoding="utf-8")
+            cron_path.write_text('{"jobs": []}', encoding="utf-8")
+            raw = json.loads(app_config.read_text(encoding="utf-8"))
+            raw["extensions"]["mcp_config"] = str(mcp_path)
+            raw["extensions"]["cron_config"] = str(cron_path)
+            app_config.write_text(json.dumps(raw), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                result = _post_json(
+                    base_url + "/api/tools/run",
+                    {
+                        "name": "extension.configure",
+                        "input": {
+                            "surface": "cron_job",
+                            "definition": {
+                                "id": "daily-audit",
+                                "description": "Run extension audit once per day.",
+                                "enabled": True,
+                                "schedule": {"type": "interval", "seconds": 86400},
+                                "command": ["extension.audit"],
+                                "risk_class": "compute_only",
+                            },
+                            "confirm": True,
+                        },
+                    },
+                )
+                cron = _get_json(base_url + "/api/cron")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"]["action"], "created")
+        self.assertIn("daily-audit", [job["id"] for job in cron["jobs"]])
+
     def test_runs_mcp_list_tools_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -533,6 +582,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("renderSetup", html)
         self.assertIn("runSetup", html)
         self.assertIn("setup-confirm", html)
+        self.assertIn("extension.configure", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)

@@ -101,6 +101,11 @@ class BackgroundCronRunner:
         thread = self._thread
         return bool(thread and thread.is_alive())
 
+    def replace_registry(self, registry: ExtensionRegistry) -> None:
+        with self._lock:
+            self._jobs = tuple(registry.cron_jobs)
+            self._registry = registry
+
     def run_once(self) -> CronRunSummary | None:
         now = self._now_func()
         try:

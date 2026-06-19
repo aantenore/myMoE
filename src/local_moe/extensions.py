@@ -130,59 +130,12 @@ def load_tools(path: str | Path) -> list[ToolDefinition]:
 
 def load_mcp_servers(path: str | Path) -> list[McpServerDefinition]:
     raw = _read_json_if_exists(path, {"servers": []})
-    servers = []
-    for item in raw.get("servers", []):
-        _validate_id(str(item["name"]))
-        risk_class = str(item.get("risk_class", "read_only"))
-        _validate_risk(risk_class)
-        env_raw = item.get("env", {})
-        if env_raw is None:
-            env_raw = {}
-        if not isinstance(env_raw, dict):
-            raise ExtensionError(f"MCP server {item['name']} env must be an object.")
-        try:
-            timeout_seconds = float(item.get("timeout_seconds", 8.0))
-        except (TypeError, ValueError) as exc:
-            raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be numeric.") from exc
-        if timeout_seconds <= 0:
-            raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be positive.")
-        servers.append(
-            McpServerDefinition(
-                name=str(item["name"]),
-                description=str(item.get("description", "")),
-                command=str(item["command"]),
-                args=tuple(str(arg) for arg in item.get("args", [])),
-                enabled=bool(item.get("enabled", False)),
-                risk_class=risk_class,
-                capabilities=tuple(str(capability) for capability in item.get("capabilities", [])),
-                transport=str(item.get("transport", "stdio")),
-                cwd=str(item["cwd"]) if item.get("cwd") is not None else None,
-                env={str(key): str(value) for key, value in env_raw.items()},
-                timeout_seconds=timeout_seconds,
-                allowed_tools=tuple(str(name) for name in item.get("allowed_tools", [])),
-            )
-        )
-    return servers
+    return [_parse_mcp_server(item) for item in raw.get("servers", [])]
 
 
 def load_cron_jobs(path: str | Path) -> list[CronJobDefinition]:
     raw = _read_json_if_exists(path, {"jobs": []})
-    jobs = []
-    for item in raw.get("jobs", []):
-        _validate_id(str(item["id"]))
-        risk_class = str(item.get("risk_class", "compute_only"))
-        _validate_risk(risk_class)
-        jobs.append(
-            CronJobDefinition(
-                id=str(item["id"]),
-                description=str(item.get("description", "")),
-                enabled=bool(item.get("enabled", False)),
-                schedule=dict(item.get("schedule", {})),
-                command=tuple(str(arg) for arg in item.get("command", [])),
-                risk_class=risk_class,
-            )
-        )
-    return jobs
+    return [_parse_cron_job(item) for item in raw.get("jobs", [])]
 
 
 def load_skills(root: str | Path) -> list[SkillDefinition]:
@@ -290,6 +243,81 @@ def create_plugin_scaffold(
     return plugin_dir
 
 
+def configure_extension_entry(
+    surface: str,
+    definition: dict[str, Any],
+    *,
+    mode: str = "upsert",
+    mcp_config: str | Path = "configs/mcp.json",
+    cron_config: str | Path = "configs/cron.json",
+) -> dict[str, Any]:
+    """Add, update, or remove extension entries in the configured registry files."""
+
+    if not isinstance(definition, dict):
+        raise ExtensionError("definition must be an object.")
+    normalized_surface = str(surface).strip()
+    normalized_mode = str(mode).strip() or "upsert"
+    if normalized_mode not in {"upsert", "remove"}:
+        raise ExtensionError("mode must be upsert or remove.")
+
+    if normalized_surface == "mcp_server":
+        path = Path(mcp_config)
+        list_key = "servers"
+        identity_key = "name"
+        parser = _parse_mcp_server
+    elif normalized_surface == "cron_job":
+        path = Path(cron_config)
+        list_key = "jobs"
+        identity_key = "id"
+        parser = _parse_cron_job
+    else:
+        raise ExtensionError("surface must be mcp_server or cron_job.")
+
+    raw = _read_json_if_exists(path, {list_key: []})
+    entries = list(raw.get(list_key, []))
+    if not isinstance(entries, list):
+        raise ExtensionError(f"{path} field {list_key} must be a list.")
+
+    identity = str(definition.get(identity_key, "")).strip()
+    _validate_id(identity)
+
+    before_count = len(entries)
+    existing_index = next(
+        (index for index, item in enumerate(entries) if str(item.get(identity_key, "")).strip() == identity),
+        None,
+    )
+
+    if normalized_mode == "remove":
+        if existing_index is None:
+            action = "missing"
+        else:
+            del entries[existing_index]
+            action = "removed"
+    else:
+        parsed = parser(definition)
+        entry = _entry_payload(parsed)
+        if existing_index is None:
+            entries.append(entry)
+            action = "created"
+        else:
+            entries[existing_index] = entry
+            action = "updated"
+
+    raw[list_key] = entries
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "surface": normalized_surface,
+        "mode": normalized_mode,
+        "action": action,
+        "id": identity,
+        "path": str(path),
+        "before_count": before_count,
+        "after_count": len(entries),
+    }
+
+
 def registry_payload(registry: ExtensionRegistry) -> dict[str, Any]:
     return {
         "tools": [item.__dict__ for item in registry.tools],
@@ -344,6 +372,68 @@ def _parse_tool(item: dict[str, Any]) -> ToolDefinition:
         side_effects=str(item.get("side_effects", "none")),
         enabled=bool(item.get("enabled", True)),
     )
+
+
+def _parse_mcp_server(item: dict[str, Any]) -> McpServerDefinition:
+    _validate_id(str(item["name"]))
+    risk_class = str(item.get("risk_class", "read_only"))
+    _validate_risk(risk_class)
+    env_raw = item.get("env", {})
+    if env_raw is None:
+        env_raw = {}
+    if not isinstance(env_raw, dict):
+        raise ExtensionError(f"MCP server {item['name']} env must be an object.")
+    try:
+        timeout_seconds = float(item.get("timeout_seconds", 8.0))
+    except (TypeError, ValueError) as exc:
+        raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be numeric.") from exc
+    if timeout_seconds <= 0:
+        raise ExtensionError(f"MCP server {item['name']} timeout_seconds must be positive.")
+    command = str(item.get("command", "")).strip()
+    if not command:
+        raise ExtensionError(f"MCP server {item['name']} command is required.")
+    return McpServerDefinition(
+        name=str(item["name"]),
+        description=str(item.get("description", "")),
+        command=command,
+        args=tuple(str(arg) for arg in item.get("args", [])),
+        enabled=bool(item.get("enabled", False)),
+        risk_class=risk_class,
+        capabilities=tuple(str(capability) for capability in item.get("capabilities", [])),
+        transport=str(item.get("transport", "stdio")),
+        cwd=str(item["cwd"]) if item.get("cwd") is not None else None,
+        env={str(key): str(value) for key, value in env_raw.items()},
+        timeout_seconds=timeout_seconds,
+        allowed_tools=tuple(str(name) for name in item.get("allowed_tools", [])),
+    )
+
+
+def _parse_cron_job(item: dict[str, Any]) -> CronJobDefinition:
+    _validate_id(str(item["id"]))
+    risk_class = str(item.get("risk_class", "compute_only"))
+    _validate_risk(risk_class)
+    schedule = item.get("schedule", {})
+    if not isinstance(schedule, dict):
+        raise ExtensionError(f"Cron job {item['id']} schedule must be an object.")
+    command = tuple(str(arg) for arg in item.get("command", []))
+    if not command:
+        raise ExtensionError(f"Cron job {item['id']} command is required.")
+    return CronJobDefinition(
+        id=str(item["id"]),
+        description=str(item.get("description", "")),
+        enabled=bool(item.get("enabled", False)),
+        schedule=dict(schedule),
+        command=command,
+        risk_class=risk_class,
+    )
+
+
+def _entry_payload(entry: McpServerDefinition | CronJobDefinition) -> dict[str, Any]:
+    payload = entry.__dict__.copy()
+    for key, value in tuple(payload.items()):
+        if isinstance(value, tuple):
+            payload[key] = list(value)
+    return payload
 
 
 def _skill_reference_set(skills: tuple[SkillDefinition, ...]) -> set[str]:
