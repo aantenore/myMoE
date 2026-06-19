@@ -26,6 +26,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add progressive streamed chat responses with non-streaming fallback.
 - [x] Add local knowledge import into context retrieval.
 - [x] Add guarded local memory and knowledge deletion controls.
+- [x] Add read-only memory maintenance reports and guarded expired-memory pruning.
 - [x] Add confirmed local data backup and restore for chats plus memory.
 - [x] Add local audit trail for sensitive host-side actions.
 - [x] Add guarded audit trail retention pruning from API and UI.

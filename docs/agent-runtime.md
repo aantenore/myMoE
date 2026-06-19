@@ -31,6 +31,8 @@ flowchart LR
 | Surface | Runtime behavior | Safety policy | Entry points |
 | --- | --- | --- | --- |
 | `memory.search` | Searches the local memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
+| `memory.maintenance` | Reports local memory totals, active temporal records, pending future records, and expired records. | Read-only; no deletion or path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/maintenance`, Advanced Memory panel, cron. |
+| `memory.prune_expired` | Deletes only records whose `valid_until` timestamp is expired. | Requires `confirm=true` from tools/API and `confirm_writes=true` for cron; future `valid_from` records are preserved. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/prune-expired`, Advanced Memory panel, optional cron. |
 | `memory.forget` | Deletes one memory record by id or all chunks for one imported knowledge document id. | Requires `confirm=true`; deletes only from `<runtime.work_dir>/memory.jsonl`; no arbitrary path input. | CLI `--run-tool`, web `/api/tools/run`, web `DELETE /api/memory/<id>`, web `DELETE /api/knowledge/<id>`, Advanced Memory and Knowledge panels. |
 | Web memory API | Saves, searches, and guard-deletes local memory records. | Writes and deletes only in `<runtime.work_dir>/memory.jsonl`; delete requires `confirm=true`; no arbitrary path input. | Web `/api/memory`, Advanced Memory panel. |
 | `knowledge.ingest` | Chunks pasted local notes or documentation into knowledge records in the local memory store. | Requires `confirm=true`; writes only to `<runtime.work_dir>/memory.jsonl`; does not read arbitrary local file paths. | CLI `--run-tool`, web `/api/tools/run`, web `/api/knowledge`, Advanced Knowledge panel. |
@@ -93,7 +95,7 @@ On the tested machine, the example filesystem MCP server starts through `npx -y 
 
 Cron schedules are evaluated by the local Python runner. A `startup` schedule means the job is due the first time the scheduler is run for the current state file. CLI and API calls can still run jobs manually, and the web server starts a cross-platform in-process background runner when `runtime.cron_auto_run=true`.
 
-The background runner polls every `runtime.cron_poll_seconds` seconds. With the default `runtime.cron_confirm_writes=false`, it auto-runs only jobs whose risk class does not require write confirmation, for example `extension.audit` and `memory.maintenance`. Jobs such as `router.distill` remain manual-only unless `runtime.cron_confirm_writes=true` is set by the operator.
+The background runner polls every `runtime.cron_poll_seconds` seconds. With the default `runtime.cron_confirm_writes=false`, it auto-runs only jobs whose risk class does not require write confirmation, for example `extension.audit` and read-only `memory.maintenance`. Write-local jobs such as `memory.prune_expired` and `router.distill` remain manual-only unless `runtime.cron_confirm_writes=true` is set by the operator.
 
 The Advanced Cron panel and `/api/cron` expose the automatic runner state: enabled/running flags, policy, auto-runnable job IDs, manual-only job IDs, due jobs, last run time, and the last run summary. This keeps unattended maintenance observable without introducing OS-specific launchd, systemd, or Task Scheduler services.
 

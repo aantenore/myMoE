@@ -29,7 +29,7 @@ from .mcp_client import (
     mcp_tool_call_payload,
     mcp_tool_list_payload,
 )
-from .memory import FileMemoryStore
+from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
 
 
 class ToolExecutionError(ValueError):
@@ -51,6 +51,8 @@ class LocalToolRunner:
 
     _SUPPORTED = {
         "memory.search",
+        "memory.maintenance",
+        "memory.prune_expired",
         "memory.forget",
         "knowledge.ingest",
         "data.export",
@@ -99,6 +101,10 @@ class LocalToolRunner:
 
         if tool.name == "memory.search":
             return self._memory_search(tool, tool_payload)
+        if tool.name == "memory.maintenance":
+            return self._memory_maintenance(tool, tool_payload)
+        if tool.name == "memory.prune_expired":
+            return self._memory_prune_expired(tool, tool_payload)
         if tool.name == "memory.forget":
             return self._memory_forget(tool, tool_payload)
         if tool.name == "knowledge.ingest":
@@ -164,6 +170,26 @@ class LocalToolRunner:
                     for record, score in results
                 ],
             },
+        )
+
+    def _memory_maintenance(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        report = FileMemoryStore(self._memory_path).maintenance_report(now=_optional_text(payload, "now"))
+        return _ok(
+            tool,
+            "Memory maintenance report completed.",
+            memory_maintenance_payload(report),
+        )
+
+    def _memory_prune_expired(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError(
+                "memory.prune_expired requires confirm=true because it deletes expired local memory records."
+            )
+        report = FileMemoryStore(self._memory_path).prune_expired(now=_optional_text(payload, "now"))
+        return _ok(
+            tool,
+            "Expired local memory records pruned.",
+            memory_prune_payload(report),
         )
 
     def _memory_forget(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:

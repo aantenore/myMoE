@@ -1095,9 +1095,17 @@
               <input class="tool-select" id="memory-forget-id" aria-label="Memory id to forget" placeholder="Memory id to forget" />
               <button class="ghost-button" id="forget-memory" type="button">Forget memory</button>
             </div>
+            <div class="tool-row">
+              <button class="ghost-button" id="check-memory" type="button">Check memory</button>
+              <button class="ghost-button" id="prune-expired-memory" type="button">Prune expired</button>
+            </div>
             <label class="check-row">
               <input id="memory-forget-confirm" type="checkbox" />
               <span>Confirm memory deletion</span>
+            </label>
+            <label class="check-row">
+              <input id="memory-prune-confirm" type="checkbox" />
+              <span>Confirm expired memory pruning</span>
             </label>
             <pre class="eval-output" id="memory-output">No memory action yet.</pre>
           </div>
@@ -1279,6 +1287,8 @@
         el("save-memory").addEventListener("click", saveMemory);
         el("search-memory").addEventListener("click", searchMemory);
         el("forget-memory").addEventListener("click", forgetMemory);
+        el("check-memory").addEventListener("click", checkMemory);
+        el("prune-expired-memory").addEventListener("click", pruneExpiredMemory);
         el("import-knowledge").addEventListener("click", importKnowledge);
         el("list-knowledge").addEventListener("click", listKnowledge);
         el("forget-knowledge").addEventListener("click", forgetKnowledge);
@@ -2018,6 +2028,10 @@
             scope: "default",
             limit: 5,
           },
+          "memory.maintenance": {},
+          "memory.prune_expired": {
+            confirm: false,
+          },
           "memory.forget": {
             record_id: "",
             document_id: "",
@@ -2423,6 +2437,30 @@
         el("memory-output").textContent = "Searching...";
         try {
           const result = await api(path);
+          el("memory-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("memory-output").textContent = error.message;
+        }
+      }
+
+      async function checkMemory() {
+        el("memory-output").textContent = "Checking...";
+        try {
+          const result = await api("/api/memory/maintenance");
+          el("memory-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("memory-output").textContent = error.message;
+        }
+      }
+
+      async function pruneExpiredMemory() {
+        el("memory-output").textContent = "Pruning expired records...";
+        try {
+          const result = await api("/api/memory/prune-expired", {
+            method: "POST",
+            body: JSON.stringify({ confirm: el("memory-prune-confirm").checked }),
+          });
+          el("memory-prune-confirm").checked = false;
           el("memory-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("memory-output").textContent = error.message;

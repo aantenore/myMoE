@@ -101,6 +101,36 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["removed_ids"], list(report.record_ids))
         self.assertEqual(remaining, [])
 
+    def test_memory_maintenance_and_prune_expired_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "memory.jsonl"
+            store = FileMemoryStore(memory_path)
+            active = store.add("Current fact.")
+            expired = store.add("Expired fact.", valid_until="2026-01-01T00:00:00+00:00")
+            runner = LocalToolRunner(load_extension_registry(), memory_path=memory_path)
+
+            maintenance = runner.run(
+                "memory.maintenance",
+                {"now": "2026-06-20T00:00:00+00:00"},
+            )
+            with self.assertRaises(ToolExecutionError):
+                runner.run(
+                    "memory.prune_expired",
+                    {"now": "2026-06-20T00:00:00+00:00"},
+                )
+            pruned = runner.run(
+                "memory.prune_expired",
+                {"now": "2026-06-20T00:00:00+00:00", "confirm": True},
+            )
+            remaining = FileMemoryStore(memory_path).list()
+
+        self.assertEqual(maintenance.status, "ok")
+        self.assertEqual(maintenance.payload["active_records"], 1)
+        self.assertEqual(maintenance.payload["expired_records"], 1)
+        self.assertEqual(pruned.payload["removed_count"], 1)
+        self.assertEqual(pruned.payload["removed_ids"], [expired.id])
+        self.assertEqual([record.id for record in remaining], [active.id])
+
     def test_data_export_import_requires_confirmation_and_restores_local_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

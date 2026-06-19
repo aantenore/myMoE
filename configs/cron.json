@@ -33,6 +33,17 @@
       "risk_class": "compute_only"
     },
     {
+      "id": "memory-prune-expired",
+      "description": "Delete expired local memory records when write-local cron jobs are explicitly confirmed.",
+      "enabled": false,
+      "schedule": {
+        "type": "interval",
+        "seconds": 86400
+      },
+      "command": ["memory.prune_expired", "--memory-path", "work/runtime/memory.jsonl"],
+      "risk_class": "write_local"
+    },
+    {
       "id": "router-distillation-refresh",
       "description": "Regenerate local route-label data and distilled router artifact from the curated live eval set.",
       "enabled": true,

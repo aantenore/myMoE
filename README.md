@@ -328,7 +328,7 @@ make run-cron
 make run-cron-writes
 ```
 
-When the web UI is running, `runtime.cron_auto_run=true` starts a lightweight in-process scheduler that executes safe due jobs such as extension audits and memory maintenance. Write-local jobs stay manual unless `runtime.cron_confirm_writes=true` is set.
+When the web UI is running, `runtime.cron_auto_run=true` starts a lightweight in-process scheduler that executes safe due jobs such as extension audits and read-only memory maintenance. Expired-memory pruning is a separate write-local job and stays manual unless `runtime.cron_confirm_writes=true` is set.
 
 Run an allowlisted local tool from the CLI:
 
@@ -336,6 +336,22 @@ Run an allowlisted local tool from the CLI:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool mcp.search_capabilities \
   --tool-input '{"query":"filesystem"}'
+```
+
+Memory maintenance is available without deleting data:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool memory.maintenance \
+  --tool-input '{}'
+```
+
+Expired memory pruning is intentionally separate and confirmation-gated:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool memory.prune_expired \
+  --tool-input '{"confirm":true}'
 ```
 
 Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create`, `{"confirm": true}` for `extension.configure`, or `--cron-confirm-writes` for CLI cron execution.

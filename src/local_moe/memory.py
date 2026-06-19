@@ -23,9 +23,21 @@ class MemoryRecord:
 @dataclass(frozen=True)
 class MemoryMaintenanceReport:
     path: str
+    checked_at: str
     total_records: int
     active_records: int
+    pending_records: int
     expired_records: int
+
+
+@dataclass(frozen=True)
+class MemoryPruneReport:
+    path: str
+    checked_at: str
+    before_count: int
+    removed_count: int
+    remaining_count: int
+    removed_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -68,6 +80,28 @@ def memory_record_payload(record: MemoryRecord, *, score: float | None = None) -
     if score is not None:
         payload["score"] = score
     return payload
+
+
+def memory_maintenance_payload(report: MemoryMaintenanceReport) -> dict[str, object]:
+    return {
+        "path": report.path,
+        "checked_at": report.checked_at,
+        "total_records": report.total_records,
+        "active_records": report.active_records,
+        "pending_records": report.pending_records,
+        "expired_records": report.expired_records,
+    }
+
+
+def memory_prune_payload(report: MemoryPruneReport) -> dict[str, object]:
+    return {
+        "path": report.path,
+        "checked_at": report.checked_at,
+        "before_count": report.before_count,
+        "removed_count": report.removed_count,
+        "remaining_count": report.remaining_count,
+        "removed_ids": list(report.removed_ids),
+    }
 
 
 class FileMemoryStore:
@@ -217,13 +251,39 @@ class FileMemoryStore:
         )
 
     def maintenance_report(self, *, now: str | None = None) -> MemoryMaintenanceReport:
+        checked_at = now or _now_iso()
         records = self.list()
-        active = [record for record in records if _is_valid_at(record, now)]
+        active = [record for record in records if _is_valid_at(record, checked_at)]
+        pending = [record for record in records if _is_pending_at(record, checked_at)]
+        expired = [record for record in records if _is_expired_at(record, checked_at)]
         return MemoryMaintenanceReport(
             path=str(self.path),
+            checked_at=checked_at,
             total_records=len(records),
             active_records=len(active),
-            expired_records=len(records) - len(active),
+            pending_records=len(pending),
+            expired_records=len(expired),
+        )
+
+    def prune_expired(self, *, now: str | None = None) -> MemoryPruneReport:
+        checked_at = now or _now_iso()
+        records = _read_records(self.path)
+        kept: list[MemoryRecord] = []
+        removed: list[MemoryRecord] = []
+        for record in records:
+            if _is_expired_at(record, checked_at):
+                removed.append(record)
+            else:
+                kept.append(record)
+        if removed:
+            _write_records(self.path, kept)
+        return MemoryPruneReport(
+            path=str(self.path),
+            checked_at=checked_at,
+            before_count=len(records),
+            removed_count=len(removed),
+            remaining_count=len(kept),
+            removed_ids=tuple(record.id for record in removed),
         )
 
     def _forget(self, predicate: Callable[[MemoryRecord], bool], *, target: str) -> MemoryForgetReport:
@@ -345,13 +405,20 @@ def _clean_text(value: str) -> str:
 
 
 def _is_valid_at(record: MemoryRecord, now: str | None) -> bool:
-    if now is None:
-        return record.valid_until is None
-    if record.valid_from and record.valid_from > now:
+    checked_at = now or _now_iso()
+    if record.valid_from and record.valid_from > checked_at:
         return False
-    if record.valid_until and record.valid_until <= now:
+    if record.valid_until and record.valid_until <= checked_at:
         return False
     return True
+
+
+def _is_pending_at(record: MemoryRecord, now: str) -> bool:
+    return bool(record.valid_from and record.valid_from > now)
+
+
+def _is_expired_at(record: MemoryRecord, now: str) -> bool:
+    return bool(record.valid_until and record.valid_until <= now)
 
 
 def _now_iso() -> str:

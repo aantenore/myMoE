@@ -70,6 +70,35 @@ class MemoryTests(unittest.TestCase):
 
         self.assertEqual([item[0].text for item in results], ["Current model recommendation."])
 
+    def test_maintenance_distinguishes_pending_and_expired_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileMemoryStore(Path(tmp) / "memory.jsonl")
+            store.add("Active fact.")
+            store.add("Future fact.", valid_from="2026-07-01T00:00:00+00:00")
+            store.add("Expired fact.", valid_until="2026-01-01T00:00:00+00:00")
+
+            report = store.maintenance_report(now="2026-06-20T00:00:00+00:00")
+
+        self.assertEqual(report.total_records, 3)
+        self.assertEqual(report.active_records, 1)
+        self.assertEqual(report.pending_records, 1)
+        self.assertEqual(report.expired_records, 1)
+
+    def test_prunes_only_expired_temporal_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileMemoryStore(Path(tmp) / "memory.jsonl")
+            active = store.add("Active fact.")
+            pending = store.add("Future fact.", valid_from="2026-07-01T00:00:00+00:00")
+            expired = store.add("Expired fact.", valid_until="2026-01-01T00:00:00+00:00")
+
+            report = store.prune_expired(now="2026-06-20T00:00:00+00:00")
+            remaining = store.list()
+
+        self.assertEqual(report.before_count, 3)
+        self.assertEqual(report.removed_count, 1)
+        self.assertEqual(report.removed_ids, (expired.id,))
+        self.assertEqual({record.id for record in remaining}, {active.id, pending.id})
+
     def test_forgets_single_record_and_document_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileMemoryStore(Path(tmp) / "memory.jsonl")

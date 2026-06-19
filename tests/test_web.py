@@ -620,6 +620,53 @@ class WebTests(unittest.TestCase):
         self.assertEqual(deleted["removed_ids"], [memory["id"]])
         self.assertEqual(searched["records"], [])
 
+    def test_memory_maintenance_and_prune_expired_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                active = _post_json(
+                    base_url + "/api/memory",
+                    {"text": "Current local memory.", "scope": "default"},
+                )
+                expired = _post_json(
+                    base_url + "/api/memory",
+                    {
+                        "text": "Expired local memory.",
+                        "scope": "default",
+                        "valid_until": "2026-01-01T00:00:00+00:00",
+                    },
+                )
+                maintenance = _get_json(base_url + "/api/memory/maintenance")
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(base_url + "/api/memory/prune-expired", {})
+                pruned = _post_json(
+                    base_url + "/api/memory/prune-expired",
+                    {"confirm": True},
+                )
+                listed = _get_json(base_url + "/api/memory?scope=default")
+                audit = _get_json(base_url + "/api/audit?action=memory.prune_expired&limit=5")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(maintenance["total_records"], 2)
+        self.assertEqual(maintenance["expired_records"], 1)
+        self.assertEqual(pruned["removed_count"], 1)
+        self.assertEqual(pruned["removed_ids"], [expired["id"]])
+        self.assertEqual([record["id"] for record in listed["records"]], [active["id"]])
+        self.assertEqual([event["status"] for event in audit["events"]], ["ok", "confirmation_required"])
+
     def test_data_export_import_api_is_confirmation_guarded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -811,6 +858,11 @@ class WebTests(unittest.TestCase):
         self.assertIn("knowledge.ingest", html)
         self.assertIn("forgetKnowledge", html)
         self.assertIn("forgetMemory", html)
+        self.assertIn("checkMemory", html)
+        self.assertIn("pruneExpiredMemory", html)
+        self.assertIn("/api/memory/maintenance", html)
+        self.assertIn("/api/memory/prune-expired", html)
+        self.assertIn("memory-prune-confirm", html)
         self.assertIn("/api/memory/", html)
         self.assertIn("/api/knowledge/", html)
         self.assertIn("Local Data", html)
