@@ -48,6 +48,17 @@ Outputs:
 - `outputs/performance-benchmark.json`
 - `outputs/performance-decision.md`
 
+## Inspect
+
+To inspect the current decision without loading models or running a new benchmark:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report --performance-report-format markdown
+```
+
+The web UI exposes the same sanitized runtime surface through `/api/performance` and `/api/performance/report.md`. The report intentionally excludes benchmark prompt response excerpts and returns only model identity, status, score, throughput, memory, load-time, coverage, and the selected primary/fallback decision.
+
 ## Current Candidate Set
 
 - `mlx-community/Qwen3-1.7B-4bit`

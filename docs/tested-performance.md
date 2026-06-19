@@ -43,6 +43,8 @@ See:
 - `outputs/performance-benchmark.json`
 - `outputs/performance-decision.md`
 
+The app also exposes the latest sanitized decision through CLI `--performance-report`, web `/api/performance`, and web `/api/performance/report.md`, so operators can confirm the selected model policy without reading raw benchmark artifacts.
+
 The benchmark uses short prompts and `96` output tokens per prompt. It is a performance and viability gate, not a full semantic quality benchmark.
 
 | Candidate | Status | Avg generation tok/s | Peak memory | Avg latency |

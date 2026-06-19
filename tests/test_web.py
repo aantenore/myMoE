@@ -71,6 +71,8 @@ class WebTests(unittest.TestCase):
             audit = _get_json(base_url + "/api/extensions/audit")
             support_bundle = _get_json(base_url + "/api/support-bundle")
             downloaded_bundle = json.loads(_get_text(base_url + "/api/support-bundle/download.json"))
+            performance = _get_json(base_url + "/api/performance")
+            performance_markdown = _get_text(base_url + "/api/performance/report.md")
         finally:
             server.shutdown()
             thread.join(timeout=5)
@@ -95,6 +97,11 @@ class WebTests(unittest.TestCase):
         self.assertEqual(support_bundle["doctor"]["status"], "ready")
         self.assertIn("chat transcripts", support_bundle["privacy"]["excludes"])
         self.assertEqual(downloaded_bundle["schema_version"], "1.0")
+        self.assertEqual(performance["schema_version"], "1.0")
+        self.assertIn(performance["status"], {"ready", "ready_partial"})
+        self.assertEqual(performance["decision"]["primary_general"]["candidate_id"], "qwen3-30b-a3b-2507-mlx-4bit")
+        self.assertNotIn("content_excerpt", json.dumps(performance))
+        self.assertIn("# myMoE Performance Report", performance_markdown)
 
     def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -542,6 +549,12 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/support-bundle/download.json", html)
         self.assertIn("Download bundle", html)
         self.assertIn("downloadSupportBundle", html)
+        self.assertIn("/api/performance", html)
+        self.assertIn("/api/performance/report.md", html)
+        self.assertIn("Performance", html)
+        self.assertIn("renderPerformance", html)
+        self.assertIn("refreshPerformance", html)
+        self.assertIn("Download report", html)
         self.assertIn("runTool", html)
         self.assertIn("/api/tools/run", html)
         self.assertIn("saveMemory", html)

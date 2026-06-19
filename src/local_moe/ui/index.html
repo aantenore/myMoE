@@ -963,6 +963,15 @@
           <div class="kv" id="models"></div>
         </section>
         <section class="advanced-section">
+          <h2>Performance</h2>
+          <div class="kv" id="performance"></div>
+          <div class="tool-row">
+            <button class="ghost-button" id="refresh-performance" type="button">Refresh report</button>
+            <button class="ghost-button" id="download-performance-report" type="button">Download report</button>
+          </div>
+          <pre class="eval-output" id="performance-output">Not loaded yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Routing</h2>
           <div class="kv" id="routing"></div>
         </section>
@@ -1067,6 +1076,7 @@
         setup: null,
         doctor: null,
         health: null,
+        performance: null,
         extensions: null,
         extensionAudit: null,
         cron: null,
@@ -1151,6 +1161,8 @@
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-support-bundle").addEventListener("click", downloadSupportBundle);
+        el("refresh-performance").addEventListener("click", refreshPerformance);
+        el("download-performance-report").addEventListener("click", downloadPerformanceReport);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
@@ -1168,13 +1180,14 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, doctor, health, extensions, extensionAudit, cron] = await Promise.all([
+          const [config, runtime, modelProcesses, setup, doctor, health, performance, extensions, extensionAudit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/models/processes"),
             api("/api/setup"),
             api("/api/doctor"),
             api("/api/health"),
+            api("/api/performance"),
             api("/api/extensions"),
             api("/api/extensions/audit"),
             api("/api/cron"),
@@ -1185,6 +1198,7 @@
           state.setup = setup;
           state.doctor = doctor;
           state.health = health;
+          state.performance = performance;
           state.extensions = extensions;
           state.extensionAudit = extensionAudit.audit;
           state.cron = cron;
@@ -1194,6 +1208,7 @@
           renderSetup(setup);
           renderDoctor(doctor);
           renderHealth(health);
+          renderPerformance(performance);
           renderExtensions(extensions);
           renderExtensionAudit(extensionAudit.audit);
           renderToolRunner(extensions);
@@ -1590,6 +1605,50 @@
 
       function downloadSupportBundle() {
         window.open("/api/support-bundle/download.json", "_blank", "noreferrer");
+      }
+
+      function renderPerformance(performance) {
+        const decision = performance?.decision || {};
+        const primary = decision.primary_general;
+        const fallback = decision.fast_fallback;
+        const coverage = performance?.coverage || {};
+        const benchmark = performance?.benchmark || {};
+        const ranked = performance?.ranked || [];
+        el("performance").innerHTML = kvRows({
+          Status: performance?.status || "unknown",
+          Coverage: coverage.status || "unknown",
+          Benchmark: benchmark.created_at || benchmark.status || "unknown",
+          Primary: primary ? shortModel(primary.label || primary.candidate_id) : "None",
+          Fallback: fallback ? shortModel(fallback.label || fallback.candidate_id) : "None",
+          "Measured candidates": `${coverage.measured_result_count || 0}/${coverage.manifest_candidate_count || 0}`,
+        });
+        const lines = ranked.slice(0, 6).map((item, index) => {
+          const metrics = item.metrics || {};
+          const score = item.score?.overall == null ? "-" : Number(item.score.overall).toFixed(3);
+          const tps = metrics.generation_tps_avg == null ? "-" : `${Number(metrics.generation_tps_avg).toFixed(1)} tok/s`;
+          const memory = metrics.peak_memory_gb == null ? "-" : `${Number(metrics.peak_memory_gb).toFixed(2)} GB`;
+          return `${index + 1}. ${item.label || item.candidate_id} [${item.status}] score ${score} · ${tps} · ${memory}`;
+        });
+        const recommendations = (performance?.recommendations || []).slice(0, 3).map((item) => `- ${item}`);
+        el("performance-output").textContent = [
+          lines.join("\n") || "No ranked benchmark results available.",
+          recommendations.length ? `\nRecommendations:\n${recommendations.join("\n")}` : "",
+        ].join("");
+      }
+
+      async function refreshPerformance() {
+        el("performance-output").textContent = "Loading...";
+        try {
+          const result = await api("/api/performance");
+          state.performance = result;
+          renderPerformance(result);
+        } catch (error) {
+          el("performance-output").textContent = error.message;
+        }
+      }
+
+      function downloadPerformanceReport() {
+        window.open("/api/performance/report.md", "_blank", "noreferrer");
       }
 
       function renderExtensions(extensions) {

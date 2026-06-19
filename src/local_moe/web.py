@@ -29,6 +29,11 @@ from .health import check_runtime_health, runtime_health_payload
 from .memory import FileMemoryStore, memory_record_payload
 from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
+from .performance_report import (
+    build_performance_report,
+    performance_report_filename,
+    render_performance_report_markdown,
+)
 from .providers import ProviderError
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
@@ -186,6 +191,20 @@ def _make_handler(
                     json.dumps(bundle, indent=2).encode("utf-8"),
                     content_type="application/json; charset=utf-8",
                     filename=support_bundle_filename(),
+                )
+                return
+
+            if path == "/api/performance":
+                _send_json(self, build_performance_report())
+                return
+
+            if path == "/api/performance/report.md":
+                report = build_performance_report()
+                _send_download(
+                    self,
+                    render_performance_report_markdown(report).encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    filename=performance_report_filename(),
                 )
                 return
 
