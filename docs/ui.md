@@ -109,7 +109,9 @@ The Runtime section exposes configured model process state from `/api/models/pro
 
 The Extensions section includes a registry audit and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
 
-The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` still requires `confirm: true` before it writes a plugin scaffold.
+The Tools section exposes only configured local tools. It accepts JSON input and returns JSON output from `/api/tools/run`. The default examples are safe to inspect; `plugin.create` and `extension.configure` still require `confirm: true` before writing local registry files.
+
+`extension.configure` is the self-configuration path for operators who do not want to edit JSON by hand. It can upsert or remove MCP server and cron job entries, writes only to the active app config's registry paths, validates each entry before writing, refreshes the web registry, and updates the in-process cron runner immediately.
 
 MCP tool discovery is available through `mcp.list_tools`. It starts an enabled stdio MCP server and lists its declared tools, but only when the app config has `permissions.allow_process_execution=true` and the tool input includes `confirm_process_execution: true`. The default app config blocks process execution, so the UI can show the tool contract without silently launching processes.
 
@@ -208,6 +210,22 @@ Run an allowlisted tool:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool mcp.search_capabilities \
   --tool-input '{"query":"filesystem"}'
+```
+
+Configure a cron job through the guarded tool runner:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool extension.configure \
+  --tool-input '{"surface":"cron_job","definition":{"id":"daily-audit","description":"Run extension audit once per day.","enabled":true,"schedule":{"type":"interval","seconds":86400},"command":["extension.audit"],"risk_class":"compute_only"},"confirm":true}'
+```
+
+Configure a disabled MCP server entry without launching it:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool extension.configure \
+  --tool-input '{"surface":"mcp_server","definition":{"name":"local-docs","description":"Read local documentation through MCP.","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","docs"],"enabled":false,"risk_class":"write_local","capabilities":["resources","tools"],"transport":"stdio","cwd":".","env":{},"timeout_seconds":8,"allowed_tools":["list_allowed_directories","list_directory","read_text_file","search_files"]},"confirm":true}'
 ```
 
 List tools from an enabled MCP server after explicitly enabling process execution in a separate app config:
