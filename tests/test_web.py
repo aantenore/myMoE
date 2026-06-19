@@ -125,6 +125,53 @@ class WebTests(unittest.TestCase):
         self.assertFalse(guarded["ok"])
         self.assertEqual(guarded["steps"][0]["status"], "confirmation_required")
 
+    def test_creates_plugin_from_web_api_and_refreshes_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_plugin_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(base_url + "/api/plugins", {"plugin_id": "demo-plugin"})
+                created = _post_json(
+                    base_url + "/api/plugins",
+                    {
+                        "plugin_id": "demo-plugin",
+                        "name": "Demo Plugin",
+                        "description": "Adds demo behavior.",
+                        "risk_class": "compute_only",
+                        "confirm": True,
+                    },
+                )
+                extensions = _get_json(base_url + "/api/extensions")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+            manifest = root / "plugins" / "demo-plugin" / "plugin.json"
+            skill = root / "plugins" / "demo-plugin" / "SKILL.md"
+            manifest_exists = manifest.exists()
+            skill_exists = skill.exists()
+            created_plugin_ids = {plugin["id"] for plugin in created["extensions"]["plugins"]}
+            created_skill_names = {item["name"] for item in created["extensions"]["skills"]}
+            listed_plugin_ids = {plugin["id"] for plugin in extensions["plugins"]}
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertTrue(created["created"])
+        self.assertTrue(manifest_exists)
+        self.assertTrue(skill_exists)
+        self.assertIn("demo-plugin", created_plugin_ids)
+        self.assertIn("demo-plugin", created_skill_names)
+        self.assertIn("demo-plugin", listed_plugin_ids)
+
     def test_serves_and_runs_cron_endpoint(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -489,6 +536,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("mcp.call_tool", html)
         self.assertIn("confirm_process_execution", html)
         self.assertIn("confirm_tool_call", html)
+        self.assertIn("/api/plugins", html)
+        self.assertIn("Plugin Studio", html)
+        self.assertIn("createPlugin", html)
+        self.assertIn("plugin-confirm", html)
         self.assertIn("Confirm local write jobs", html)
         self.assertIn("config.routing?.strategy", html)
         self.assertIn("config.routing?.semantic?.enabled", html)
@@ -544,6 +595,15 @@ def _write_temp_app_config(root: Path, *, context_policy_path: Path | None = Non
         raw["runtime"]["context_policy_config"] = str(context_policy_path)
         raw["runtime"]["context_policy_profile"] = "default"
     path = root / "app.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
+
+
+def _write_temp_plugin_app_config(root: Path) -> Path:
+    path = _write_temp_app_config(root)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["extensions"]["plugins_dir"] = str(root / "plugins")
+    raw["extensions"]["skills_dir"] = str(root / "skills")
     path.write_text(json.dumps(raw), encoding="utf-8")
     return path
 

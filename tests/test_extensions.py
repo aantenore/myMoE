@@ -42,10 +42,23 @@ class ExtensionTests(unittest.TestCase):
 
     def test_creates_plugin_scaffold_with_valid_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = create_plugin_scaffold("sample-plugin", root=tmp)
+            path = create_plugin_scaffold(
+                "sample-plugin",
+                root=tmp,
+                name='Sample Plugin: "quoted"\nName',
+                description="Adds sample behavior.\nWith wrapped text.",
+                risk_class="compute_only",
+            )
+            registry = load_extension_registry(plugins_dir=tmp)
+            audit = audit_extension_registry(registry)
+            skill_text = (path / "SKILL.md").read_text(encoding="utf-8")
 
             self.assertTrue((path / "plugin.json").exists())
             self.assertTrue((path / "SKILL.md").exists())
+            self.assertIn('description: "Use this skill when working with the Sample Plugin: \\"quoted\\" Name plugin."', skill_text)
+            self.assertIn("sample-plugin", {skill.name for skill in registry.skills})
+            self.assertEqual(audit["issue_count"], 0)
+            self.assertEqual(registry.plugins[0].permissions["risk_class"], "compute_only")
 
     def test_rejects_invalid_plugin_id(self) -> None:
         with self.assertRaises(ExtensionError):

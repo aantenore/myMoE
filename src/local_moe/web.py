@@ -17,7 +17,7 @@ from .config import load_config
 from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
 from .evaluator import evaluate_router, load_eval_cases
-from .extensions import load_extension_registry, registry_payload
+from .extensions import ExtensionError, create_plugin_scaffold, load_extension_registry, registry_payload
 from .health import check_runtime_health, runtime_health_payload
 from .memory import FileMemoryStore, memory_record_payload
 from .model_servers import ModelServerManager, model_server_action_payload
@@ -71,13 +71,7 @@ def build_server(
         app_config.runtime.context_policy_profile,
     )
     moe = LocalMoE(config)
-    registry = load_extension_registry(
-        plugins_dir=app_config.extensions.plugins_dir,
-        skills_dir=app_config.extensions.skills_dir,
-        tools_config=app_config.extensions.tools_config,
-        mcp_config=app_config.extensions.mcp_config,
-        cron_config=app_config.extensions.cron_config,
-    )
+    registry = _load_registry(app_config)
     chat_store = FileChatStore(_chat_store_path(app_config))
     memory_store = FileMemoryStore(_memory_store_path(app_config))
     model_manager = ModelServerManager.from_config(
@@ -249,6 +243,7 @@ def _make_handler(
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
+            nonlocal registry
             path = urlparse(self.path).path
             if path == "/api/generate":
                 payload = _read_json(self)
@@ -441,6 +436,48 @@ def _make_handler(
                 _send_json(self, setup_run_payload(result))
                 return
 
+            if path == "/api/plugins":
+                payload = _read_json(self)
+                if payload.get("confirm") is not True:
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Plugin creation requires confirm=true because it writes local files.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    path_created = create_plugin_scaffold(
+                        _required_payload_text(payload, "plugin_id"),
+                        root=app_config.extensions.plugins_dir,
+                        name=_optional_str(payload.get("name")),
+                        description=_optional_str(payload.get("description")),
+                        risk_class=_optional_str(payload.get("risk_class")) or "read_only",
+                    )
+                except (ExtensionError, ValueError) as exc:
+                    _send_json(
+                        self,
+                        {"error": "plugin_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                registry = _load_registry(app_config)
+                _send_json(
+                    self,
+                    {
+                        "created": True,
+                        "plugin_id": path_created.name,
+                        "path": str(path_created),
+                        "manifest": str(path_created / "plugin.json"),
+                        "skill": str(path_created / "SKILL.md"),
+                        "extensions": registry_payload(registry),
+                    },
+                    status=HTTPStatus.CREATED,
+                )
+                return
+
             if path == "/api/models/start":
                 payload = _read_json(self)
                 action = model_manager.start(
@@ -555,6 +592,16 @@ def _make_handler(
 
 def _asset(name: str) -> str:
     return (Path(__file__).parent / "ui" / name).read_text(encoding="utf-8")
+
+
+def _load_registry(app_config: object) -> object:
+    return load_extension_registry(
+        plugins_dir=app_config.extensions.plugins_dir,
+        skills_dir=app_config.extensions.skills_dir,
+        tools_config=app_config.extensions.tools_config,
+        mcp_config=app_config.extensions.mcp_config,
+        cron_config=app_config.extensions.cron_config,
+    )
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -774,6 +821,13 @@ def _optional_str(raw: object) -> str | None:
         return None
     value = str(raw).strip()
     return value or None
+
+
+def _required_payload_text(payload: dict[str, Any], key: str) -> str:
+    value = _optional_str(payload.get(key))
+    if value is None:
+        raise ValueError(f"{key} is required.")
+    return value
 
 
 if __name__ == "__main__":

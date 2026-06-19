@@ -174,7 +174,13 @@ class LocalToolRunner:
         if payload.get("confirm") is not True:
             raise ToolExecutionError("plugin.create requires confirm=true because it writes local files.")
         plugin_id = _required_text(payload, "plugin_id")
-        path = create_plugin_scaffold(plugin_id, root=self._plugins_dir)
+        path = create_plugin_scaffold(
+            plugin_id,
+            root=self._plugins_dir,
+            name=_optional_text(payload, "name"),
+            description=_optional_text(payload, "description"),
+            risk_class=_optional_text(payload, "risk_class") or "read_only",
+        )
         return _ok(
             tool,
             "Plugin scaffold created.",

@@ -113,12 +113,13 @@ def load_extension_registry(
     mcp_config: str | Path = "configs/mcp.json",
     cron_config: str | Path = "configs/cron.json",
 ) -> ExtensionRegistry:
+    plugins = tuple(load_plugins(plugins_dir))
     return ExtensionRegistry(
         tools=tuple(load_tools(tools_config)),
-        skills=tuple(load_skills(skills_dir)),
+        skills=tuple(load_skills(skills_dir)) + tuple(load_plugin_skills(plugins)),
         mcp_servers=tuple(load_mcp_servers(mcp_config)),
         cron_jobs=tuple(load_cron_jobs(cron_config)),
-        plugins=tuple(load_plugins(plugins_dir)),
+        plugins=plugins,
     )
 
 
@@ -203,6 +204,25 @@ def load_skills(root: str | Path) -> list[SkillDefinition]:
     return skills
 
 
+def load_plugin_skills(plugins: tuple[PluginManifest, ...] | list[PluginManifest]) -> list[SkillDefinition]:
+    skills = []
+    for plugin in plugins:
+        skill_file = Path(plugin.path) / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        metadata = _read_frontmatter(skill_file)
+        name = str(metadata.get("name") or plugin.id)
+        _validate_id(name)
+        skills.append(
+            SkillDefinition(
+                name=name,
+                description=str(metadata.get("description", "")),
+                path=str(skill_file),
+            )
+        )
+    return skills
+
+
 def load_plugins(root: str | Path) -> list[PluginManifest]:
     root_path = Path(root)
     if not root_path.exists():
@@ -229,30 +249,41 @@ def load_plugins(root: str | Path) -> list[PluginManifest]:
     return plugins
 
 
-def create_plugin_scaffold(plugin_id: str, *, root: str | Path = "plugins") -> Path:
+def create_plugin_scaffold(
+    plugin_id: str,
+    *,
+    root: str | Path = "plugins",
+    name: str | None = None,
+    description: str | None = None,
+    risk_class: str = "read_only",
+) -> Path:
     _validate_id(plugin_id)
+    _validate_risk(risk_class)
     plugin_dir = Path(root) / plugin_id
     if plugin_dir.exists():
         raise ExtensionError(f"Plugin already exists: {plugin_id}")
     plugin_dir.mkdir(parents=True)
+    plugin_name = _clean_generated_text(name or plugin_id.replace("-", " ").title())
+    plugin_description = _clean_generated_text(description or "Local myMoE plugin scaffold.")
     manifest = {
         "id": plugin_id,
-        "name": plugin_id.replace("-", " ").title(),
+        "name": plugin_name,
         "version": "0.1.0",
-        "description": "Local myMoE plugin scaffold.",
-        "skills": [f"{plugin_id}/SKILL.md"],
+        "description": plugin_description,
+        "skills": [plugin_id],
         "tools": [],
         "mcp_servers": [],
         "cron_jobs": [],
-        "permissions": {"risk_class": "read_only"},
+        "permissions": {"risk_class": risk_class},
     }
     (plugin_dir / "plugin.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (plugin_dir / "SKILL.md").write_text(
         "---\n"
-        f"name: {plugin_id}\n"
-        f"description: Use this skill when working with the {plugin_id} plugin.\n"
+        f"name: {_frontmatter_scalar(plugin_id)}\n"
+        f"description: {_frontmatter_scalar(f'Use this skill when working with the {plugin_name} plugin.')}\n"
         "---\n\n"
-        f"# {manifest['name']}\n\n"
+        f"# {plugin_name}\n\n"
+        f"{plugin_description}\n\n"
         "Describe plugin behavior, inputs, validation, and gotchas here.\n",
         encoding="utf-8",
     )
@@ -323,6 +354,7 @@ def _skill_reference_set(skills: tuple[SkillDefinition, ...]) -> set[str]:
         refs.add(str(path))
         refs.add(str(path.parent))
         refs.add(path.parent.name)
+        refs.add(f"{path.parent.name}/SKILL.md")
     return refs
 
 
@@ -367,6 +399,14 @@ def _read_frontmatter(path: Path) -> dict[str, str]:
         key, value = line.split(":", 1)
         metadata[key.strip()] = value.strip().strip('"')
     return metadata
+
+
+def _frontmatter_scalar(value: str) -> str:
+    return json.dumps(_clean_generated_text(value))
+
+
+def _clean_generated_text(value: str) -> str:
+    return " ".join(str(value).split())
 
 
 def _validate_id(value: str) -> None:
