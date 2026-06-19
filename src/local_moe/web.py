@@ -7,9 +7,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .app_config import app_config_payload, load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
+from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .config import load_config
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import load_extension_registry, registry_payload
@@ -56,12 +58,14 @@ def build_server(
         mcp_config=app_config.extensions.mcp_config,
         cron_config=app_config.extensions.cron_config,
     )
+    chat_store = FileChatStore(_chat_store_path(app_config))
     handler = _make_handler(
         config_path=config_path,
         app_config=app_config,
         config=config,
         moe=moe,
         registry=registry,
+        chat_store=chat_store,
     )
     return ThreadingHTTPServer((host, port), handler)
 
@@ -72,10 +76,12 @@ def _make_handler(
     config: object,
     moe: LocalMoE,
     registry: object,
+    chat_store: FileChatStore,
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if self.path in {"/", "/index.html"}:
+            path = urlparse(self.path).path
+            if path in {"/", "/index.html"}:
                 _send(
                     self,
                     HTTPStatus.OK,
@@ -84,20 +90,20 @@ def _make_handler(
                 )
                 return
 
-            if self.path == "/api/config":
+            if path == "/api/config":
                 _send_json(self, _config_payload(config_path, config, app_config))
                 return
 
-            if self.path == "/api/extensions":
+            if path == "/api/extensions":
                 _send_json(self, registry_payload(registry))
                 return
 
-            if self.path == "/api/runtime":
+            if path == "/api/runtime":
                 plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
                 _send_json(self, runtime_plan_payload(plan))
                 return
 
-            if self.path == "/api/cron":
+            if path == "/api/cron":
                 _send_json(
                     self,
                     cron_status(
@@ -107,10 +113,31 @@ def _make_handler(
                 )
                 return
 
+            if path == "/api/chats":
+                sessions = chat_store.list_sessions()
+                _send_json(
+                    self,
+                    {
+                        "count": len(sessions),
+                        "sessions": [chat_summary_payload(summary) for summary in sessions],
+                    },
+                )
+                return
+
+            if path.startswith("/api/chats/"):
+                session_id = _path_tail(path, "/api/chats/")
+                session = chat_store.get_session(session_id)
+                if session is None:
+                    _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                _send_json(self, chat_session_payload(session))
+                return
+
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
-            if self.path == "/api/generate":
+            path = urlparse(self.path).path
+            if path == "/api/generate":
                 payload = _read_json(self)
                 prompt = str(payload.get("prompt", "")).strip()
                 if not prompt:
@@ -120,10 +147,22 @@ def _make_handler(
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
+                session_id = _optional_str(payload.get("session_id"))
+                session = None
+                if session_id:
+                    session = chat_store.get_session(session_id)
+                    if session is None:
+                        _send_json(
+                            self,
+                            {"error": "not_found", "message": "Chat session not found."},
+                            status=HTTPStatus.NOT_FOUND,
+                        )
+                        return
+                model_prompt = _prompt_with_chat_history(session, prompt) if session else prompt
 
                 try:
                     response = moe.generate(
-                        prompt,
+                        model_prompt,
                         correlation_id=_optional_str(payload.get("correlation_id")),
                     )
                 except ProviderError as exc:
@@ -134,17 +173,46 @@ def _make_handler(
                     )
                     return
 
-                _send_json(self, _response_payload(response))
+                response_payload = _response_payload(response)
+                try:
+                    session = chat_store.append_exchange(
+                        session_id=session_id,
+                        user_content=prompt,
+                        assistant_content=response.content,
+                        assistant_meta={
+                            "correlation_id": response_payload["correlation_id"],
+                            "route": response_payload["route"],
+                            "results": response_payload["results"],
+                            "errors": response_payload["errors"],
+                            "disagreement": response_payload["disagreement"],
+                        },
+                    )
+                except KeyError:
+                    _send_json(
+                        self,
+                        {"error": "not_found", "message": "Chat session not found."},
+                        status=HTTPStatus.NOT_FOUND,
+                    )
+                    return
+                response_payload["session_id"] = session.id
+                response_payload["session"] = chat_session_payload(session)
+                _send_json(self, response_payload)
                 return
 
-            if self.path == "/api/evaluate":
+            if path == "/api/chats":
+                payload = _read_json(self)
+                session = chat_store.create_session(title=_optional_str(payload.get("title")))
+                _send_json(self, chat_session_payload(session), status=HTTPStatus.CREATED)
+                return
+
+            if path == "/api/evaluate":
                 payload = _read_json(self)
                 eval_path = str(payload.get("eval_path", "experiments/eval_set.jsonl"))
                 result = evaluate_router(config, load_eval_cases(eval_path))
                 _send_json(self, result)
                 return
 
-            if self.path == "/api/cron/run":
+            if path == "/api/cron/run":
                 payload = _read_json(self)
                 summary = run_due_jobs(
                     registry.cron_jobs,
@@ -156,7 +224,7 @@ def _make_handler(
                 _send_json(self, cron_summary_payload(summary))
                 return
 
-            if self.path == "/api/tools/run":
+            if path == "/api/tools/run":
                 payload = _read_json(self)
                 name = str(payload.get("name", "")).strip()
                 tool_input = payload.get("input", {})
@@ -188,6 +256,19 @@ def _make_handler(
                     )
                     return
                 _send_json(self, tool_result_payload(result))
+                return
+
+            _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
+        def do_DELETE(self) -> None:
+            path = urlparse(self.path).path
+            if path.startswith("/api/chats/"):
+                session_id = _path_tail(path, "/api/chats/")
+                deleted = chat_store.delete_session(session_id)
+                if not deleted:
+                    _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                _send_json(self, {"deleted": True, "id": session_id})
                 return
 
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
@@ -264,6 +345,14 @@ def _cron_state_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/cron-state.json"
 
 
+def _chat_store_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/chats.json"
+
+
+def _path_tail(path: str, prefix: str) -> str:
+    return unquote(path[len(prefix) :]).strip("/")
+
+
 def _routing_payload(routing: object) -> dict[str, object]:
     semantic = routing.semantic
     distilled = routing.distilled
@@ -310,6 +399,30 @@ def _response_payload(response: object) -> dict[str, object]:
         "errors": list(response.errors),
         "disagreement": asdict(response.disagreement) if response.disagreement else None,
     }
+
+
+def _prompt_with_chat_history(session: ChatSession, prompt: str, *, max_messages: int = 8) -> str:
+    if not session.messages:
+        return prompt
+    recent = session.messages[-max_messages:]
+    lines = [
+        "You are continuing a local chat session.",
+        "Use the recent conversation only as context for the current user message.",
+        "",
+        "Recent conversation:",
+    ]
+    for message in recent:
+        role = "User" if message.role == "user" else "Assistant"
+        lines.append(f"{role}: {_clip_for_prompt(message.content)}")
+    lines.extend(["", "Current user message:", prompt])
+    return "\n".join(lines)
+
+
+def _clip_for_prompt(text: str, *, limit: int = 1200) -> str:
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
 
 
 def _optional_str(raw: object) -> str | None:
