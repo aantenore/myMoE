@@ -88,6 +88,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("runtime", payload)
         self.assertIn("setup", payload)
         self.assertIn("health", payload)
+        self.assertIn("hardware_fit", payload)
+        self.assertIn("hardware_fit", {item["id"] for item in payload["checks"]})
         self.assertIn("extension_audit", payload)
         self.assertIn("download_command_display", payload["setup"])
         self.assertTrue(payload["extensions"]["tools"])

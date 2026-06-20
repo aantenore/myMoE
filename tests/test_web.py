@@ -99,6 +99,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(doctor["status"], "ready")
         self.assertEqual(doctor["summary"]["failed"], 0)
         self.assertIn("health", doctor)
+        self.assertIn("hardware_fit", doctor)
+        self.assertIn("hardware_fit", {item["id"] for item in doctor["checks"]})
         self.assertIn("extension_audit", doctor)
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
