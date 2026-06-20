@@ -72,6 +72,11 @@ from .runtime_optimizer import (
     runtime_optimizer_filename,
 )
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
+from .security_audit import (
+    build_security_audit_report,
+    render_security_audit_markdown,
+    security_audit_filename,
+)
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
 from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
@@ -340,6 +345,35 @@ def _make_handler(
                     render_runtime_optimizer_markdown(report).encode("utf-8"),
                     content_type="text/markdown; charset=utf-8",
                     filename=runtime_optimizer_filename(),
+                )
+                return
+
+            if path == "/api/security":
+                _send_json(
+                    self,
+                    build_security_audit_report(
+                        config_path=config_path,
+                        config=config,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                        registry=registry,
+                    ),
+                )
+                return
+
+            if path == "/api/security/report.md":
+                report = build_security_audit_report(
+                    config_path=config_path,
+                    config=config,
+                    app_config=app_config,
+                    app_config_path=app_config_path,
+                    registry=registry,
+                )
+                _send_download(
+                    self,
+                    render_security_audit_markdown(report).encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    filename=security_audit_filename(),
                 )
                 return
 

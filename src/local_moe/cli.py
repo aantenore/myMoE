@@ -31,6 +31,7 @@ from .runtime_optimizer import (
     render_runtime_optimizer_markdown,
 )
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
+from .security_audit import build_security_audit_report, render_security_audit_markdown
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
 from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
@@ -78,6 +79,9 @@ def main() -> None:
     parser.add_argument("--runtime-optimizer-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--runtime-optimizer-out")
     parser.add_argument("--runtime-optimizer-runs-limit", type=int, default=100)
+    parser.add_argument("--security-audit", action="store_true")
+    parser.add_argument("--security-audit-format", choices=["json", "markdown"], default="json")
+    parser.add_argument("--security-audit-out")
     parser.add_argument("--support-bundle", action="store_true")
     parser.add_argument("--support-bundle-out")
     parser.add_argument("--bootstrap", action="store_true")
@@ -216,6 +220,28 @@ def main() -> None:
             rendered = json.dumps(payload, indent=2)
         if args.runtime_optimizer_out:
             out = Path(args.runtime_optimizer_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(rendered, encoding="utf-8")
+            print(json.dumps({"written": str(out)}, indent=2))
+        else:
+            print(rendered)
+        return
+
+    if args.security_audit or args.security_audit_out:
+        payload = build_security_audit_report(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+            app_config_path=args.app_config,
+            registry=_registry(app_config),
+        )
+        rendered = (
+            render_security_audit_markdown(payload)
+            if args.security_audit_format == "markdown"
+            else json.dumps(payload, indent=2)
+        )
+        if args.security_audit_out:
+            out = Path(args.security_audit_out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(rendered, encoding="utf-8")
             print(json.dumps({"written": str(out)}, indent=2))

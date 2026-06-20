@@ -253,13 +253,22 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer --runtime-o
 
 The web UI exposes the same advisory report through `/api/runtime/optimizer` and `/api/runtime/optimizer/report.md`.
 
+Inspect the read-only local security posture:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --security-audit
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --security-audit --security-audit-format markdown
+```
+
+The web UI exposes the same metadata-only report through `/api/security` and `/api/security/report.md`.
+
 For issue reports or handoffs, generate a privacy-safe support bundle:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the Doctor report, quality gate status, sanitized performance report, runtime optimizer summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variable names and values, benchmark response excerpts, API keys, generation run log contents, and log contents. MCP registry payloads expose only `env_configured` and `env_count`; actual env values remain runtime-only. The web UI exposes the same artifact through Advanced System Doctor.
+The bundle includes the Doctor report, quality gate status, sanitized performance report, runtime optimizer summary, security audit summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variable names and values, benchmark response excerpts, API keys, generation run log contents, MCP tool results, local data bundle contents, and log contents. MCP registry payloads expose only `env_configured` and `env_count`; actual env values remain runtime-only. The web UI exposes the same artifact through Advanced System Doctor.
 
 ## Background Maintenance
 

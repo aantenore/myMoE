@@ -55,7 +55,10 @@ class SupportBundleTests(unittest.TestCase):
         self.assertNotIn("content_excerpt", str(bundle["performance"]))
         self.assertEqual(bundle["runtime_optimizer"]["schema_version"], "1.0")
         self.assertEqual(bundle["runtime_optimizer"]["mode"], "read_only")
+        self.assertEqual(bundle["security_audit"]["schema_version"], "1.0")
+        self.assertIn(bundle["security_audit"]["status"], {"ready", "attention", "blocked"})
         self.assertIn("runtime optimizer summary", " ".join(bundle["privacy"]["includes"]))
+        self.assertIn("security audit summary", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("storage capacity summary", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("model asset inventory", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("chat_store", bundle["runtime_files"])
@@ -111,6 +114,7 @@ class SupportBundleTests(unittest.TestCase):
         self.assertNotIn("MCP_SECRET_TOKEN", serialized)
         self.assertNotIn("SAFE_FLAG", serialized)
         self.assertNotIn("super-secret", serialized)
+        self.assertEqual(bundle["security_audit"]["mcp"]["env_var_count"], 2)
 
 
 if __name__ == "__main__":

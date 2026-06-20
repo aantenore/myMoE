@@ -32,6 +32,7 @@ from .mcp_client import (
 from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
 from .model_inventory import DEFAULT_MAX_FILES, build_model_asset_inventory
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
+from .security_audit import build_security_audit_report
 from .storage import DEFAULT_MIN_FREE_GIB, build_storage_report
 
 
@@ -66,6 +67,7 @@ class LocalToolRunner:
         "profile.activate",
         "storage.inspect",
         "models.inventory",
+        "security.audit",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -135,6 +137,8 @@ class LocalToolRunner:
             return self._storage_inspect(tool, tool_payload)
         if tool.name == "models.inventory":
             return self._models_inventory(tool, tool_payload)
+        if tool.name == "security.audit":
+            return self._security_audit(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -437,6 +441,21 @@ class LocalToolRunner:
                 config=self._moe_config,
                 app_config=self._app_config,
                 max_files=max_files,
+            ),
+        )
+
+    def _security_audit(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if self._app_config is None or self._moe_config is None:
+            raise ToolExecutionError("security.audit requires app and MoE configs.")
+        return _ok(
+            tool,
+            "Security audit completed.",
+            build_security_audit_report(
+                config_path=self._active_config_path or "",
+                config=self._moe_config,
+                app_config=self._app_config,
+                app_config_path=self._app_config_path,
+                registry=self._registry,
             ),
         )
 

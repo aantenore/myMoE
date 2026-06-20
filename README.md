@@ -234,6 +234,13 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer --runtime-optimizer-format markdown
 ```
 
+Inspect the local security posture for permissions, MCP, cron, tools, plugins, and model endpoint locality:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --security-audit
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --security-audit --security-audit-format markdown
+```
+
 Inspect metadata-only generation runs:
 
 ```bash
@@ -247,7 +254,7 @@ Create a privacy-safe support bundle for issues or handoff:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, read-only runtime optimizer summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variable names and values, benchmark response excerpts, generation run log contents, API keys, and log contents. MCP registry payloads keep only `env_configured` and `env_count`; the runtime registry still retains the real values for local MCP process startup.
+The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, read-only runtime optimizer summary, read-only security audit summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variable names and values, benchmark response excerpts, generation run log contents, API keys, and log contents. MCP registry payloads keep only `env_configured` and `env_count`; the runtime registry still retains the real values for local MCP process startup.
 
 Inspect configured model process status:
 
@@ -314,7 +321,7 @@ Runtime Optimizer combines recent run-log health, profile recommendation, and be
 
 ![myMoE runtime optimizer](docs/screenshots/runtime-optimizer.png)
 
-The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, model asset inventory, performance decision, runtime health checks, storage capacity checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, disk-space pressure, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, security audit, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, model asset inventory, performance decision, runtime health checks, storage capacity checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, disk-space pressure, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, permission posture, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 
@@ -542,6 +549,8 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 Use the same Extensions panel to run a registry audit. The audit validates plugin references to tools, skills, MCP servers, cron jobs, and permission risk classes before the plugin is used by an agent workflow.
 
 The `extension.configure` tool lets the app self-configure MCP server and cron job registry entries through the allowlisted tool runner. It writes only to the registry files declared by the active app config, validates entries with the same parsers used at startup, requires `confirm: true`, then refreshes the running web registry and cron state. Public registry responses redact MCP environment details to `env_configured` and `env_count`, so tokens can be used at runtime without leaking through UI, CLI, Doctor, or support bundle payloads.
+
+The `security.audit` tool and `/api/security` report summarize local posture without side effects: app permission policy, process execution setting, MCP env counts, MCP allowlist coverage, cron write-risk automation, enabled write-risk tools, plugin risk classes, and remote model endpoint count.
 
 Example guarded cron configuration:
 
