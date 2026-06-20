@@ -719,6 +719,26 @@
         overflow-wrap: anywhere;
       }
 
+      .command-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.35rem;
+      }
+
+      .command-meta {
+        min-width: 0;
+      }
+
+      .command-copy {
+        min-height: 1.75rem;
+        padding: 0 0.55rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+        white-space: nowrap;
+      }
+
       .command-details {
         margin-top: 0.55rem;
       }
@@ -1777,7 +1797,7 @@
       function renderConfigProfiles(profiles) {
         const items = profiles?.profiles || [];
         const rows = items
-          .map((profile) => {
+          .map((profile, profileIndex) => {
             const flags = [
               profile.active ? "active" : "",
               profile.default ? "default" : "",
@@ -1792,10 +1812,21 @@
                 : profile.error || "Invalid profile";
             const commands = (profile.launch_commands || [])
               .map(
-                (command) => `
+                (command, commandIndex) => `
                   <div class="command-line">
-                    <strong>${escapeHtml(command.label || command.id)}</strong>
-                    <span class="muted"> · ${escapeHtml(formatSideEffects(command.side_effects))}</span><br>
+                    <div class="command-header">
+                      <span class="command-meta">
+                        <strong>${escapeHtml(command.label || command.id)}</strong>
+                        <span class="muted"> · ${escapeHtml(formatSideEffects(command.side_effects))}</span>
+                      </span>
+                      <button
+                        class="command-copy"
+                        type="button"
+                        data-copy-profile-command="${profileIndex}"
+                        data-command-index="${commandIndex}"
+                        aria-label="Copy ${escapeHtml(command.label || command.id)} command"
+                      >Copy</button>
+                    </div>
                     <span class="mono">${escapeHtml(command.display || "")}</span>
                   </div>`,
               )
@@ -1822,6 +1853,53 @@
             Default: profiles?.default_config_path || "Unknown",
             Count: profiles?.count ?? 0,
           }) + (rows || '<span class="muted">No runnable profiles found.</span>');
+        document.querySelectorAll("[data-copy-profile-command]").forEach((button) => {
+          button.addEventListener("click", () =>
+            copyProfileCommand(Number(button.dataset.copyProfileCommand), Number(button.dataset.commandIndex), button),
+          );
+        });
+      }
+
+      async function copyProfileCommand(profileIndex, commandIndex, button) {
+        const profile = state.configProfiles?.profiles?.[profileIndex];
+        const command = profile?.launch_commands?.[commandIndex];
+        const text = command?.display || "";
+        if (!text) return;
+        try {
+          await copyText(text);
+          button.textContent = "Copied";
+          setStatus("Command copied", command.label || command.id || "Launch hint", true);
+          window.setTimeout(() => {
+            button.textContent = "Copy";
+          }, 1600);
+        } catch (error) {
+          setStatus("Copy unavailable", error.message, false);
+        }
+      }
+
+      async function copyText(text) {
+        if (navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return;
+          } catch (_error) {
+            // Fall back for browser contexts where the Clipboard API exists but permission is denied.
+          }
+        }
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          if (!document.execCommand("copy")) {
+            throw new Error("Clipboard copy failed");
+          }
+        } finally {
+          textarea.remove();
+        }
       }
 
       function renderHealth(health) {

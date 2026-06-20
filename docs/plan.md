@@ -24,6 +24,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add System Doctor readiness report from CLI, API, and UI.
 - [x] Add read-only runtime profile discovery from API and UI.
 - [x] Add read-only launch hints for discovered runtime profiles.
+- [x] Add clipboard copy controls for runtime profile launch hints.
 - [x] Add privacy-safe support bundle export from CLI, API, and UI.
 - [x] Add sanitized performance decision report from CLI, API, and UI.
 - [x] Add progressive streamed chat responses with non-streaming fallback.
