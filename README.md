@@ -186,7 +186,7 @@ Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-Profiles lists runnable local model configs, active/default flags, setup readiness, backend, model names, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state.
+Profiles lists runnable local model configs, active/default flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state.
 
 ![myMoE runtime profiles](docs/screenshots/profiles.png)
 

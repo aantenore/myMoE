@@ -8,6 +8,17 @@ import unittest
 
 from local_moe.app_config import load_app_config
 from local_moe.config_profiles import discover_config_profiles
+from local_moe.hardware import HardwareProfile
+
+
+TEST_HARDWARE = HardwareProfile(
+    machine="arm64",
+    cpu_brand="Apple Test",
+    memory_bytes=24 * 1024**3,
+    memory_gib=24.0,
+    recommended_strategy="general_purpose_moe_single_resident",
+    rationale=("Use one strong resident general expert plus a small fallback.",),
+)
 
 
 class ConfigProfileTests(unittest.TestCase):
@@ -48,13 +59,19 @@ class ConfigProfileTests(unittest.TestCase):
                 active_config_path=str(profile_path),
                 app_config=app_config,
                 config_dir=config_dir,
+                hardware_profile=TEST_HARDWARE,
+                candidate_paths=(),
             )
 
         self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["hardware"]["memory_gib"], 24.0)
+        self.assertEqual(payload["hardware"]["recommended_strategy"], "general_purpose_moe_single_resident")
         profile = payload["profiles"][0]
         self.assertTrue(profile["active"])
         self.assertTrue(profile["default"])
         self.assertEqual(profile["status"], "valid")
+        self.assertEqual(profile["hardware_fit"]["status"], "compatible")
+        self.assertEqual(profile["hardware_fit"]["estimated_memory_gb"], 0.0)
         self.assertEqual(profile["setup"]["status"], "ready")
         self.assertEqual(profile["expert_count"], 1)
         self.assertEqual(profile["experts"][0]["model"], "synthetic-general")
@@ -83,12 +100,94 @@ class ConfigProfileTests(unittest.TestCase):
                 active_config_path=str(active_path),
                 app_config=app_config,
                 config_dir=config_dir,
+                hardware_profile=TEST_HARDWARE,
+                candidate_paths=(),
             )
 
         self.assertEqual(payload["count"], 1)
         self.assertTrue(payload["profiles"][0]["active"])
         self.assertEqual(payload["profiles"][0]["status"], "valid")
         self.assertTrue(payload["profiles"][0]["launch_commands"])
+        self.assertIn("hardware_fit", payload["profiles"][0])
+
+    def test_scores_profile_hardware_fit_from_candidate_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "configs"
+            config_dir.mkdir()
+            profile_path = config_dir / "moe.live.test.json"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "routing": {"top_k": 1, "fallback_order": ["fast_fallback"]},
+                        "experts": [
+                            {
+                                "id": "general",
+                                "provider": "openai_compatible",
+                                "base_url": "http://127.0.0.1:8101/v1",
+                                "model": "example/Qwen3-30B-A3B-4bit",
+                                "role": "primary-general-purpose",
+                                "params": {"runtime_backend": "mlx_lm"},
+                            },
+                            {
+                                "id": "fast_fallback",
+                                "provider": "openai_compatible",
+                                "base_url": "http://127.0.0.1:8102/v1",
+                                "model": "example/Gemma-E4B-4bit",
+                                "role": "fast-summary-and-fallback",
+                                "params": {"runtime_backend": "mlx_lm"},
+                            },
+                        ],
+                        "rules": [
+                            {
+                                "expert_id": "fast_fallback",
+                                "keywords": ["summarize"],
+                                "weight": 1.0,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            candidates = root / "candidates.json"
+            candidates.write_text(
+                json.dumps(
+                    {
+                        "candidates": [
+                            {
+                                "id": "qwen-general",
+                                "repo": "example/Qwen3-30B-A3B-4bit",
+                                "role": "primary_general",
+                                "estimated_memory_gb": 18.5,
+                            },
+                            {
+                                "id": "gemma-fallback",
+                                "repo": "example/Gemma-E4B-4bit",
+                                "role": "fast_compaction_or_fallback",
+                                "estimated_memory_gb": 5.5,
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            app_config = load_app_config("configs/app.json")
+            app_config = replace(app_config, default_moe_config=str(profile_path))
+
+            payload = discover_config_profiles(
+                active_config_path=str(profile_path),
+                app_config=app_config,
+                config_dir=config_dir,
+                hardware_profile=TEST_HARDWARE,
+                candidate_paths=(candidates,),
+            )
+
+        fit = payload["profiles"][0]["hardware_fit"]
+        self.assertEqual(fit["status"], "recommended")
+        self.assertEqual(fit["estimated_memory_gb"], 24.0)
+        self.assertEqual(fit["headroom_gb"], 0.0)
+        self.assertEqual(fit["resident_large_experts"], 1)
+        self.assertEqual({item["candidate_id"] for item in fit["matched_models"]}, {"qwen-general", "gemma-fallback"})
 
 
 if __name__ == "__main__":
