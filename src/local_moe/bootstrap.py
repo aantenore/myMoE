@@ -91,12 +91,14 @@ def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | N
 
 def endpoint_is_reachable(base_url: str, timeout_seconds: float = 2.0) -> bool:
     parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return False
     root = f"{parsed.scheme}://{parsed.netloc}"
     for suffix in ("/v1/models", "/health"):
         try:
             with request.urlopen(root + suffix, timeout=timeout_seconds):
                 return True
-        except (OSError, error.URLError):
+        except (OSError, ValueError, error.URLError):
             continue
     return False
 

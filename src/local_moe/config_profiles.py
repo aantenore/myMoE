@@ -251,6 +251,17 @@ def _hardware_payload(profile: HardwareProfile) -> dict[str, Any]:
     }
 
 
+def build_hardware_fit(
+    config: MoEConfig,
+    *,
+    hardware_profile: HardwareProfile | None = None,
+    candidate_paths: tuple[str | Path, ...] | None = None,
+) -> dict[str, Any]:
+    hardware = hardware_profile or detect_hardware()
+    candidate_index = _candidate_index(DEFAULT_CANDIDATE_PATHS if candidate_paths is None else candidate_paths)
+    return _hardware_fit(config, hardware, candidate_index)
+
+
 def _hardware_fit(
     config: MoEConfig,
     hardware_profile: HardwareProfile,

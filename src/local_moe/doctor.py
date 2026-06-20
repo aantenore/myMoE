@@ -5,6 +5,7 @@ from typing import Any
 
 from .app_config import app_config_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
+from .config_profiles import build_hardware_fit
 from .extensions import (
     ExtensionRegistry,
     audit_extension_registry,
@@ -12,6 +13,7 @@ from .extensions import (
     registry_payload,
 )
 from .health import check_runtime_health, runtime_health_payload
+from .hardware import HardwareProfile
 from .model_servers import ModelServerManager
 from .scheduler import cron_status
 from .setup_status import inspect_setup_status, setup_status_payload
@@ -26,6 +28,8 @@ def build_doctor_report(
     registry: ExtensionRegistry | None = None,
     model_manager: ModelServerManager | None = None,
     include_health: bool = True,
+    hardware_profile: HardwareProfile | None = None,
+    candidate_paths: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     registry = registry or _load_registry(app_config)
     runtime_plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
@@ -43,6 +47,11 @@ def build_doctor_report(
         else {"status": "skipped", "checked_at": _now_iso(), "experts": []}
     )
     audit = audit_extension_registry(registry)
+    hardware_fit = build_hardware_fit(
+        config,
+        hardware_profile=hardware_profile,
+        candidate_paths=candidate_paths,
+    )
     processes = (
         model_manager
         or ModelServerManager.from_config(
@@ -57,11 +66,12 @@ def build_doctor_report(
         _setup_check(setup),
         _health_check(health),
         _extension_check(audit),
+        _hardware_fit_check(hardware_fit),
         _process_check(processes, health),
         _cron_check(cron, app_config),
     ]
     status = _overall_status(checks)
-    recommendations = _recommendations(setup, health, audit, processes, cron)
+    recommendations = _recommendations(setup, health, audit, hardware_fit, processes, cron)
 
     return {
         "status": status,
@@ -77,6 +87,7 @@ def build_doctor_report(
         "runtime": runtime_plan_payload(runtime_plan),
         "setup": setup,
         "health": health,
+        "hardware_fit": hardware_fit,
         "model_processes": processes,
         "extension_audit": audit,
         "extensions": registry_payload(registry),
@@ -123,6 +134,34 @@ def _extension_check(audit: dict[str, Any]) -> dict[str, Any]:
         "Extension registry has invalid plugin references.",
         severity="required",
         detail=f"{issue_count} issue(s)",
+    )
+
+
+def _hardware_fit_check(fit: dict[str, Any]) -> dict[str, Any]:
+    status = str(fit.get("status") or "unknown")
+    summary = str(fit.get("summary") or status)
+    if status in {"recommended", "fits", "compatible"}:
+        return _check(
+            "hardware_fit",
+            "pass",
+            "Active profile fits the detected machine.",
+            severity="required",
+            detail=summary,
+        )
+    if status == "too_large":
+        return _check(
+            "hardware_fit",
+            "fail",
+            "Active profile is too large for the detected machine.",
+            severity="required",
+            detail=summary,
+        )
+    return _check(
+        "hardware_fit",
+        "warn",
+        "Active profile needs hardware-fit review.",
+        severity="optional",
+        detail=summary,
     )
 
 
@@ -188,6 +227,7 @@ def _recommendations(
     setup: dict[str, Any],
     health: dict[str, Any],
     audit: dict[str, Any],
+    hardware_fit: dict[str, Any],
     processes: dict[str, Any],
     cron: dict[str, Any],
 ) -> list[str]:
@@ -201,6 +241,13 @@ def _recommendations(
         recommendations.append("Start configured local model servers and refresh runtime health.")
     if int(audit.get("issue_count", 0)):
         recommendations.append("Fix plugin references reported by the extension registry audit.")
+    fit_status = str(hardware_fit.get("status") or "unknown")
+    if fit_status == "too_large":
+        recommendations.append("Switch to a smaller runtime profile before starting local model servers.")
+    elif fit_status == "stretch":
+        recommendations.append("Treat the active profile as stretch: close extra model processes and monitor memory.")
+    elif fit_status == "unknown":
+        recommendations.append("Add a model candidate memory estimate or run a local benchmark for this profile.")
     servers = [item for item in processes.get("servers", []) if isinstance(item, dict)]
     if servers and not all(bool(item.get("endpoint_reachable")) for item in servers):
         recommendations.append("Use Advanced Runtime or CLI --start-models --models-confirm to start endpoints.")

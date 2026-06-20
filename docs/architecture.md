@@ -33,7 +33,7 @@ flowchart LR
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures. Providers can expose streaming generation while preserving the same final result contract.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
-- `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, model process reachability, extension audit, and cron state.
+- `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, model process reachability, extension audit, and cron state.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.
