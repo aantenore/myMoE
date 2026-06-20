@@ -4,7 +4,7 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, installed console-script packaging smoke checks, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -47,6 +47,7 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `experiments/route_labels_live_general.jsonl`: 52 regenerated distilled router labels for the live general-purpose router.
 - `experiments/run_quality_gate.py`: project-level quality gate.
 - `scripts/run_ci_checks.py`: cross-platform Python quality gate runner used by `make check`, the shell compatibility wrapper, and CI templates.
+- `scripts/run_packaging_smoke.py`: temporary-venv editable install smoke test for `mymoe` and `mymoe-web` console scripts without `PYTHONPATH`.
 
 ## Verification
 
@@ -64,6 +65,7 @@ Result:
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`
 - quality gate: passed
+- packaging smoke: passed, editable install exposes `mymoe` and `mymoe-web`
 - live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
 - forbidden listener check on `127.0.0.1:8101`: passed, no active listener during quality gate
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed

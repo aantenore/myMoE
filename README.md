@@ -95,6 +95,8 @@ make check
 
 The quality gate runner is implemented in Python so the same command shape works on macOS, Linux, and Windows. Use `python3 scripts/run_ci_checks.py --dry-run --json` to inspect the exact argv-based steps before wiring it into CI.
 
+Editable installs expose `mymoe` and `mymoe-web` console scripts. The quality gate includes a packaging smoke test that installs the project in a temporary virtual environment and verifies both entry points without `PYTHONPATH`.
+
 Ask the orchestrator directly:
 
 ```bash
@@ -102,11 +104,23 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --prompt "Analyze the tradeoff between a single local model and a routed MoE."
 ```
 
+or, after install:
+
+```bash
+mymoe --prompt "Analyze the tradeoff between a single local model and a routed MoE."
+```
+
 Open the local UI:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.web \
   --port 8089
+```
+
+or, after install:
+
+```bash
+mymoe-web --port 8089
 ```
 
 Then visit `http://127.0.0.1:8089`.

@@ -22,6 +22,7 @@ The gate currently performs these steps:
 4. Run the extended synthetic routing smoke eval.
 5. Run the project quality gate from `configs/quality-gate.json`.
 6. Refresh the hardware profile artifact.
+7. Run the packaging smoke test, which installs the project in a temporary virtual environment and verifies the `mymoe` and `mymoe-web` console scripts.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
 
