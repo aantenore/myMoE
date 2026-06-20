@@ -202,7 +202,7 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor --doctor-format markdown
 ```
 
-The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, active-profile hardware fit, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor. The Markdown form is available from CLI and `/api/doctor/report.md` for issue reports and handoffs.
+The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, active-profile hardware fit, storage capacity, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor. The Markdown form is available from CLI and `/api/doctor/report.md` for issue reports and handoffs.
 
 To capture a metadata-only environment snapshot for reproducibility or issue reports:
 
@@ -211,7 +211,7 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --about
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --about --about-format markdown
 ```
 
-The snapshot includes app mode, config paths, platform, Python version, selected package versions, git revision, hardware summary, routing policy, and configured local model identities. The same data is exposed by the web UI through `/api/about`, `/api/about/report.md`, and Advanced Environment.
+The snapshot includes app mode, config paths, platform, Python version, selected package versions, git revision, hardware summary, storage capacity, routing policy, and configured local model identities. The same data is exposed by the web UI through `/api/about`, `/api/about/report.md`, and Advanced Environment.
 
 To verify that the configured local model endpoint can produce visible content, not only answer health probes:
 
@@ -245,7 +245,7 @@ For issue reports or handoffs, generate a privacy-safe support bundle:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the Doctor report, quality gate status, sanitized performance report, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, and log contents. The web UI exposes the same artifact through Advanced System Doctor.
+The bundle includes the Doctor report, quality gate status, sanitized performance report, runtime optimizer summary, storage capacity summary, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, generation run log contents, and log contents. The web UI exposes the same artifact through Advanced System Doctor.
 
 ## Background Maintenance
 

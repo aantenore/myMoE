@@ -33,9 +33,9 @@ flowchart LR
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures. Providers can expose streaming generation while preserving the same final result contract.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
-- `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, model process reachability, extension audit, and cron state.
+- `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, storage capacity, model process reachability, extension audit, and cron state.
 - `Startup Runbook`: guarded control-plane flow that previews readiness, prepares runtime assets, starts configured local model servers, and returns System Doctor evidence.
-- `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
+- `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs, including storage capacity summaries without local file contents.
 - `Profile Recommender`: read-only control-plane scorer that chooses the best local runtime profile from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
 - `Profile Preparation`: guarded setup runner entry point for explicit or recommended profiles before activation.
 - `Profile Activation`: guarded write-local control-plane action that updates only the app default MoE profile and requires a restart to change the running instance.
@@ -126,3 +126,4 @@ The practical policy is:
 5. Streaming and non-streaming generation append metadata-only run records without leaking prompt or answer text.
 6. Local endpoint smoke test returns valid text under timeout.
 7. MoE beats single-model baseline on a small rubric before adding complexity.
+8. Doctor and environment diagnostics expose configured runtime storage status without creating missing directories.

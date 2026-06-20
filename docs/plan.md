@@ -24,6 +24,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add sanitized model log diagnostics from CLI, API, and UI.
 - [x] Add System Doctor readiness report from CLI, API, and UI.
 - [x] Add active-profile hardware-fit readiness to System Doctor.
+- [x] Add read-only storage capacity diagnostics to System Doctor, Environment Snapshot, support bundle, and UI.
 - [x] Add metadata-only System Doctor Markdown report export.
 - [x] Add metadata-only Environment Snapshot from CLI, API, support bundle, and UI.
 - [x] Add read-only runtime profile discovery from API and UI.

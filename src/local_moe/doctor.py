@@ -17,6 +17,7 @@ from .hardware import HardwareProfile
 from .model_servers import ModelServerManager
 from .scheduler import cron_status
 from .setup_status import inspect_setup_status, setup_status_payload
+from .storage import DEFAULT_MIN_FREE_GIB, build_storage_report
 
 DOCTOR_REPORT_FILENAME = "mymoe-doctor-report.md"
 
@@ -32,6 +33,7 @@ def build_doctor_report(
     include_health: bool = True,
     hardware_profile: HardwareProfile | None = None,
     candidate_paths: tuple[str, ...] | None = None,
+    storage_min_free_gib: float = DEFAULT_MIN_FREE_GIB,
 ) -> dict[str, Any]:
     registry = registry or _load_registry(app_config)
     runtime_plan = build_runtime_plan(config, app_config.runtime.preferred_backends)
@@ -63,17 +65,19 @@ def build_doctor_report(
         )
     ).status()
     cron = cron_status(registry.cron_jobs, state_path=_cron_state_path(app_config))
+    storage = build_storage_report(app_config, min_free_gib=storage_min_free_gib)
 
     checks = [
         _setup_check(setup),
         _health_check(health),
         _extension_check(audit),
         _hardware_fit_check(hardware_fit),
+        _storage_check(storage),
         _process_check(processes, health),
         _cron_check(cron, app_config),
     ]
     status = _overall_status(checks)
-    recommendations = _recommendations(setup, health, audit, hardware_fit, processes, cron)
+    recommendations = _recommendations(setup, health, audit, hardware_fit, storage, processes, cron)
 
     return {
         "status": status,
@@ -90,6 +94,7 @@ def build_doctor_report(
         "setup": setup,
         "health": health,
         "hardware_fit": hardware_fit,
+        "storage": storage,
         "model_processes": processes,
         "extension_audit": audit,
         "extensions": registry_payload(registry),
@@ -104,6 +109,7 @@ def doctor_report_filename() -> str:
 def render_doctor_report_markdown(report: dict[str, Any]) -> str:
     summary = report.get("summary", {}) if isinstance(report.get("summary"), dict) else {}
     hardware_fit = report.get("hardware_fit", {}) if isinstance(report.get("hardware_fit"), dict) else {}
+    storage = report.get("storage", {}) if isinstance(report.get("storage"), dict) else {}
     setup = report.get("setup", {}) if isinstance(report.get("setup"), dict) else {}
     health = report.get("health", {}) if isinstance(report.get("health"), dict) else {}
     runtime = report.get("runtime", {}) if isinstance(report.get("runtime"), dict) else {}
@@ -162,6 +168,7 @@ def render_doctor_report_markdown(report: dict[str, Any]) -> str:
             f"- Model process count: `{model_processes.get('count', 0)}`",
             f"- Extension issues: `{extension_audit.get('issue_count', 0)}`",
             f"- Cron jobs: `{len(cron.get('jobs', [])) if isinstance(cron.get('jobs', []), list) else 0}`",
+            f"- Storage status: `{storage.get('status', 'unknown')}`",
             "",
             "## Hardware Fit",
             "",
@@ -170,6 +177,27 @@ def render_doctor_report_markdown(report: dict[str, Any]) -> str:
             f"- Estimated memory: `{hardware_fit.get('estimated_memory_gb', 'unknown')} GiB`",
             f"- Detected memory: `{hardware_fit.get('memory_gib', 'unknown')} GiB`",
             f"- Resident large experts: `{hardware_fit.get('resident_large_experts', 0)}`",
+            "",
+            "## Storage",
+            "",
+            f"- Status: `{storage.get('status', 'unknown')}`",
+            f"- Minimum free space: `{storage.get('min_free_gib', 'unknown')} GiB`",
+        ]
+    )
+    storage_paths = storage.get("paths", []) if isinstance(storage.get("paths"), list) else []
+    for item in storage_paths:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            "- `{label}`: `{status}`, `{free}` GiB free at `{path}`".format(
+                label=_md_cell(item.get("label", "")),
+                status=_md_cell(item.get("status", "")),
+                free=_md_cell(item.get("free_gib", "unknown")),
+                path=_md_cell(item.get("expanded_path", "")),
+            )
+        )
+    lines.extend(
+        [
             "",
             "## Privacy",
             "",
@@ -280,6 +308,22 @@ def _cron_check(cron: dict[str, Any], app_config: object) -> dict[str, Any]:
     return _check("cron", "warn", "Background cron automation is disabled.", severity="optional")
 
 
+def _storage_check(storage: dict[str, Any]) -> dict[str, Any]:
+    if storage.get("status") == "ready":
+        return _check("storage", "pass", "Configured runtime storage has enough free space.", severity="optional")
+    summary = storage.get("summary", {}) if isinstance(storage.get("summary"), dict) else {}
+    return _check(
+        "storage",
+        "warn",
+        "Configured runtime storage needs attention.",
+        severity="optional",
+        detail=(
+            f"{summary.get('attention', 0)} attention path(s), "
+            f"{summary.get('unavailable', 0)} unavailable path(s)"
+        ),
+    )
+
+
 def _check(
     check_id: str,
     status: str,
@@ -313,6 +357,7 @@ def _recommendations(
     health: dict[str, Any],
     audit: dict[str, Any],
     hardware_fit: dict[str, Any],
+    storage: dict[str, Any],
     processes: dict[str, Any],
     cron: dict[str, Any],
 ) -> list[str]:
@@ -333,6 +378,8 @@ def _recommendations(
         recommendations.append("Treat the active profile as stretch: close extra model processes and monitor memory.")
     elif fit_status == "unknown":
         recommendations.append("Add a model candidate memory estimate or run a local benchmark for this profile.")
+    if storage.get("status") != "ready":
+        recommendations.extend(str(item) for item in storage.get("recommendations", []))
     servers = [item for item in processes.get("servers", []) if isinstance(item, dict)]
     if servers and not all(bool(item.get("endpoint_reachable")) for item in servers):
         recommendations.append("Use Advanced Runtime or CLI --start-models --models-confirm to start endpoints.")

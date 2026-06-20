@@ -42,6 +42,7 @@ def build_support_bundle(
                 "quality gate status",
                 "sanitized performance report",
                 "read-only runtime optimizer summary",
+                "storage capacity summary",
                 "hardware profile",
                 "configured model server log paths",
                 "generation run log path",

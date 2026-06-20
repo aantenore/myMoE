@@ -49,9 +49,36 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["health"]["status"], "pass")
         self.assertEqual(checks["extensions"]["status"], "pass")
         self.assertEqual(checks["hardware_fit"]["status"], "pass")
+        self.assertEqual(checks["storage"]["status"], "pass")
         self.assertEqual(report["hardware_fit"]["status"], "compatible")
+        self.assertEqual(report["storage"]["status"], "ready")
         self.assertIn("extension_audit", report)
         self.assertTrue(report["extensions"]["tools"])
+
+    def test_reports_storage_attention_as_optional_warning(self) -> None:
+        app_config = load_app_config("configs/app.json")
+        config = load_config("tests/fixtures/moe.synthetic.json")
+        registry = load_extension_registry(
+            plugins_dir=app_config.extensions.plugins_dir,
+            skills_dir=app_config.extensions.skills_dir,
+            tools_config=app_config.extensions.tools_config,
+            mcp_config=app_config.extensions.mcp_config,
+            cron_config=app_config.extensions.cron_config,
+        )
+
+        report = build_doctor_report(
+            config_path="tests/fixtures/moe.synthetic.json",
+            config=config,
+            app_config=app_config,
+            registry=registry,
+            storage_min_free_gib=1_000_000_000,
+        )
+
+        checks = {item["id"]: item for item in report["checks"]}
+        self.assertEqual(report["status"], "attention")
+        self.assertEqual(checks["storage"]["status"], "warn")
+        self.assertEqual(checks["storage"]["severity"], "optional")
+        self.assertTrue(any("Free at least" in item for item in report["recommendations"]))
 
     def test_reports_too_large_active_profile_as_required_failure(self) -> None:
         app_config = load_app_config("configs/app.json")
@@ -140,6 +167,8 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("# myMoE System Doctor Report", markdown)
         self.assertIn("## Checks", markdown)
         self.assertIn("`hardware_fit`", markdown)
+        self.assertIn("`storage`", markdown)
+        self.assertIn("## Storage", markdown)
         self.assertIn("## Privacy", markdown)
         self.assertNotIn("content_excerpt", markdown)
         self.assertNotIn("api_key", markdown.lower())

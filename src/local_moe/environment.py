@@ -11,6 +11,7 @@ from typing import Any
 
 from .app_config import app_config_payload
 from .hardware import detect_hardware
+from .storage import build_storage_report
 
 ENVIRONMENT_REPORT_PREFIX = "mymoe-environment-report"
 
@@ -34,6 +35,7 @@ def build_environment_report(
                 "git revision metadata",
                 "configured local model identities",
                 "hardware summary",
+                "storage capacity and configured runtime paths",
             ],
             "excludes": [
                 "chat transcripts",
@@ -85,6 +87,7 @@ def build_environment_report(
         ),
         "git": _git_info(),
         "hardware": asdict(hardware),
+        "storage": build_storage_report(app_config),
         "runtime": {
             "backend_preferences": dict(app_config.runtime.preferred_backends),
             "context_policy_config": app_config.runtime.context_policy_config,
@@ -119,6 +122,7 @@ def render_environment_report_markdown(report: dict[str, Any]) -> str:
     python = report.get("python", {}) if isinstance(report.get("python"), dict) else {}
     git = report.get("git", {}) if isinstance(report.get("git"), dict) else {}
     hardware = report.get("hardware", {}) if isinstance(report.get("hardware"), dict) else {}
+    storage = report.get("storage", {}) if isinstance(report.get("storage"), dict) else {}
     runtime = report.get("runtime", {}) if isinstance(report.get("runtime"), dict) else {}
     packages = report.get("packages", {}) if isinstance(report.get("packages"), dict) else {}
     experts = runtime.get("experts", []) if isinstance(runtime.get("experts"), list) else []
@@ -145,6 +149,7 @@ def render_environment_report_markdown(report: dict[str, Any]) -> str:
         f"- Virtualenv: `{python.get('virtualenv', 'unknown')}`",
         f"- Hardware: `{hardware.get('cpu_brand', 'unknown')}` / `{hardware.get('memory_gib', 'unknown')} GiB RAM`",
         f"- Strategy: `{hardware.get('recommended_strategy', 'unknown')}`",
+        f"- Storage: `{storage.get('status', 'unknown')}` / lowest free `{_storage_lowest_free(storage)}` GiB",
         "",
         "## Git",
         "",
@@ -191,6 +196,25 @@ def render_environment_report_markdown(report: dict[str, Any]) -> str:
         if not isinstance(info, dict):
             continue
         lines.append(f"| `{_md_cell(name)}` | `{_md_cell(_package_label(info))}` |")
+    lines.extend(["", "## Storage", ""])
+    lines.extend(
+        [
+            f"- Status: `{storage.get('status', 'unknown')}`",
+            f"- Minimum free space: `{storage.get('min_free_gib', 'unknown')} GiB`",
+        ]
+    )
+    storage_paths = storage.get("paths", []) if isinstance(storage.get("paths"), list) else []
+    for item in storage_paths:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            "- `{label}`: `{status}`, `{free}` GiB free at `{path}`".format(
+                label=_md_cell(item.get("label", "")),
+                status=_md_cell(item.get("status", "")),
+                free=_md_cell(item.get("free_gib", "unknown")),
+                path=_md_cell(item.get("expanded_path", "")),
+            )
+        )
     recommendations = report.get("recommendations", [])
     lines.extend(["", "## Recommendations", ""])
     if recommendations:
@@ -243,6 +267,11 @@ def _package_label(info: dict[str, object]) -> str:
     if version:
         return version
     return str(info.get("status") or "unknown")
+
+
+def _storage_lowest_free(storage: dict[str, Any]) -> object:
+    summary = storage.get("summary", {}) if isinstance(storage.get("summary"), dict) else {}
+    return summary.get("lowest_free_gib", "unknown")
 
 
 def _git_info() -> dict[str, Any]:

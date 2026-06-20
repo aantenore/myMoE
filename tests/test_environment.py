@@ -25,6 +25,8 @@ class EnvironmentReportTests(unittest.TestCase):
         self.assertIn("packages", report)
         self.assertIn("git", report)
         self.assertIn("hardware", report)
+        self.assertIn("storage", report)
+        self.assertEqual(report["storage"]["schema_version"], "1.0")
         self.assertEqual(report["runtime"]["expert_count"], 3)
         self.assertIn("chat transcripts", report["privacy"]["excludes"])
         serialized = str(report).lower()
@@ -79,6 +81,7 @@ class EnvironmentReportTests(unittest.TestCase):
 
         self.assertIn("# myMoE Environment Snapshot", markdown)
         self.assertIn("## Experts", markdown)
+        self.assertIn("## Storage", markdown)
         self.assertIn("`synthetic-general`", markdown)
         self.assertIn("## Privacy", markdown)
         self.assertNotIn("api_key", markdown.lower())
