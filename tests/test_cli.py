@@ -612,6 +612,52 @@ class CliTests(unittest.TestCase):
         self.assertIn("performance", payload)
         self.assertIn("environment", payload)
         self.assertEqual(payload["environment"]["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertIn("security_audit", payload)
+
+    def test_security_audit_prints_metadata_only_payload(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--security-audit",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["model_endpoints"]["remote_count"], 0)
+        self.assertIn("environment variable names and values", " ".join(payload["privacy"]["excludes"]))
+
+    def test_security_audit_can_render_markdown(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--security-audit",
+                "--security-audit-format",
+                "markdown",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("# myMoE Security Audit", completed.stdout)
+        self.assertIn("## Checks", completed.stdout)
 
     def test_performance_report_prints_runtime_decision(self) -> None:
         completed = subprocess.run(

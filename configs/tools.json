@@ -99,6 +99,13 @@
       "enabled": true
     },
     {
+      "name": "security.audit",
+      "description": "Report local security posture for permissions, MCP, cron, tools, plugins, and model endpoint locality.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
       "name": "mcp.search_capabilities",
       "description": "List configured MCP servers and their declared capability domains.",
       "risk_class": "read_only",

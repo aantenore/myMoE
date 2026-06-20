@@ -397,6 +397,25 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["summary"]["asset_count"], 0)
         self.assertEqual(result.payload["status"], "ready")
 
+    def test_security_audit_reports_local_posture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config_path = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            runner = LocalToolRunner(
+                load_extension_registry(),
+                app_config=load_app_config(app_config_path),
+                moe_config=load_config("tests/fixtures/moe.synthetic.json"),
+                app_config_path=str(app_config_path),
+                active_config_path="tests/fixtures/moe.synthetic.json",
+            )
+
+            result = runner.run("security.audit", {})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["schema_version"], "1.0")
+        self.assertEqual(result.payload["status"], "ready")
+        self.assertEqual(result.payload["model_endpoints"]["remote_count"], 0)
+
     def test_mcp_search_capabilities_returns_declared_servers(self) -> None:
         runner = LocalToolRunner(load_extension_registry())
 

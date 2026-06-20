@@ -1093,6 +1093,15 @@
           <pre class="eval-output" id="doctor-output">Not run yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>Security</h2>
+          <div class="kv" id="security"></div>
+          <div class="tool-row">
+            <button class="ghost-button" id="refresh-security" type="button">Refresh audit</button>
+            <button class="ghost-button" id="download-security-report" type="button">Download report</button>
+          </div>
+          <pre class="eval-output" id="security-output">Not loaded yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Local Data</h2>
           <div class="tool-controls">
             <div class="tool-row">
@@ -1433,6 +1442,7 @@
         configProfiles: null,
         configRecommendation: null,
         doctor: null,
+        security: null,
         health: null,
         performance: null,
         runtimeOptimizer: null,
@@ -1533,6 +1543,8 @@
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-doctor-report").addEventListener("click", downloadDoctorReport);
         el("download-support-bundle").addEventListener("click", downloadSupportBundle);
+        el("refresh-security").addEventListener("click", refreshSecurity);
+        el("download-security-report").addEventListener("click", downloadSecurityReport);
         el("export-data").addEventListener("click", exportData);
         el("download-data").addEventListener("click", downloadData);
         el("import-data").addEventListener("click", importData);
@@ -1576,7 +1588,7 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, modelInventory, startup, setup, configProfiles, configRecommendation, doctor, health, performance, runtimeOptimizer, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, modelInventory, startup, setup, configProfiles, configRecommendation, doctor, security, health, performance, runtimeOptimizer, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
@@ -1587,6 +1599,7 @@
             api("/api/config/profiles"),
             api("/api/config/recommendation"),
             api("/api/doctor"),
+            api("/api/security"),
             api("/api/health"),
             api("/api/performance"),
             api("/api/runtime/optimizer"),
@@ -1607,6 +1620,7 @@
           state.configProfiles = configProfiles;
           state.configRecommendation = configRecommendation;
           state.doctor = doctor;
+          state.security = security;
           state.health = health;
           state.performance = performance;
           state.runtimeOptimizer = runtimeOptimizer;
@@ -1625,6 +1639,7 @@
           renderSetup(setup);
           renderConfigProfiles(configProfiles);
           renderDoctor(doctor);
+          renderSecurity(security);
           renderHealth(health);
           renderPerformance(performance);
           renderRuntimeOptimizer(runtimeOptimizer);
@@ -2506,6 +2521,47 @@
         window.open("/api/doctor/report.md", "_blank", "noreferrer");
       }
 
+      function renderSecurity(report) {
+        const summary = report?.summary || {};
+        const mcp = report?.mcp || {};
+        const cron = report?.cron || {};
+        const models = report?.model_endpoints || {};
+        const tools = report?.tools || {};
+        const checks = (report?.checks || [])
+          .map((check) => `${String(check.status || "").toUpperCase()} ${check.id}: ${check.message}`)
+          .join("\n");
+        const recommendations = (report?.recommendations || []).slice(0, 5).map((item) => `- ${item}`);
+        el("security").innerHTML = kvRows({
+          Status: report?.status || "unknown",
+          Passed: summary.passed ?? 0,
+          Warnings: summary.warnings ?? 0,
+          Failed: summary.failed ?? 0,
+          "Remote endpoints": models.remote_count || 0,
+          "MCP env values": mcp.env_var_count || 0,
+          "Cron write-risk jobs": cron.enabled_write_risk_count || 0,
+          "Write-risk tools": tools.enabled_write_risk_count || 0,
+        });
+        el("security-output").textContent = [
+          recommendations.length ? recommendations.join("\n") : "No recommendations.",
+          checks ? `\nChecks:\n${checks}` : "",
+        ].join("");
+      }
+
+      async function refreshSecurity() {
+        el("security-output").textContent = "Checking...";
+        try {
+          const result = await api("/api/security");
+          state.security = result;
+          renderSecurity(result);
+        } catch (error) {
+          el("security-output").textContent = error.message;
+        }
+      }
+
+      function downloadSecurityReport() {
+        window.open("/api/security/report.md", "_blank", "noreferrer");
+      }
+
       async function exportData() {
         el("data-output").textContent = "Exporting...";
         try {
@@ -3143,6 +3199,7 @@
           "models.inventory": {
             max_files: 20000,
           },
+          "security.audit": {},
           "extension.configure": {
             surface: "mcp_server",
             mode: "upsert",

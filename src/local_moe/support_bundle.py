@@ -12,6 +12,7 @@ from .model_inventory import build_model_asset_inventory
 from .model_servers import ModelServerManager
 from .performance_report import build_performance_report
 from .runtime_optimizer import build_runtime_optimizer_report
+from .security_audit import build_security_audit_report
 
 
 def build_support_bundle(
@@ -43,6 +44,7 @@ def build_support_bundle(
                 "quality gate status",
                 "sanitized performance report",
                 "read-only runtime optimizer summary",
+                "read-only security audit summary",
                 "storage capacity summary",
                 "model asset inventory",
                 "hardware profile",
@@ -58,6 +60,7 @@ def build_support_bundle(
                 "model log contents",
                 "benchmark prompt response excerpts",
                 "API keys or secrets",
+                "MCP environment variable names and values",
             ],
         },
         "doctor": doctor,
@@ -78,6 +81,13 @@ def build_support_bundle(
             config_path=config_path,
             app_config=app_config,
             app_config_path=app_config_path,
+        ),
+        "security_audit": build_security_audit_report(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+            app_config_path=app_config_path,
+            registry=registry,
         ),
         "hardware_profile": _read_json_artifact(hardware_profile_path),
         "runtime_files": _runtime_files(app_config),
