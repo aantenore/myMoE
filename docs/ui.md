@@ -143,7 +143,7 @@ Setup readiness is side-effect free. It reports the bootstrap command, configure
 
 The Setup section also exposes a guarded "Prepare runtime" action backed by `/api/setup/run`. Without confirmation it reports `confirmation_required`; with confirmation it runs only the install and model-download commands derived from the active configuration. The same flow is available from CLI through `--prepare-runtime`.
 
-The Profiles section calls `/api/config/profiles` and lists runnable config profiles discovered from `configs/`, plus the currently active config even when it lives elsewhere. It is read-only: it shows active/default flags, setup readiness, backend, expert count, model names, and copyable launch hints so operators can decide which profile to inspect, prepare, launch, or run in CLI without editing JSON blindly. Launch hints include explicit side-effect labels; the UI can copy them to the clipboard but does not execute those commands.
+The Profiles section calls `/api/config/profiles` and lists runnable config profiles discovered from `configs/`, plus the currently active config even when it lives elsewhere. It is read-only: it shows active/default flags, setup readiness, backend, expert count, model names, hardware fit, and copyable launch hints so operators can decide which profile to inspect, prepare, launch, or run in CLI without editing JSON blindly. Hardware fit is derived from the detected machine profile plus the configured model candidate manifests, then falls back to conservative model-name heuristics only when no manifest estimate exists. Launch hints include explicit side-effect labels; the UI can copy them to the clipboard but does not execute those commands.
 
 System Doctor calls `/api/doctor` and combines setup, health, model process reachability, extension audit, and cron state into one `ready`, `attention`, or `blocked` report with recommendations. The same panel can download a privacy-safe support bundle from `/api/support-bundle/download.json`.
 
@@ -186,7 +186,7 @@ Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval d
 
 ![myMoE advanced runtime](screenshots/extensions.png)
 
-Runtime profile discovery shows runnable local model profiles, setup readiness, and copyable launch hints without mutating runtime state:
+Runtime profile discovery shows runnable local model profiles, setup readiness, hardware fit, and copyable launch hints without mutating runtime state:
 
 ![myMoE runtime profiles](screenshots/profiles.png)
 

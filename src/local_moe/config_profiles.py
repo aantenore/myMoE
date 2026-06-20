@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from .app_config import AppConfig
-from .config import load_config
+from .config import ExpertConfig, MoEConfig, load_config
+from .hardware import HardwareProfile, detect_hardware
 from .setup_status import inspect_setup_status, setup_status_payload
+
+DEFAULT_CANDIDATE_PATHS = (Path("configs/model-benchmark.json"), Path("configs/model-candidates.json"))
 
 
 def discover_config_profiles(
@@ -16,6 +20,8 @@ def discover_config_profiles(
     app_config: AppConfig,
     app_config_path: str = "configs/app.json",
     config_dir: str | Path = "configs",
+    hardware_profile: HardwareProfile | None = None,
+    candidate_paths: tuple[str | Path, ...] | None = None,
 ) -> dict[str, Any]:
     """Return read-only metadata for runnable local MoE profiles."""
 
@@ -23,6 +29,8 @@ def discover_config_profiles(
     active_path = Path(active_config_path)
     if active_path.exists() and not _contains_path(paths, active_path):
         paths.insert(0, active_path)
+    hardware = hardware_profile or detect_hardware()
+    candidate_index = _candidate_index(DEFAULT_CANDIDATE_PATHS if candidate_paths is None else candidate_paths)
 
     profiles = [
         _profile_payload(
@@ -31,6 +39,8 @@ def discover_config_profiles(
             default_config_path=app_config.default_moe_config,
             app_config=app_config,
             app_config_path=app_config_path,
+            hardware_profile=hardware,
+            candidate_index=candidate_index,
         )
         for path in paths
     ]
@@ -40,6 +50,7 @@ def discover_config_profiles(
         "default_config_path": _display_path(app_config.default_moe_config),
         "config_dir": _display_path(config_dir),
         "count": len(profiles),
+        "hardware": _hardware_payload(hardware),
         "profiles": profiles,
     }
 
@@ -63,6 +74,8 @@ def _profile_payload(
     default_config_path: str,
     app_config: AppConfig,
     app_config_path: str,
+    hardware_profile: HardwareProfile,
+    candidate_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     display_path = _display_path(path)
     payload: dict[str, Any] = {
@@ -125,6 +138,7 @@ def _profile_payload(
                 "download_command_display": setup_payload["download_command_display"],
                 "error": setup_payload["error"],
             },
+            "hardware_fit": _hardware_fit(config, hardware_profile, candidate_index),
             "launch_commands": _launch_commands(
                 display_path,
                 app_config_path=app_config_path,
@@ -224,6 +238,248 @@ def _launch_commands(config_path: str, *, app_config_path: str) -> list[dict[str
         },
     ]
     return [{**command, "env": env, "display": _display_command(command["argv"], env=env)} for command in commands]
+
+
+def _hardware_payload(profile: HardwareProfile) -> dict[str, Any]:
+    return {
+        "machine": profile.machine,
+        "cpu_brand": profile.cpu_brand,
+        "memory_bytes": profile.memory_bytes,
+        "memory_gib": profile.memory_gib,
+        "recommended_strategy": profile.recommended_strategy,
+        "rationale": list(profile.rationale),
+    }
+
+
+def _hardware_fit(
+    config: MoEConfig,
+    hardware_profile: HardwareProfile,
+    candidate_index: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if all(expert.provider == "synthetic" for expert in config.experts):
+        return {
+            "status": "compatible",
+            "summary": "Synthetic fixture; no local model memory required.",
+            "estimated_memory_gb": 0.0,
+            "memory_gib": hardware_profile.memory_gib,
+            "headroom_gb": hardware_profile.memory_gib,
+            "resident_large_experts": 0,
+            "matched_models": [],
+            "unknown_models": [],
+            "rationale": ["Synthetic providers are confined to tests and do not allocate model weights."],
+        }
+
+    estimates = [_expert_fit(expert, candidate_index) for expert in config.experts]
+    known = [item for item in estimates if item["estimated_memory_gb"] is not None]
+    unknown = [item for item in estimates if item["estimated_memory_gb"] is None]
+    matched = [item for item in estimates if item["source"] != "heuristic" and item["estimated_memory_gb"] is not None]
+    memory_gib = float(hardware_profile.memory_gib or 0.0)
+    estimated_memory_gb = round(sum(float(item["estimated_memory_gb"]) for item in known), 2)
+    headroom_gb = round(memory_gib - estimated_memory_gb, 2) if memory_gib else None
+    large_experts = sum(1 for item in known if float(item["estimated_memory_gb"]) >= 12.0)
+
+    rationale: list[str] = []
+    if matched:
+        rationale.append(f"Matched {len(matched)} expert model estimate(s) from the model candidate manifests.")
+    heuristic = [item for item in estimates if item["source"] == "heuristic"]
+    if heuristic:
+        rationale.append(f"Estimated {len(heuristic)} expert model(s) from model name and backend heuristics.")
+    if unknown:
+        rationale.append(f"{len(unknown)} expert model(s) have no memory estimate; run a benchmark before relying on this profile.")
+    if large_experts > 1:
+        rationale.append("More than one large resident expert is configured; prefer cold-loading specialists on 24 GiB class machines.")
+
+    status = _fit_status(
+        estimated_memory_gb=estimated_memory_gb,
+        memory_gib=memory_gib,
+        resident_large_experts=large_experts,
+        unknown_models=len(unknown),
+        estimates=estimates,
+        strategy=hardware_profile.recommended_strategy,
+    )
+    summary = _fit_summary(status, estimated_memory_gb, memory_gib, large_experts, len(unknown))
+    return {
+        "status": status,
+        "summary": summary,
+        "estimated_memory_gb": estimated_memory_gb if known else None,
+        "memory_gib": hardware_profile.memory_gib,
+        "headroom_gb": headroom_gb,
+        "resident_large_experts": large_experts,
+        "matched_models": [
+            {
+                "expert_id": item["expert_id"],
+                "model": item["model"],
+                "candidate_id": item.get("candidate_id"),
+                "estimated_memory_gb": item["estimated_memory_gb"],
+                "role": item.get("role", ""),
+                "source": item["source"],
+            }
+            for item in known
+        ],
+        "unknown_models": [{"expert_id": item["expert_id"], "model": item["model"]} for item in unknown],
+        "rationale": rationale,
+    }
+
+
+def _fit_status(
+    *,
+    estimated_memory_gb: float,
+    memory_gib: float,
+    resident_large_experts: int,
+    unknown_models: int,
+    estimates: list[dict[str, Any]],
+    strategy: str,
+) -> str:
+    if memory_gib <= 0 or unknown_models:
+        return "unknown"
+    if any(str(item.get("role", "")).lower() == "not_viable_on_24gb" for item in estimates):
+        return "too_large"
+    if any(float(item.get("minimum_memory_gb") or 0.0) > memory_gib for item in estimates):
+        return "too_large"
+    if estimated_memory_gb > memory_gib * 1.12:
+        return "too_large"
+    if estimated_memory_gb > memory_gib or resident_large_experts > 1:
+        return "stretch"
+    if strategy == "general_purpose_moe_single_resident" and resident_large_experts == 1:
+        return "recommended"
+    return "fits"
+
+
+def _fit_summary(
+    status: str,
+    estimated_memory_gb: float,
+    memory_gib: float,
+    resident_large_experts: int,
+    unknown_models: int,
+) -> str:
+    if status == "compatible":
+        return "No local model memory required."
+    if status == "unknown":
+        return f"{unknown_models} model estimate(s) missing; benchmark before using this profile."
+    memory = f"{estimated_memory_gb:.1f} GiB estimated / {memory_gib:.1f} GiB RAM"
+    if status == "recommended":
+        return f"Recommended for this machine: {memory}, {resident_large_experts} large resident expert."
+    if status == "fits":
+        return f"Fits this machine: {memory}."
+    if status == "stretch":
+        return f"Stretch profile: {memory}; monitor memory and avoid extra resident specialists."
+    return f"Too large for this machine: {memory}."
+
+
+def _expert_fit(expert: ExpertConfig, candidate_index: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    candidate = _match_candidate(expert.model, candidate_index)
+    if candidate:
+        return {
+            "expert_id": expert.id,
+            "model": expert.model,
+            "candidate_id": candidate.get("id", ""),
+            "role": candidate.get("role", ""),
+            "minimum_memory_gb": candidate.get("minimum_memory_gb"),
+            "estimated_memory_gb": candidate["estimated_memory_gb"],
+            "source": candidate["source"],
+        }
+    estimate = _heuristic_memory_estimate(expert)
+    return {
+        "expert_id": expert.id,
+        "model": expert.model,
+        "candidate_id": "",
+        "role": expert.role,
+        "minimum_memory_gb": None,
+        "estimated_memory_gb": estimate,
+        "source": "heuristic" if estimate is not None else "unknown",
+    }
+
+
+def _match_candidate(model: str, candidate_index: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    keys = _model_keys(model)
+    for key in keys:
+        if key in candidate_index:
+            return candidate_index[key]
+    return None
+
+
+def _candidate_index(paths: tuple[str | Path, ...]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        try:
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for item in raw.get("candidates", []):
+            estimate = _candidate_memory_estimate(item)
+            if estimate is None:
+                continue
+            candidate = {
+                "id": str(item.get("id", "")),
+                "role": str(item.get("role", "")),
+                "repo": str(item.get("repo", "")),
+                "minimum_memory_gb": _float_or_none(item.get("minimum_memory_gb")),
+                "estimated_memory_gb": estimate,
+                "source": "manifest",
+            }
+            for key in _candidate_keys(item):
+                index.setdefault(key, candidate)
+    return index
+
+
+def _candidate_memory_estimate(item: dict[str, Any]) -> float | None:
+    for key in ("estimated_memory_gb", "recommended_memory_gb", "minimum_memory_gb"):
+        value = _float_or_none(item.get(key))
+        if value is not None:
+            return round(value, 2)
+    approx_size = _float_or_none(item.get("approx_size_gb"))
+    if approx_size is not None:
+        return round(approx_size + 2.5, 2)
+    return None
+
+
+def _candidate_keys(item: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for value in (item.get("id"), item.get("repo"), item.get("label"), item.get("config")):
+        if value:
+            keys.update(_model_keys(str(value)))
+    repo = str(item.get("repo") or "")
+    file_alias = str(item.get("file_alias") or "")
+    if repo and file_alias:
+        keys.update(_model_keys(f"{repo}:{file_alias}"))
+    return {key for key in keys if key}
+
+
+def _model_keys(model: str) -> set[str]:
+    normalized = _normalize_model_key(model)
+    keys = {normalized}
+    if "/" in normalized and ":" in normalized:
+        keys.add(normalized.split(":", 1)[0])
+    return keys
+
+
+def _normalize_model_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _heuristic_memory_estimate(expert: ExpertConfig) -> float | None:
+    model = expert.model.lower()
+    if expert.provider == "synthetic":
+        return 0.0
+    e_match = re.search(r"e(\d+(?:\.\d+)?)b", model)
+    b_match = re.search(r"(\d+(?:\.\d+)?)b", model)
+    size_b = float((e_match or b_match).group(1)) if (e_match or b_match) else None
+    if size_b is None:
+        return None
+    backend = str(expert.params.get("runtime_backend") or "").lower()
+    if "q4" in model or "4bit" in model or "4-bit" in model:
+        factor = 0.58
+    else:
+        factor = 1.2
+    overhead = 2.0 if backend == "mlx_lm" else 1.5
+    return round(max(1.0, size_b * factor + overhead), 2)
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _contains_path(paths: list[Path], target: Path) -> bool:

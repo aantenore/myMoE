@@ -748,6 +748,25 @@
         color: var(--muted);
       }
 
+      .fit-status {
+        font-weight: 650;
+      }
+
+      .fit-recommended,
+      .fit-fits,
+      .fit-compatible {
+        color: var(--success);
+      }
+
+      .fit-stretch,
+      .fit-unknown {
+        color: var(--warning);
+      }
+
+      .fit-too_large {
+        color: var(--danger);
+      }
+
       .eval-output {
         margin: 0;
         white-space: pre-wrap;
@@ -1810,6 +1829,9 @@
               profile.status === "valid"
                 ? `${profile.backend || "unknown"} · ${profile.expert_count || 0} expert(s) · ${experts || "No experts"}`
                 : profile.error || "Invalid profile";
+            const fit = profile.hardware_fit || {};
+            const fitStatus = fit.status || "";
+            const fitSummary = fit.summary || "";
             const commands = (profile.launch_commands || [])
               .map(
                 (command, commandIndex) => `
@@ -1839,6 +1861,11 @@
                   <span class="mono">${escapeHtml(profile.path || "")}</span><br>
                   <span class="muted">${escapeHtml(detail)}</span>
                   ${
+                    fitStatus
+                      ? `<br><span class="muted">Hardware fit: <span class="fit-status fit-${escapeHtml(fitStatus)}">${escapeHtml(fitStatus)}</span> · ${escapeHtml(fitSummary)}</span>`
+                      : ""
+                  }
+                  ${
                     commands
                       ? `<details class="command-details" ${profile.active ? "open" : ""}><summary>Launch hints</summary><div class="command-list">${commands}</div></details>`
                       : ""
@@ -1851,6 +1878,7 @@
           kvRows({
             Active: profiles?.active_config_path || "Unknown",
             Default: profiles?.default_config_path || "Unknown",
+            Hardware: profileHardwareLabel(profiles?.hardware),
             Count: profiles?.count ?? 0,
           }) + (rows || '<span class="muted">No runnable profiles found.</span>');
         document.querySelectorAll("[data-copy-profile-command]").forEach((button) => {
@@ -1930,6 +1958,12 @@
 
       function formatSideEffects(value) {
         return String(value || "none").replaceAll("_", " ");
+      }
+
+      function profileHardwareLabel(hardware) {
+        if (!hardware) return "Unknown";
+        const memory = hardware.memory_gib ? `${hardware.memory_gib} GiB` : "unknown RAM";
+        return `${memory} · ${hardware.recommended_strategy || "unknown strategy"}`;
       }
 
       async function refreshHealth() {
