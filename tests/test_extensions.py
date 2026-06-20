@@ -52,6 +52,8 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(mcp_presets[0]["definition"]["transport"], "stdio")
         self.assertIn("read_text_file", mcp_presets[0]["definition"]["allowed_tools"])
         self.assertEqual(cron_presets[0]["definition"]["command"], ["extension.audit"])
+        self.assertIn("hourly-runtime-optimizer", {preset["id"] for preset in cron_presets})
+        self.assertIn("runtime.optimizer", {action["id"] for action in templates["cron_actions"]})
         self.assertIn("router.distill", {action["id"] for action in templates["cron_actions"]})
 
     def test_creates_plugin_scaffold_with_valid_id(self) -> None:

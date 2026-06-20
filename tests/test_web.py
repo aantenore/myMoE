@@ -145,6 +145,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("mcp_server", {surface["id"] for surface in extension_templates["surfaces"]})
         self.assertIn("filesystem-docs", {preset["id"] for preset in extension_templates["presets"]["mcp_server"]})
         self.assertIn("daily-memory-maintenance", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
+        self.assertIn("hourly-runtime-optimizer", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
+        self.assertIn("runtime.optimizer", {action["id"] for action in extension_templates["cron_actions"]})
         self.assertEqual(audit["audit"]["issue_count"], 0)
         self.assertIn("extensions", audit)
         self.assertEqual(support_bundle["schema_version"], "1.0")

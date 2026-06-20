@@ -131,6 +131,91 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(summary.results[0].status, "ok")
         self.assertTrue(summary.results[0].payload["checked"])
 
+    def test_runs_runtime_optimizer_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            run_log_path = root / "runtime" / "runs.jsonl"
+            job = CronJobDefinition(
+                id="runtime-optimizer",
+                description="Runtime optimizer",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=(
+                    "runtime.optimizer",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--run-log-path",
+                    str(run_log_path),
+                    "--run-limit",
+                    "5",
+                ),
+                risk_class="compute_only",
+            )
+
+            summary = run_due_jobs((job,), state_path=root / "cron-state.json", now_epoch=120)
+
+        payload = summary.results[0].payload
+        self.assertEqual(summary.results[0].status, "ok")
+        self.assertEqual(summary.results[0].message, "Runtime optimizer report completed.")
+        self.assertEqual(payload["mode"], "read_only")
+        self.assertIn(payload["status"], {"ready", "watch", "attention"})
+        self.assertEqual(payload["run_log"]["summary"]["record_count"], 0)
+        self.assertIn("run_generation_smoke", {action["id"] for action in payload["actions"]})
+        self.assertEqual(summary.last_run_epoch["runtime-optimizer"], 120)
+
+    def test_runtime_optimizer_output_requires_write_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            report_path = root / "optimizer.md"
+            compute_only = CronJobDefinition(
+                id="runtime-optimizer",
+                description="Runtime optimizer",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=(
+                    "runtime.optimizer",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--out",
+                    str(report_path),
+                    "--format",
+                    "markdown",
+                ),
+                risk_class="compute_only",
+            )
+            write_local = CronJobDefinition(
+                id="runtime-optimizer-write",
+                description="Runtime optimizer write",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=compute_only.command,
+                risk_class="write_local",
+            )
+
+            rejected = run_due_jobs((compute_only,), state_path=root / "state-1.json", now_epoch=120)
+            guarded = run_due_jobs((write_local,), state_path=root / "state-2.json", now_epoch=120)
+            confirmed = run_due_jobs(
+                (write_local,),
+                state_path=root / "state-3.json",
+                now_epoch=120,
+                confirm_writes=True,
+            )
+            report_exists = report_path.exists()
+            report_text = report_path.read_text(encoding="utf-8") if report_exists else ""
+
+        self.assertEqual(rejected.results[0].status, "error")
+        self.assertIn("requires a write-local risk class", rejected.results[0].message)
+        self.assertEqual(guarded.results[0].status, "needs_confirmation")
+        self.assertEqual(confirmed.results[0].status, "ok")
+        self.assertTrue(report_exists)
+        self.assertIn("# myMoE Runtime Optimizer Report", report_text)
+
     def test_runs_router_distillation_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             eval_path = Path(tmp) / "eval.jsonl"
@@ -288,6 +373,15 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(status["skipped_job_ids"], ["router-distillation-refresh"])
         self.assertEqual(status["run_count"], 1)
         self.assertEqual(status["last_error"], None)
+
+
+def _write_temp_app_config(root: Path) -> Path:
+    raw = json.loads(Path("configs/app.json").read_text(encoding="utf-8"))
+    raw["default_moe_config"] = "tests/fixtures/moe.synthetic.json"
+    raw["runtime"]["work_dir"] = str(root / "runtime")
+    path = root / "app.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
 
 
 if __name__ == "__main__":

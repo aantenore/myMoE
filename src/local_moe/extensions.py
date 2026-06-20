@@ -43,6 +43,10 @@ CRON_ACTION_PRESETS = {
         "description": "Delete expired local memory records after explicit confirmation.",
         "risk_class": "write_local",
     },
+    "runtime.optimizer": {
+        "description": "Build a read-only runtime optimizer report from run logs, profile recommendation, and benchmark status.",
+        "risk_class": "compute_only",
+    },
     "router.distill": {
         "description": "Refresh the local distilled router artifact from curated labels.",
         "risk_class": "write_local",
@@ -469,6 +473,25 @@ def extension_configuration_templates() -> dict[str, Any]:
                         "enabled": True,
                         "schedule": {"type": "interval", "seconds": 86400},
                         "command": ["memory.maintenance", "--memory-path", "work/runtime/memory.jsonl"],
+                        "risk_class": "compute_only",
+                    },
+                },
+                {
+                    "id": "hourly-runtime-optimizer",
+                    "label": "Hourly Runtime Optimizer",
+                    "description": "Refresh the read-only runtime optimization recommendation once per hour.",
+                    "definition": {
+                        "id": "runtime-optimizer",
+                        "description": "Build a read-only runtime optimizer report from local metadata.",
+                        "enabled": True,
+                        "schedule": {"type": "interval", "seconds": 3600},
+                        "command": [
+                            "runtime.optimizer",
+                            "--app-config",
+                            "configs/app.json",
+                            "--run-limit",
+                            "100",
+                        ],
                         "risk_class": "compute_only",
                     },
                 },

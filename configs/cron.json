@@ -33,6 +33,17 @@
       "risk_class": "compute_only"
     },
     {
+      "id": "runtime-optimizer",
+      "description": "Refresh read-only runtime optimization signals from run logs, profile recommendation, and benchmark status.",
+      "enabled": true,
+      "schedule": {
+        "type": "interval",
+        "seconds": 3600
+      },
+      "command": ["runtime.optimizer", "--app-config", "configs/app.json", "--run-limit", "100"],
+      "risk_class": "compute_only"
+    },
+    {
       "id": "memory-prune-expired",
       "description": "Delete expired local memory records when write-local cron jobs are explicitly confirmed.",
       "enabled": false,

@@ -346,6 +346,9 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
             payload=audit_extension_registry(registry or load_extension_registry()),
         )
 
+    if action == "runtime.optimizer":
+        return _run_runtime_optimizer(job, args)
+
     if action == "router.distill":
         return _run_router_distill(job, args)
 
@@ -355,7 +358,61 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
 def _is_allowlisted_action(job: DueJob) -> bool:
     if not job.command:
         return False
-    return job.command[0] in {"memory.maintenance", "memory.prune_expired", "extension.audit", "router.distill"}
+    return job.command[0] in {
+        "memory.maintenance",
+        "memory.prune_expired",
+        "extension.audit",
+        "runtime.optimizer",
+        "router.distill",
+    }
+
+
+def _run_runtime_optimizer(job: DueJob, args: dict[str, str]) -> CronRunResult:
+    from .app_config import load_app_config
+    from .runtime_optimizer import build_runtime_optimizer_report, render_runtime_optimizer_markdown
+
+    app_config_path = args.get("app-config", "configs/app.json")
+    app_config = load_app_config(app_config_path)
+    config_path = args.get("config") or app_config.default_moe_config
+    run_limit = _optional_int(args.get("run-limit")) or 100
+    report = build_runtime_optimizer_report(
+        config_path=config_path,
+        app_config=app_config,
+        app_config_path=app_config_path,
+        run_log_path=args.get("run-log-path"),
+        run_limit=run_limit,
+    )
+    output_path = args.get("out")
+    payload: dict[str, object] = {
+        "status": report["status"],
+        "mode": report["mode"],
+        "generated_at": report["generated_at"],
+        "signals": report["signals"],
+        "actions": report["actions"],
+        "run_log": report["run_log"],
+        "profile_recommendation": report["profile_recommendation"],
+        "performance": report["performance"],
+    }
+    if output_path:
+        if not requires_write_confirmation(job.risk_class):
+            return _cron_error(job, "runtime.optimizer --out requires a write-local risk class.")
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output_format = args.get("format", "json")
+        if output_format == "markdown" or output.suffix.lower() in {".md", ".markdown"}:
+            output.write_text(render_runtime_optimizer_markdown(report), encoding="utf-8")
+        else:
+            output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        payload["output_path"] = str(output)
+        payload["output_format"] = "markdown" if output_format == "markdown" else "json"
+    return CronRunResult(
+        id=job.id,
+        status="ok",
+        reason=job.reason,
+        command=job.command,
+        message="Runtime optimizer report completed.",
+        payload=payload,
+    )
 
 
 def _run_router_distill(job: DueJob, args: dict[str, str]) -> CronRunResult:
@@ -417,6 +474,15 @@ def _parse_command_args(args: tuple[str, ...]) -> dict[str, str]:
         else:
             index += 1
     return parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_state(path: str | Path) -> dict[str, float]:
