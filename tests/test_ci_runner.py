@@ -29,7 +29,15 @@ class CiRunnerTests(unittest.TestCase):
 
         self.assertEqual(
             [step.name for step in steps],
-            ["compile", "unit tests", "smoke eval", "extended smoke eval", "quality gate", "hardware report"],
+            [
+                "compile",
+                "unit tests",
+                "smoke eval",
+                "extended smoke eval",
+                "quality gate",
+                "hardware report",
+                "packaging smoke",
+            ],
         )
         for step in steps:
             self.assertIsInstance(step.command, list)
@@ -63,7 +71,7 @@ class CiRunnerTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["root"], str(ROOT))
         self.assertEqual(payload["steps"][0]["name"], "compile")
-        self.assertEqual(payload["steps"][-1]["command"][1], "scripts/hardware_report.py")
+        self.assertEqual(payload["steps"][-1]["command"][1], "scripts/run_packaging_smoke.py")
 
 
 if __name__ == "__main__":

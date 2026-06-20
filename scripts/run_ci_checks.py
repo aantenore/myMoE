@@ -80,6 +80,7 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep("hardware report", [python, "scripts/hardware_report.py"]),
+        CheckStep("packaging smoke", [python, "scripts/run_packaging_smoke.py"]),
     ]
 
 

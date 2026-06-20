@@ -20,6 +20,8 @@ uv pip install --python .venv/bin/python ".[mlx]"
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
 
+Editable installs expose the `mymoe` and `mymoe-web` console scripts. The quality gate runs `scripts/run_packaging_smoke.py` to install the project in a temporary virtual environment and verify both entry points without relying on `PYTHONPATH`.
+
 Validated Apple Silicon MLX package profile:
 
 ```text
@@ -51,6 +53,12 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --prepare-execute \
   --prepare-download-models \
   --prepare-confirm
+```
+
+After installation, the shorter equivalent is:
+
+```bash
+mymoe --prepare-runtime
 ```
 
 `--prepare-runtime` without side-effect flags is a preview. Installs and model downloads require `--prepare-confirm`, and the web UI uses the same confirmation policy in the Advanced Setup panel.
@@ -181,6 +189,12 @@ The older `configs/moe.live.gemma-12b-coder-gguf.example.json` profile is retain
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.web --port 8089
+```
+
+After installation:
+
+```bash
+mymoe-web --port 8089
 ```
 
 Open `http://127.0.0.1:8089`.
