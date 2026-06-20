@@ -63,6 +63,14 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
 
 The setup report lists the selected runtime backend, model cache path, model asset status, and the exact bootstrap command for the active config. Hugging Face snapshots are checked in the local cache, local GGUF paths are validated, and Ollama profiles report the required pull command.
 
+To choose the best local profile for the detected machine and current model cache without editing config files:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --recommend-profile
+```
+
+The same read-only decision is exposed by `/api/config/recommendation` and embedded in `/api/config/profiles` for the Advanced Profiles panel.
+
 ## Start Models
 
 ```bash

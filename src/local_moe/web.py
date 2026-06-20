@@ -15,7 +15,7 @@ from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
 from .compaction import LocalCompactionProvider
 from .config import load_config
-from .config_profiles import discover_config_profiles
+from .config_profiles import discover_config_profiles, recommend_config_profile
 from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
 from .context_policy import load_context_policy
 from .data_bundle import (
@@ -176,6 +176,17 @@ def _make_handler(
                 _send_json(
                     self,
                     discover_config_profiles(
+                        active_config_path=config_path,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                    ),
+                )
+                return
+
+            if path == "/api/config/recommendation":
+                _send_json(
+                    self,
+                    recommend_config_profile(
                         active_config_path=config_path,
                         app_config=app_config,
                         app_config_path=app_config_path,

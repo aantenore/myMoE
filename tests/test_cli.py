@@ -184,6 +184,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["models"], [])
         self.assertIn("scripts/bootstrap_runtime.py", payload["download_command_display"])
 
+    def test_recommend_profile_prints_local_decision(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--recommend-profile",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertGreaterEqual(payload["profiles_considered"], 1)
+        self.assertIn(payload["recommendation"]["status"], {"ready", "needs_setup", "unavailable"})
+        self.assertIn("profile_path", payload["recommendation"])
+
     def test_smoke_generate_prints_runtime_probe(self) -> None:
         completed = subprocess.run(
             [

@@ -124,6 +124,12 @@ Inspect local setup readiness before starting the app:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
 ```
 
+Ask myMoE to recommend the best local runtime profile for the detected machine and current model cache:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --recommend-profile
+```
+
 Run the full local system doctor when you want one readiness report across setup, runtime health, active-profile hardware fit, model processes, extension audit, and cron state:
 
 ```bash
@@ -202,7 +208,7 @@ Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-Profiles lists runnable local model configs, active/default flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state.
+Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
 
 ![myMoE runtime profiles](docs/screenshots/profiles.png)
 
@@ -214,7 +220,7 @@ Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 
