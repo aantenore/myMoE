@@ -155,6 +155,8 @@ System Doctor calls `/api/doctor` and combines setup, health, active-profile har
 
 Performance calls `/api/performance` and shows the current benchmark status, measured candidate coverage, selected primary general expert, selected fallback/compaction expert, and top ranked model scores. It is read-only and does not start a benchmark. The Markdown handoff report is available from `/api/performance/report.md`.
 
+Runtime Optimizer calls `/api/runtime/optimizer` and combines recent metadata-only run observations, run-log diagnostics, profile recommendation, and benchmark status into a read-only action plan. It never starts models, downloads assets, or changes the default profile by itself; actions are labeled with side effects and confirmation requirements so operators can run the existing guarded flows deliberately. The Markdown handoff report is available from `/api/runtime/optimizer/report.md`.
+
 The Runtime section exposes configured model process state from `/api/models/processes`. "Start models" requires confirmation, starts only commands generated from the active runtime plan, and skips endpoints that already respond. "Stop managed" requires confirmation and terminates only model processes started by the current web server. "Run smoke" calls `/api/smoke/generate` and verifies that the routed local expert returns visible content, not just a healthy HTTP endpoint. Model Logs calls `/api/models/logs` and shows bounded sanitized tails from the same runtime-plan-generated log paths, with no arbitrary path input from the browser.
 
 The Extensions section includes registry audit, Extension Studio, and Plugin Studio. The audit calls `/api/extensions/audit` and reports plugin reference issues before a workflow relies on them. Extension Studio reads safe starter templates from `/api/extensions/templates`, lets operators configure MCP server and cron job entries through form controls, then writes through `/api/extensions/configure` only after explicit confirmation. Plugin Studio writes a local `plugin.json` plus plugin-local `SKILL.md` through `/api/plugins`, requires confirmation, refreshes the extension registry, and runs the same audit immediately after creation.
@@ -207,6 +209,10 @@ Audit Trail exposes recent operational events plus guarded retention pruning:
 Run Log exposes recent metadata-only generation observations, aggregate health signals, skipped-record diagnostics, and guarded retention pruning:
 
 ![myMoE run log](screenshots/run-log.png)
+
+Runtime Optimizer exposes read-only next actions based on recent run observations and benchmark/profile evidence:
+
+![myMoE runtime optimizer](screenshots/runtime-optimizer.png)
 
 Runtime process controls require confirmation before starting or stopping configured model servers:
 

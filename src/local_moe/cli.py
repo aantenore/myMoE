@@ -19,6 +19,10 @@ from .orchestrator import LocalMoE
 from .performance_report import build_performance_report, render_performance_report_markdown
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
 from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
+from .runtime_optimizer import (
+    build_runtime_optimizer_report,
+    render_runtime_optimizer_markdown,
+)
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -50,6 +54,10 @@ def main() -> None:
     parser.add_argument("--performance-report", action="store_true")
     parser.add_argument("--performance-report-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--performance-report-out")
+    parser.add_argument("--runtime-optimizer", action="store_true")
+    parser.add_argument("--runtime-optimizer-format", choices=["json", "markdown"], default="json")
+    parser.add_argument("--runtime-optimizer-out")
+    parser.add_argument("--runtime-optimizer-runs-limit", type=int, default=100)
     parser.add_argument("--support-bundle", action="store_true")
     parser.add_argument("--support-bundle-out")
     parser.add_argument("--bootstrap", action="store_true")
@@ -168,6 +176,26 @@ def main() -> None:
             rendered = json.dumps(payload, indent=2)
         if args.performance_report_out:
             out = Path(args.performance_report_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(rendered, encoding="utf-8")
+            print(json.dumps({"written": str(out)}, indent=2))
+        else:
+            print(rendered)
+        return
+
+    if args.runtime_optimizer or args.runtime_optimizer_out:
+        payload = build_runtime_optimizer_report(
+            config_path=config_path,
+            app_config=app_config,
+            app_config_path=args.app_config,
+            run_limit=args.runtime_optimizer_runs_limit,
+        )
+        if args.runtime_optimizer_format == "markdown":
+            rendered = render_runtime_optimizer_markdown(payload)
+        else:
+            rendered = json.dumps(payload, indent=2)
+        if args.runtime_optimizer_out:
+            out = Path(args.runtime_optimizer_out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(rendered, encoding="utf-8")
             print(json.dumps({"written": str(out)}, indent=2))

@@ -186,6 +186,13 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report --performance-report-format markdown
 ```
 
+Ask the read-only runtime optimizer to combine recent run metadata, profile recommendation, and benchmark status into concrete next actions:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer --runtime-optimizer-format markdown
+```
+
 Inspect metadata-only generation runs:
 
 ```bash
@@ -199,7 +206,7 @@ Create a privacy-safe support bundle for issues or handoff:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, generation run log contents, API keys, and log contents.
+The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, read-only runtime optimizer summary, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, generation run log contents, API keys, and log contents.
 
 Inspect configured model process status:
 
@@ -261,6 +268,10 @@ Audit Trail includes guarded retention pruning for older operational events.
 Run Log shows recent metadata-only generation observations, aggregate health signals, corrupt-record diagnostics, and guarded retention pruning.
 
 ![myMoE run log](docs/screenshots/run-log.png)
+
+Runtime Optimizer combines recent run-log health, profile recommendation, and benchmark status into read-only next actions.
+
+![myMoE runtime optimizer](docs/screenshots/runtime-optimizer.png)
 
 The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 

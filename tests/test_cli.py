@@ -460,6 +460,59 @@ class CliTests(unittest.TestCase):
         self.assertIn("# myMoE Performance Report", completed.stdout)
         self.assertIn("Primary general expert", completed.stdout)
 
+    def test_runtime_optimizer_prints_read_only_recommendations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--runtime-optimizer",
+                    "--runtime-optimizer-runs-limit",
+                    "5",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["mode"], "read_only")
+        self.assertIn(payload["status"], {"ready", "watch", "attention"})
+        self.assertEqual(payload["run_log"]["summary"]["record_count"], 0)
+        self.assertIn("run_generation_smoke", {action["id"] for action in payload["actions"]})
+
+    def test_runtime_optimizer_can_render_markdown(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--runtime-optimizer",
+                "--runtime-optimizer-format",
+                "markdown",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("# myMoE Runtime Optimizer Report", completed.stdout)
+        self.assertIn("## Actions", completed.stdout)
+
     def test_prepare_runtime_preview_prints_setup_run(self) -> None:
         completed = subprocess.run(
             [

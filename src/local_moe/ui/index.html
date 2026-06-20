@@ -1185,6 +1185,15 @@
           <pre class="eval-output" id="performance-output">Not loaded yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>Runtime Optimizer</h2>
+          <div class="kv" id="runtime-optimizer"></div>
+          <div class="tool-row">
+            <button class="ghost-button" id="refresh-runtime-optimizer" type="button">Refresh optimizer</button>
+            <button class="ghost-button" id="download-runtime-optimizer-report" type="button">Download report</button>
+          </div>
+          <pre class="eval-output" id="runtime-optimizer-output">Not loaded yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Routing</h2>
           <div class="kv" id="routing"></div>
         </section>
@@ -1419,6 +1428,7 @@
         doctor: null,
         health: null,
         performance: null,
+        runtimeOptimizer: null,
         extensions: null,
         extensionTemplates: null,
         extensionAudit: null,
@@ -1524,6 +1534,8 @@
         el("prune-run-log").addEventListener("click", pruneRunLog);
         el("refresh-performance").addEventListener("click", refreshPerformance);
         el("download-performance-report").addEventListener("click", downloadPerformanceReport);
+        el("refresh-runtime-optimizer").addEventListener("click", refreshRuntimeOptimizer);
+        el("download-runtime-optimizer-report").addEventListener("click", downloadRuntimeOptimizerReport);
         el("run-eval").addEventListener("click", runEval);
         el("run-cron").addEventListener("click", runCron);
         el("run-tool").addEventListener("click", runTool);
@@ -1556,7 +1568,7 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, runtimeOptimizer, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
@@ -1568,6 +1580,7 @@
             api("/api/doctor"),
             api("/api/health"),
             api("/api/performance"),
+            api("/api/runtime/optimizer"),
             api("/api/extensions"),
             api("/api/extensions/templates"),
             api("/api/extensions/audit"),
@@ -1586,6 +1599,7 @@
           state.doctor = doctor;
           state.health = health;
           state.performance = performance;
+          state.runtimeOptimizer = runtimeOptimizer;
           state.extensions = extensions;
           state.extensionTemplates = extensionTemplates;
           state.extensionAudit = extensionAudit.audit;
@@ -1602,6 +1616,7 @@
           renderDoctor(doctor);
           renderHealth(health);
           renderPerformance(performance);
+          renderRuntimeOptimizer(runtimeOptimizer);
           renderExtensions(extensions);
           renderExtensionStudioTemplates(extensionTemplates);
           renderExtensionAudit(extensionAudit.audit);
@@ -2545,6 +2560,55 @@
 
       function downloadPerformanceReport() {
         window.open("/api/performance/report.md", "_blank", "noreferrer");
+      }
+
+      function renderRuntimeOptimizer(report) {
+        const runLog = report?.run_log || {};
+        const summary = runLog.summary || {};
+        const latency = summary.latency_ms || {};
+        const diagnostics = runLog.diagnostics || {};
+        const profile = report?.profile_recommendation || {};
+        const performance = report?.performance || {};
+        const actions = report?.actions || [];
+        const signals = report?.signals || [];
+        el("runtime-optimizer").innerHTML = kvRows({
+          Status: report?.status || "unknown",
+          Mode: report?.mode || "read_only",
+          "Run records": summary.record_count || 0,
+          "P95 latency": latency.p95 == null ? "-" : `${latency.p95} ms`,
+          "Skipped records": diagnostics.skipped_records || 0,
+          "Profile status": profile.status || "unknown",
+          "Performance": performance.status || "unknown",
+          Actions: actions.length,
+        });
+        const signalLines = signals
+          .slice(0, 6)
+          .map((signal) => `- ${signal.id} [${signal.status}/${signal.severity}]: ${signal.message}`);
+        const actionLines = actions
+          .slice(0, 5)
+          .map((action) => {
+            const confirm = action.requires_confirmation ? "confirm" : "read-only";
+            return `- ${action.label} (${confirm})\n  ${action.display || action.id}`;
+          });
+        el("runtime-optimizer-output").textContent = [
+          signalLines.length ? `Signals:\n${signalLines.join("\n")}` : "No optimizer signals.",
+          actionLines.length ? `\nActions:\n${actionLines.join("\n")}` : "",
+        ].join("");
+      }
+
+      async function refreshRuntimeOptimizer() {
+        el("runtime-optimizer-output").textContent = "Loading...";
+        try {
+          const result = await api("/api/runtime/optimizer");
+          state.runtimeOptimizer = result;
+          renderRuntimeOptimizer(result);
+        } catch (error) {
+          el("runtime-optimizer-output").textContent = error.message;
+        }
+      }
+
+      function downloadRuntimeOptimizerReport() {
+        window.open("/api/runtime/optimizer/report.md", "_blank", "noreferrer");
       }
 
       function renderAudit(audit) {
