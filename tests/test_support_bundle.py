@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 import unittest
@@ -59,6 +60,57 @@ class SupportBundleTests(unittest.TestCase):
         self.assertIn("model asset inventory", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("chat_store", bundle["runtime_files"])
         self.assertIn("run_log", bundle["runtime_files"])
+
+    def test_support_bundle_omits_mcp_env_names_and_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mcp_config = root / "mcp.json"
+            mcp_config.write_text(
+                json.dumps(
+                    {
+                        "servers": [
+                            {
+                                "name": "secure",
+                                "description": "Secret-backed MCP server.",
+                                "command": "python",
+                                "args": ["server.py"],
+                                "enabled": False,
+                                "risk_class": "read_only",
+                                "env": {
+                                    "MCP_SECRET_TOKEN": "super-secret",
+                                    "SAFE_FLAG": "1",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            app_config = load_app_config("configs/app.json")
+            config = load_config("tests/fixtures/moe.synthetic.json")
+            registry = load_extension_registry(
+                plugins_dir=root / "plugins",
+                skills_dir=root / "skills",
+                tools_config=root / "tools.json",
+                mcp_config=mcp_config,
+                cron_config=root / "cron.json",
+            )
+
+            bundle = build_support_bundle(
+                config_path="tests/fixtures/moe.synthetic.json",
+                config=config,
+                app_config=app_config,
+                registry=registry,
+            )
+
+        serialized = json.dumps(bundle)
+        server = bundle["doctor"]["extensions"]["mcp_servers"][0]
+        self.assertEqual(server["env"], {})
+        self.assertEqual(server["env_count"], 2)
+        self.assertTrue(server["env_configured"])
+        self.assertNotIn("MCP_SECRET_TOKEN", serialized)
+        self.assertNotIn("SAFE_FLAG", serialized)
+        self.assertNotIn("super-secret", serialized)
 
 
 if __name__ == "__main__":

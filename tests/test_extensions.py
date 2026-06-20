@@ -13,6 +13,7 @@ from local_moe.extensions import (
     create_plugin_scaffold,
     extension_configuration_templates,
     load_extension_registry,
+    registry_payload,
 )
 from local_moe.scheduler import due_jobs
 
@@ -92,6 +93,28 @@ class ExtensionTests(unittest.TestCase):
 
             with self.assertRaises(ExtensionError):
                 load_extension_registry(mcp_config=config)
+
+    def test_registry_payload_omits_mcp_env_names_and_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "mcp.json"
+            config.write_text(
+                '{"servers":[{"name":"secure","command":"python","env":{"MCP_SECRET_TOKEN":"super-secret","SAFE_FLAG":"1"},"risk_class":"read_only"}]}',
+                encoding="utf-8",
+            )
+            registry = load_extension_registry(mcp_config=config)
+
+            payload = registry_payload(registry)
+            sensitive_payload = registry_payload(registry, include_sensitive=True)
+
+        serialized = str(payload)
+        server = payload["mcp_servers"][0]
+        self.assertEqual(server["env"], {})
+        self.assertEqual(server["env_count"], 2)
+        self.assertTrue(server["env_configured"])
+        self.assertNotIn("MCP_SECRET_TOKEN", serialized)
+        self.assertNotIn("SAFE_FLAG", serialized)
+        self.assertNotIn("super-secret", serialized)
+        self.assertEqual(sensitive_payload["mcp_servers"][0]["env"]["MCP_SECRET_TOKEN"], "super-secret")
 
     def test_rejects_invalid_mcp_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

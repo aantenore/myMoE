@@ -11,6 +11,7 @@ from typing import Any
 
 from .app_config import app_config_payload
 from .hardware import detect_hardware
+from .redaction import REDACTED_VALUE, is_secret_key, sanitize_diagnostic_value
 from .storage import build_storage_report
 
 ENVIRONMENT_REPORT_PREFIX = "mymoe-environment-report"
@@ -308,22 +309,16 @@ def _git(args: list[str]) -> str:
 
 
 def _is_safe_param_key(key: str) -> bool:
-    lowered = key.lower()
-    secret_markers = ("api", "key", "token", "secret", "password", "credential", "auth")
-    return not any(marker in lowered for marker in secret_markers)
+    return not is_secret_key(key)
 
 
 def _sanitize_param_value(value: object) -> object:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
     if isinstance(value, dict):
         return {
-            str(key): (_sanitize_param_value(nested) if _is_safe_param_key(str(key)) else "[redacted]")
+            str(key): (sanitize_diagnostic_value(nested) if _is_safe_param_key(str(key)) else REDACTED_VALUE)
             for key, nested in value.items()
         }
-    if isinstance(value, (list, tuple)):
-        return [_sanitize_param_value(item) for item in value]
-    return str(type(value).__name__)
+    return sanitize_diagnostic_value(value)
 
 
 def _recommendations() -> list[str]:
