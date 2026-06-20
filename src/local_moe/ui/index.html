@@ -1018,6 +1018,14 @@
           </div>
         </section>
         <section class="advanced-section">
+          <h2>Environment</h2>
+          <div class="kv" id="about"></div>
+          <div class="tool-row">
+            <button class="ghost-button" id="refresh-about" type="button">Refresh snapshot</button>
+            <button class="ghost-button" id="download-about-report" type="button">Download snapshot</button>
+          </div>
+        </section>
+        <section class="advanced-section">
           <h2>Setup</h2>
           <div class="kv" id="setup"></div>
           <label class="check-row">
@@ -1340,6 +1348,7 @@
         busy: false,
         config: null,
         runtime: null,
+        about: null,
         modelProcesses: null,
         modelLogs: null,
         setup: null,
@@ -1427,6 +1436,8 @@
         el("advanced-toggle").addEventListener("click", () => setAdvanced(true));
         el("advanced-close").addEventListener("click", () => setAdvanced(false));
         el("overlay").addEventListener("click", () => setAdvanced(false));
+        el("refresh-about").addEventListener("click", refreshAbout);
+        el("download-about-report").addEventListener("click", downloadAboutReport);
         el("start-models").addEventListener("click", startModels);
         el("stop-models").addEventListener("click", stopModels);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
@@ -1473,9 +1484,10 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
+            api("/api/about"),
             api("/api/models/processes"),
             api("/api/setup"),
             api("/api/config/profiles"),
@@ -1490,6 +1502,7 @@
           ]);
           state.config = config;
           state.runtime = runtime;
+          state.about = about;
           state.modelProcesses = modelProcesses;
           state.setup = setup;
           state.configProfiles = configProfiles;
@@ -1503,6 +1516,7 @@
           state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
+          renderAbout(about);
           renderModelProcesses(modelProcesses);
           renderSetup(setup);
           renderConfigProfiles(configProfiles);
@@ -1714,6 +1728,54 @@
           (commands
             ? `<div class="section-label">Start commands</div>${commands}`
             : `<span class="muted">No runtime commands available.</span>`);
+      }
+
+      function renderAbout(about) {
+        const system = about?.system || {};
+        const python = about?.python || {};
+        const git = about?.git || {};
+        const hardware = about?.hardware || {};
+        const runtime = about?.runtime || {};
+        const paths = about?.paths || {};
+        const experts = (runtime.experts || [])
+          .map(
+            (expert) => `
+              <div class="kv-row">
+                <span>${escapeHtml(expert.id)}</span>
+                <span>
+                  <strong>${escapeHtml(shortModel(expert.model))}</strong><br>
+                  <span class="mono">${escapeHtml(expert.provider)} · ${escapeHtml(expert.role)}</span><br>
+                  <span class="muted">${escapeHtml(expert.base_url || "local runtime")}</span>
+                </span>
+              </div>`,
+          )
+          .join("");
+        el("about").innerHTML =
+          kvRows({
+            Generated: about?.generated_at || "unknown",
+            Platform: system.platform || system.system || "unknown",
+            Python: `${python.implementation || "Python"} ${python.version || "unknown"}`,
+            Git: git.short_commit ? `${git.branch || "unknown"} · ${git.short_commit}${git.dirty ? " · dirty" : ""}` : "Unavailable",
+            Hardware: `${hardware.cpu_brand || "unknown CPU"} · ${hardware.memory_gib || "unknown"} GiB RAM`,
+            Strategy: hardware.recommended_strategy || "unknown",
+            Config: paths.moe_config || "unknown",
+            Experts: runtime.expert_count ?? 0,
+          }) + (experts || '<span class="muted">No experts configured.</span>');
+      }
+
+      async function refreshAbout() {
+        el("about").innerHTML = '<span class="muted">Refreshing snapshot...</span>';
+        try {
+          const about = await api("/api/about");
+          state.about = about;
+          renderAbout(about);
+        } catch (error) {
+          el("about").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      function downloadAboutReport() {
+        window.open("/api/about/report.md", "_blank", "noreferrer");
       }
 
       function renderModelProcesses(processes) {

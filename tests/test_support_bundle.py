@@ -39,6 +39,8 @@ class SupportBundleTests(unittest.TestCase):
 
         self.assertEqual(bundle["schema_version"], "1.0")
         self.assertEqual(bundle["doctor"]["status"], "ready")
+        self.assertEqual(bundle["environment"]["schema_version"], "1.0")
+        self.assertEqual(bundle["environment"]["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
         self.assertEqual(bundle["quality_gate"]["data"]["passed"], True)
         self.assertEqual(bundle["hardware_profile"]["data"]["machine"], "test")
         self.assertIn("chat transcripts", bundle["privacy"]["excludes"])
