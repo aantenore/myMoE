@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+from local_moe.app_config import load_app_config
 from local_moe.chat_store import FileChatStore
 from local_moe.config import load_config
 from local_moe.extensions import (
@@ -322,6 +323,33 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(removed.payload["action"], "removed")
         self.assertEqual(remaining, [])
 
+    def test_profile_activate_requires_confirmation_and_updates_app_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config_path = _write_temp_app_config(root, "configs/moe.live.fast-mlx.example.json")
+            runner = LocalToolRunner(
+                load_extension_registry(),
+                app_config=load_app_config(app_config_path),
+                app_config_path=str(app_config_path),
+                active_config_path="configs/moe.live.fast-mlx.example.json",
+            )
+
+            with self.assertRaises(ToolExecutionError):
+                runner.run("profile.activate", {"profile_path": "tests/fixtures/moe.synthetic.json"})
+            result = runner.run(
+                "profile.activate",
+                {
+                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                    "confirm": True,
+                },
+            )
+            raw = json.loads(app_config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["new_default_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertTrue(result.payload["restart_required"])
+        self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
+
     def test_mcp_search_capabilities_returns_declared_servers(self) -> None:
         runner = LocalToolRunner(load_extension_registry())
 
@@ -536,6 +564,15 @@ def _app_config_for_extensions(root: Path, mcp_path: Path, cron_path: Path) -> o
             cron_config=str(cron_path),
         ),
     )
+
+
+def _write_temp_app_config(root: Path, default_config: str) -> Path:
+    raw = json.loads(Path("configs/app.json").read_text(encoding="utf-8"))
+    raw["default_moe_config"] = default_config
+    raw["runtime"]["work_dir"] = str(root / "runtime")
+    path = root / "app.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
 
 
 if __name__ == "__main__":

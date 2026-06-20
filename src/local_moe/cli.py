@@ -17,6 +17,7 @@ from .extensions import create_plugin_scaffold, load_extension_registry, registr
 from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
 from .orchestrator import LocalMoE
 from .performance_report import build_performance_report, render_performance_report_markdown
+from .profile_activation import activate_config_profile, activate_recommended_config_profile
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -47,6 +48,9 @@ def main() -> None:
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--recommend-profile", action="store_true")
+    parser.add_argument("--activate-profile")
+    parser.add_argument("--activate-recommended-profile", action="store_true")
+    parser.add_argument("--profile-confirm", action="store_true")
     parser.add_argument("--prepare-runtime", action="store_true")
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
@@ -171,6 +175,27 @@ def main() -> None:
         )
         return
 
+    if args.activate_profile or args.activate_recommended_profile:
+        if args.activate_recommended_profile:
+            payload = activate_recommended_config_profile(
+                active_config_path=config_path,
+                app_config=app_config,
+                app_config_path=args.app_config,
+                confirm=args.profile_confirm,
+            )
+        else:
+            payload = activate_config_profile(
+                args.activate_profile,
+                active_config_path=config_path,
+                app_config=app_config,
+                app_config_path=args.app_config,
+                confirm=args.profile_confirm,
+            )
+        print(json.dumps(payload, indent=2))
+        if payload["status"] != "ok":
+            raise SystemExit(2)
+        return
+
     if args.bootstrap:
         print(json.dumps(runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)), indent=2))
         return
@@ -270,6 +295,8 @@ def main() -> None:
                 _registry(app_config),
                 app_config=app_config,
                 moe_config=config,
+                app_config_path=args.app_config,
+                active_config_path=config_path,
             ).run(args.run_tool, tool_input)
         except (json.JSONDecodeError, ToolExecutionError) as exc:
             print(json.dumps({"error": "tool_error", "message": str(exc)}, indent=2), file=sys.stderr)

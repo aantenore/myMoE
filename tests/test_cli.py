@@ -207,6 +207,55 @@ class CliTests(unittest.TestCase):
         self.assertIn(payload["recommendation"]["status"], {"ready", "needs_setup", "unavailable"})
         self.assertIn("profile_path", payload["recommendation"])
 
+    def test_activate_profile_requires_confirmation_and_updates_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config_path = _write_temp_app_config(root, "configs/moe.live.fast-mlx.example.json")
+            guarded = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config_path),
+                    "--config",
+                    "configs/moe.live.fast-mlx.example.json",
+                    "--activate-profile",
+                    "tests/fixtures/moe.synthetic.json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+            confirmed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config_path),
+                    "--config",
+                    "configs/moe.live.fast-mlx.example.json",
+                    "--activate-profile",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--profile-confirm",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            raw = json.loads(app_config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(guarded.returncode, 2)
+        self.assertEqual(json.loads(guarded.stdout)["status"], "confirmation_required")
+        payload = json.loads(confirmed.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["activated"])
+        self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
+
     def test_smoke_generate_prints_runtime_probe(self) -> None:
         completed = subprocess.run(
             [
@@ -534,7 +583,7 @@ def _write_temp_openai_config(root: Path) -> Path:
     return path
 
 
-def _write_temp_app_config(root: Path, config_path: Path) -> Path:
+def _write_temp_app_config(root: Path, config_path: Path | str) -> Path:
     raw = json.loads((ROOT / "configs" / "app.json").read_text(encoding="utf-8"))
     raw["default_moe_config"] = str(config_path)
     raw["runtime"]["work_dir"] = str(root / "runtime")

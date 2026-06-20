@@ -221,6 +221,50 @@ class WebTests(unittest.TestCase):
         self.assertFalse(guarded["ok"])
         self.assertEqual(guarded["steps"][0]["status"], "confirmation_required")
 
+    def test_profile_activation_endpoint_is_confirmation_guarded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            raw = json.loads(app_config.read_text(encoding="utf-8"))
+            raw["default_moe_config"] = "configs/moe.live.fast-mlx.example.json"
+            app_config.write_text(json.dumps(raw), encoding="utf-8")
+            server = build_server(
+                "configs/moe.live.fast-mlx.example.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                try:
+                    _post_json(
+                        base_url + "/api/config/activate-profile",
+                        {"profile_path": "tests/fixtures/moe.synthetic.json"},
+                    )
+                    self.fail("Expected confirmation guard to reject profile activation")
+                except HTTPError as exc:
+                    guarded = json.loads(exc.read().decode("utf-8"))
+                confirmed = _post_json(
+                    base_url + "/api/config/activate-profile",
+                    {
+                        "profile_path": "tests/fixtures/moe.synthetic.json",
+                        "confirm": True,
+                    },
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+            updated = json.loads(app_config.read_text(encoding="utf-8"))
+
+        self.assertEqual(guarded["status"], "confirmation_required")
+        self.assertFalse(guarded["activated"])
+        self.assertEqual(confirmed["status"], "ok")
+        self.assertTrue(confirmed["activated"])
+        self.assertTrue(confirmed["restart_required"])
+        self.assertEqual(updated["default_moe_config"], "tests/fixtures/moe.synthetic.json")
+
     def test_creates_plugin_from_web_api_and_refreshes_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1006,11 +1050,17 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/setup/run", html)
         self.assertIn("/api/config/profiles", html)
         self.assertIn("/api/config/recommendation", html)
+        self.assertIn("/api/config/activate-profile", html)
         self.assertIn("renderSetup", html)
         self.assertIn("renderConfigProfiles", html)
         self.assertIn("Recommended", html)
         self.assertIn("profile.recommended", html)
         self.assertIn("recommendation.next_actions", html)
+        self.assertIn("profile-activate-confirm", html)
+        self.assertIn("activateRecommendedProfile", html)
+        self.assertIn("activateProfile", html)
+        self.assertIn("Use recommended", html)
+        self.assertIn("Use profile", html)
         self.assertIn("profile.hardware_fit", html)
         self.assertIn("profileHardwareLabel", html)
         self.assertIn("Hardware fit", html)
