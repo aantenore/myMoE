@@ -1036,6 +1036,7 @@
           <div class="kv" id="doctor"></div>
           <div class="tool-row">
             <button class="ghost-button" id="run-doctor" type="button">Run doctor</button>
+            <button class="ghost-button" id="download-doctor-report" type="button">Download report</button>
             <button class="ghost-button" id="download-support-bundle" type="button">Download bundle</button>
           </div>
           <pre class="eval-output" id="doctor-output">Not run yet.</pre>
@@ -1431,6 +1432,7 @@
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
+        el("download-doctor-report").addEventListener("click", downloadDoctorReport);
         el("download-support-bundle").addEventListener("click", downloadSupportBundle);
         el("export-data").addEventListener("click", exportData);
         el("download-data").addEventListener("click", downloadData);
@@ -2086,6 +2088,10 @@
 
       function downloadSupportBundle() {
         window.open("/api/support-bundle/download.json", "_blank", "noreferrer");
+      }
+
+      function downloadDoctorReport() {
+        window.open("/api/doctor/report.md", "_blank", "noreferrer");
       }
 
       async function exportData() {

@@ -126,6 +126,7 @@ Run the full local system doctor when you want one readiness report across setup
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor --doctor-format markdown
 ```
 
 Inspect the latest local performance decision without running a new benchmark:
@@ -198,7 +199,7 @@ Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, benchmark evidence, plugin registry problems, cron status, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, benchmark evidence, plugin registry problems, cron status, a downloadable Doctor Markdown report, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 

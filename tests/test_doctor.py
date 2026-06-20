@@ -7,7 +7,7 @@ import unittest
 
 from local_moe.app_config import load_app_config
 from local_moe.config import load_config
-from local_moe.doctor import build_doctor_report
+from local_moe.doctor import build_doctor_report, render_doctor_report_markdown
 from local_moe.extensions import load_extension_registry
 from local_moe.hardware import HardwareProfile
 
@@ -117,6 +117,32 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["hardware_fit"]["severity"], "required")
         self.assertEqual(report["hardware_fit"]["status"], "too_large")
         self.assertIn("Switch to a smaller runtime profile", " ".join(report["recommendations"]))
+
+    def test_renders_metadata_only_markdown_report(self) -> None:
+        app_config = load_app_config("configs/app.json")
+        config = load_config("tests/fixtures/moe.synthetic.json")
+        registry = load_extension_registry(
+            plugins_dir=app_config.extensions.plugins_dir,
+            skills_dir=app_config.extensions.skills_dir,
+            tools_config=app_config.extensions.tools_config,
+            mcp_config=app_config.extensions.mcp_config,
+            cron_config=app_config.extensions.cron_config,
+        )
+        report = build_doctor_report(
+            config_path="tests/fixtures/moe.synthetic.json",
+            config=config,
+            app_config=app_config,
+            registry=registry,
+        )
+
+        markdown = render_doctor_report_markdown(report)
+
+        self.assertIn("# myMoE System Doctor Report", markdown)
+        self.assertIn("## Checks", markdown)
+        self.assertIn("`hardware_fit`", markdown)
+        self.assertIn("## Privacy", markdown)
+        self.assertNotIn("content_excerpt", markdown)
+        self.assertNotIn("api_key", markdown.lower())
 
 
 if __name__ == "__main__":
