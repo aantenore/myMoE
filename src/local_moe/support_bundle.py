@@ -10,6 +10,7 @@ from .environment import build_environment_report
 from .extensions import ExtensionRegistry
 from .model_servers import ModelServerManager
 from .performance_report import build_performance_report
+from .runtime_optimizer import build_runtime_optimizer_report
 
 
 def build_support_bundle(
@@ -40,6 +41,7 @@ def build_support_bundle(
                 "environment snapshot",
                 "quality gate status",
                 "sanitized performance report",
+                "read-only runtime optimizer summary",
                 "hardware profile",
                 "configured model server log paths",
                 "generation run log path",
@@ -64,6 +66,11 @@ def build_support_bundle(
         ),
         "quality_gate": _read_json_artifact(quality_gate_path),
         "performance": build_performance_report(),
+        "runtime_optimizer": build_runtime_optimizer_report(
+            config_path=config_path,
+            app_config=app_config,
+            app_config_path=app_config_path,
+        ),
         "hardware_profile": _read_json_artifact(hardware_profile_path),
         "runtime_files": _runtime_files(app_config),
         "log_paths": _log_paths(doctor),

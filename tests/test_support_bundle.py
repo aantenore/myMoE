@@ -49,6 +49,9 @@ class SupportBundleTests(unittest.TestCase):
         self.assertIn("benchmark prompt response excerpts", bundle["privacy"]["excludes"])
         self.assertEqual(bundle["performance"]["schema_version"], "1.0")
         self.assertNotIn("content_excerpt", str(bundle["performance"]))
+        self.assertEqual(bundle["runtime_optimizer"]["schema_version"], "1.0")
+        self.assertEqual(bundle["runtime_optimizer"]["mode"], "read_only")
+        self.assertIn("runtime optimizer summary", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("chat_store", bundle["runtime_files"])
         self.assertIn("run_log", bundle["runtime_files"])
 

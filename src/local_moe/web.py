@@ -61,6 +61,11 @@ from .profile_activation import (
     activate_recommended_config_profile,
 )
 from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
+from .runtime_optimizer import (
+    build_runtime_optimizer_report,
+    render_runtime_optimizer_markdown,
+    runtime_optimizer_filename,
+)
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -305,6 +310,31 @@ def _make_handler(
                     render_performance_report_markdown(report).encode("utf-8"),
                     content_type="text/markdown; charset=utf-8",
                     filename=performance_report_filename(),
+                )
+                return
+
+            if path == "/api/runtime/optimizer":
+                _send_json(
+                    self,
+                    build_runtime_optimizer_report(
+                        config_path=config_path,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                    ),
+                )
+                return
+
+            if path == "/api/runtime/optimizer/report.md":
+                report = build_runtime_optimizer_report(
+                    config_path=config_path,
+                    app_config=app_config,
+                    app_config_path=app_config_path,
+                )
+                _send_download(
+                    self,
+                    render_runtime_optimizer_markdown(report).encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    filename=runtime_optimizer_filename(),
                 )
                 return
 

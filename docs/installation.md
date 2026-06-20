@@ -230,6 +230,15 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report --performa
 
 The web UI exposes the same sanitized data through `/api/performance` and a Markdown handoff report through `/api/performance/report.md`.
 
+To combine recent run metadata, profile recommendation, and benchmark status into read-only next actions:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runtime-optimizer --runtime-optimizer-format markdown
+```
+
+The web UI exposes the same advisory report through `/api/runtime/optimizer` and `/api/runtime/optimizer/report.md`.
+
 For issue reports or handoffs, generate a privacy-safe support bundle:
 
 ```bash
