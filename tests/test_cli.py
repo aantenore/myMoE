@@ -127,6 +127,101 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("Remember this CLI detail", run_log_text)
         self.assertNotIn("Use the previous CLI detail", run_log_text)
 
+    def test_cli_searches_and_compacts_chat_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            created = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--prompt",
+                    "Remember this compactable CLI session.",
+                    "--new-chat",
+                    "--chat-title",
+                    "Compact Target",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            session_id = json.loads(created.stdout)["session_id"]
+            search = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--list-chats",
+                    "--chat-query",
+                    "compact",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            guarded = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--compact-chat",
+                    session_id,
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+            compacted = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--compact-chat",
+                    session_id,
+                    "--chat-confirm",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            search_payload = json.loads(search.stdout)
+            guarded_payload = json.loads(guarded.stderr)
+            compacted_payload = json.loads(compacted.stdout)
+
+        self.assertEqual(search_payload["count"], 1)
+        self.assertEqual(search_payload["sessions"][0]["id"], session_id)
+        self.assertEqual(guarded.returncode, 2)
+        self.assertEqual(guarded_payload["error"], "confirmation_required")
+        self.assertIn("[general:synthetic-general]", compacted_payload["summary"])
+        self.assertEqual(compacted_payload["compaction"]["expert_id"], "general")
+        self.assertTrue(compacted_payload["session"]["summary"])
+        self.assertEqual(compacted_payload["session"]["message_count"], 3)
+
     def test_interactive_cli_uses_persistent_chat_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

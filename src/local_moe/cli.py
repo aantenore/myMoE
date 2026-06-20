@@ -9,9 +9,11 @@ import sys
 from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_runtime import generate_chat_turn
-from .chat_store import FileChatStore, chat_session_payload, chat_summary_payload
+from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
+from .compaction import LocalCompactionProvider
 from .config import load_config
 from .config_profiles import recommend_config_profile
+from .context import ConversationTurn
 from .context_policy import load_context_policy
 from .doctor import build_doctor_report, render_doctor_report_markdown
 from .environment import build_environment_report, render_environment_report_markdown
@@ -48,9 +50,12 @@ def main() -> None:
     chat_session_group.add_argument("--chat-session")
     chat_session_group.add_argument("--new-chat", action="store_true")
     parser.add_argument("--chat-title")
+    parser.add_argument("--chat-query")
     parser.add_argument("--list-chats", action="store_true")
     parser.add_argument("--chats-limit", type=int, default=20)
     parser.add_argument("--export-chat")
+    parser.add_argument("--compact-chat")
+    parser.add_argument("--compact-expert")
     parser.add_argument("--delete-chat")
     parser.add_argument("--rename-chat")
     parser.add_argument("--chat-confirm", action="store_true")
@@ -238,7 +243,10 @@ def main() -> None:
 
     if args.list_chats:
         chat_store = _chat_store(app_config)
-        summaries = chat_store.list_sessions(limit=args.chats_limit)
+        if args.chat_query:
+            summaries = chat_store.search_sessions(args.chat_query, limit=args.chats_limit)
+        else:
+            summaries = chat_store.list_sessions(limit=args.chats_limit)
         print(
             json.dumps(
                 {
@@ -268,6 +276,72 @@ def main() -> None:
             print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
             raise SystemExit(2) from exc
         print(json.dumps(chat_session_payload(session), indent=2))
+        return
+
+    if args.compact_chat:
+        if not args.chat_confirm:
+            print(
+                json.dumps(
+                    {
+                        "error": "confirmation_required",
+                        "message": "Chat compaction writes a durable summary and requires --chat-confirm.",
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        chat_store = _chat_store(app_config)
+        session = chat_store.get_session(args.compact_chat)
+        if session is None:
+            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            raise SystemExit(2)
+        turns = _conversation_turns(session)
+        if not turns:
+            print(
+                json.dumps(
+                    {"error": "bad_request", "message": "Chat session has no turns to compact."},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        try:
+            compacted = LocalCompactionProvider(config, expert_id=args.compact_expert).compact(
+                turns=turns,
+                existing_summary=session.summary,
+            )
+            updated = chat_store.update_summary(
+                session.id,
+                compacted.summary,
+                meta={
+                    "expert_id": compacted.expert_id,
+                    "model": compacted.model,
+                    "correlation_id": compacted.correlation_id,
+                    "input_messages": len(turns),
+                    "previous_summary_present": bool(session.summary.strip()),
+                },
+            )
+        except (KeyError, ProviderError, ValueError) as exc:
+            print(json.dumps({"error": "compact_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(
+            json.dumps(
+                {
+                    "session": chat_session_payload(updated),
+                    "summary": updated.summary,
+                    "summary_updated_at": updated.summary_updated_at,
+                    "compaction": {
+                        "expert_id": compacted.expert_id,
+                        "model": compacted.model,
+                        "correlation_id": compacted.correlation_id,
+                        "input_messages": len(turns),
+                        "previous_summary_present": bool(session.summary.strip()),
+                    },
+                },
+                indent=2,
+            )
+        )
         return
 
     if args.delete_chat:
@@ -674,6 +748,14 @@ def _print_session_summary(session: object) -> None:
             indent=2,
         ),
         file=sys.stderr,
+    )
+
+
+def _conversation_turns(session: ChatSession) -> tuple[ConversationTurn, ...]:
+    return tuple(
+        ConversationTurn(role=message.role, content=message.content)
+        for message in session.messages
+        if message.role in {"user", "assistant"}
     )
 
 
