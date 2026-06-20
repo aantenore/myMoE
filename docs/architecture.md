@@ -36,6 +36,7 @@ flowchart LR
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, model process reachability, extension audit, and cron state.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 - `Profile Recommender`: read-only control-plane scorer that chooses the best local runtime profile from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
+- `Profile Preparation`: guarded setup runner entry point for explicit or recommended profiles before activation.
 - `Profile Activation`: guarded write-local control-plane action that updates only the app default MoE profile and requires a restart to change the running instance.
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.

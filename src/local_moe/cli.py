@@ -52,6 +52,9 @@ def main() -> None:
     parser.add_argument("--activate-recommended-profile", action="store_true")
     parser.add_argument("--profile-confirm", action="store_true")
     parser.add_argument("--prepare-runtime", action="store_true")
+    prepare_profile_group = parser.add_mutually_exclusive_group()
+    prepare_profile_group.add_argument("--prepare-profile")
+    prepare_profile_group.add_argument("--prepare-recommended-profile", action="store_true")
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
     parser.add_argument("--prepare-confirm", action="store_true")
@@ -193,6 +196,33 @@ def main() -> None:
             )
         print(json.dumps(payload, indent=2))
         if payload["status"] != "ok":
+            raise SystemExit(2)
+        return
+
+    if args.prepare_profile or args.prepare_recommended_profile:
+        if args.prepare_recommended_profile:
+            recommended = recommend_config_profile(
+                active_config_path=config_path,
+                app_config=app_config,
+                app_config_path=args.app_config,
+            )["recommendation"]
+            profile_path = str(recommended.get("profile_path") or "")
+            if not profile_path:
+                print(json.dumps({"error": "profile_error", "message": "No recommended runtime profile is available."}, indent=2))
+                raise SystemExit(2)
+        else:
+            profile_path = args.prepare_profile
+        result = run_runtime_setup(
+            config_path=profile_path,
+            app_config_path=args.app_config,
+            execute=args.prepare_execute,
+            download_models=args.prepare_download_models,
+            confirm=args.prepare_confirm,
+        )
+        payload = setup_run_payload(result)
+        payload["profile_path"] = profile_path
+        print(json.dumps(payload, indent=2))
+        if not result.ok and result.status not in {"planned", "needs_setup", "confirmation_required"}:
             raise SystemExit(2)
         return
 

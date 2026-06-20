@@ -138,6 +138,16 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --profile-confirm
 ```
 
+Prepare the recommended profile's dependencies and model assets without making it active:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prepare-recommended-profile \
+  --prepare-execute \
+  --prepare-download-models \
+  --prepare-confirm
+```
+
 Run the full local system doctor when you want one readiness report across setup, runtime health, active-profile hardware fit, model processes, extension audit, and cron state:
 
 ```bash
@@ -216,7 +226,7 @@ Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks. Updating the default profile requires explicit confirmation, writes only `default_moe_config` in the app config file, and returns a restart command because the running MoE instance is not hot-swapped.
+Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks. A profile can be prepared before activation through the same guarded setup runner used by the active config. Updating the default profile requires explicit confirmation, writes only `default_moe_config` in the app config file, and returns a restart command because the running MoE instance is not hot-swapped.
 
 ![myMoE runtime profiles](docs/screenshots/profiles.png)
 

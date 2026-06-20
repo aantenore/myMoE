@@ -256,6 +256,71 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["activated"])
         self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
 
+    def test_prepare_profile_uses_requested_profile_and_confirmation_guard(self) -> None:
+        guarded = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-profile",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-execute",
+                "--prepare-download-models",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        confirmed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-profile",
+                "tests/fixtures/moe.synthetic.json",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        guarded_payload = json.loads(guarded.stdout)
+        confirmed_payload = json.loads(confirmed.stdout)
+        self.assertEqual(guarded_payload["status"], "confirmation_required")
+        self.assertEqual(guarded_payload["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(confirmed_payload["status"], "planned")
+        self.assertEqual(confirmed_payload["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertTrue(confirmed_payload["ok"])
+
+    def test_prepare_profile_options_are_mutually_exclusive(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-profile",
+                "tests/fixtures/moe.synthetic.json",
+                "--prepare-recommended-profile",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("not allowed with argument", completed.stderr)
+
     def test_smoke_generate_prints_runtime_probe(self) -> None:
         completed = subprocess.run(
             [
