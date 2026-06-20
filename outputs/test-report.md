@@ -4,7 +4,7 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery with hardware fit and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with hardware fit and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -15,6 +15,7 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
 - `tests/test_doctor.py`: normalized setup, health, extension, cron, and hardware-fit checks, required failure for profiles that exceed the detected machine, and metadata-only Markdown rendering.
 - `tests/test_environment.py`: metadata-only environment snapshot generation and Markdown rendering for platform, Python, package, git, hardware, config, and configured local model identity handoffs.
+- `tests/test_ci_runner.py`: cross-platform quality gate command plan, `PYTHONPATH` environment construction, and JSON dry-run output.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
 - `tests/test_setup_status.py`: side-effect-free setup readiness for Hugging Face cache hits, missing local files, Ollama pull commands, and no-model fixture profiles.
 - `tests/test_health.py`: runtime health status for reachable, unreachable, malformed, path-prefixed, and skipped expert providers.
@@ -39,19 +40,20 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `experiments/route_labels_extended.jsonl`: 56 regenerated distilled router labels from the curated extended eval.
 - `experiments/route_labels_live_general.jsonl`: 52 regenerated distilled router labels for the live general-purpose router.
 - `experiments/run_quality_gate.py`: project-level quality gate.
+- `scripts/run_ci_checks.py`: cross-platform Python quality gate runner used by `make check`, the shell compatibility wrapper, and CI templates.
 
 ## Verification
 
 Command:
 
 ```bash
-./scripts/run_all_checks.sh
+python3 scripts/run_ci_checks.py
 ```
 
 Result:
 
 - compileall: passed
-- unit/contract tests: `184/184` passed
+- unit/contract tests: `196/196` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`

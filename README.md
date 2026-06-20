@@ -73,7 +73,7 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
 Run the full local quality gate:
 
 ```bash
-./scripts/run_all_checks.sh
+python3 scripts/run_ci_checks.py
 ```
 
 or:
@@ -81,6 +81,8 @@ or:
 ```bash
 make check
 ```
+
+The quality gate runner is implemented in Python so the same command shape works on macOS, Linux, and Windows. Use `python3 scripts/run_ci_checks.py --dry-run --json` to inspect the exact argv-based steps before wiring it into CI.
 
 Ask the orchestrator directly:
 
@@ -325,7 +327,7 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
 The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile, adds v2 as the preferred GGUF coding/agentic profile, and leaves Qwen3 30B-A3B as the general-purpose default.
 
-The current quality gate compiles source/tests/scripts, runs unit and contract tests, evaluates 64 deterministic routing cases across the base and extended sets, verifies the 52-case live general routing report, checks required files, and verifies no live eval server remains on `127.0.0.1:8101`.
+The current quality gate uses `scripts/run_ci_checks.py` to compile source/tests/scripts, run unit and contract tests, evaluate 64 deterministic routing cases across the base and extended sets, verify the 52-case live general routing report, check required files, and verify no live eval server remains on `127.0.0.1:8101`.
 
 Run local model performance benchmarks with:
 

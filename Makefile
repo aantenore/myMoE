@@ -1,7 +1,7 @@
 .PHONY: check test eval distill-router prepare-runtime models-status models-logs cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
-	./scripts/run_all_checks.sh
+	python3 scripts/run_ci_checks.py
 
 test:
 	PYTHONPATH=src python3 -m unittest discover -s tests -v
