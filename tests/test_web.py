@@ -68,6 +68,7 @@ class WebTests(unittest.TestCase):
             profiles = _get_json(base_url + "/api/config/profiles")
             recommendation = _get_json(base_url + "/api/config/recommendation")
             processes = _get_json(base_url + "/api/models/processes")
+            startup = _get_json(base_url + "/api/startup")
             setup = _get_json(base_url + "/api/setup")
             doctor = _get_json(base_url + "/api/doctor")
             doctor_markdown = _get_text(base_url + "/api/doctor/report.md")
@@ -111,6 +112,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("--config", next(command for command in active_profile["launch_commands"] if command["id"] == "start_ui")["argv"])
         self.assertEqual(processes["count"], 0)
         self.assertEqual(processes["servers"], [])
+        self.assertEqual(startup["status"], "planned")
+        self.assertEqual(startup["doctor"]["status"], "ready")
+        self.assertEqual(startup["setup"]["status"], "ready")
         self.assertEqual(setup["status"], "ready")
         self.assertEqual(setup["models"], [])
         self.assertIn("download_command_display", setup)
@@ -295,6 +299,31 @@ class WebTests(unittest.TestCase):
         self.assertEqual(confirmed["status"], "planned")
         self.assertEqual(confirmed["profile_path"], "tests/fixtures/moe.synthetic.json")
         self.assertTrue(confirmed["ok"])
+
+    def test_startup_endpoint_is_confirmation_guarded(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            guarded = _post_json(
+                base_url + "/api/startup/run",
+                {
+                    "prepare": True,
+                    "download_models": True,
+                    "start_models": True,
+                },
+            )
+            preview = _post_json(base_url + "/api/startup/run", {})
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(guarded["status"], "confirmation_required")
+        self.assertFalse(guarded["ok"])
+        self.assertEqual(preview["status"], "planned")
+        self.assertEqual(preview["doctor"]["status"], "ready")
 
     def test_creates_plugin_from_web_api_and_refreshes_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1073,6 +1102,15 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/models/stop", html)
         self.assertIn("renderModelProcesses", html)
         self.assertIn("refreshModelLogs", html)
+        self.assertIn("/api/startup", html)
+        self.assertIn("/api/startup/run", html)
+        self.assertIn("renderStartup", html)
+        self.assertIn("previewStartup", html)
+        self.assertIn("runStartup", html)
+        self.assertIn("Preview startup", html)
+        self.assertIn("Prepare and start", html)
+        self.assertIn("startup-confirm", html)
+        self.assertIn("startup-only-first", html)
         self.assertIn("Model Logs", html)
         self.assertIn("model-log-expert", html)
         self.assertIn("Start models", html)

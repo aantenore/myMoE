@@ -63,6 +63,19 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --setup
 
 The setup report lists the selected runtime backend, model cache path, model asset status, and the exact bootstrap command for the active config. Hugging Face snapshots are checked in the local cache, local GGUF paths are validated, and Ollama profiles report the required pull command.
 
+To combine setup inspection, runtime preparation, model startup, and System Doctor verification in one guarded flow:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --startup \
+  --startup-prepare \
+  --startup-download-models \
+  --startup-start-models \
+  --startup-confirm
+```
+
+`--startup` without side-effect flags is a read-only preview. `--startup-start-models` can also be combined with `--startup-only-first` when a machine should launch only the primary local expert.
+
 To choose the best local profile for the detected machine and current model cache without editing config files:
 
 ```bash

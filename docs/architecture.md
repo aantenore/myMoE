@@ -34,6 +34,7 @@ flowchart LR
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, model process reachability, extension audit, and cron state.
+- `Startup Runbook`: guarded control-plane flow that previews readiness, prepares runtime assets, starts configured local model servers, and returns System Doctor evidence.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
 - `Profile Recommender`: read-only control-plane scorer that chooses the best local runtime profile from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
 - `Profile Preparation`: guarded setup runner entry point for explicit or recommended profiles before activation.
