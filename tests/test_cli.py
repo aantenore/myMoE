@@ -321,6 +321,53 @@ class CliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertIn("not allowed with argument", completed.stderr)
 
+    def test_startup_preview_prints_readiness_runbook(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--startup",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "planned")
+        self.assertEqual(payload["doctor"]["status"], "ready")
+        self.assertEqual(payload["setup"]["status"], "ready")
+        self.assertEqual(payload["model_processes"]["count"], 0)
+
+    def test_startup_side_effects_require_confirmation(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--startup",
+                "--startup-prepare",
+                "--startup-download-models",
+                "--startup-start-models",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(payload["status"], "confirmation_required")
+        self.assertFalse(payload["ok"])
+
     def test_smoke_generate_prints_runtime_probe(self) -> None:
         completed = subprocess.run(
             [

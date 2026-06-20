@@ -22,6 +22,7 @@ from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
 from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
+from .startup import run_startup_readiness
 from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
@@ -58,6 +59,12 @@ def main() -> None:
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
     parser.add_argument("--prepare-confirm", action="store_true")
+    parser.add_argument("--startup", action="store_true")
+    parser.add_argument("--startup-prepare", action="store_true")
+    parser.add_argument("--startup-download-models", action="store_true")
+    parser.add_argument("--startup-start-models", action="store_true")
+    parser.add_argument("--startup-confirm", action="store_true")
+    parser.add_argument("--startup-only-first", action="store_true")
     parser.add_argument("--models-status", action="store_true")
     parser.add_argument("--models-logs", action="store_true")
     parser.add_argument("--models-log-expert")
@@ -223,6 +230,21 @@ def main() -> None:
         payload["profile_path"] = profile_path
         print(json.dumps(payload, indent=2))
         if not result.ok and result.status not in {"planned", "needs_setup", "confirmation_required"}:
+            raise SystemExit(2)
+        return
+
+    if args.startup:
+        payload = run_startup_readiness(
+            config_path=config_path,
+            app_config_path=args.app_config,
+            prepare=args.startup_prepare,
+            download_models=args.startup_download_models,
+            start_models=args.startup_start_models,
+            confirm=args.startup_confirm,
+            only_first=args.startup_only_first,
+        )
+        print(json.dumps(payload, indent=2))
+        if payload["status"] in {"confirmation_required", "error", "manual_required", "needs_setup", "needs_attention"}:
             raise SystemExit(2)
         return
 

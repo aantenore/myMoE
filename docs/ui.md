@@ -137,11 +137,13 @@ The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Re
 
 The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same memory file. It requires an explicit confirmation checkbox because it writes local records, and its forget action requires a separate confirmation before deleting all chunks for a document id. It does not read arbitrary files from the browser.
 
-The Advanced drawer contains runtime commands, Environment Snapshot, System Doctor, setup readiness, runtime health with a manual refresh action, configured models, latest performance decision, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
+The Advanced drawer contains runtime commands, Startup runbook, Environment Snapshot, System Doctor, setup readiness, runtime health with a manual refresh action, configured models, latest performance decision, last routing metadata, extension registry, the allowlisted tool runner, cron controls, and the deterministic router eval button. Users who only want to chat do not need to see backend details.
 
 Setup readiness is side-effect free. It reports the bootstrap command, configured model cache path, and whether each model asset appears present, missing, partial, or runtime-dependent.
 
 The Setup section also exposes a guarded "Prepare runtime" action backed by `/api/setup/run`. Without confirmation it reports `confirmation_required`; with confirmation it runs only the install and model-download commands derived from the active configuration. The same flow is available from CLI through `--prepare-runtime`.
+
+The Startup section calls `/api/startup` for a read-only runbook preview and `/api/startup/run` for the guarded action. The action combines runtime preparation, model asset checks/downloads, model process startup, and System Doctor verification, but only after the confirmation checkbox is selected. The "Start only the first model" option maps to `--startup-only-first` for machines that should keep just the primary local expert resident.
 
 The Profiles section calls `/api/config/profiles` and `/api/config/recommendation` to list runnable config profiles discovered from `configs/`, plus the currently active config even when it lives elsewhere. It shows active/default/recommended flags, setup readiness, backend, expert count, model names, hardware fit, and copyable launch hints so operators can decide which profile to inspect, prepare, launch, or run in CLI without editing JSON blindly. Hardware fit is derived from the detected machine profile plus the configured model candidate manifests, then falls back to conservative model-name heuristics only when no manifest estimate exists. The recommendation summarizes the best local profile and next actions based on setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks. Launch hints include explicit side-effect labels; the UI can copy them to the clipboard but does not execute those commands. Preparing a profile calls `/api/config/prepare-profile` and reuses the guarded setup runner for that profile. Activating a profile calls `/api/config/activate-profile`, requires confirmation, writes only the app config default profile, and returns a restart command instead of hot-swapping the running model.
 
@@ -184,9 +186,13 @@ Composer with multiline prompt support before sending:
 
 ![myMoE response](screenshots/composer.png)
 
-Advanced runtime, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes background automation status plus a local "Run due jobs" action backed by the allowlisted scheduler runner:
+Advanced runtime, startup, setup, model, routing, extension, MCP, tools, cron, and eval drawer. Cron includes background automation status plus a local "Run due jobs" action backed by the allowlisted scheduler runner:
 
 ![myMoE advanced runtime](screenshots/extensions.png)
+
+Startup runbook previews setup, model process, and Doctor status, then can prepare and start the local runtime after confirmation:
+
+![myMoE startup runbook](screenshots/startup.png)
 
 Runtime profile discovery shows runnable local model profiles, setup readiness, hardware fit, and copyable launch hints without mutating runtime state:
 

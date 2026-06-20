@@ -27,6 +27,17 @@ You can also run the same guarded preparation flow through the app CLI:
 make prepare-runtime
 ```
 
+For one guarded readiness flow that inspects setup, prepares missing assets, starts configured local model servers, and returns the System Doctor result:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --startup \
+  --startup-prepare \
+  --startup-download-models \
+  --startup-start-models \
+  --startup-confirm
+```
+
 The `.[mlx]` extra intentionally pins the MLX stack that was validated with both Qwen and Gemma E4B on the tested machine. Use `.[mlx-current]` only when you explicitly want to track the newest MLX packages.
 
 Start the configured local model server:
@@ -222,9 +233,11 @@ Chat sessions are persisted locally under the configured runtime work directory.
 
 The Advanced drawer includes Local Data, Audit Trail, Memory, and Knowledge panels. Local Data can export and restore a portable JSON backup containing chat sessions and memory records, with explicit confirmation because the backup contains private user content. Audit Trail records host-side sensitive actions such as data export/import, model process changes, setup runs, tool calls, plugin creation, and memory or knowledge deletion without duplicating chat or memory content. Older audit events can be pruned with an explicit keep count and confirmation, and the prune action keeps its own audit event. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
 
-Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer. Extension Studio adds guided MCP server and cron job configuration from safe presets, so operators can add or remove local extension entries without hand-editing registry JSON.
+Advanced runtime, startup, setup, profile discovery, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer. Startup combines setup inspection, guarded runtime preparation, guarded model starts, and System Doctor verification into one operator flow. Extension Studio adds guided MCP server and cron job configuration from safe presets, so operators can add or remove local extension entries without hand-editing registry JSON.
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
+
+![myMoE startup runbook](docs/screenshots/startup.png)
 
 Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks. A profile can be prepared before activation through the same guarded setup runner used by the active config. Updating the default profile requires explicit confirmation, writes only `default_moe_config` in the app config file, and returns a restart command because the running MoE instance is not hot-swapped.
 

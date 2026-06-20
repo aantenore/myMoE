@@ -1019,6 +1019,23 @@
           </div>
         </section>
         <section class="advanced-section">
+          <h2>Startup</h2>
+          <div class="kv" id="startup"></div>
+          <label class="check-row">
+            <input id="startup-confirm" type="checkbox" />
+            <span>Confirm startup preparation and model starts</span>
+          </label>
+          <label class="check-row">
+            <input id="startup-only-first" type="checkbox" />
+            <span>Start only the first model</span>
+          </label>
+          <div class="tool-row">
+            <button class="ghost-button" id="preview-startup" type="button">Preview startup</button>
+            <button class="ghost-button" id="run-startup" type="button">Prepare and start</button>
+          </div>
+          <pre class="eval-output" id="startup-output">Not run yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Environment</h2>
           <div class="kv" id="about"></div>
           <div class="tool-row">
@@ -1364,6 +1381,7 @@
         about: null,
         modelProcesses: null,
         modelLogs: null,
+        startup: null,
         setup: null,
         configProfiles: null,
         configRecommendation: null,
@@ -1457,6 +1475,8 @@
         el("stop-models").addEventListener("click", stopModels);
         el("run-generation-smoke").addEventListener("click", runGenerationSmoke);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
+        el("preview-startup").addEventListener("click", previewStartup);
+        el("run-startup").addEventListener("click", runStartup);
         el("activate-recommended-profile").addEventListener("click", activateRecommendedProfile);
         el("prepare-recommended-profile").addEventListener("click", prepareRecommendedProfile);
         el("run-setup").addEventListener("click", runSetup);
@@ -1502,11 +1522,12 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
             api("/api/models/processes"),
+            api("/api/startup"),
             api("/api/setup"),
             api("/api/config/profiles"),
             api("/api/config/recommendation"),
@@ -1523,6 +1544,7 @@
           state.runtime = runtime;
           state.about = about;
           state.modelProcesses = modelProcesses;
+          state.startup = startup;
           state.setup = setup;
           state.configProfiles = configProfiles;
           state.configRecommendation = configRecommendation;
@@ -1538,6 +1560,7 @@
           renderRuntime(runtime);
           renderAbout(about);
           renderModelProcesses(modelProcesses);
+          renderStartup(startup);
           renderSetup(setup);
           renderConfigProfiles(configProfiles);
           renderDoctor(doctor);
@@ -1895,6 +1918,71 @@
             ? `<div class="kv-row"><span>Error</span><span class="mono">${escapeHtml(setup.error)}</span></div>`
             : "") +
           (models || '<span class="muted">No model assets are required by this profile.</span>');
+      }
+
+      function renderStartup(startup) {
+        const doctor = startup?.doctor || {};
+        const setup = startup?.setup || {};
+        const processes = startup?.model_processes || {};
+        const steps = (startup?.steps || [])
+          .map((step) => `${step.status} · ${step.id}`)
+          .join("\n");
+        el("startup").innerHTML = kvRows({
+          Status: startup?.status || "unknown",
+          Doctor: doctor.status || "unknown",
+          Setup: setup.status || "unknown",
+          Models: processes.count ?? 0,
+          Confirmed: startup?.confirmed ? "yes" : "no",
+        });
+        el("startup-output").textContent = steps || "No startup run yet.";
+      }
+
+      async function previewStartup() {
+        el("startup-output").textContent = "Previewing startup...";
+        try {
+          const result = await api("/api/startup");
+          state.startup = result;
+          state.setup = result.setup || state.setup;
+          state.doctor = result.doctor || state.doctor;
+          state.modelProcesses = result.model_processes || state.modelProcesses;
+          renderStartup(result);
+          if (result.setup) renderSetup(result.setup);
+          if (result.doctor) renderDoctor(result.doctor);
+          if (result.model_processes) renderModelProcesses(result.model_processes);
+        } catch (error) {
+          el("startup-output").textContent = error.message;
+        }
+      }
+
+      async function runStartup() {
+        el("startup-output").textContent = "Running startup...";
+        try {
+          const result = await api("/api/startup/run", {
+            method: "POST",
+            body: JSON.stringify({
+              prepare: true,
+              download_models: true,
+              start_models: true,
+              confirm: el("startup-confirm").checked,
+              only_first: el("startup-only-first").checked,
+            }),
+          });
+          state.startup = result;
+          state.setup = result.setup || state.setup;
+          state.doctor = result.doctor || state.doctor;
+          state.health = result.doctor?.health || state.health;
+          state.modelProcesses = result.model_processes || state.modelProcesses;
+          renderStartup(result);
+          if (result.setup) renderSetup(result.setup);
+          if (result.doctor) {
+            renderDoctor(result.doctor);
+            if (result.doctor.health) renderHealth(result.doctor.health);
+          }
+          if (result.model_processes) renderModelProcesses(result.model_processes);
+          await refreshModelLogs();
+        } catch (error) {
+          el("startup-output").textContent = error.message;
+        }
       }
 
       function renderConfigProfiles(profiles) {

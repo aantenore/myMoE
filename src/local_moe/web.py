@@ -63,6 +63,7 @@ from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, 
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
 from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
+from .startup import run_startup_readiness
 from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
@@ -365,6 +366,18 @@ def _make_handler(
                             app_config,
                             app_config_path=app_config_path,
                         )
+                    ),
+                )
+                return
+
+            if path == "/api/startup":
+                _send_json(
+                    self,
+                    run_startup_readiness(
+                        config_path=config_path,
+                        app_config_path=app_config_path,
+                        registry=registry,
+                        model_manager=model_manager,
                     ),
                 )
                 return
@@ -1002,6 +1015,39 @@ def _make_handler(
                     },
                 )
                 _send_json(self, setup_run_payload(result))
+                return
+
+            if path == "/api/startup/run":
+                payload = _read_json(self)
+                result = run_startup_readiness(
+                    config_path=config_path,
+                    app_config_path=app_config_path,
+                    prepare=bool(payload.get("prepare", False)),
+                    download_models=bool(payload.get("download_models", False)),
+                    start_models=bool(payload.get("start_models", False)),
+                    confirm=bool(payload.get("confirm", False)),
+                    only_first=bool(payload.get("only_first", False)),
+                    registry=registry,
+                    model_manager=model_manager,
+                )
+                _audit(
+                    audit_store,
+                    "startup.run",
+                    result["status"],
+                    risk_class=(
+                        "process_execution"
+                        if result["prepare"] or result["download_models"] or result["start_models"]
+                        else "read_only"
+                    ),
+                    metadata={
+                        "confirmed": result["confirmed"],
+                        "prepare": result["prepare"],
+                        "download_models": result["download_models"],
+                        "start_models": result["start_models"],
+                        "only_first": result["only_first"],
+                    },
+                )
+                _send_json(self, result)
                 return
 
             if path == "/api/config/prepare-profile":
