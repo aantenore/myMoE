@@ -166,6 +166,29 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("run_generation_smoke", {action["id"] for action in payload["actions"]})
         self.assertEqual(summary.last_run_epoch["runtime-optimizer"], 120)
 
+    def test_runs_storage_inspect_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            job = CronJobDefinition(
+                id="storage-inspect",
+                description="Storage inspect",
+                enabled=True,
+                schedule={"type": "interval", "seconds": 60},
+                command=("storage.inspect", "--app-config", str(app_config), "--min-free-gib", "0"),
+                risk_class="compute_only",
+            )
+
+            summary = run_due_jobs((job,), state_path=root / "cron-state.json", now_epoch=120)
+
+        payload = summary.results[0].payload
+        self.assertEqual(summary.results[0].status, "ok")
+        self.assertEqual(summary.results[0].message, "Storage diagnostics completed.")
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["min_free_gib"], 0.0)
+        self.assertEqual(summary.last_run_epoch["storage-inspect"], 120)
+
     def test_runtime_optimizer_output_requires_write_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

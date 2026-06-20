@@ -346,6 +346,9 @@ def _run_allowed_job(job: DueJob, *, registry: ExtensionRegistry | None = None) 
             payload=audit_extension_registry(registry or load_extension_registry()),
         )
 
+    if action == "storage.inspect":
+        return _run_storage_inspect(job, args)
+
     if action == "runtime.optimizer":
         return _run_runtime_optimizer(job, args)
 
@@ -362,9 +365,28 @@ def _is_allowlisted_action(job: DueJob) -> bool:
         "memory.maintenance",
         "memory.prune_expired",
         "extension.audit",
+        "storage.inspect",
         "runtime.optimizer",
         "router.distill",
     }
+
+
+def _run_storage_inspect(job: DueJob, args: dict[str, str]) -> CronRunResult:
+    from .app_config import load_app_config
+    from .storage import DEFAULT_MIN_FREE_GIB, build_storage_report
+
+    app_config_path = args.get("app-config", "configs/app.json")
+    parsed_min_free_gib = _optional_float(args.get("min-free-gib"))
+    min_free_gib = parsed_min_free_gib if parsed_min_free_gib is not None else DEFAULT_MIN_FREE_GIB
+    report = build_storage_report(load_app_config(app_config_path), min_free_gib=min_free_gib)
+    return CronRunResult(
+        id=job.id,
+        status="ok",
+        reason=job.reason,
+        command=job.command,
+        message="Storage diagnostics completed.",
+        payload=report,
+    )
 
 
 def _run_runtime_optimizer(job: DueJob, args: dict[str, str]) -> CronRunResult:
@@ -483,6 +505,16 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _load_state(path: str | Path) -> dict[str, float]:

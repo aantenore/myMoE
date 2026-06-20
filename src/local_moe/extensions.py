@@ -47,6 +47,10 @@ CRON_ACTION_PRESETS = {
         "description": "Build a read-only runtime optimizer report from run logs, profile recommendation, and benchmark status.",
         "risk_class": "compute_only",
     },
+    "storage.inspect": {
+        "description": "Inspect configured runtime storage capacity for model cache and work directories.",
+        "risk_class": "compute_only",
+    },
     "router.distill": {
         "description": "Refresh the local distilled router artifact from curated labels.",
         "risk_class": "write_local",
@@ -492,6 +496,19 @@ def extension_configuration_templates() -> dict[str, Any]:
                             "--run-limit",
                             "100",
                         ],
+                        "risk_class": "compute_only",
+                    },
+                },
+                {
+                    "id": "hourly-storage-inspect",
+                    "label": "Hourly Storage Inspect",
+                    "description": "Check configured model cache and work directory free space once per hour.",
+                    "definition": {
+                        "id": "storage-inspect",
+                        "description": "Check configured runtime storage capacity.",
+                        "enabled": True,
+                        "schedule": {"type": "interval", "seconds": 3600},
+                        "command": ["storage.inspect", "--app-config", "configs/app.json"],
                         "risk_class": "compute_only",
                     },
                 },
