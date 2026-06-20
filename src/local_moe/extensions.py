@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .redaction import public_env_summary, sanitize_diagnostic_value
+
 
 class ExtensionError(ValueError):
     """Raised when extension metadata is invalid."""
@@ -345,13 +347,13 @@ def configure_extension_entry(
     }
 
 
-def registry_payload(registry: ExtensionRegistry) -> dict[str, Any]:
+def registry_payload(registry: ExtensionRegistry, *, include_sensitive: bool = False) -> dict[str, Any]:
     return {
-        "tools": [item.__dict__ for item in registry.tools],
-        "skills": [item.__dict__ for item in registry.skills],
-        "mcp_servers": [item.__dict__ for item in registry.mcp_servers],
-        "cron_jobs": [item.__dict__ for item in registry.cron_jobs],
-        "plugins": [item.__dict__ for item in registry.plugins],
+        "tools": [_public_payload(item) for item in registry.tools],
+        "skills": [_public_payload(item) for item in registry.skills],
+        "mcp_servers": [_mcp_server_payload(item, include_sensitive=include_sensitive) for item in registry.mcp_servers],
+        "cron_jobs": [_public_payload(item) for item in registry.cron_jobs],
+        "plugins": [_plugin_payload(item, include_sensitive=include_sensitive) for item in registry.plugins],
     }
 
 
@@ -614,10 +616,28 @@ def _parse_cron_job(item: dict[str, Any]) -> CronJobDefinition:
 
 
 def _entry_payload(entry: McpServerDefinition | CronJobDefinition) -> dict[str, Any]:
+    return _public_payload(entry)
+
+
+def _public_payload(entry: object) -> dict[str, Any]:
     payload = entry.__dict__.copy()
     for key, value in tuple(payload.items()):
         if isinstance(value, tuple):
             payload[key] = list(value)
+    return payload
+
+
+def _mcp_server_payload(entry: McpServerDefinition, *, include_sensitive: bool) -> dict[str, Any]:
+    payload = _public_payload(entry)
+    if not include_sensitive:
+        payload.update(public_env_summary(entry.env))
+    return payload
+
+
+def _plugin_payload(entry: PluginManifest, *, include_sensitive: bool) -> dict[str, Any]:
+    payload = _public_payload(entry)
+    if not include_sensitive:
+        payload["permissions"] = sanitize_diagnostic_value(payload.get("permissions", {}))
     return payload
 
 

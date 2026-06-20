@@ -549,6 +549,7 @@ class WebTests(unittest.TestCase):
                             "risk_class": "write_local",
                             "capabilities": ["resources", "tools"],
                             "transport": "stdio",
+                            "env": {"MCP_SECRET_TOKEN": "super-secret"},
                             "allowed_tools": ["list_directory", "read_text_file"],
                         },
                         "confirm": True,
@@ -571,6 +572,7 @@ class WebTests(unittest.TestCase):
                 )
                 cron = _get_json(base_url + "/api/cron")
                 audit = _get_json(base_url + "/api/audit?action=extension.configure&limit=10")
+                mcp_file_text = mcp_path.read_text(encoding="utf-8")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -580,6 +582,11 @@ class WebTests(unittest.TestCase):
         self.assertTrue(mcp["configured"])
         self.assertEqual(mcp["action"], "created")
         self.assertIn("docs", [server["name"] for server in mcp["extensions"]["mcp_servers"]])
+        self.assertEqual(mcp["extensions"]["mcp_servers"][0]["env"], {})
+        self.assertEqual(mcp["extensions"]["mcp_servers"][0]["env_count"], 1)
+        self.assertNotIn("MCP_SECRET_TOKEN", json.dumps(mcp))
+        self.assertNotIn("super-secret", json.dumps(mcp))
+        self.assertIn("super-secret", mcp_file_text)
         self.assertEqual(cron_created["action"], "created")
         self.assertIn("daily-audit", [job["id"] for job in cron["jobs"]])
         self.assertEqual({event["status"] for event in audit["events"]}, {"ok", "confirmation_required"})
