@@ -171,7 +171,7 @@ MCP tool calls are available through `mcp.call_tool`. Calls require the same pro
 
 The bundled MCP-enabled example uses the local filesystem MCP server. It is useful for verifying integration, but it is marked `write_local` because the upstream server advertises write/edit tools.
 
-The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Read-only memory maintenance can run automatically; expired-memory pruning is a separate write-local job and requires the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
+The Cron section shows the background automation state from `/api/cron`: whether auto-run is configured, the active policy, the polling interval, auto-runnable jobs, manual-only jobs, due jobs, and last run time. Manual execution still uses `/api/cron/run`. Read-only memory maintenance and runtime optimizer monitoring can run automatically; expired-memory pruning, router distillation, and optimizer report file exports are write-local jobs and require the "Confirm local write jobs" checkbox, matching the CLI `--cron-confirm-writes` flag.
 
 Chat responses are rendered with a small safe Markdown renderer. It supports bold, emphasis, inline code, fenced code blocks, links, blockquotes, headings, and bullet lists while escaping model-provided HTML before formatting. Streaming updates use the same renderer, so partial Markdown remains escaped while the answer is still arriving.
 
@@ -306,6 +306,8 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool extension.configure \
   --tool-input '{"surface":"cron_job","definition":{"id":"daily-audit","description":"Run extension audit once per day.","enabled":true,"schedule":{"type":"interval","seconds":86400},"command":["extension.audit"],"risk_class":"compute_only"},"confirm":true}'
 ```
+
+The guided cron presets include an hourly Runtime Optimizer monitor. It runs `runtime.optimizer` as a compute-only job unless you add an `--out` path, in which case the cron job must be `write_local` and confirmed before execution.
 
 Configure a disabled MCP server entry without launching it:
 

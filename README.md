@@ -423,7 +423,7 @@ make run-cron
 make run-cron-writes
 ```
 
-When the web UI is running, `runtime.cron_auto_run=true` starts a lightweight in-process scheduler that executes safe due jobs such as extension audits and read-only memory maintenance. Expired-memory pruning is a separate write-local job and stays manual unless `runtime.cron_confirm_writes=true` is set.
+When the web UI is running, `runtime.cron_auto_run=true` starts a lightweight in-process scheduler that executes safe due jobs such as extension audits, read-only memory maintenance, and the read-only runtime optimizer monitor. Expired-memory pruning, router distillation, and optimizer report file exports are write-local jobs and stay manual unless `runtime.cron_confirm_writes=true` is set.
 
 Run an allowlisted local tool from the CLI:
 
@@ -492,6 +492,8 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool extension.configure \
   --tool-input '{"surface":"cron_job","definition":{"id":"daily-audit","description":"Run extension audit once per day.","enabled":true,"schedule":{"type":"interval","seconds":86400},"command":["extension.audit"],"risk_class":"compute_only"},"confirm":true}'
 ```
+
+The bundled cron registry also includes an hourly `runtime.optimizer` monitor. It computes optimizer signals in memory by default; if a job uses `--out` to persist a Markdown or JSON report, mark it `write_local` and run it with `--cron-confirm-writes`.
 
 MCP stdio discovery is also available for trusted, enabled MCP servers:
 
