@@ -44,6 +44,11 @@ def discover_config_profiles(
         )
         for path in paths
     ]
+    recommendation = _profile_recommendation(profiles)
+    recommended_path = recommendation.get("profile_path")
+    if recommended_path:
+        for profile in profiles:
+            profile["recommended"] = profile.get("path") == recommended_path
     return {
         "schema_version": "1.0",
         "active_config_path": _display_path(active_config_path),
@@ -51,7 +56,35 @@ def discover_config_profiles(
         "config_dir": _display_path(config_dir),
         "count": len(profiles),
         "hardware": _hardware_payload(hardware),
+        "recommendation": recommendation,
         "profiles": profiles,
+    }
+
+
+def recommend_config_profile(
+    *,
+    active_config_path: str,
+    app_config: AppConfig,
+    app_config_path: str = "configs/app.json",
+    config_dir: str | Path = "configs",
+    hardware_profile: HardwareProfile | None = None,
+    candidate_paths: tuple[str | Path, ...] | None = None,
+) -> dict[str, Any]:
+    profiles = discover_config_profiles(
+        active_config_path=active_config_path,
+        app_config=app_config,
+        app_config_path=app_config_path,
+        config_dir=config_dir,
+        hardware_profile=hardware_profile,
+        candidate_paths=candidate_paths,
+    )
+    return {
+        "schema_version": "1.0",
+        "active_config_path": profiles["active_config_path"],
+        "default_config_path": profiles["default_config_path"],
+        "hardware": profiles["hardware"],
+        "profiles_considered": profiles["count"],
+        "recommendation": profiles["recommendation"],
     }
 
 
@@ -238,6 +271,175 @@ def _launch_commands(config_path: str, *, app_config_path: str) -> list[dict[str
         },
     ]
     return [{**command, "env": env, "display": _display_command(command["argv"], env=env)} for command in commands]
+
+
+def _profile_recommendation(profiles: list[dict[str, Any]]) -> dict[str, Any]:
+    scored: list[dict[str, Any]] = []
+    invalid_count = 0
+    for profile in profiles:
+        if profile.get("status") != "valid":
+            invalid_count += 1
+            continue
+        score, rationale = _profile_score(profile)
+        scored.append(
+            {
+                "score": score,
+                "profile": profile,
+                "rationale": rationale,
+            }
+        )
+
+    if not scored:
+        return {
+            "status": "unavailable",
+            "profile_path": "",
+            "profile_name": "",
+            "score": 0,
+            "confidence": 0,
+            "reason": "No valid runtime profiles were found.",
+            "rationale": [f"{invalid_count} invalid profile(s) skipped."] if invalid_count else [],
+            "requires_setup": False,
+            "next_actions": [],
+            "alternatives": [],
+        }
+
+    scored.sort(
+        key=lambda item: (
+            item["score"],
+            bool(item["profile"].get("active")),
+            bool(item["profile"].get("default")),
+            str(item["profile"].get("path", "")),
+        ),
+        reverse=True,
+    )
+    selected = scored[0]
+    profile = selected["profile"]
+    setup_status = str(profile.get("setup", {}).get("status") or "unknown")
+    fit_status = str(profile.get("hardware_fit", {}).get("status") or "unknown")
+    status = _recommendation_status(setup_status, fit_status)
+    second_score = scored[1]["score"] if len(scored) > 1 else selected["score"]
+    return {
+        "status": status,
+        "profile_path": profile.get("path", ""),
+        "profile_name": profile.get("name", ""),
+        "score": selected["score"],
+        "confidence": _recommendation_confidence(selected["score"], second_score),
+        "reason": _recommendation_reason(status, setup_status, fit_status, profile),
+        "setup_status": setup_status,
+        "hardware_fit_status": fit_status,
+        "active": bool(profile.get("active")),
+        "default": bool(profile.get("default")),
+        "requires_setup": setup_status != "ready",
+        "rationale": selected["rationale"],
+        "next_actions": _recommendation_actions(profile, setup_status),
+        "alternatives": [
+            {
+                "profile_path": item["profile"].get("path", ""),
+                "profile_name": item["profile"].get("name", ""),
+                "score": item["score"],
+                "setup_status": item["profile"].get("setup", {}).get("status") or "unknown",
+                "hardware_fit_status": item["profile"].get("hardware_fit", {}).get("status") or "unknown",
+            }
+            for item in scored[1:4]
+        ],
+    }
+
+
+def _profile_score(profile: dict[str, Any]) -> tuple[int, list[str]]:
+    setup_status = str(profile.get("setup", {}).get("status") or "unknown")
+    fit_status = str(profile.get("hardware_fit", {}).get("status") or "unknown")
+    routing = profile.get("routing", {})
+    score = 0
+    rationale: list[str] = []
+
+    fit_scores = {
+        "recommended": 90,
+        "fits": 78,
+        "compatible": 70,
+        "stretch": 35,
+        "unknown": 18,
+        "too_large": -240,
+    }
+    fit_score = fit_scores.get(fit_status, 0)
+    score += fit_score
+    rationale.append(f"hardware_fit={fit_status} contributed {fit_score} point(s).")
+
+    setup_scores = {
+        "ready": 45,
+        "needs_setup": 12,
+    }
+    setup_score = setup_scores.get(setup_status, 0)
+    score += setup_score
+    rationale.append(f"setup={setup_status} contributed {setup_score} point(s).")
+
+    if _has_general_expert(profile):
+        score += 14
+        rationale.append("A general-purpose expert is present.")
+    if profile.get("expert_count", 0) > 1:
+        score += 5
+        rationale.append("Multiple experts are configured for fallback or specialization.")
+    if routing.get("distilled"):
+        score += 6
+        rationale.append("Distilled local routing is enabled.")
+    if routing.get("semantic"):
+        score += 4
+        rationale.append("Multilingual semantic routing is enabled.")
+    if profile.get("active"):
+        score += 3
+        rationale.append("The profile is currently active.")
+    if profile.get("default"):
+        score += 2
+        rationale.append("The profile is the configured default.")
+    return score, rationale
+
+
+def _has_general_expert(profile: dict[str, Any]) -> bool:
+    for expert in profile.get("experts", []):
+        role = str(expert.get("role") or "").lower()
+        expert_id = str(expert.get("id") or "").lower()
+        if "general" in role or expert_id == "general":
+            return True
+    return False
+
+
+def _recommendation_status(setup_status: str, fit_status: str) -> str:
+    if fit_status == "too_large":
+        return "unavailable"
+    if setup_status != "ready":
+        return "needs_setup"
+    return "ready"
+
+
+def _recommendation_reason(
+    status: str,
+    setup_status: str,
+    fit_status: str,
+    profile: dict[str, Any],
+) -> str:
+    name = str(profile.get("name") or profile.get("path") or "profile")
+    if status == "ready":
+        return f"{name} is the best ready local profile for the detected machine."
+    if status == "needs_setup":
+        return f"{name} is the best fit, but setup is {setup_status}; prepare runtime before use."
+    return f"No recommended profile is currently usable because the best candidate is {fit_status}."
+
+
+def _recommendation_confidence(score: int, second_score: int) -> float:
+    if score <= 0:
+        return 0.0
+    if score == second_score:
+        return 0.5
+    margin = max(0, score - second_score)
+    return round(min(0.99, 0.55 + margin / 100.0), 2)
+
+
+def _recommendation_actions(profile: dict[str, Any], setup_status: str) -> list[dict[str, Any]]:
+    wanted = {"inspect_setup", "prepare_runtime"} if setup_status != "ready" else {"start_models", "start_ui", "open_cli"}
+    return [
+        command
+        for command in profile.get("launch_commands", [])
+        if command.get("id") in wanted
+    ]
 
 
 def _hardware_payload(profile: HardwareProfile) -> dict[str, Any]:

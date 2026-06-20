@@ -35,6 +35,7 @@ flowchart LR
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, model process reachability, extension audit, and cron state.
 - `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs.
+- `Profile Recommender`: read-only control-plane scorer that chooses the best local runtime profile from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
 - `Performance Report`: sanitized read-only benchmark decision surface for runtime, CLI, and support handoff.
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.
 - `Local Data Bundle`: confirmed export/import path for user-owned chat sessions and memory records, scoped to the configured runtime work directory.

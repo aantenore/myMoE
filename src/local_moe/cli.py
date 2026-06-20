@@ -9,6 +9,7 @@ import sys
 from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
+from .config_profiles import recommend_config_profile
 from .doctor import build_doctor_report, render_doctor_report_markdown
 from .environment import build_environment_report, render_environment_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
@@ -45,6 +46,7 @@ def main() -> None:
     parser.add_argument("--support-bundle-out")
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--setup", action="store_true")
+    parser.add_argument("--recommend-profile", action="store_true")
     parser.add_argument("--prepare-runtime", action="store_true")
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
@@ -150,6 +152,19 @@ def main() -> None:
                         app_config,
                         app_config_path=args.app_config,
                     )
+                ),
+                indent=2,
+            )
+        )
+        return
+
+    if args.recommend_profile:
+        print(
+            json.dumps(
+                recommend_config_profile(
+                    active_config_path=config_path,
+                    app_config=app_config,
+                    app_config_path=args.app_config,
                 ),
                 indent=2,
             )

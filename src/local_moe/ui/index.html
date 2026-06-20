@@ -1353,6 +1353,8 @@
         modelProcesses: null,
         modelLogs: null,
         setup: null,
+        configProfiles: null,
+        configRecommendation: null,
         doctor: null,
         health: null,
         performance: null,
@@ -1486,13 +1488,14 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, setup, configProfiles, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
             api("/api/models/processes"),
             api("/api/setup"),
             api("/api/config/profiles"),
+            api("/api/config/recommendation"),
             api("/api/doctor"),
             api("/api/health"),
             api("/api/performance"),
@@ -1508,6 +1511,7 @@
           state.modelProcesses = modelProcesses;
           state.setup = setup;
           state.configProfiles = configProfiles;
+          state.configRecommendation = configRecommendation;
           state.doctor = doctor;
           state.health = health;
           state.performance = performance;
@@ -1881,9 +1885,32 @@
 
       function renderConfigProfiles(profiles) {
         const items = profiles?.profiles || [];
+        const recommendation = profiles?.recommendation || {};
+        const nextActions = (recommendation.next_actions || [])
+          .map((command) => command.label || command.id)
+          .filter(Boolean)
+          .join(" · ");
+        const recommendationRow = recommendation.profile_path
+          ? `
+            <div class="kv-row">
+              <span>Recommended</span>
+              <span>
+                <strong>${escapeHtml(recommendation.profile_name || recommendation.profile_path)}</strong>
+                <span class="muted"> · ${escapeHtml(recommendation.status || "unknown")}</span><br>
+                <span class="mono">${escapeHtml(recommendation.profile_path || "")}</span><br>
+                <span class="muted">${escapeHtml(recommendation.reason || "")}</span>
+                ${
+                  nextActions
+                    ? `<br><span class="muted">Next: ${escapeHtml(nextActions)}</span>`
+                    : ""
+                }
+              </span>
+            </div>`
+          : "";
         const rows = items
           .map((profile, profileIndex) => {
             const flags = [
+              profile.recommended ? "recommended" : "",
               profile.active ? "active" : "",
               profile.default ? "default" : "",
               profile.status === "valid" ? profile.setup?.status || "valid" : "invalid",
@@ -1933,7 +1960,7 @@
                   }
                   ${
                     commands
-                      ? `<details class="command-details" ${profile.active ? "open" : ""}><summary>Launch hints</summary><div class="command-list">${commands}</div></details>`
+                      ? `<details class="command-details" ${profile.active || profile.recommended ? "open" : ""}><summary>Launch hints</summary><div class="command-list">${commands}</div></details>`
                       : ""
                   }
                 </span>
@@ -1946,7 +1973,7 @@
             Default: profiles?.default_config_path || "Unknown",
             Hardware: profileHardwareLabel(profiles?.hardware),
             Count: profiles?.count ?? 0,
-          }) + (rows || '<span class="muted">No runnable profiles found.</span>');
+          }) + recommendationRow + (rows || '<span class="muted">No runnable profiles found.</span>');
         document.querySelectorAll("[data-copy-profile-command]").forEach((button) => {
           button.addEventListener("click", () =>
             copyProfileCommand(Number(button.dataset.copyProfileCommand), Number(button.dataset.commandIndex), button),
