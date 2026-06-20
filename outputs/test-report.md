@@ -4,7 +4,7 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -15,8 +15,9 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_run_log.py`: metadata-only generation run writes, prompt/answer exclusion, latest-first listing, aggregate latency/token/context/error summaries, recommendations, and latest-run retention pruning.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, streaming SSE parsing, usage/timing parsing, invalid payload handling, invalid JSON handling, reasoning-channel stripping, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
-- `tests/test_doctor.py`: normalized setup, health, extension, cron, and hardware-fit checks, required failure for profiles that exceed the detected machine, and metadata-only Markdown rendering.
-- `tests/test_environment.py`: metadata-only environment snapshot generation and Markdown rendering for platform, Python, package, git, hardware, config, and configured local model identity handoffs.
+- `tests/test_doctor.py`: normalized setup, health, extension, cron, hardware-fit, and storage checks, required failure for profiles that exceed the detected machine, optional storage pressure warnings, and metadata-only Markdown rendering.
+- `tests/test_environment.py`: metadata-only environment snapshot generation and Markdown rendering for platform, Python, package, git, hardware, storage, config, and configured local model identity handoffs.
+- `tests/test_storage.py`: read-only runtime storage capacity diagnostics for configured model cache and work directories, including missing-path probing without creating directories and low-free-space recommendations.
 - `tests/test_smoke.py`: generation smoke pass/fail reports, including explicit failure for blank visible output.
 - `tests/test_ci_runner.py`: cross-platform quality gate command plan, `PYTHONPATH` environment construction, and JSON dry-run output.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
@@ -24,7 +25,7 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_health.py`: runtime health status for reachable, unreachable, malformed, path-prefixed, and skipped expert providers.
 - `tests/test_doctor.py`: unified setup, health, process, extension audit, and cron readiness report.
 - `tests/test_performance_report.py`: sanitized benchmark decision payload, missing benchmark status, and Markdown report rendering.
-- `tests/test_support_bundle.py`: privacy-safe diagnostic bundle content and exclusions, including embedded environment snapshot metadata.
+- `tests/test_support_bundle.py`: privacy-safe diagnostic bundle content and exclusions, including embedded environment snapshot and storage metadata.
 - `tests/test_cli.py`: eval mode, setup readiness, profile recommendation, profile preparation, profile activation, startup runbook preview and confirmation guard, performance report output, environment snapshot output, generation run log listing with metadata-only summary and confirmation-guarded pruning, guarded runtime preparation preview, model process status, sanitized model log tail output, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
 - `tests/test_data_bundle.py`: portable local data export and restore for chat sessions plus memory records, including merge and replace behavior.
@@ -57,7 +58,7 @@ python3 scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `230/230` passed
+- unit/contract tests: `233/233` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`

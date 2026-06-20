@@ -41,6 +41,7 @@ class SupportBundleTests(unittest.TestCase):
         self.assertEqual(bundle["doctor"]["status"], "ready")
         self.assertEqual(bundle["environment"]["schema_version"], "1.0")
         self.assertEqual(bundle["environment"]["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(bundle["environment"]["storage"]["schema_version"], "1.0")
         self.assertEqual(bundle["quality_gate"]["data"]["passed"], True)
         self.assertEqual(bundle["hardware_profile"]["data"]["machine"], "test")
         self.assertIn("chat transcripts", bundle["privacy"]["excludes"])
@@ -52,6 +53,7 @@ class SupportBundleTests(unittest.TestCase):
         self.assertEqual(bundle["runtime_optimizer"]["schema_version"], "1.0")
         self.assertEqual(bundle["runtime_optimizer"]["mode"], "read_only")
         self.assertIn("runtime optimizer summary", " ".join(bundle["privacy"]["includes"]))
+        self.assertIn("storage capacity summary", " ".join(bundle["privacy"]["includes"]))
         self.assertIn("chat_store", bundle["runtime_files"])
         self.assertIn("run_log", bundle["runtime_files"])
 

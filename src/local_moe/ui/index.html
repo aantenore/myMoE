@@ -1830,8 +1830,11 @@
         const python = about?.python || {};
         const git = about?.git || {};
         const hardware = about?.hardware || {};
+        const storage = about?.storage || {};
         const runtime = about?.runtime || {};
         const paths = about?.paths || {};
+        const storagePaths = Array.isArray(storage.paths) ? storage.paths : [];
+        const cacheStorage = storagePaths.find((item) => item.label === "model_cache_dir") || {};
         const experts = (runtime.experts || [])
           .map(
             (expert) => `
@@ -1853,6 +1856,8 @@
             Git: git.short_commit ? `${git.branch || "unknown"} · ${git.short_commit}${git.dirty ? " · dirty" : ""}` : "Unavailable",
             Hardware: `${hardware.cpu_brand || "unknown CPU"} · ${hardware.memory_gib || "unknown"} GiB RAM`,
             Strategy: hardware.recommended_strategy || "unknown",
+            Storage: storage.status || "unknown",
+            "Cache free": cacheStorage.free_gib == null ? "-" : `${cacheStorage.free_gib} GiB`,
             Config: paths.moe_config || "unknown",
             Experts: runtime.expert_count ?? 0,
           }) + (experts || '<span class="muted">No experts configured.</span>');
