@@ -18,6 +18,7 @@ from .model_servers import ModelServerManager, model_server_action_payload, wait
 from .orchestrator import LocalMoE
 from .performance_report import build_performance_report, render_performance_report_markdown
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
+from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -41,6 +42,11 @@ def main() -> None:
     parser.add_argument("--about", action="store_true")
     parser.add_argument("--about-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--about-out")
+    parser.add_argument("--runs", action="store_true")
+    parser.add_argument("--runs-limit", type=int, default=100)
+    parser.add_argument("--runs-prune", action="store_true")
+    parser.add_argument("--runs-keep", type=int, default=1000)
+    parser.add_argument("--runs-confirm", action="store_true")
     parser.add_argument("--performance-report", action="store_true")
     parser.add_argument("--performance-report-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--performance-report-out")
@@ -121,6 +127,25 @@ def main() -> None:
             print(json.dumps({"written": str(out)}, indent=2))
         else:
             print(rendered)
+        return
+
+    if args.runs or args.runs_prune:
+        store = RunLogStore(_run_log_path(app_config))
+        if args.runs_prune:
+            if not args.runs_confirm:
+                print(
+                    json.dumps(
+                        {
+                            "error": "confirmation_required",
+                            "message": "Run log pruning requires --runs-confirm.",
+                        },
+                        indent=2,
+                    )
+                )
+                raise SystemExit(2)
+            print(json.dumps(run_log_prune_payload(store.prune(keep=args.runs_keep)), indent=2))
+            return
+        print(json.dumps(run_log_payload(store.list_records(limit=args.runs_limit), path=store.path), indent=2))
         return
 
     if args.performance_report or args.performance_report_out:
@@ -436,6 +461,10 @@ def _registry(app_config: object) -> object:
 
 def _cron_state_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/cron-state.json"
+
+
+def _run_log_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/runs.jsonl"
 
 
 if __name__ == "__main__":

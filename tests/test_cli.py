@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 
+from local_moe.run_log import RunLogStore
 from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
 
@@ -602,6 +603,71 @@ class CliTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["payload"]["servers"][0]["name"], "filesystem")
+
+    def test_runs_cli_lists_metadata_only_generation_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            store = RunLogStore(root / "runtime" / "runs.jsonl")
+            store.record_generation(
+                mode="generate",
+                prompt="Private CLI run prompt",
+                response_payload={
+                    "correlation_id": "corr-cli",
+                    "route": {"selected": [{"expert_id": "general"}], "fallback_order": []},
+                    "results": [{"model": "synthetic-general"}],
+                    "errors": [],
+                },
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--runs",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        rendered = completed.stdout
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["records"][0]["correlation_id"], "corr-cli")
+        self.assertNotIn("Private CLI run prompt", rendered)
+
+    def test_runs_cli_prune_requires_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            guarded = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--runs-prune",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(guarded.stdout)
+        self.assertEqual(guarded.returncode, 2)
+        self.assertEqual(payload["error"], "confirmation_required")
 
     def test_run_tool_lists_enabled_mcp_server_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

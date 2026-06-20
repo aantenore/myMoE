@@ -42,11 +42,13 @@ def build_support_bundle(
                 "sanitized performance report",
                 "hardware profile",
                 "configured model server log paths",
+                "generation run log path",
                 "runtime file paths",
             ],
             "excludes": [
                 "chat transcripts",
                 "memory records",
+                "generation run log contents",
                 "environment variables",
                 "model log contents",
                 "benchmark prompt response excerpts",
@@ -90,6 +92,7 @@ def _runtime_files(app_config: object) -> dict[str, str]:
         "work_dir": work_dir,
         "chat_store": f"{work_dir}/chats.json",
         "memory_store": f"{work_dir}/memory.jsonl",
+        "run_log": f"{work_dir}/runs.jsonl",
         "cron_state": f"{work_dir}/cron-state.json",
     }
 

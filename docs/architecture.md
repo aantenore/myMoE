@@ -43,6 +43,7 @@ flowchart LR
 - `Knowledge Import`: paste/API-based local RAG layer that chunks user-provided text into scoped memory records and supports guarded document deletion without granting browser filesystem access.
 - `Local Data Bundle`: confirmed export/import path for user-owned chat sessions and memory records, scoped to the configured runtime work directory.
 - `Audit Trail`: local JSONL metadata log for sensitive host-side actions, intentionally excluding chat and memory text.
+- `Generation Run Log`: local JSONL metadata log for successful generations, intentionally excluding prompt and answer text while retaining route, model, latency, token, context, and prompt-hash observations.
 
 ## Runtime Modes
 
@@ -122,5 +123,6 @@ The practical policy is:
 2. Router selects expected experts on known prompts.
 3. Provider boundary preserves `correlation_id`.
 4. Streaming and non-streaming generation return the same persisted chat contract.
-5. Local endpoint smoke test returns valid text under timeout.
-6. MoE beats single-model baseline on a small rubric before adding complexity.
+5. Streaming and non-streaming generation append metadata-only run records without leaking prompt or answer text.
+6. Local endpoint smoke test returns valid text under timeout.
+7. MoE beats single-model baseline on a small rubric before adding complexity.

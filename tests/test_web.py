@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 from pathlib import Path
 import tempfile
 import threading
@@ -14,20 +15,27 @@ from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_confi
 
 class WebTests(unittest.TestCase):
     def test_serves_config_and_generates_with_synthetic_provider(self) -> None:
-        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            base_url = f"http://127.0.0.1:{server.server_address[1]}"
-            config = _get_json(base_url + "/api/config")
-            result = _post_json(
-                base_url + "/api/generate",
-                {"prompt": "Summarize this note into bullets."},
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
             )
-        finally:
-            server.shutdown()
-            thread.join(timeout=5)
-            server.server_close()
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                config = _get_json(base_url + "/api/config")
+                result = _post_json(
+                    base_url + "/api/generate",
+                    {"prompt": "Summarize this note into bullets."},
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
 
         self.assertEqual(config["routing"]["aggregation"], "best")
         self.assertEqual(config["routing"]["strategy"], "rules")
@@ -633,6 +641,7 @@ class WebTests(unittest.TestCase):
                     base_url + "/api/generate",
                     {"prompt": "Continue the same chat.", "session_id": session_id},
                 )
+                runs = _get_json(base_url + "/api/runs")
                 renamed = _patch_json(
                     base_url + f"/api/chats/{session_id}",
                     {"title": "Local Session Notes"},
@@ -654,6 +663,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("route", loaded["messages"][1]["meta"])
         self.assertIn("context", loaded["messages"][1]["meta"])
         self.assertEqual(second["session"]["message_count"], 4)
+        self.assertEqual(runs["count"], 2)
+        self.assertEqual(runs["privacy"], "metadata_only")
+        self.assertEqual(runs["records"][0]["session_id"], session_id)
+        self.assertEqual(runs["records"][0]["mode"], "generate")
+        self.assertGreaterEqual(len(runs["records"][0]["selected_experts"]), 1)
+        self.assertNotIn("Continue the same chat.", json.dumps(runs))
+        self.assertNotIn(second["content"], json.dumps(runs))
         self.assertIn("recent_turns", second["context"]["sections"])
         self.assertGreater(
             _prompt_chars(second["content"]),
@@ -684,6 +700,7 @@ class WebTests(unittest.TestCase):
                     {"prompt": "Summarize this streamed note."},
                 )
                 listed = _get_json(base_url + "/api/chats")
+                runs = _get_json(base_url + "/api/runs")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -695,6 +712,37 @@ class WebTests(unittest.TestCase):
         self.assertIn('"session_id"', raw)
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["sessions"][0]["message_count"], 2)
+        self.assertEqual(runs["records"][0]["mode"], "stream")
+        self.assertNotIn("Summarize this streamed note.", json.dumps(runs))
+
+    def test_run_log_prune_api_is_confirmation_guarded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                _post_json(base_url + "/api/generate", {"prompt": "First run log item."})
+                _post_json(base_url + "/api/generate", {"prompt": "Second run log item."})
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(base_url + "/api/runs/prune", {"keep": 1})
+                pruned = _post_json(base_url + "/api/runs/prune", {"keep": 1, "confirm": True})
+                runs = _get_json(base_url + "/api/runs?limit=10")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(pruned["before_count"], 2)
+        self.assertEqual(pruned["after_count"], 1)
+        self.assertEqual(runs["count"], 1)
 
     def test_generate_rejects_missing_chat_session_before_model_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1180,6 +1228,14 @@ class WebTests(unittest.TestCase):
         self.assertIn("refreshAudit", html)
         self.assertIn("pruneAudit", html)
         self.assertIn("audit-prune-confirm", html)
+        self.assertIn("Run Log", html)
+        self.assertIn("/api/runs", html)
+        self.assertIn("/api/runs/prune", html)
+        self.assertIn("renderRunLog", html)
+        self.assertIn("refreshRunLog", html)
+        self.assertIn("pruneRunLog", html)
+        self.assertIn("runs-prune-confirm", html)
+        self.assertIn("runs-keep", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)
         self.assertIn("experiments/eval_set_live_general.jsonl", html)
