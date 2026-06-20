@@ -770,6 +770,8 @@
       .eval-output {
         margin: 0;
         white-space: pre-wrap;
+        overflow: auto;
+        overflow-wrap: anywhere;
         color: var(--muted);
       }
 
@@ -790,7 +792,11 @@
       }
 
       .audit-row {
-        grid-template-columns: auto minmax(8rem, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) minmax(6rem, 8rem) minmax(0, 1fr);
+      }
+
+      .audit-row .ghost-button {
+        min-width: 0;
       }
 
       .tool-select,
@@ -1136,6 +1142,31 @@
           <pre class="eval-output" id="audit-output">Not loaded yet.</pre>
         </section>
         <section class="advanced-section">
+          <h2>Run Log</h2>
+          <div class="kv" id="run-log"></div>
+          <div class="tool-controls">
+            <div class="tool-row audit-row">
+              <button class="ghost-button" id="refresh-run-log" type="button">Refresh runs</button>
+              <input
+                class="tool-number mono"
+                id="runs-keep"
+                type="number"
+                min="1"
+                max="100000"
+                step="100"
+                value="1000"
+                aria-label="Generation runs to keep"
+              />
+              <button class="ghost-button" id="prune-run-log" type="button">Prune runs</button>
+            </div>
+            <label class="check-row">
+              <input id="runs-prune-confirm" type="checkbox" />
+              <span>Confirm run log pruning</span>
+            </label>
+          </div>
+          <pre class="eval-output" id="run-log-output">Not loaded yet.</pre>
+        </section>
+        <section class="advanced-section">
           <h2>Health</h2>
           <button class="ghost-button" id="refresh-health" type="button">Refresh health</button>
           <div class="kv" id="health"></div>
@@ -1392,6 +1423,7 @@
         extensionTemplates: null,
         extensionAudit: null,
         audit: null,
+        runLog: null,
         cron: null,
         messages: [],
         sessions: [],
@@ -1488,6 +1520,8 @@
         el("import-data").addEventListener("click", importData);
         el("refresh-audit").addEventListener("click", refreshAudit);
         el("prune-audit").addEventListener("click", pruneAudit);
+        el("refresh-run-log").addEventListener("click", refreshRunLog);
+        el("prune-run-log").addEventListener("click", pruneRunLog);
         el("refresh-performance").addEventListener("click", refreshPerformance);
         el("download-performance-report").addEventListener("click", downloadPerformanceReport);
         el("run-eval").addEventListener("click", runEval);
@@ -1522,7 +1556,7 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
@@ -1538,6 +1572,7 @@
             api("/api/extensions/templates"),
             api("/api/extensions/audit"),
             api("/api/audit?limit=20"),
+            api("/api/runs?limit=20"),
             api("/api/cron"),
           ]);
           state.config = config;
@@ -1555,6 +1590,7 @@
           state.extensionTemplates = extensionTemplates;
           state.extensionAudit = extensionAudit.audit;
           state.audit = audit;
+          state.runLog = runLog;
           state.cron = cron;
           renderConfig(config);
           renderRuntime(runtime);
@@ -1570,6 +1606,7 @@
           renderExtensionStudioTemplates(extensionTemplates);
           renderExtensionAudit(extensionAudit.audit);
           renderAudit(audit);
+          renderRunLog(runLog);
           renderToolRunner(extensions);
           renderCronStatus(cron);
         } catch (error) {
@@ -2572,6 +2609,79 @@
         }
       }
 
+      function renderRunLog(runLog) {
+        const records = runLog?.records || [];
+        const latest = records.slice(0, 8);
+        el("run-log").innerHTML =
+          kvRows({
+            Runs: runLog?.count || 0,
+            Privacy: runLog?.privacy || "metadata_only",
+            Latest: latest[0]?.created_at || "None",
+          }) +
+          (latest.length
+            ? latest
+                .map((record) => {
+                  const experts = (record.selected_experts || []).join(", ") || "No experts";
+                  const models = (record.result_models || []).map(shortModel).join(", ") || "No model";
+                  const speed =
+                    record.predicted_tokens_per_second == null
+                      ? ""
+                      : `${Number(record.predicted_tokens_per_second).toFixed(1)} tok/s`;
+                  const tokenCopy =
+                    record.prompt_tokens == null && record.completion_tokens == null
+                      ? ""
+                      : `${record.prompt_tokens ?? "-"} in / ${record.completion_tokens ?? "-"} out`;
+                  return `
+                    <div class="kv-row">
+                      <span>${escapeHtml(record.mode || "generate")}</span>
+                      <span>
+                        <strong>${escapeHtml(experts)}</strong><br>
+                        <span class="mono">${escapeHtml(record.created_at || "")}</span><br>
+                        <span class="muted">${escapeHtml([models, tokenCopy, speed].filter(Boolean).join(" · "))}</span>
+                      </span>
+                    </div>`;
+                })
+                .join("")
+            : '<span class="muted">No generation runs yet.</span>');
+        el("run-log-output").textContent = JSON.stringify(latest, null, 2);
+      }
+
+      async function refreshRunLog(options = {}) {
+        if (!options.quiet) el("run-log-output").textContent = "Loading...";
+        try {
+          const runLog = await api("/api/runs?limit=20");
+          state.runLog = runLog;
+          renderRunLog(runLog);
+        } catch (error) {
+          el("run-log-output").textContent = error.message;
+        }
+      }
+
+      function runsKeepValue() {
+        const value = Number.parseInt(el("runs-keep").value || "1000", 10);
+        if (!Number.isFinite(value)) return 1000;
+        return Math.max(1, Math.min(value, 100000));
+      }
+
+      async function pruneRunLog() {
+        el("run-log-output").textContent = "Pruning...";
+        try {
+          const result = await api("/api/runs/prune", {
+            method: "POST",
+            body: JSON.stringify({
+              keep: runsKeepValue(),
+              confirm: el("runs-prune-confirm").checked,
+            }),
+          });
+          el("runs-prune-confirm").checked = false;
+          await refreshRunLog({ quiet: true });
+          el("run-log-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          await refreshRunLog({ quiet: true });
+          el("run-log-output").textContent = error.message;
+        }
+      }
+
       function renderExtensions(extensions) {
         const groups = [
           ["Tools", extensions.tools],
@@ -2987,6 +3097,7 @@
         } else {
           loadChats(false);
         }
+        refreshRunLog({ quiet: true });
       }
 
       function supportsStreaming() {

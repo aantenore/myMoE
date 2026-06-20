@@ -186,13 +186,20 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --performance-report --performance-report-format markdown
 ```
 
+Inspect metadata-only generation runs:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runs --runs-limit 20
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runs-prune --runs-keep 1000 --runs-confirm
+```
+
 Create a privacy-safe support bundle for issues or handoff:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, hardware profile, runtime file paths, and model log paths. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, and log contents.
+The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, generation run log contents, API keys, and log contents.
 
 Inspect configured model process status:
 
@@ -231,7 +238,7 @@ The composer supports normal chat usage, progressive streamed responses, rendere
 
 Chat sessions are persisted locally under the configured runtime work directory. Refreshing the UI reloads saved sessions, while `?new_chat=true` starts with an empty composer. Saved chats can be searched, renamed, compacted, exported, and deleted. Continued chats use the configured context policy, durable summaries, retrieved local memories, imported knowledge chunks, and recent turns in the next local model prompt. The browser uses `/api/generate/stream` when available and falls back to `/api/generate` when streaming is unavailable.
 
-The Advanced drawer includes Local Data, Audit Trail, Memory, and Knowledge panels. Local Data can export and restore a portable JSON backup containing chat sessions and memory records, with explicit confirmation because the backup contains private user content. Audit Trail records host-side sensitive actions such as data export/import, model process changes, setup runs, tool calls, plugin creation, and memory or knowledge deletion without duplicating chat or memory content. Older audit events can be pruned with an explicit keep count and confirmation, and the prune action keeps its own audit event. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
+The Advanced drawer includes Local Data, Audit Trail, Run Log, Memory, and Knowledge panels. Local Data can export and restore a portable JSON backup containing chat sessions and memory records, with explicit confirmation because the backup contains private user content. Audit Trail records host-side sensitive actions such as data export/import, model process changes, setup runs, tool calls, plugin creation, and memory or knowledge deletion without duplicating chat or memory content. Older audit events can be pruned with an explicit keep count and confirmation, and the prune action keeps its own audit event. Run Log records metadata-only generation observations such as selected experts, models, latency, token counts, context pressure, and prompt hash in `<runtime.work_dir>/runs.jsonl`; it never stores prompt text or answer text. Knowledge import chunks pasted local notes or documentation into the local memory store with document metadata, then the normal local context retrieval path can use those chunks in future chat prompts. Memory records and imported knowledge documents can be removed through guarded forget controls that require explicit confirmation. The browser never receives permission to read arbitrary local files; users paste content or call the guarded API/tool explicitly.
 
 Advanced runtime, startup, setup, profile discovery, model, routing, extension, MCP, cron, and eval details are available only when the user opens the drawer. Startup combines setup inspection, guarded runtime preparation, guarded model starts, and System Doctor verification into one operator flow. Extension Studio adds guided MCP server and cron job configuration from safe presets, so operators can add or remove local extension entries without hand-editing registry JSON.
 
@@ -250,6 +257,10 @@ Extension Studio configures MCP server and cron job entries through guarded pres
 Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
+
+Run Log shows recent metadata-only generation observations and guarded retention pruning.
+
+![myMoE run log](docs/screenshots/run-log.png)
 
 The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
@@ -332,6 +343,7 @@ src/local_moe/
   hardware.py
   memory.py
   performance_report.py
+  run_log.py
   router.py
   providers.py
   orchestrator.py

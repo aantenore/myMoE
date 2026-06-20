@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import time
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,6 +60,7 @@ from .profile_activation import (
     activate_config_profile,
     activate_recommended_config_profile,
 )
+from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -112,6 +114,7 @@ def build_server(
     moe = LocalMoE(config)
     registry = _load_registry(app_config)
     audit_store = AuditLogStore(_audit_log_path(app_config))
+    run_log_store = RunLogStore(_run_log_path(app_config))
     chat_store = FileChatStore(_chat_store_path(app_config))
     memory_store = FileMemoryStore(_memory_store_path(app_config))
     model_manager = ModelServerManager.from_config(
@@ -136,6 +139,7 @@ def build_server(
         moe=moe,
         registry=registry,
         audit_store=audit_store,
+        run_log_store=run_log_store,
         chat_store=chat_store,
         memory_store=memory_store,
         model_manager=model_manager,
@@ -156,6 +160,7 @@ def _make_handler(
     moe: LocalMoE,
     registry: object,
     audit_store: AuditLogStore,
+    run_log_store: RunLogStore,
     chat_store: FileChatStore,
     memory_store: FileMemoryStore,
     model_manager: ModelServerManager,
@@ -329,6 +334,14 @@ def _make_handler(
                     status=_optional_str(query.get("status", [""])[0]),
                 )
                 _send_json(self, audit_log_payload(events))
+                return
+
+            if path == "/api/runs":
+                query = parse_qs(parsed_url.query)
+                records = run_log_store.list_records(
+                    limit=_query_limit(query.get("limit", ["100"])[0], default=100, maximum=500),
+                )
+                _send_json(self, run_log_payload(records, path=run_log_store.path))
                 return
 
             if path == "/api/runtime":
@@ -520,6 +533,7 @@ def _make_handler(
                 )
 
                 _send_sse_headers(self)
+                started_at = time.monotonic()
                 try:
                     for event in moe.generate_stream(
                         model_context["prompt"],
@@ -558,6 +572,14 @@ def _make_handler(
                                 return
                             response_payload["session_id"] = session.id
                             response_payload["session"] = chat_session_payload(session)
+                            run_log_store.record_generation(
+                                mode="stream",
+                                prompt=prompt,
+                                response_payload=response_payload,
+                                context_payload=response_payload["context"],
+                                session_id=session.id,
+                                latency_ms=_elapsed_ms(started_at),
+                            )
                             _send_sse_event(self, "final", response_payload)
                             return
                     _send_sse_event(
@@ -612,6 +634,7 @@ def _make_handler(
                     memory_store=memory_store,
                 )
 
+                started_at = time.monotonic()
                 try:
                     response = moe.generate(
                         model_context["prompt"],
@@ -651,6 +674,14 @@ def _make_handler(
                     return
                 response_payload["session_id"] = session.id
                 response_payload["session"] = chat_session_payload(session)
+                run_log_store.record_generation(
+                    mode="generate",
+                    prompt=prompt,
+                    response_payload=response_payload,
+                    context_payload=response_payload["context"],
+                    session_id=session.id,
+                    latency_ms=_elapsed_ms(started_at),
+                )
                 _send_json(self, response_payload)
                 return
 
@@ -918,6 +949,41 @@ def _make_handler(
                     return
                 report = audit_store.prune(keep=keep)
                 _send_json(self, audit_prune_payload(report))
+                return
+
+            if path == "/api/runs/prune":
+                payload = _read_json(self)
+                keep = _bounded_int(payload.get("keep"), default=1000, minimum=1, maximum=100000)
+                if payload.get("confirm") is not True:
+                    _audit(
+                        audit_store,
+                        "runs.prune",
+                        "confirmation_required",
+                        risk_class="write_local",
+                        metadata={"keep": keep},
+                    )
+                    _send_json(
+                        self,
+                        {
+                            "error": "confirmation_required",
+                            "message": "Run log pruning requires confirm=true because it removes older metadata records.",
+                        },
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                report = run_log_store.prune(keep=keep)
+                _audit(
+                    audit_store,
+                    "runs.prune",
+                    "ok",
+                    risk_class="write_local",
+                    metadata={
+                        "keep": report.keep,
+                        "removed_count": report.removed_count,
+                        "after_count": report.after_count,
+                    },
+                )
+                _send_json(self, run_log_prune_payload(report))
                 return
 
             if path.startswith("/api/chats/") and path.endswith("/compact"):
@@ -1699,6 +1765,10 @@ def _audit_log_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/audit.jsonl"
 
 
+def _run_log_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/runs.jsonl"
+
+
 def _path_tail(path: str, prefix: str) -> str:
     return unquote(path[len(prefix) :]).strip("/")
 
@@ -1709,6 +1779,10 @@ def _query_limit(raw: object, *, default: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, min(value, maximum))
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
 
 
 def _bounded_int(raw: object, *, default: int, minimum: int, maximum: int) -> int:

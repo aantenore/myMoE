@@ -134,11 +134,17 @@ The router now learns from curated route-label data through a local distilled ar
 
 ## Observability
 
-Every generation should record:
+Every successful generation records metadata in:
+
+```text
+<runtime.work_dir>/runs.jsonl
+```
+
+The implementation is `src/local_moe/run_log.py`. Each record stores:
 
 - correlation id,
 - selected expert,
-- context policy id,
+- model ids,
 - estimated tokens by section,
 - compaction decision,
 - memory ids retrieved,
@@ -146,9 +152,9 @@ Every generation should record:
 - tokens/sec when provider reports it,
 - fallback errors.
 
-This gives us a way to compare single-model vs MoE behavior honestly.
+The log deliberately stores a prompt SHA-256 hash and prompt character count instead of prompt text, and it never stores answer text. This gives us a way to compare single-model vs MoE behavior honestly without turning observability into a transcript archive.
 
-The web API now returns context telemetry in `/api/generate` and stores it on the assistant message metadata. That metadata is reused when a saved chat is loaded.
+The web API returns context telemetry in `/api/generate` and `/api/generate/stream`, stores it on the assistant message metadata, and appends a metadata-only run record after the exchange is persisted. Recent run records are available through CLI `--runs`, web `/api/runs`, and the Advanced Run Log panel. Retention pruning uses `--runs-prune --runs-confirm` or `/api/runs/prune` with `confirm=true`.
 
 ## Evaluation Targets
 

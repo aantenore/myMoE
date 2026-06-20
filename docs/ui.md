@@ -133,6 +133,8 @@ The Local Data section exports and restores a portable JSON bundle with chat ses
 
 The Audit Trail section reads `/api/audit` and shows recent sensitive host-side actions with status, action name, timestamp, risk class, subject id, and compact metadata. It can also call `/api/audit/prune` to keep the latest configured number of audit events after an explicit confirmation. The prune action writes its own `audit.prune` event, so the trail still records that older entries were removed. It is an operational trail, not a content archive: chat text, memory text, environment variables, and model log bodies are not written to the audit file.
 
+The Run Log section reads `/api/runs` and shows recent successful generation observations. Records are stored in `<runtime.work_dir>/runs.jsonl` and include prompt hash, prompt character count, selected experts, result model ids, latency, token counts, throughput, context pressure, and retrieved memory ids. Prompt text and answer text are not stored. The same panel can call `/api/runs/prune` to keep the latest configured number of run records after explicit confirmation.
+
 The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can check memory maintenance totals, prune only expired temporal records after confirmation, and forget one record by id after the user checks the deletion confirmation box.
 
 The Knowledge section is the local RAG import path. It accepts pasted notes or documentation, chunks the text into `knowledge` records with document metadata, and stores those chunks in the same memory file. It requires an explicit confirmation checkbox because it writes local records, and its forget action requires a separate confirmation before deleting all chunks for a document id. It does not read arbitrary files from the browser.
@@ -202,6 +204,10 @@ Audit Trail exposes recent operational events plus guarded retention pruning:
 
 ![myMoE audit trail](screenshots/audit-trail.png)
 
+Run Log exposes recent metadata-only generation observations plus guarded retention pruning:
+
+![myMoE run log](screenshots/run-log.png)
+
 Runtime process controls require confirmation before starting or stopping configured model servers:
 
 ![myMoE model processes](screenshots/model-processes.png)
@@ -270,6 +276,13 @@ Setup readiness:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --config configs/moe.live.general-mlx.example.json \
   --setup
+```
+
+Inspect metadata-only generation runs:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runs --runs-limit 20
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --runs-prune --runs-keep 1000 --runs-confirm
 ```
 
 Run an allowlisted tool:
