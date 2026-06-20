@@ -30,6 +30,7 @@ from .mcp_client import (
     mcp_tool_list_payload,
 )
 from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
+from .profile_activation import activate_config_profile, activate_recommended_config_profile
 
 
 class ToolExecutionError(ValueError):
@@ -60,6 +61,7 @@ class LocalToolRunner:
         "context.compact",
         "extension.audit",
         "extension.configure",
+        "profile.activate",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -76,6 +78,8 @@ class LocalToolRunner:
         chat_path: str | Path | None = None,
         plugins_dir: str | Path | None = None,
         allow_process_execution: bool | None = None,
+        app_config_path: str = "configs/app.json",
+        active_config_path: str | None = None,
     ):
         self._registry = registry
         self._app_config = app_config
@@ -92,6 +96,8 @@ class LocalToolRunner:
         )
         self._chat_path = Path(chat_path) if chat_path is not None else _runtime_path(app_config, "chats.json")
         self._plugins_dir = Path(plugins_dir) if plugins_dir is not None else _plugins_dir(app_config)
+        self._app_config_path = app_config_path
+        self._active_config_path = active_config_path
 
     def run(self, name: str, payload: dict[str, Any] | None = None) -> ToolRunResult:
         tool = self._tool(name)
@@ -119,6 +125,8 @@ class LocalToolRunner:
             return self._extension_audit(tool, tool_payload)
         if tool.name == "extension.configure":
             return self._extension_configure(tool, tool_payload)
+        if tool.name == "profile.activate":
+            return self._profile_activate(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -369,6 +377,30 @@ class LocalToolRunner:
             }
         )
         return _ok(tool, "Extension registry configuration updated.", result)
+
+    def _profile_activate(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if payload.get("confirm") is not True:
+            raise ToolExecutionError("profile.activate requires confirm=true because it writes the app config file.")
+        if self._app_config is None:
+            raise ToolExecutionError("profile.activate requires an app config.")
+        if not self._active_config_path:
+            raise ToolExecutionError("profile.activate requires the active MoE config path.")
+        if payload.get("recommended") is True:
+            result = activate_recommended_config_profile(
+                active_config_path=self._active_config_path,
+                app_config=self._app_config,
+                app_config_path=self._app_config_path,
+                confirm=True,
+            )
+        else:
+            result = activate_config_profile(
+                _required_text(payload, "profile_path"),
+                active_config_path=self._active_config_path,
+                app_config=self._app_config,
+                app_config_path=self._app_config_path,
+                confirm=True,
+            )
+        return _ok(tool, "Runtime profile default updated.", result)
 
     def _plugin_create(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
         if payload.get("confirm") is not True:

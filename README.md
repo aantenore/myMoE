@@ -130,6 +130,14 @@ Ask myMoE to recommend the best local runtime profile for the detected machine a
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --recommend-profile
 ```
 
+Guardedly update the default runtime profile for the next app start:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --activate-recommended-profile \
+  --profile-confirm
+```
+
 Run the full local system doctor when you want one readiness report across setup, runtime health, active-profile hardware fit, model processes, extension audit, and cron state:
 
 ```bash
@@ -208,7 +216,7 @@ Advanced runtime, setup, profile discovery, model, routing, extension, MCP, cron
 
 ![myMoE advanced drawer](docs/screenshots/extensions.png)
 
-Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
+Profiles lists runnable local model configs, active/default/recommended flags, setup readiness, backend, model names, hardware fit, and copyable launch hints for setup, model startup, UI startup, and CLI usage without switching runtime state. The recommendation is computed locally from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks. Updating the default profile requires explicit confirmation, writes only `default_moe_config` in the app config file, and returns a restart command because the running MoE instance is not hot-swapped.
 
 ![myMoE runtime profiles](docs/screenshots/profiles.png)
 
@@ -395,7 +403,7 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --tool-input '{"confirm":true}'
 ```
 
-Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create`, `{"confirm": true}` for `extension.configure`, or `--cron-confirm-writes` for CLI cron execution.
+Tools are allowlisted by name. Local write tools and write-local cron jobs require explicit confirmation, for example `{"confirm": true}` for `plugin.create`, `{"confirm": true}` for `extension.configure`, `{"confirm": true}` for `profile.activate`, or `--cron-confirm-writes` for CLI cron execution.
 
 The Advanced drawer also includes Plugin Studio for creating a local plugin scaffold without writing JSON by hand. It creates `plugin.json` plus plugin-local `SKILL.md`, requires confirmation, and refreshes the registry in the running web app.
 

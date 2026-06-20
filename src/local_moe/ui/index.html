@@ -1038,6 +1038,12 @@
         </section>
         <section class="advanced-section">
           <h2>Profiles</h2>
+          <label class="check-row">
+            <input id="profile-activate-confirm" type="checkbox" />
+            <span>Confirm default profile update</span>
+          </label>
+          <button class="ghost-button" id="activate-recommended-profile" type="button">Use recommended</button>
+          <pre class="eval-output" id="profile-activation-output">No profile changes yet.</pre>
           <div class="kv" id="config-profiles"></div>
         </section>
         <section class="advanced-section">
@@ -1445,6 +1451,7 @@
         el("stop-models").addEventListener("click", stopModels);
         el("run-generation-smoke").addEventListener("click", runGenerationSmoke);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
+        el("activate-recommended-profile").addEventListener("click", activateRecommendedProfile);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-doctor-report").addEventListener("click", downloadDoctorReport);
@@ -1946,6 +1953,14 @@
                   </div>`,
               )
               .join("");
+            const activateButton =
+              profile.status === "valid"
+                ? `<button
+                    class="ghost-button"
+                    type="button"
+                    data-activate-profile="${profileIndex}"
+                  >Use profile</button>`
+                : "";
             return `
               <div class="kv-row">
                 <span>${escapeHtml(flags.join(" · ") || "profile")}</span>
@@ -1963,6 +1978,7 @@
                       ? `<details class="command-details" ${profile.active || profile.recommended ? "open" : ""}><summary>Launch hints</summary><div class="command-list">${commands}</div></details>`
                       : ""
                   }
+                  ${activateButton}
                 </span>
               </div>`;
           })
@@ -1979,6 +1995,32 @@
             copyProfileCommand(Number(button.dataset.copyProfileCommand), Number(button.dataset.commandIndex), button),
           );
         });
+        document.querySelectorAll("[data-activate-profile]").forEach((button) => {
+          button.addEventListener("click", () =>
+            activateProfile(Number(button.dataset.activateProfile)),
+          );
+        });
+      }
+
+      async function activateRecommendedProfile() {
+        await activateProfile(null, true);
+      }
+
+      async function activateProfile(profileIndex, recommended = false) {
+        const profile = profileIndex == null ? null : state.configProfiles?.profiles?.[profileIndex];
+        el("profile-activation-output").textContent = "Updating default profile...";
+        try {
+          const payload = recommended
+            ? { recommended: true, confirm: el("profile-activate-confirm").checked }
+            : { profile_path: profile?.path, confirm: el("profile-activate-confirm").checked };
+          const result = await api("/api/config/activate-profile", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          el("profile-activation-output").textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          el("profile-activation-output").textContent = error.message;
+        }
       }
 
       async function copyProfileCommand(profileIndex, commandIndex, button) {

@@ -78,6 +78,13 @@
       "enabled": true
     },
     {
+      "name": "profile.activate",
+      "description": "Guarded default runtime profile activation in the app config file.",
+      "risk_class": "write_local",
+      "side_effects": "writes_app_config_default_profile",
+      "enabled": true
+    },
+    {
       "name": "mcp.search_capabilities",
       "description": "List configured MCP servers and their declared capability domains.",
       "risk_class": "read_only",

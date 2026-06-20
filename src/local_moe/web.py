@@ -54,6 +54,11 @@ from .performance_report import (
     render_performance_report_markdown,
 )
 from .providers import ProviderError
+from .profile_activation import (
+    ProfileActivationError,
+    activate_config_profile,
+    activate_recommended_config_profile,
+)
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
@@ -999,6 +1004,55 @@ def _make_handler(
                 _send_json(self, setup_run_payload(result))
                 return
 
+            if path == "/api/config/activate-profile":
+                payload = _read_json(self)
+                confirm = payload.get("confirm") is True
+                try:
+                    if payload.get("recommended") is True:
+                        result = activate_recommended_config_profile(
+                            active_config_path=config_path,
+                            app_config=app_config,
+                            app_config_path=app_config_path,
+                            confirm=confirm,
+                        )
+                    else:
+                        result = activate_config_profile(
+                            _required_payload_text(payload, "profile_path"),
+                            active_config_path=config_path,
+                            app_config=app_config,
+                            app_config_path=app_config_path,
+                            confirm=confirm,
+                        )
+                except (ProfileActivationError, ValueError) as exc:
+                    _audit(
+                        audit_store,
+                        "config.activate_profile",
+                        "error",
+                        risk_class="write_local",
+                        metadata={"message": str(exc)},
+                    )
+                    _send_json(
+                        self,
+                        {"error": "profile_activation_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _audit(
+                    audit_store,
+                    "config.activate_profile",
+                    result["status"],
+                    risk_class="write_local",
+                    subject=result.get("new_default_config"),
+                    metadata={
+                        "confirmed": confirm,
+                        "activated": result.get("activated"),
+                        "restart_required": result.get("restart_required"),
+                    },
+                )
+                status = HTTPStatus.OK if result["status"] == "ok" else HTTPStatus.BAD_REQUEST
+                _send_json(self, result, status=status)
+                return
+
             if path == "/api/plugins":
                 payload = _read_json(self)
                 if payload.get("confirm") is not True:
@@ -1225,6 +1279,8 @@ def _make_handler(
                         registry,
                         app_config=app_config,
                         moe_config=config,
+                        app_config_path=app_config_path,
+                        active_config_path=config_path,
                     ).run(name, tool_input)
                 except ToolExecutionError as exc:
                     _audit(
