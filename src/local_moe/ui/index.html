@@ -2612,12 +2612,28 @@
       function renderRunLog(runLog) {
         const records = runLog?.records || [];
         const latest = records.slice(0, 8);
+        const summary = runLog?.summary || {};
+        const latency = summary.latency_ms || {};
+        const errors = summary.errors || {};
+        const context = summary.context || {};
+        const recommendations = summary.recommendations || [];
+        const topExpert = summary.experts?.[0];
+        const topModel = summary.models?.[0];
         el("run-log").innerHTML =
           kvRows({
             Runs: runLog?.count || 0,
             Privacy: runLog?.privacy || "metadata_only",
             Latest: latest[0]?.created_at || "None",
+            "Avg latency": latency.avg == null ? "-" : `${Number(latency.avg).toFixed(0)} ms`,
+            "P95 latency": latency.p95 == null ? "-" : `${latency.p95} ms`,
+            "Max context": context.max_token_estimate == null ? "-" : `${context.max_token_estimate} tokens`,
+            Errors: `${errors.run_count || 0} runs / ${errors.total || 0} total`,
+            "Top expert": topExpert ? `${topExpert.id} (${topExpert.count})` : "None",
+            "Top model": topModel ? `${shortModel(topModel.id)} (${topModel.count})` : "None",
           }) +
+          (recommendations.length
+            ? `<div class="kv-row"><span>Signal</span><span>${escapeHtml(recommendations[0])}</span></div>`
+            : "") +
           (latest.length
             ? latest
                 .map((record) => {
@@ -2643,7 +2659,14 @@
                 })
                 .join("")
             : '<span class="muted">No generation runs yet.</span>');
-        el("run-log-output").textContent = JSON.stringify(latest, null, 2);
+        el("run-log-output").textContent = JSON.stringify(
+          {
+            summary,
+            records: latest,
+          },
+          null,
+          2,
+        );
       }
 
       async function refreshRunLog(options = {}) {
