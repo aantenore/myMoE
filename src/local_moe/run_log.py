@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import threading
 from typing import Any
@@ -121,7 +122,71 @@ def run_log_payload(records: list[GenerationRunRecord], *, path: str | Path) -> 
         "count": len(records),
         "path": str(path),
         "privacy": "metadata_only",
+        "summary": run_log_summary(records),
         "records": [run_record_payload(record) for record in records],
+    }
+
+
+def run_log_summary(records: list[GenerationRunRecord]) -> dict[str, Any]:
+    latencies = [record.latency_ms for record in records if record.latency_ms is not None]
+    prompt_tokens = [record.prompt_tokens for record in records if record.prompt_tokens is not None]
+    completion_tokens = [
+        record.completion_tokens for record in records if record.completion_tokens is not None
+    ]
+    errors_total = sum(record.error_count for record in records)
+    context_token_estimates = [
+        value
+        for record in records
+        for value in [_optional_int(record.context.get("token_estimate"))]
+        if value is not None
+    ]
+    dropped_turns = [
+        value
+        for record in records
+        for value in [_optional_int(record.context.get("dropped_turns"))]
+        if value is not None
+    ]
+    memory_id_count = sum(len(record.context.get("memory_ids", [])) for record in records)
+    return {
+        "record_count": len(records),
+        "latest_created_at": records[0].created_at if records else None,
+        "oldest_created_at": records[-1].created_at if records else None,
+        "latency_ms": {
+            "count": len(latencies),
+            "avg": _average(latencies),
+            "p95": _percentile(latencies, 95),
+            "max": max(latencies) if latencies else None,
+        },
+        "tokens": {
+            "prompt_total": sum(prompt_tokens),
+            "completion_total": sum(completion_tokens),
+            "prompt_avg": _average(prompt_tokens),
+            "completion_avg": _average(completion_tokens),
+        },
+        "experts": _rank_counts(
+            expert_id
+            for record in records
+            for expert_id in record.selected_experts
+            if expert_id.strip()
+        ),
+        "models": _rank_counts(
+            model for record in records for model in record.result_models if model.strip()
+        ),
+        "modes": _rank_counts(record.mode for record in records if record.mode.strip()),
+        "context": {
+            "max_token_estimate": max(context_token_estimates) if context_token_estimates else None,
+            "compaction_needed_count": sum(
+                1 for record in records if bool(record.context.get("compaction_needed"))
+            ),
+            "dropped_turns_total": sum(dropped_turns),
+            "memory_hit_count": sum(1 for record in records if record.context.get("memory_ids")),
+            "memory_id_count": memory_id_count,
+        },
+        "errors": {
+            "run_count": sum(1 for record in records if record.error_count > 0),
+            "total": errors_total,
+        },
+        "recommendations": _summary_recommendations(records, latencies, errors_total),
     }
 
 
@@ -223,6 +288,53 @@ def _write_records(path: Path, records: list[GenerationRunRecord]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(payload, encoding="utf-8")
     tmp_path.replace(path)
+
+
+def _rank_counts(values: object) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value).strip()
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"id": key, "count": count}
+        for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _average(values: list[int]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 2)
+
+
+def _percentile(values: list[int], percentile: int) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, math.ceil((percentile / 100) * len(ordered)) - 1)
+    return ordered[index]
+
+
+def _summary_recommendations(
+    records: list[GenerationRunRecord], latencies: list[int], errors_total: int
+) -> list[str]:
+    recommendations: list[str] = []
+    if not records:
+        return ["No generation runs have been recorded yet."]
+    p95_latency = _percentile(latencies, 95)
+    if p95_latency is not None and p95_latency > 30000:
+        recommendations.append(
+            "P95 latency is above 30 seconds; consider a smaller active profile or fewer resident experts."
+        )
+    if errors_total:
+        recommendations.append("Some runs recorded errors; inspect model server logs and fallback order.")
+    if any(record.context.get("compaction_needed") for record in records):
+        recommendations.append("Some runs needed context compaction; review context budgets and memory volume.")
+    if not recommendations:
+        recommendations.append("Recent generation runs look healthy.")
+    return recommendations
 
 
 def _sum_int(items: object, key: str) -> int | None:

@@ -641,6 +641,8 @@ class CliTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         rendered = completed.stdout
         self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["summary"]["record_count"], 1)
+        self.assertEqual(payload["summary"]["models"], [{"id": "synthetic-general", "count": 1}])
         self.assertEqual(payload["records"][0]["correlation_id"], "corr-cli")
         self.assertNotIn("Private CLI run prompt", rendered)
 

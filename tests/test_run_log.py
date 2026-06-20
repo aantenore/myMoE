@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from local_moe.run_log import RunLogStore, run_log_payload, run_log_prune_payload
+from local_moe.run_log import RunLogStore, run_log_payload, run_log_prune_payload, run_log_summary
 
 
 class RunLogTests(unittest.TestCase):
@@ -49,6 +49,12 @@ class RunLogTests(unittest.TestCase):
 
         rendered = str(payload)
         self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["summary"]["record_count"], 1)
+        self.assertEqual(payload["summary"]["latency_ms"]["avg"], 42)
+        self.assertEqual(payload["summary"]["latency_ms"]["p95"], 42)
+        self.assertEqual(payload["summary"]["experts"], [{"id": "general", "count": 1}])
+        self.assertEqual(payload["summary"]["models"], [{"id": "local/model", "count": 1}])
+        self.assertEqual(payload["summary"]["context"]["memory_hit_count"], 1)
         record = payload["records"][0]
         self.assertEqual(record["mode"], "generate")
         self.assertEqual(record["session_id"], "session-1")
@@ -85,6 +91,72 @@ class RunLogTests(unittest.TestCase):
         self.assertEqual(payload["removed_count"], 1)
         self.assertEqual(remaining["count"], 2)
         self.assertEqual([item["correlation_id"] for item in remaining["records"]], ["corr-2", "corr-1"])
+
+    def test_summary_reports_latency_context_and_error_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunLogStore(Path(tmp) / "runs.jsonl")
+            store.record_generation(
+                mode="generate",
+                prompt="Private slow prompt",
+                latency_ms=35000,
+                context_payload={
+                    "token_estimate": 900,
+                    "budget_tokens": 1000,
+                    "compaction_needed": True,
+                    "dropped_turns": 2,
+                    "sections": {"current_prompt": 100},
+                    "memory_ids": ["mem-1", "mem-2"],
+                },
+                response_payload={
+                    "content": "Private slow answer",
+                    "correlation_id": "corr-slow",
+                    "route": {"selected": [{"expert_id": "general"}], "fallback_order": []},
+                    "results": [
+                        {
+                            "model": "local/slow",
+                            "prompt_tokens": 20,
+                            "completion_tokens": 10,
+                        }
+                    ],
+                    "errors": ["fallback failed"],
+                },
+            )
+            store.record_generation(
+                mode="stream",
+                prompt="Private fast prompt",
+                latency_ms=1000,
+                response_payload={
+                    "content": "Private fast answer",
+                    "correlation_id": "corr-fast",
+                    "route": {"selected": [{"expert_id": "fast_fallback"}], "fallback_order": []},
+                    "results": [
+                        {
+                            "model": "local/fast",
+                            "prompt_tokens": 5,
+                            "completion_tokens": 3,
+                        }
+                    ],
+                    "errors": [],
+                },
+            )
+
+            records = store.list_records(limit=10)
+            summary = run_log_summary(records)
+
+        rendered = str(summary)
+        self.assertEqual(summary["record_count"], 2)
+        self.assertEqual(summary["latency_ms"]["p95"], 35000)
+        self.assertEqual(summary["latency_ms"]["max"], 35000)
+        self.assertEqual(summary["tokens"]["prompt_total"], 25)
+        self.assertEqual(summary["tokens"]["completion_total"], 13)
+        self.assertEqual(summary["context"]["compaction_needed_count"], 1)
+        self.assertEqual(summary["context"]["dropped_turns_total"], 2)
+        self.assertEqual(summary["context"]["memory_id_count"], 2)
+        self.assertEqual(summary["errors"]["total"], 1)
+        self.assertTrue(any("P95 latency" in item for item in summary["recommendations"]))
+        self.assertTrue(any("errors" in item for item in summary["recommendations"]))
+        self.assertNotIn("Private slow prompt", rendered)
+        self.assertNotIn("Private fast answer", rendered)
 
 
 if __name__ == "__main__":
