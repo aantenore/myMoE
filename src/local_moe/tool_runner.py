@@ -31,6 +31,7 @@ from .mcp_client import (
 )
 from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
+from .storage import DEFAULT_MIN_FREE_GIB, build_storage_report
 
 
 class ToolExecutionError(ValueError):
@@ -62,6 +63,7 @@ class LocalToolRunner:
         "extension.audit",
         "extension.configure",
         "profile.activate",
+        "storage.inspect",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -127,6 +129,8 @@ class LocalToolRunner:
             return self._extension_configure(tool, tool_payload)
         if tool.name == "profile.activate":
             return self._profile_activate(tool, tool_payload)
+        if tool.name == "storage.inspect":
+            return self._storage_inspect(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -402,6 +406,21 @@ class LocalToolRunner:
             )
         return _ok(tool, "Runtime profile default updated.", result)
 
+    def _storage_inspect(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if self._app_config is None:
+            raise ToolExecutionError("storage.inspect requires an app config.")
+        min_free_gib = _float_in_range(
+            payload.get("min_free_gib", DEFAULT_MIN_FREE_GIB),
+            "min_free_gib",
+            minimum=0,
+            maximum=1_000_000_000,
+        )
+        return _ok(
+            tool,
+            "Storage diagnostics completed.",
+            build_storage_report(self._app_config, min_free_gib=min_free_gib),
+        )
+
     def _plugin_create(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
         if payload.get("confirm") is not True:
             raise ToolExecutionError("plugin.create requires confirm=true because it writes local files.")
@@ -569,6 +588,16 @@ def _int_in_range(raw: object, key: str, *, minimum: int, maximum: int) -> int:
         raise ToolExecutionError(f"{key} must be an integer.") from exc
     if value < minimum or value > maximum:
         raise ToolExecutionError(f"{key} must be between {minimum} and {maximum}.")
+    return value
+
+
+def _float_in_range(raw: object, key: str, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ToolExecutionError(f"{key} must be a number.") from exc
+    if value < minimum or value > maximum:
+        raise ToolExecutionError(f"{key} must be between {minimum:g} and {maximum:g}.")
     return value
 
 

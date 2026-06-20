@@ -85,6 +85,13 @@
       "enabled": true
     },
     {
+      "name": "storage.inspect",
+      "description": "Inspect configured local runtime storage capacity for model cache and work directories.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
       "name": "mcp.search_capabilities",
       "description": "List configured MCP servers and their declared capability domains.",
       "risk_class": "read_only",

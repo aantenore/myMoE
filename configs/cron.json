@@ -44,6 +44,17 @@
       "risk_class": "compute_only"
     },
     {
+      "id": "storage-inspect",
+      "description": "Check configured runtime storage capacity for model cache and work directories.",
+      "enabled": true,
+      "schedule": {
+        "type": "interval",
+        "seconds": 3600
+      },
+      "command": ["storage.inspect", "--app-config", "configs/app.json"],
+      "risk_class": "compute_only"
+    },
+    {
       "id": "memory-prune-expired",
       "description": "Delete expired local memory records when write-local cron jobs are explicitly confirmed.",
       "enabled": false,

@@ -350,6 +350,34 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertTrue(result.payload["restart_required"])
         self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
 
+    def test_storage_inspect_reports_configured_paths_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config_path = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            raw = json.loads(app_config_path.read_text(encoding="utf-8"))
+            cache = root / "missing-cache"
+            work = root / "missing-work"
+            raw["runtime"]["model_cache_dir"] = str(cache)
+            raw["runtime"]["work_dir"] = str(work)
+            app_config_path.write_text(json.dumps(raw), encoding="utf-8")
+            runner = LocalToolRunner(
+                load_extension_registry(),
+                app_config=load_app_config(app_config_path),
+                app_config_path=str(app_config_path),
+            )
+
+            result = runner.run("storage.inspect", {"min_free_gib": 0})
+            cache_exists = cache.exists()
+            work_exists = work.exists()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["schema_version"], "1.0")
+        self.assertEqual(result.payload["status"], "ready")
+        self.assertEqual(result.payload["min_free_gib"], 0.0)
+        self.assertEqual({item["label"] for item in result.payload["paths"]}, {"model_cache_dir", "work_dir"})
+        self.assertFalse(cache_exists)
+        self.assertFalse(work_exists)
+
     def test_mcp_search_capabilities_returns_declared_servers(self) -> None:
         runner = LocalToolRunner(load_extension_registry())
 

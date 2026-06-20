@@ -249,6 +249,6 @@ The bundle includes the Doctor report, quality gate status, sanitized performanc
 
 ## Background Maintenance
 
-The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web UI starts, it also starts a lightweight in-process scheduler that polls every `runtime.cron_poll_seconds` seconds and runs due safe jobs. The bundled registry includes extension audit, memory maintenance, and runtime optimizer monitoring as safe jobs. By default, `runtime.cron_confirm_writes=false`, so write-local jobs such as expired-memory pruning, router distillation, or `runtime.optimizer --out ...` report exports remain manual and require the CLI `--cron-confirm-writes` flag or the UI confirmation checkbox.
+The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web UI starts, it also starts a lightweight in-process scheduler that polls every `runtime.cron_poll_seconds` seconds and runs due safe jobs. The bundled registry includes extension audit, memory maintenance, storage inspection, and runtime optimizer monitoring as safe jobs. By default, `runtime.cron_confirm_writes=false`, so write-local jobs such as expired-memory pruning, router distillation, or `runtime.optimizer --out ...` report exports remain manual and require the CLI `--cron-confirm-writes` flag or the UI confirmation checkbox.
 
 This design stays cross-platform because it does not require launchd, systemd, Windows Task Scheduler, or a separate daemon. Operators who prefer OS-level scheduling can still call the same CLI commands from their scheduler of choice.

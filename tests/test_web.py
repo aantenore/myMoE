@@ -94,6 +94,10 @@ class WebTests(unittest.TestCase):
             performance_markdown = _get_text(base_url + "/api/performance/report.md")
             optimizer = _get_json(base_url + "/api/runtime/optimizer")
             optimizer_markdown = _get_text(base_url + "/api/runtime/optimizer/report.md")
+            storage_tool = _post_json(
+                base_url + "/api/tools/run",
+                {"name": "storage.inspect", "input": {"min_free_gib": 0}},
+            )
         finally:
             server.shutdown()
             thread.join(timeout=5)
@@ -150,7 +154,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("filesystem-docs", {preset["id"] for preset in extension_templates["presets"]["mcp_server"]})
         self.assertIn("daily-memory-maintenance", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
         self.assertIn("hourly-runtime-optimizer", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
+        self.assertIn("hourly-storage-inspect", {preset["id"] for preset in extension_templates["presets"]["cron_job"]})
         self.assertIn("runtime.optimizer", {action["id"] for action in extension_templates["cron_actions"]})
+        self.assertIn("storage.inspect", {action["id"] for action in extension_templates["cron_actions"]})
         self.assertEqual(audit["audit"]["issue_count"], 0)
         self.assertIn("extensions", audit)
         self.assertEqual(support_bundle["schema_version"], "1.0")
@@ -172,6 +178,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("actions", optimizer)
         self.assertNotIn("content_excerpt", json.dumps(optimizer))
         self.assertIn("# myMoE Runtime Optimizer Report", optimizer_markdown)
+        self.assertEqual(storage_tool["status"], "ok")
+        self.assertEqual(storage_tool["payload"]["schema_version"], "1.0")
+        self.assertIn(storage_tool["payload"]["status"], {"ready", "attention"})
 
     def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
