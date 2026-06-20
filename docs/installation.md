@@ -158,9 +158,10 @@ PYTHONPATH=src .venv/bin/python -m local_moe.web --config configs/moe.live.ollam
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor --doctor-format markdown
 ```
 
-The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, active-profile hardware fit, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor.
+The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, active-profile hardware fit, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor. The Markdown form is available from CLI and `/api/doctor/report.md` for issue reports and handoffs.
 
 To inspect the latest local model benchmark decision without starting a new benchmark:
 

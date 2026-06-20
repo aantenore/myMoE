@@ -18,6 +18,8 @@ from .model_servers import ModelServerManager
 from .scheduler import cron_status
 from .setup_status import inspect_setup_status, setup_status_payload
 
+DOCTOR_REPORT_FILENAME = "mymoe-doctor-report.md"
+
 
 def build_doctor_report(
     *,
@@ -93,6 +95,89 @@ def build_doctor_report(
         "extensions": registry_payload(registry),
         "cron": cron,
     }
+
+
+def doctor_report_filename() -> str:
+    return DOCTOR_REPORT_FILENAME
+
+
+def render_doctor_report_markdown(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {}) if isinstance(report.get("summary"), dict) else {}
+    hardware_fit = report.get("hardware_fit", {}) if isinstance(report.get("hardware_fit"), dict) else {}
+    setup = report.get("setup", {}) if isinstance(report.get("setup"), dict) else {}
+    health = report.get("health", {}) if isinstance(report.get("health"), dict) else {}
+    runtime = report.get("runtime", {}) if isinstance(report.get("runtime"), dict) else {}
+    model_processes = report.get("model_processes", {}) if isinstance(report.get("model_processes"), dict) else {}
+    extension_audit = report.get("extension_audit", {}) if isinstance(report.get("extension_audit"), dict) else {}
+    cron = report.get("cron", {}) if isinstance(report.get("cron"), dict) else {}
+    checks = [item for item in report.get("checks", []) if isinstance(item, dict)]
+    recommendations = [str(item) for item in report.get("recommendations", [])]
+    lines = [
+        "# myMoE System Doctor Report",
+        "",
+        f"Status: `{report.get('status', 'unknown')}`",
+        f"Checked at: `{report.get('checked_at', 'unknown')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Passed checks: `{summary.get('passed', 0)}`",
+        f"- Warnings: `{summary.get('warnings', 0)}`",
+        f"- Failed checks: `{summary.get('failed', 0)}`",
+        "",
+        "## Checks",
+        "",
+        "| Check | Status | Severity | Detail |",
+        "| --- | --- | --- | --- |",
+    ]
+    for check in checks:
+        detail = str(check.get("detail") or check.get("message") or "")
+        lines.append(
+            "| `{id}` | `{status}` | `{severity}` | {detail} |".format(
+                id=_md_cell(check.get("id", "")),
+                status=_md_cell(check.get("status", "")),
+                severity=_md_cell(check.get("severity", "")),
+                detail=_md_cell(detail),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Recommendations",
+            "",
+        ]
+    )
+    if recommendations:
+        lines.extend(f"- {item}" for item in recommendations)
+    else:
+        lines.append("- No recommendations.")
+    lines.extend(
+        [
+            "",
+            "## Runtime",
+            "",
+            f"- Backend: `{runtime.get('backend', 'unknown')}`",
+            f"- Platform: `{runtime.get('platform_key', 'unknown')}`",
+            f"- Setup status: `{setup.get('status', 'unknown')}`",
+            f"- Health status: `{health.get('status', 'unknown')}`",
+            f"- Model process count: `{model_processes.get('count', 0)}`",
+            f"- Extension issues: `{extension_audit.get('issue_count', 0)}`",
+            f"- Cron jobs: `{len(cron.get('jobs', [])) if isinstance(cron.get('jobs', []), list) else 0}`",
+            "",
+            "## Hardware Fit",
+            "",
+            f"- Status: `{hardware_fit.get('status', 'unknown')}`",
+            f"- Summary: {hardware_fit.get('summary', 'unknown')}",
+            f"- Estimated memory: `{hardware_fit.get('estimated_memory_gb', 'unknown')} GiB`",
+            f"- Detected memory: `{hardware_fit.get('memory_gib', 'unknown')} GiB`",
+            f"- Resident large experts: `{hardware_fit.get('resident_large_experts', 0)}`",
+            "",
+            "## Privacy",
+            "",
+            "This report is metadata-only. It does not include chat transcripts, memory records, environment variables, API keys, model log bodies, or benchmark response excerpts.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _setup_check(setup: dict[str, Any]) -> dict[str, Any]:
@@ -275,3 +360,7 @@ def _cron_state_path(app_config: object) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _md_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ").strip()

@@ -23,7 +23,7 @@ from .data_bundle import (
     local_data_restore_payload,
     restore_local_data_bundle,
 )
-from .doctor import build_doctor_report
+from .doctor import build_doctor_report, doctor_report_filename, render_doctor_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import (
     ExtensionError,
@@ -188,6 +188,23 @@ def _make_handler(
                         registry=registry,
                         model_manager=model_manager,
                     ),
+                )
+                return
+
+            if path == "/api/doctor/report.md":
+                report = build_doctor_report(
+                    config_path=config_path,
+                    config=config,
+                    app_config=app_config,
+                    app_config_path=app_config_path,
+                    registry=registry,
+                    model_manager=model_manager,
+                )
+                _send_download(
+                    self,
+                    render_doctor_report_markdown(report).encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    filename=doctor_report_filename(),
                 )
                 return
 

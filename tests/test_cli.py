@@ -94,6 +94,27 @@ class CliTests(unittest.TestCase):
         self.assertIn("download_command_display", payload["setup"])
         self.assertTrue(payload["extensions"]["tools"])
 
+    def test_doctor_prints_markdown_report(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--doctor",
+                "--doctor-format",
+                "markdown",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("# myMoE System Doctor Report", completed.stdout)
+        self.assertIn("## Checks", completed.stdout)
+        self.assertIn("`hardware_fit`", completed.stdout)
+
     def test_setup_prints_model_asset_status(self) -> None:
         completed = subprocess.run(
             [
