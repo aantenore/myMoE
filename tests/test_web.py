@@ -265,6 +265,37 @@ class WebTests(unittest.TestCase):
         self.assertTrue(confirmed["restart_required"])
         self.assertEqual(updated["default_moe_config"], "tests/fixtures/moe.synthetic.json")
 
+    def test_profile_preparation_endpoint_uses_requested_profile(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            guarded = _post_json(
+                base_url + "/api/config/prepare-profile",
+                {
+                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                    "execute": True,
+                    "download_models": True,
+                },
+            )
+            confirmed = _post_json(
+                base_url + "/api/config/prepare-profile",
+                {
+                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                },
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(guarded["status"], "confirmation_required")
+        self.assertEqual(guarded["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(confirmed["status"], "planned")
+        self.assertEqual(confirmed["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertTrue(confirmed["ok"])
+
     def test_creates_plugin_from_web_api_and_refreshes_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1051,16 +1082,22 @@ class WebTests(unittest.TestCase):
         self.assertIn("/api/config/profiles", html)
         self.assertIn("/api/config/recommendation", html)
         self.assertIn("/api/config/activate-profile", html)
+        self.assertIn("/api/config/prepare-profile", html)
         self.assertIn("renderSetup", html)
         self.assertIn("renderConfigProfiles", html)
         self.assertIn("Recommended", html)
         self.assertIn("profile.recommended", html)
         self.assertIn("recommendation.next_actions", html)
         self.assertIn("profile-activate-confirm", html)
+        self.assertIn("profile-prepare-confirm", html)
         self.assertIn("activateRecommendedProfile", html)
         self.assertIn("activateProfile", html)
+        self.assertIn("prepareRecommendedProfile", html)
+        self.assertIn("prepareProfile", html)
         self.assertIn("Use recommended", html)
         self.assertIn("Use profile", html)
+        self.assertIn("Prepare recommended", html)
+        self.assertIn("Prepare profile", html)
         self.assertIn("profile.hardware_fit", html)
         self.assertIn("profileHardwareLabel", html)
         self.assertIn("Hardware fit", html)

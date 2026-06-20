@@ -71,6 +71,16 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --recommend-profile
 
 The same read-only decision is exposed by `/api/config/recommendation` and embedded in `/api/config/profiles` for the Advanced Profiles panel.
 
+To prepare the recommended profile's runtime dependencies and model assets before activation:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prepare-recommended-profile \
+  --prepare-execute \
+  --prepare-download-models \
+  --prepare-confirm
+```
+
 To set the recommended profile as the app default for the next start:
 
 ```bash

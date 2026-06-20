@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+build/
+*.egg-info/
 work/
 outputs/*.tmp

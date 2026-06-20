@@ -1004,6 +1004,58 @@ def _make_handler(
                 _send_json(self, setup_run_payload(result))
                 return
 
+            if path == "/api/config/prepare-profile":
+                payload = _read_json(self)
+                try:
+                    if payload.get("recommended") is True:
+                        recommended = recommend_config_profile(
+                            active_config_path=config_path,
+                            app_config=app_config,
+                            app_config_path=app_config_path,
+                        )["recommendation"]
+                        profile_path = str(recommended.get("profile_path") or "")
+                        if not profile_path:
+                            raise ValueError("No recommended runtime profile is available.")
+                    else:
+                        profile_path = _required_payload_text(payload, "profile_path")
+                    result = run_runtime_setup(
+                        config_path=profile_path,
+                        app_config_path=app_config_path,
+                        execute=bool(payload.get("execute", False)),
+                        download_models=bool(payload.get("download_models", False)),
+                        confirm=bool(payload.get("confirm", False)),
+                    )
+                except Exception as exc:
+                    _audit(
+                        audit_store,
+                        "config.prepare_profile",
+                        "error",
+                        risk_class="process_execution",
+                        metadata={"message": str(exc)},
+                    )
+                    _send_json(
+                        self,
+                        {"error": "profile_preparation_error", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                _audit(
+                    audit_store,
+                    "config.prepare_profile",
+                    result.status,
+                    risk_class="process_execution" if result.execute or result.download_models else "read_only",
+                    subject=profile_path,
+                    metadata={
+                        "execute": result.execute,
+                        "download_models": result.download_models,
+                        "confirmed": result.confirmed,
+                    },
+                )
+                response = setup_run_payload(result)
+                response["profile_path"] = profile_path
+                _send_json(self, response)
+                return
+
             if path == "/api/config/activate-profile":
                 payload = _read_json(self)
                 confirm = payload.get("confirm") is True

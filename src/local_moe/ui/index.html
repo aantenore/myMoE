@@ -1042,8 +1042,14 @@
             <input id="profile-activate-confirm" type="checkbox" />
             <span>Confirm default profile update</span>
           </label>
+          <label class="check-row">
+            <input id="profile-prepare-confirm" type="checkbox" />
+            <span>Confirm installs and model downloads for profiles</span>
+          </label>
           <button class="ghost-button" id="activate-recommended-profile" type="button">Use recommended</button>
+          <button class="ghost-button" id="prepare-recommended-profile" type="button">Prepare recommended</button>
           <pre class="eval-output" id="profile-activation-output">No profile changes yet.</pre>
+          <pre class="eval-output" id="profile-preparation-output">No profile preparation yet.</pre>
           <div class="kv" id="config-profiles"></div>
         </section>
         <section class="advanced-section">
@@ -1452,6 +1458,7 @@
         el("run-generation-smoke").addEventListener("click", runGenerationSmoke);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
         el("activate-recommended-profile").addEventListener("click", activateRecommendedProfile);
+        el("prepare-recommended-profile").addEventListener("click", prepareRecommendedProfile);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
         el("download-doctor-report").addEventListener("click", downloadDoctorReport);
@@ -1961,6 +1968,14 @@
                     data-activate-profile="${profileIndex}"
                   >Use profile</button>`
                 : "";
+            const prepareButton =
+              profile.status === "valid"
+                ? `<button
+                    class="ghost-button"
+                    type="button"
+                    data-prepare-profile="${profileIndex}"
+                  >Prepare profile</button>`
+                : "";
             return `
               <div class="kv-row">
                 <span>${escapeHtml(flags.join(" · ") || "profile")}</span>
@@ -1979,6 +1994,7 @@
                       : ""
                   }
                   ${activateButton}
+                  ${prepareButton}
                 </span>
               </div>`;
           })
@@ -2000,10 +2016,19 @@
             activateProfile(Number(button.dataset.activateProfile)),
           );
         });
+        document.querySelectorAll("[data-prepare-profile]").forEach((button) => {
+          button.addEventListener("click", () =>
+            prepareProfile(Number(button.dataset.prepareProfile)),
+          );
+        });
       }
 
       async function activateRecommendedProfile() {
         await activateProfile(null, true);
+      }
+
+      async function prepareRecommendedProfile() {
+        await prepareProfile(null, true);
       }
 
       async function activateProfile(profileIndex, recommended = false) {
@@ -2020,6 +2045,34 @@
           el("profile-activation-output").textContent = JSON.stringify(result, null, 2);
         } catch (error) {
           el("profile-activation-output").textContent = error.message;
+        }
+      }
+
+      async function prepareProfile(profileIndex, recommended = false) {
+        const profile = profileIndex == null ? null : state.configProfiles?.profiles?.[profileIndex];
+        el("profile-preparation-output").textContent = "Preparing profile...";
+        try {
+          const payload = recommended
+            ? {
+                recommended: true,
+                execute: true,
+                download_models: true,
+                confirm: el("profile-prepare-confirm").checked,
+              }
+            : {
+                profile_path: profile?.path,
+                execute: true,
+                download_models: true,
+                confirm: el("profile-prepare-confirm").checked,
+              };
+          const result = await api("/api/config/prepare-profile", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          el("profile-preparation-output").textContent = JSON.stringify(result, null, 2);
+          await loadMeta();
+        } catch (error) {
+          el("profile-preparation-output").textContent = error.message;
         }
       }
 
