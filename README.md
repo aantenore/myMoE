@@ -129,6 +129,13 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor --doctor-format markdown
 ```
 
+Capture a metadata-only environment snapshot with platform, Python, package versions, git revision, active config, hardware summary, and configured local model identities:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --about
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --about --about-format markdown
+```
+
 Inspect the latest local performance decision without running a new benchmark:
 
 ```bash
@@ -142,7 +149,7 @@ Create a privacy-safe support bundle for issues or handoff:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, quality gate status, sanitized performance report, hardware profile, runtime file paths, and model log paths. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, and log contents.
+The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, hardware profile, runtime file paths, and model log paths. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, API keys, and log contents.
 
 Inspect configured model process status:
 
@@ -199,7 +206,7 @@ Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, benchmark evidence, plugin registry problems, cron status, a downloadable Doctor Markdown report, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, environment snapshot, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 

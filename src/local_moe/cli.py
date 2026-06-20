@@ -10,6 +10,7 @@ from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .config import load_config
 from .doctor import build_doctor_report, render_doctor_report_markdown
+from .environment import build_environment_report, render_environment_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
 from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
@@ -33,6 +34,9 @@ def main() -> None:
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--doctor-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--doctor-out")
+    parser.add_argument("--about", action="store_true")
+    parser.add_argument("--about-format", choices=["json", "markdown"], default="json")
+    parser.add_argument("--about-out")
     parser.add_argument("--performance-report", action="store_true")
     parser.add_argument("--performance-report-format", choices=["json", "markdown"], default="json")
     parser.add_argument("--performance-report-out")
@@ -76,6 +80,23 @@ def main() -> None:
         rendered = render_doctor_report_markdown(report) if args.doctor_format == "markdown" else json.dumps(report, indent=2)
         if args.doctor_out:
             out = Path(args.doctor_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(rendered, encoding="utf-8")
+            print(json.dumps({"written": str(out)}, indent=2))
+        else:
+            print(rendered)
+        return
+
+    if args.about or args.about_out:
+        payload = build_environment_report(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+            app_config_path=args.app_config,
+        )
+        rendered = render_environment_report_markdown(payload) if args.about_format == "markdown" else json.dumps(payload, indent=2)
+        if args.about_out:
+            out = Path(args.about_out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(rendered, encoding="utf-8")
             print(json.dumps({"written": str(out)}, indent=2))

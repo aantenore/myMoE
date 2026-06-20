@@ -115,6 +115,53 @@ class CliTests(unittest.TestCase):
         self.assertIn("## Checks", completed.stdout)
         self.assertIn("`hardware_fit`", completed.stdout)
 
+    def test_about_prints_environment_snapshot(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--about",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertIn("python", payload)
+        self.assertIn("packages", payload)
+        self.assertEqual(payload["runtime"]["expert_count"], 3)
+
+    def test_about_prints_markdown_snapshot(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--about",
+                "--about-format",
+                "markdown",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("# myMoE Environment Snapshot", completed.stdout)
+        self.assertIn("## Experts", completed.stdout)
+        self.assertIn("`synthetic-general`", completed.stdout)
+
     def test_setup_prints_model_asset_status(self) -> None:
         completed = subprocess.run(
             [
@@ -160,6 +207,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("chat transcripts", payload["privacy"]["excludes"])
         self.assertIn("quality_gate", payload)
         self.assertIn("performance", payload)
+        self.assertIn("environment", payload)
+        self.assertEqual(payload["environment"]["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
 
     def test_performance_report_prints_runtime_decision(self) -> None:
         completed = subprocess.run(

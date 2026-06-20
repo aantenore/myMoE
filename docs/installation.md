@@ -163,6 +163,15 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --doctor --doctor-format markdo
 
 The doctor output reports an overall `ready`, `attention`, or `blocked` status with normalized checks, recommendations, platform, backend choice, install commands, model commands, setup readiness, active-profile hardware fit, runtime health, model process state, extension audit, configured tools, skills, plugins, MCP servers, and cron jobs. The same report is available in the web UI through `/api/doctor` and Advanced System Doctor. The Markdown form is available from CLI and `/api/doctor/report.md` for issue reports and handoffs.
 
+To capture a metadata-only environment snapshot for reproducibility or issue reports:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --about
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --about --about-format markdown
+```
+
+The snapshot includes app mode, config paths, platform, Python version, selected package versions, git revision, hardware summary, routing policy, and configured local model identities. The same data is exposed by the web UI through `/api/about`, `/api/about/report.md`, and Advanced Environment.
+
 To inspect the latest local model benchmark decision without starting a new benchmark:
 
 ```bash

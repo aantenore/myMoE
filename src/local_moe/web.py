@@ -24,6 +24,11 @@ from .data_bundle import (
     restore_local_data_bundle,
 )
 from .doctor import build_doctor_report, doctor_report_filename, render_doctor_report_markdown
+from .environment import (
+    build_environment_report,
+    environment_report_filename,
+    render_environment_report_markdown,
+)
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import (
     ExtensionError,
@@ -205,6 +210,33 @@ def _make_handler(
                     render_doctor_report_markdown(report).encode("utf-8"),
                     content_type="text/markdown; charset=utf-8",
                     filename=doctor_report_filename(),
+                )
+                return
+
+            if path == "/api/about":
+                _send_json(
+                    self,
+                    build_environment_report(
+                        config_path=config_path,
+                        config=config,
+                        app_config=app_config,
+                        app_config_path=app_config_path,
+                    ),
+                )
+                return
+
+            if path == "/api/about/report.md":
+                report = build_environment_report(
+                    config_path=config_path,
+                    config=config,
+                    app_config=app_config,
+                    app_config_path=app_config_path,
+                )
+                _send_download(
+                    self,
+                    render_environment_report_markdown(report).encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    filename=environment_report_filename(),
                 )
                 return
 

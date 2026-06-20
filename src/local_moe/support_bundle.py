@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .doctor import build_doctor_report
+from .environment import build_environment_report
 from .extensions import ExtensionRegistry
 from .model_servers import ModelServerManager
 from .performance_report import build_performance_report
@@ -36,6 +37,7 @@ def build_support_bundle(
         "privacy": {
             "includes": [
                 "system doctor report",
+                "environment snapshot",
                 "quality gate status",
                 "sanitized performance report",
                 "hardware profile",
@@ -52,6 +54,12 @@ def build_support_bundle(
             ],
         },
         "doctor": doctor,
+        "environment": build_environment_report(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+            app_config_path=app_config_path,
+        ),
         "quality_gate": _read_json_artifact(quality_gate_path),
         "performance": build_performance_report(),
         "hardware_profile": _read_json_artifact(hardware_profile_path),
