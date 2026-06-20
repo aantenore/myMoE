@@ -1,6 +1,33 @@
 # CI
 
-GitHub refused workflow pushes from the current OAuth token because it does not include the `workflow` scope. Until that scope is available, use this workflow template manually from GitHub or push it with a token that can manage Actions workflows.
+myMoE's canonical quality gate is `scripts/run_ci_checks.py`. It is implemented in Python and runs subprocesses with explicit argv lists instead of shell-specific command strings, so it can be used from macOS, Linux, Windows, GitHub Actions, or another CI runner.
+
+Run the full gate locally:
+
+```bash
+python3 scripts/run_ci_checks.py
+```
+
+Inspect the plan without executing it:
+
+```bash
+python3 scripts/run_ci_checks.py --dry-run --json
+```
+
+The gate currently performs these steps:
+
+1. Compile `src`, `tests`, `experiments`, and `scripts`.
+2. Run the full `unittest` suite.
+3. Run the base synthetic routing smoke eval.
+4. Run the extended synthetic routing smoke eval.
+5. Run the project quality gate from `configs/quality-gate.json`.
+6. Refresh the hardware profile artifact.
+
+`make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
+
+## GitHub Actions Template
+
+The current GitHub token available in this workspace has `repo` scope but not `workflow` scope, so commits that create or modify `.github/workflows/*` are rejected by GitHub. Until a token with `workflow` scope is available, create this workflow manually in GitHub or push it from a credential that can manage Actions workflows.
 
 ```yaml
 name: CI
@@ -11,7 +38,12 @@ on:
 
 jobs:
   checks:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,8 +51,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Run quality gate
-        run: ./scripts/run_all_checks.sh
+        run: python scripts/run_ci_checks.py
 ```

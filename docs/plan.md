@@ -42,6 +42,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Add guarded extension self-configuration for MCP server and cron job entries.
 - [x] Add guided Extension Studio for MCP server and cron job templates.
+- [x] Add cross-platform Python quality gate runner for local and CI use.
 - [x] Plug one real local GGUF expert into `configs/moe.live.qwen25-coder.json`.
 - [x] Benchmark single expert vs MoE top-1 routing.
 - [x] Add top-2 routing plus deterministic disagreement reporting.
