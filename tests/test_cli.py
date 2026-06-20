@@ -184,6 +184,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["models"], [])
         self.assertIn("scripts/bootstrap_runtime.py", payload["download_command_display"])
 
+    def test_smoke_generate_prints_runtime_probe(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--smoke-generate",
+                "--smoke-prompt",
+                "Summarize this in one sentence.",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "pass")
+        self.assertGreater(payload["content_chars"], 0)
+        self.assertEqual(payload["route"]["selected"][0]["expert_id"], "general")
+
     def test_support_bundle_prints_privacy_safe_payload(self) -> None:
         completed = subprocess.run(
             [

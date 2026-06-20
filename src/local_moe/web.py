@@ -57,6 +57,7 @@ from .providers import ProviderError
 from .scheduler import BackgroundCronRunner, cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
+from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
 from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
@@ -541,6 +542,17 @@ def _make_handler(
                         "error",
                         {"error": "provider_error", "message": str(exc)},
                     )
+                return
+
+            if path == "/api/smoke/generate":
+                payload = _read_json(self)
+                prompt = str(payload.get("prompt") or DEFAULT_SMOKE_PROMPT)
+                result = build_generation_smoke_report(
+                    config,
+                    prompt=prompt,
+                    correlation_id=_optional_str(payload.get("correlation_id")),
+                )
+                _send_json(self, result)
                 return
 
             if path == "/api/generate":

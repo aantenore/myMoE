@@ -1006,6 +1006,7 @@
           <div class="tool-row">
             <button class="ghost-button" id="start-models" type="button">Start models</button>
             <button class="ghost-button" id="stop-models" type="button">Stop managed</button>
+            <button class="ghost-button" id="run-generation-smoke" type="button">Run smoke</button>
           </div>
           <pre class="eval-output" id="models-output">Not run yet.</pre>
           <div class="tool-controls">
@@ -1440,6 +1441,7 @@
         el("download-about-report").addEventListener("click", downloadAboutReport);
         el("start-models").addEventListener("click", startModels);
         el("stop-models").addEventListener("click", stopModels);
+        el("run-generation-smoke").addEventListener("click", runGenerationSmoke);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
         el("run-setup").addEventListener("click", runSetup);
         el("run-doctor").addEventListener("click", runDoctor);
@@ -2071,6 +2073,31 @@
             }),
           });
           el("models-output").textContent = JSON.stringify(result, null, 2);
+          await refreshHealth();
+        } catch (error) {
+          el("models-output").textContent = error.message;
+        }
+      }
+
+      async function runGenerationSmoke() {
+        el("models-output").textContent = "Running generation smoke test...";
+        try {
+          const result = await api("/api/smoke/generate", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          el("models-output").textContent = JSON.stringify(
+            {
+              status: result.status,
+              latency_ms: result.latency_ms,
+              route: result.route,
+              results: result.results,
+              content: result.content,
+              recommendations: result.recommendations,
+            },
+            null,
+            2,
+          );
           await refreshHealth();
         } catch (error) {
           el("models-output").textContent = error.message;

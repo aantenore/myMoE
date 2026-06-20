@@ -172,6 +172,14 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --about --about-format markdown
 
 The snapshot includes app mode, config paths, platform, Python version, selected package versions, git revision, hardware summary, routing policy, and configured local model identities. The same data is exposed by the web UI through `/api/about`, `/api/about/report.md`, and Advanced Environment.
 
+To verify that the configured local model endpoint can produce visible content, not only answer health probes:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --smoke-generate
+```
+
+The same generation smoke test is exposed in the web UI through `/api/smoke/generate` and Advanced Runtime.
+
 To inspect the latest local model benchmark decision without starting a new benchmark:
 
 ```bash
