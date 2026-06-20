@@ -50,6 +50,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add read-only runtime optimizer from run-log, profile, and benchmark evidence.
 - [x] Add scheduled runtime optimizer cron monitoring with guarded report export.
 - [x] Add read-only storage inspection as an allowlisted tool and safe cron job.
+- [x] Add read-only model asset inventory from CLI, API, UI, support bundle, and local tool runner.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Add guarded extension self-configuration for MCP server and cron job entries.

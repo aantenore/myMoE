@@ -206,7 +206,7 @@ Create a privacy-safe support bundle for issues or handoff:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, read-only runtime optimizer summary, storage capacity summary, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, generation run log contents, API keys, and log contents.
+The bundle includes the System Doctor report, environment snapshot, quality gate status, sanitized performance report, read-only runtime optimizer summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, model log paths, and the generation run log path. It intentionally excludes chat transcripts, memory records, environment variables, benchmark response excerpts, generation run log contents, API keys, and log contents.
 
 Inspect configured model process status:
 
@@ -273,7 +273,7 @@ Runtime Optimizer combines recent run-log health, profile recommendation, and be
 
 ![myMoE runtime optimizer](docs/screenshots/runtime-optimizer.png)
 
-The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, performance decision, runtime health checks, storage capacity checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, disk-space pressure, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, local runtime profile recommendation, read-only runtime profile discovery, model asset inventory, performance decision, runtime health checks, storage capacity checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, disk-space pressure, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 
@@ -447,6 +447,14 @@ Storage inspection is also available as a read-only tool and cron-safe action:
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --run-tool storage.inspect \
   --tool-input '{"min_free_gib":5}'
+```
+
+Model asset inventory reports configured cache/file presence and estimated size without downloading or deleting models:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --run-tool models.inventory \
+  --tool-input '{"max_files":20000}'
 ```
 
 Expired memory pruning is intentionally separate and confirmation-gated:

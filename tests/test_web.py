@@ -76,6 +76,7 @@ class WebTests(unittest.TestCase):
             profiles = _get_json(base_url + "/api/config/profiles")
             recommendation = _get_json(base_url + "/api/config/recommendation")
             processes = _get_json(base_url + "/api/models/processes")
+            model_inventory = _get_json(base_url + "/api/models/inventory")
             startup = _get_json(base_url + "/api/startup")
             setup = _get_json(base_url + "/api/setup")
             doctor = _get_json(base_url + "/api/doctor")
@@ -97,6 +98,10 @@ class WebTests(unittest.TestCase):
             storage_tool = _post_json(
                 base_url + "/api/tools/run",
                 {"name": "storage.inspect", "input": {"min_free_gib": 0}},
+            )
+            models_tool = _post_json(
+                base_url + "/api/tools/run",
+                {"name": "models.inventory", "input": {"max_files": 10}},
             )
         finally:
             server.shutdown()
@@ -128,6 +133,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("--config", next(command for command in active_profile["launch_commands"] if command["id"] == "start_ui")["argv"])
         self.assertEqual(processes["count"], 0)
         self.assertEqual(processes["servers"], [])
+        self.assertEqual(model_inventory["schema_version"], "1.0")
+        self.assertEqual(model_inventory["summary"]["asset_count"], 0)
         self.assertEqual(startup["status"], "planned")
         self.assertEqual(startup["doctor"]["status"], "ready")
         self.assertEqual(startup["setup"]["status"], "ready")
@@ -181,6 +188,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(storage_tool["status"], "ok")
         self.assertEqual(storage_tool["payload"]["schema_version"], "1.0")
         self.assertIn(storage_tool["payload"]["status"], {"ready", "attention"})
+        self.assertEqual(models_tool["status"], "ok")
+        self.assertEqual(models_tool["payload"]["schema_version"], "1.0")
+        self.assertEqual(models_tool["payload"]["summary"]["asset_count"], 0)
 
     def test_model_process_endpoints_are_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -1277,6 +1287,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("renderHealth", html)
         self.assertIn("refreshHealth", html)
         self.assertIn("Refresh health", html)
+        self.assertIn("/api/models/inventory", html)
+        self.assertIn("Model Inventory", html)
+        self.assertIn("refreshModelInventory", html)
+        self.assertIn("renderModelInventory", html)
         self.assertIn("/api/smoke/generate", html)
         self.assertIn("Run smoke", html)
         self.assertIn("runGenerationSmoke", html)

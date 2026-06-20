@@ -30,6 +30,7 @@ from .mcp_client import (
     mcp_tool_list_payload,
 )
 from .memory import FileMemoryStore, memory_maintenance_payload, memory_prune_payload
+from .model_inventory import DEFAULT_MAX_FILES, build_model_asset_inventory
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
 from .storage import DEFAULT_MIN_FREE_GIB, build_storage_report
 
@@ -64,6 +65,7 @@ class LocalToolRunner:
         "extension.configure",
         "profile.activate",
         "storage.inspect",
+        "models.inventory",
         "plugin.create",
         "mcp.search_capabilities",
         "mcp.list_tools",
@@ -131,6 +133,8 @@ class LocalToolRunner:
             return self._profile_activate(tool, tool_payload)
         if tool.name == "storage.inspect":
             return self._storage_inspect(tool, tool_payload)
+        if tool.name == "models.inventory":
+            return self._models_inventory(tool, tool_payload)
         if tool.name == "plugin.create":
             return self._plugin_create(tool, tool_payload)
         if tool.name == "mcp.search_capabilities":
@@ -419,6 +423,21 @@ class LocalToolRunner:
             tool,
             "Storage diagnostics completed.",
             build_storage_report(self._app_config, min_free_gib=min_free_gib),
+        )
+
+    def _models_inventory(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+        if self._app_config is None or self._moe_config is None:
+            raise ToolExecutionError("models.inventory requires app and MoE configs.")
+        max_files = _int_in_range(payload.get("max_files", DEFAULT_MAX_FILES), "max_files", minimum=1, maximum=200_000)
+        return _ok(
+            tool,
+            "Model asset inventory completed.",
+            build_model_asset_inventory(
+                config_path=self._active_config_path or "",
+                config=self._moe_config,
+                app_config=self._app_config,
+                max_files=max_files,
+            ),
         )
 
     def _plugin_create(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
