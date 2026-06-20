@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -91,6 +92,85 @@ class RunLogTests(unittest.TestCase):
         self.assertEqual(payload["removed_count"], 1)
         self.assertEqual(remaining["count"], 2)
         self.assertEqual([item["correlation_id"] for item in remaining["records"]], ["corr-2", "corr-1"])
+
+    def test_skips_corrupt_legacy_records_and_reports_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunLogStore(Path(tmp) / "runs.jsonl")
+            store.record_generation(
+                mode="generate",
+                prompt="Private good prompt",
+                response_payload={
+                    "correlation_id": "corr-good",
+                    "route": {"selected": [{"expert_id": "general"}], "fallback_order": []},
+                    "results": [{"model": "local/good"}],
+                    "errors": [],
+                },
+            )
+            with store.path.open("a", encoding="utf-8") as handle:
+                handle.write("{not-json\n")
+                handle.write(json.dumps(["unexpected", "array"]) + "\n")
+                handle.write(json.dumps({"id": "missing-created-at"}) + "\n")
+                handle.write(
+                    json.dumps(
+                        {
+                            "id": "legacy-run",
+                            "created_at": "2026-06-20T10:00:00Z",
+                            "prompt_chars": "invalid",
+                            "selected_experts": "legacy-string",
+                            "error_count": "invalid",
+                        }
+                    )
+                    + "\n"
+                )
+
+            report = store.read_report(limit=10)
+            payload = run_log_payload(
+                report.records,
+                path=store.path,
+                valid_count=report.valid_count,
+                skipped_count=report.skipped_count,
+                total_lines=report.total_lines,
+            )
+
+        self.assertEqual(report.valid_count, 2)
+        self.assertEqual(report.skipped_count, 3)
+        self.assertEqual(report.total_lines, 5)
+        self.assertEqual(payload["diagnostics"]["status"], "attention")
+        self.assertEqual(payload["diagnostics"]["valid_records"], 2)
+        self.assertEqual(payload["diagnostics"]["skipped_records"], 3)
+        self.assertEqual(payload["records"][0]["id"], "legacy-run")
+        self.assertEqual(payload["records"][0]["prompt_chars"], 0)
+        self.assertEqual(payload["records"][0]["selected_experts"], [])
+        self.assertNotIn("Private good prompt", str(payload))
+
+    def test_prune_cleans_corrupt_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunLogStore(Path(tmp) / "runs.jsonl")
+            for index in range(2):
+                store.record_generation(
+                    mode="generate",
+                    prompt=f"Prompt {index}",
+                    response_payload={
+                        "correlation_id": f"corr-{index}",
+                        "route": {"selected": [], "fallback_order": []},
+                        "results": [],
+                        "errors": [],
+                    },
+                )
+            with store.path.open("a", encoding="utf-8") as handle:
+                handle.write("{interrupted-write\n")
+
+            report = store.prune(keep=1)
+            payload = run_log_prune_payload(report)
+            after = store.read_report(limit=10)
+
+        self.assertEqual(payload["before_count"], 2)
+        self.assertEqual(payload["after_count"], 1)
+        self.assertEqual(payload["removed_count"], 1)
+        self.assertEqual(payload["skipped_count"], 1)
+        self.assertEqual(after.skipped_count, 0)
+        self.assertEqual(after.valid_count, 1)
+        self.assertEqual(after.records[0].correlation_id, "corr-1")
 
     def test_summary_reports_latency_context_and_error_signals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1241,6 +1241,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("runs-keep", html)
         self.assertIn("Avg latency", html)
         self.assertIn("P95 latency", html)
+        self.assertIn("Skipped records", html)
         self.assertIn("summary.recommendations", html)
         self.assertIn("Prepare runtime", html)
         self.assertIn("download_command_display", html)

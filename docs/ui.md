@@ -133,7 +133,7 @@ The Local Data section exports and restores a portable JSON bundle with chat ses
 
 The Audit Trail section reads `/api/audit` and shows recent sensitive host-side actions with status, action name, timestamp, risk class, subject id, and compact metadata. It can also call `/api/audit/prune` to keep the latest configured number of audit events after an explicit confirmation. The prune action writes its own `audit.prune` event, so the trail still records that older entries were removed. It is an operational trail, not a content archive: chat text, memory text, environment variables, and model log bodies are not written to the audit file.
 
-The Run Log section reads `/api/runs` and shows recent successful generation observations plus aggregate health signals. Records are stored in `<runtime.work_dir>/runs.jsonl` and include prompt hash, prompt character count, selected experts, result model ids, latency, token counts, throughput, context pressure, and retrieved memory ids. Prompt text and answer text are not stored. The summary shows average and p95 latency, top models and experts, context pressure, error totals, and recommendations derived from metadata only. The same panel can call `/api/runs/prune` to keep the latest configured number of run records after explicit confirmation.
+The Run Log section reads `/api/runs` and shows recent successful generation observations plus aggregate health signals. Records are stored in `<runtime.work_dir>/runs.jsonl` and include prompt hash, prompt character count, selected experts, result model ids, latency, token counts, throughput, context pressure, and retrieved memory ids. Prompt text and answer text are not stored. The summary shows average and p95 latency, top models and experts, context pressure, error totals, and recommendations derived from metadata only. The same payload includes diagnostics for malformed or legacy JSONL rows so a partial write cannot break the panel. `/api/runs/prune` keeps the latest configured number of valid run records after explicit confirmation and rewrites the file without skipped rows.
 
 The Memory section stores local records in `<runtime.work_dir>/memory.jsonl`. Records saved under the `default` scope are automatically retrieved for matching chat prompts and injected into the model context while routing still uses only the current user prompt. The same panel can check memory maintenance totals, prune only expired temporal records after confirmation, and forget one record by id after the user checks the deletion confirmation box.
 
@@ -204,7 +204,7 @@ Audit Trail exposes recent operational events plus guarded retention pruning:
 
 ![myMoE audit trail](screenshots/audit-trail.png)
 
-Run Log exposes recent metadata-only generation observations, aggregate health signals, and guarded retention pruning:
+Run Log exposes recent metadata-only generation observations, aggregate health signals, skipped-record diagnostics, and guarded retention pruning:
 
 ![myMoE run log](screenshots/run-log.png)
 

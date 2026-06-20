@@ -57,7 +57,7 @@ python3 scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `222/222` passed
+- unit/contract tests: `224/224` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`

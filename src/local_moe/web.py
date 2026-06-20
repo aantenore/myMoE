@@ -338,10 +338,19 @@ def _make_handler(
 
             if path == "/api/runs":
                 query = parse_qs(parsed_url.query)
-                records = run_log_store.list_records(
+                report = run_log_store.read_report(
                     limit=_query_limit(query.get("limit", ["100"])[0], default=100, maximum=500),
                 )
-                _send_json(self, run_log_payload(records, path=run_log_store.path))
+                _send_json(
+                    self,
+                    run_log_payload(
+                        report.records,
+                        path=run_log_store.path,
+                        valid_count=report.valid_count,
+                        skipped_count=report.skipped_count,
+                        total_lines=report.total_lines,
+                    ),
+                )
                 return
 
             if path == "/api/runtime":
