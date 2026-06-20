@@ -2616,6 +2616,7 @@
         const latency = summary.latency_ms || {};
         const errors = summary.errors || {};
         const context = summary.context || {};
+        const diagnostics = runLog?.diagnostics || {};
         const recommendations = summary.recommendations || [];
         const topExpert = summary.experts?.[0];
         const topModel = summary.models?.[0];
@@ -2623,6 +2624,8 @@
           kvRows({
             Runs: runLog?.count || 0,
             Privacy: runLog?.privacy || "metadata_only",
+            Diagnostics: diagnostics.status || "ready",
+            "Skipped records": diagnostics.skipped_records || 0,
             Latest: latest[0]?.created_at || "None",
             "Avg latency": latency.avg == null ? "-" : `${Number(latency.avg).toFixed(0)} ms`,
             "P95 latency": latency.p95 == null ? "-" : `${latency.p95} ms`,
@@ -2662,6 +2665,7 @@
         el("run-log-output").textContent = JSON.stringify(
           {
             summary,
+            diagnostics,
             records: latest,
           },
           null,

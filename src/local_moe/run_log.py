@@ -38,6 +38,16 @@ class RunLogPruneReport:
     before_count: int
     after_count: int
     removed_count: int
+    skipped_count: int
+    path: str
+
+
+@dataclass(frozen=True)
+class RunLogReadReport:
+    records: list[GenerationRunRecord]
+    valid_count: int
+    skipped_count: int
+    total_lines: int
     path: str
 
 
@@ -73,16 +83,27 @@ class RunLogStore:
         return record
 
     def list_records(self, *, limit: int = 100) -> list[GenerationRunRecord]:
+        return self.read_report(limit=limit).records
+
+    def read_report(self, *, limit: int = 100) -> RunLogReadReport:
         with self._lock:
-            records = _read_records(self.path)
+            report = _read_records(self.path)
+        records = list(report.records)
         records.reverse()
-        return records[: max(1, min(limit, 500))]
+        return RunLogReadReport(
+            records=records[: max(1, min(limit, 500))],
+            valid_count=report.valid_count,
+            skipped_count=report.skipped_count,
+            total_lines=report.total_lines,
+            path=report.path,
+        )
 
     def prune(self, *, keep: int = 1000) -> RunLogPruneReport:
         bounded_keep = max(1, min(int(keep), 100000))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            records = _read_records(self.path)
+            report = _read_records(self.path)
+            records = report.records
             before_count = len(records)
             kept = records[-bounded_keep:]
             _write_records(self.path, kept)
@@ -91,6 +112,7 @@ class RunLogStore:
             before_count=before_count,
             after_count=len(kept),
             removed_count=max(0, before_count - len(kept)),
+            skipped_count=report.skipped_count,
             path=str(self.path),
         )
 
@@ -117,11 +139,25 @@ def run_record_payload(record: GenerationRunRecord) -> dict[str, Any]:
     }
 
 
-def run_log_payload(records: list[GenerationRunRecord], *, path: str | Path) -> dict[str, Any]:
+def run_log_payload(
+    records: list[GenerationRunRecord],
+    *,
+    path: str | Path,
+    valid_count: int | None = None,
+    skipped_count: int = 0,
+    total_lines: int | None = None,
+) -> dict[str, Any]:
     return {
         "count": len(records),
         "path": str(path),
         "privacy": "metadata_only",
+        "diagnostics": {
+            "status": "attention" if skipped_count else "ready",
+            "returned_records": len(records),
+            "valid_records": len(records) if valid_count is None else valid_count,
+            "skipped_records": skipped_count,
+            "total_lines": len(records) + skipped_count if total_lines is None else total_lines,
+        },
         "summary": run_log_summary(records),
         "records": [run_record_payload(record) for record in records],
     }
@@ -196,6 +232,7 @@ def run_log_prune_payload(report: RunLogPruneReport) -> dict[str, Any]:
         "before_count": report.before_count,
         "after_count": report.after_count,
         "removed_count": report.removed_count,
+        "skipped_count": report.skipped_count,
         "path": report.path,
     }
 
@@ -248,39 +285,61 @@ def _safe_context(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _read_records(path: Path) -> list[GenerationRunRecord]:
+def _read_records(path: Path) -> RunLogReadReport:
     if not path.exists():
-        return []
+        return RunLogReadReport(records=[], valid_count=0, skipped_count=0, total_lines=0, path=str(path))
     records: list[GenerationRunRecord] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    skipped_count = 0
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines:
         if not line.strip():
             continue
-        raw = json.loads(line)
-        if not isinstance(raw, dict):
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            skipped_count += 1
             continue
-        context = raw.get("context", {})
-        records.append(
-            GenerationRunRecord(
-                id=str(raw["id"]),
-                created_at=str(raw["created_at"]),
-                mode=str(raw.get("mode", "generate")),
-                correlation_id=str(raw.get("correlation_id", "")),
-                session_id=str(raw.get("session_id", "")),
-                prompt_sha256=str(raw.get("prompt_sha256", "")),
-                prompt_chars=int(raw.get("prompt_chars", 0)),
-                selected_experts=tuple(str(item) for item in raw.get("selected_experts", [])),
-                fallback_order=tuple(str(item) for item in raw.get("fallback_order", [])),
-                result_models=tuple(str(item) for item in raw.get("result_models", [])),
-                latency_ms=_optional_int(raw.get("latency_ms")),
-                prompt_tokens=_optional_int(raw.get("prompt_tokens")),
-                completion_tokens=_optional_int(raw.get("completion_tokens")),
-                predicted_tokens_per_second=_optional_float(raw.get("predicted_tokens_per_second")),
-                context=context if isinstance(context, dict) else {},
-                error_count=int(raw.get("error_count", 0)),
-                disagreement_status=str(raw.get("disagreement_status", "")),
-            )
-        )
-    return records
+        record = _record_from_raw_run(raw)
+        if record is None:
+            skipped_count += 1
+            continue
+        records.append(record)
+    return RunLogReadReport(
+        records=records,
+        valid_count=len(records),
+        skipped_count=skipped_count,
+        total_lines=len(lines),
+        path=str(path),
+    )
+
+
+def _record_from_raw_run(raw: object) -> GenerationRunRecord | None:
+    if not isinstance(raw, dict):
+        return None
+    record_id = _clean(raw.get("id"))
+    created_at = _clean(raw.get("created_at"))
+    if not record_id or not created_at:
+        return None
+    context = raw.get("context", {})
+    return GenerationRunRecord(
+        id=record_id,
+        created_at=created_at,
+        mode=_clean(raw.get("mode")) or "generate",
+        correlation_id=str(raw.get("correlation_id", "")),
+        session_id=str(raw.get("session_id", "")),
+        prompt_sha256=str(raw.get("prompt_sha256", "")),
+        prompt_chars=_optional_int(raw.get("prompt_chars")) or 0,
+        selected_experts=_string_tuple(raw.get("selected_experts", [])),
+        fallback_order=_string_tuple(raw.get("fallback_order", [])),
+        result_models=_string_tuple(raw.get("result_models", [])),
+        latency_ms=_optional_int(raw.get("latency_ms")),
+        prompt_tokens=_optional_int(raw.get("prompt_tokens")),
+        completion_tokens=_optional_int(raw.get("completion_tokens")),
+        predicted_tokens_per_second=_optional_float(raw.get("predicted_tokens_per_second")),
+        context=context if isinstance(context, dict) else {},
+        error_count=_optional_int(raw.get("error_count")) or 0,
+        disagreement_status=str(raw.get("disagreement_status", "")),
+    )
 
 
 def _write_records(path: Path, records: list[GenerationRunRecord]) -> None:
@@ -381,6 +440,12 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(item) for item in value if str(item).strip())
 
 
 def _clean(value: object) -> str:

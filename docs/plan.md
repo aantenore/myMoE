@@ -45,6 +45,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add guarded audit trail retention pruning from API and UI.
 - [x] Add metadata-only generation run log from CLI, API, and UI.
 - [x] Add metadata-only run log analytics and operator recommendations.
+- [x] Harden generation run log reads against malformed or legacy JSONL records.
 - [x] Add Plugin Studio and plugin-local skill discovery.
 - [x] Add manual extension registry audit from CLI, API, and UI.
 - [x] Add guarded extension self-configuration for MCP server and cron job entries.

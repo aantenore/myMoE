@@ -619,6 +619,8 @@ class CliTests(unittest.TestCase):
                     "errors": [],
                 },
             )
+            with store.path.open("a", encoding="utf-8") as handle:
+                handle.write("{corrupt-cli-record\n")
 
             completed = subprocess.run(
                 [
@@ -641,6 +643,8 @@ class CliTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         rendered = completed.stdout
         self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["diagnostics"]["status"], "attention")
+        self.assertEqual(payload["diagnostics"]["skipped_records"], 1)
         self.assertEqual(payload["summary"]["record_count"], 1)
         self.assertEqual(payload["summary"]["models"], [{"id": "synthetic-general", "count": 1}])
         self.assertEqual(payload["records"][0]["correlation_id"], "corr-cli")

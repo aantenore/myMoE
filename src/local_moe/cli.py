@@ -145,7 +145,19 @@ def main() -> None:
                 raise SystemExit(2)
             print(json.dumps(run_log_prune_payload(store.prune(keep=args.runs_keep)), indent=2))
             return
-        print(json.dumps(run_log_payload(store.list_records(limit=args.runs_limit), path=store.path), indent=2))
+        report = store.read_report(limit=args.runs_limit)
+        print(
+            json.dumps(
+                run_log_payload(
+                    report.records,
+                    path=store.path,
+                    valid_count=report.valid_count,
+                    skipped_count=report.skipped_count,
+                    total_lines=report.total_lines,
+                ),
+                indent=2,
+            )
+        )
         return
 
     if args.performance_report or args.performance_report_out:
