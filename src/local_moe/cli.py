@@ -19,6 +19,7 @@ from .performance_report import build_performance_report, render_performance_rep
 from .scheduler import cron_status, cron_summary_payload, run_due_jobs
 from .setup_status import inspect_setup_status, setup_status_payload
 from .setup_runner import run_runtime_setup, setup_run_payload
+from .smoke import DEFAULT_SMOKE_PROMPT, build_generation_smoke_report
 from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
@@ -64,6 +65,8 @@ def main() -> None:
     parser.add_argument("--run-cron", action="store_true")
     parser.add_argument("--cron-dry-run", action="store_true")
     parser.add_argument("--cron-confirm-writes", action="store_true")
+    parser.add_argument("--smoke-generate", action="store_true")
+    parser.add_argument("--smoke-prompt", default=DEFAULT_SMOKE_PROMPT)
     args = parser.parse_args()
 
     app_config = load_app_config(args.app_config)
@@ -231,6 +234,13 @@ def main() -> None:
             registry=registry,
         )
         print(json.dumps(cron_summary_payload(summary), indent=2))
+        return
+
+    if args.smoke_generate:
+        payload = build_generation_smoke_report(config, prompt=args.smoke_prompt)
+        print(json.dumps(payload, indent=2))
+        if payload["status"] != "pass":
+            raise SystemExit(2)
         return
 
     if args.create_plugin:

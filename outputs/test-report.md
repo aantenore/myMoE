@@ -4,7 +4,7 @@ Generated: 2026-06-20
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery with hardware fit and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with hardware fit and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, generation smoke testing, sanitized model log diagnostics, runtime setup readiness, System Doctor readiness reporting with active-profile hardware fit and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 ## New Test Surface
 
@@ -15,6 +15,7 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
 - `tests/test_doctor.py`: normalized setup, health, extension, cron, and hardware-fit checks, required failure for profiles that exceed the detected machine, and metadata-only Markdown rendering.
 - `tests/test_environment.py`: metadata-only environment snapshot generation and Markdown rendering for platform, Python, package, git, hardware, config, and configured local model identity handoffs.
+- `tests/test_smoke.py`: generation smoke pass/fail reports, including explicit failure for blank visible output.
 - `tests/test_ci_runner.py`: cross-platform quality gate command plan, `PYTHONPATH` environment construction, and JSON dry-run output.
 - `tests/test_runtime.py`: llama-server command/URL construction and health probing.
 - `tests/test_setup_status.py`: side-effect-free setup readiness for Hugging Face cache hits, missing local files, Ollama pull commands, and no-model fixture profiles.
@@ -25,7 +26,7 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_cli.py`: eval mode, setup readiness, performance report output, environment snapshot output, guarded runtime preparation preview, model process status, sanitized model log tail output, doctor output, and prompt mode through the public CLI.
 - `tests/test_chat_store.py`: local chat session create, append, reload, list, search, rename, durable summary, export, and delete behavior.
 - `tests/test_data_bundle.py`: portable local data export and restore for chat sessions plus memory records, including merge and replace behavior.
-- `tests/test_web.py`: web config, environment snapshot APIs, runtime profile discovery APIs, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, model log diagnostics APIs, plugin creation APIs, extension audit APIs, guided extension templates and configure APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
+- `tests/test_web.py`: web config, environment snapshot APIs, runtime profile discovery APIs, generation smoke APIs, generation, streamed generation, persisted chat sessions, chat compaction APIs, memory APIs, memory maintenance and expired pruning APIs, guarded memory and knowledge deletion APIs, confirmed local data backup APIs, local audit and audit pruning APIs, knowledge import APIs, chat management APIs, setup preparation APIs, System Doctor APIs, performance report APIs, support bundle APIs, model log diagnostics APIs, plugin creation APIs, extension audit APIs, guided extension templates and configure APIs, extension self-configuration refresh, cron status APIs, and eval endpoints over a local HTTP server.
 - `tests/test_setup_runner.py`: runtime preparation preview, confirmation guard, injected install runner, and local-file model validation without network access.
 - `tests/test_tools.py`: allowlisted local tool execution, knowledge ingestion, memory maintenance, guarded expired-memory pruning, guarded memory/document deletion, confirmed local data export/import, extension audit, guarded extension self-configuration for MCP/cron registries, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
@@ -53,7 +54,7 @@ python3 scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `196/196` passed
+- unit/contract tests: `199/199` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live general routing eval: `52/52`, accuracy `1.0`

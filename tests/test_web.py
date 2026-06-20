@@ -70,6 +70,10 @@ class WebTests(unittest.TestCase):
             setup = _get_json(base_url + "/api/setup")
             doctor = _get_json(base_url + "/api/doctor")
             doctor_markdown = _get_text(base_url + "/api/doctor/report.md")
+            smoke = _post_json(
+                base_url + "/api/smoke/generate",
+                {"prompt": "Summarize this in one sentence."},
+            )
             health = _get_json(base_url + "/api/health")
             extensions = _get_json(base_url + "/api/extensions")
             extension_templates = _get_json(base_url + "/api/extensions/templates")
@@ -114,6 +118,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("# myMoE System Doctor Report", doctor_markdown)
         self.assertIn("`hardware_fit`", doctor_markdown)
         self.assertIn("extension_audit", doctor)
+        self.assertEqual(smoke["status"], "pass")
+        self.assertGreater(smoke["content_chars"], 0)
+        self.assertEqual(smoke["route"]["selected"][0]["expert_id"], "general")
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["experts"][0]["status"], "skipped")
         self.assertTrue(extensions["tools"])
@@ -1048,6 +1055,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("renderHealth", html)
         self.assertIn("refreshHealth", html)
         self.assertIn("Refresh health", html)
+        self.assertIn("/api/smoke/generate", html)
+        self.assertIn("Run smoke", html)
+        self.assertIn("runGenerationSmoke", html)
         self.assertIn("/api/about", html)
         self.assertIn("/api/about/report.md", html)
         self.assertIn("Environment", html)

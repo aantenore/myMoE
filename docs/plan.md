@@ -20,6 +20,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add local fallback-backed context compaction provider.
 - [x] Add guarded runtime self-configuration from CLI and UI.
 - [x] Add guarded model process management from CLI and UI.
+- [x] Add generation smoke test from CLI, API, and UI.
 - [x] Add sanitized model log diagnostics from CLI, API, and UI.
 - [x] Add System Doctor readiness report from CLI, API, and UI.
 - [x] Add active-profile hardware-fit readiness to System Doctor.

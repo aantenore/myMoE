@@ -138,6 +138,12 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --about
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --about --about-format markdown
 ```
 
+Run a real local generation smoke test when endpoints are reachable but you want proof that the selected model returns visible content:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --smoke-generate
+```
+
 Inspect the latest local performance decision without running a new benchmark:
 
 ```bash
@@ -208,7 +214,7 @@ Audit Trail includes guarded retention pruning for older operational events.
 
 ![myMoE audit trail](docs/screenshots/audit-trail.png)
 
-The Advanced drawer includes System Doctor, environment snapshot, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
+The Advanced drawer includes System Doctor, environment snapshot, generation smoke test, setup status, read-only runtime profile discovery, performance decision, runtime health checks, and sanitized model log tails for every configured expert endpoint, so missing model assets, hardware-fit issues, model-server issues, blank generation failures, benchmark evidence, plugin registry problems, cron status, downloadable Markdown reports, and a downloadable support bundle are visible before the first prompt.
 
 Model Logs exposes bounded, sanitized tails from runtime-plan-generated log paths only.
 
