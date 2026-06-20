@@ -8,6 +8,7 @@ from typing import Any
 from .doctor import build_doctor_report
 from .environment import build_environment_report
 from .extensions import ExtensionRegistry
+from .model_inventory import build_model_asset_inventory
 from .model_servers import ModelServerManager
 from .performance_report import build_performance_report
 from .runtime_optimizer import build_runtime_optimizer_report
@@ -43,6 +44,7 @@ def build_support_bundle(
                 "sanitized performance report",
                 "read-only runtime optimizer summary",
                 "storage capacity summary",
+                "model asset inventory",
                 "hardware profile",
                 "configured model server log paths",
                 "generation run log path",
@@ -67,6 +69,11 @@ def build_support_bundle(
         ),
         "quality_gate": _read_json_artifact(quality_gate_path),
         "performance": build_performance_report(),
+        "model_inventory": build_model_asset_inventory(
+            config_path=config_path,
+            config=config,
+            app_config=app_config,
+        ),
         "runtime_optimizer": build_runtime_optimizer_report(
             config_path=config_path,
             app_config=app_config,

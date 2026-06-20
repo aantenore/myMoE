@@ -92,6 +92,13 @@
       "enabled": true
     },
     {
+      "name": "models.inventory",
+      "description": "Inventory configured local model assets and estimate cache/file size without downloading or deleting models.",
+      "risk_class": "read_only",
+      "side_effects": "none",
+      "enabled": true
+    },
+    {
       "name": "mcp.search_capabilities",
       "description": "List configured MCP servers and their declared capability domains.",
       "risk_class": "read_only",

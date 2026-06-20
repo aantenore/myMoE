@@ -47,6 +47,7 @@ from .memory import (
     memory_prune_payload,
     memory_record_payload,
 )
+from .model_inventory import build_model_asset_inventory
 from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
 from .performance_report import (
@@ -390,6 +391,17 @@ def _make_handler(
 
             if path == "/api/models/processes":
                 _send_json(self, model_manager.status())
+                return
+
+            if path == "/api/models/inventory":
+                _send_json(
+                    self,
+                    build_model_asset_inventory(
+                        config_path=config_path,
+                        config=config,
+                        app_config=app_config,
+                    ),
+                )
                 return
 
             if path == "/api/models/logs":

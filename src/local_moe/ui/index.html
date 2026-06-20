@@ -1016,6 +1016,13 @@
           </div>
           <pre class="eval-output" id="models-output">Not run yet.</pre>
           <div class="tool-controls">
+            <div class="section-label">Model Inventory</div>
+            <div class="tool-row">
+              <button class="ghost-button" id="refresh-model-inventory" type="button">Refresh inventory</button>
+            </div>
+            <div class="kv" id="model-inventory"></div>
+          </div>
+          <div class="tool-controls">
             <div class="section-label">Model Logs</div>
             <div class="tool-row">
               <select class="tool-select" id="model-log-expert" aria-label="Model log expert"></select>
@@ -1516,6 +1523,7 @@
         el("start-models").addEventListener("click", startModels);
         el("stop-models").addEventListener("click", stopModels);
         el("run-generation-smoke").addEventListener("click", runGenerationSmoke);
+        el("refresh-model-inventory").addEventListener("click", refreshModelInventory);
         el("refresh-model-logs").addEventListener("click", refreshModelLogs);
         el("preview-startup").addEventListener("click", previewStartup);
         el("run-startup").addEventListener("click", runStartup);
@@ -1568,11 +1576,12 @@
 
       async function loadMeta() {
         try {
-          const [config, runtime, about, modelProcesses, startup, setup, configProfiles, configRecommendation, doctor, health, performance, runtimeOptimizer, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
+          const [config, runtime, about, modelProcesses, modelInventory, startup, setup, configProfiles, configRecommendation, doctor, health, performance, runtimeOptimizer, extensions, extensionTemplates, extensionAudit, audit, runLog, cron] = await Promise.all([
             api("/api/config"),
             api("/api/runtime"),
             api("/api/about"),
             api("/api/models/processes"),
+            api("/api/models/inventory"),
             api("/api/startup"),
             api("/api/setup"),
             api("/api/config/profiles"),
@@ -1592,6 +1601,7 @@
           state.runtime = runtime;
           state.about = about;
           state.modelProcesses = modelProcesses;
+          state.modelInventory = modelInventory;
           state.startup = startup;
           state.setup = setup;
           state.configProfiles = configProfiles;
@@ -1610,6 +1620,7 @@
           renderRuntime(runtime);
           renderAbout(about);
           renderModelProcesses(modelProcesses);
+          renderModelInventory(modelInventory);
           renderStartup(startup);
           renderSetup(setup);
           renderConfigProfiles(configProfiles);
@@ -1912,6 +1923,46 @@
         if ([...el("model-log-expert").options].some((option) => option.value === current)) {
           el("model-log-expert").value = current;
         }
+      }
+
+      async function refreshModelInventory() {
+        el("model-inventory").innerHTML = '<span class="muted">Loading inventory...</span>';
+        try {
+          const inventory = await api("/api/models/inventory");
+          state.modelInventory = inventory;
+          renderModelInventory(inventory);
+        } catch (error) {
+          el("model-inventory").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      function renderModelInventory(inventory) {
+        const summary = inventory?.summary || {};
+        const assets = Array.isArray(inventory?.assets) ? inventory.assets : [];
+        const rows = assets
+          .map(
+            (asset) => `
+              <div class="kv-row">
+                <span>${escapeHtml(asset.status || "unknown")}</span>
+                <span>
+                  <strong>${escapeHtml(shortModel(asset.model || asset.repo_id || "model"))}</strong><br>
+                  <span class="mono">${escapeHtml(asset.backend || "unknown")} · ${escapeHtml(asset.kind || "asset")}</span><br>
+                  <span class="muted">${escapeHtml([
+                    formatGib(asset.configured_size_gib),
+                    asset.matched_file_count == null ? "" : `${asset.matched_file_count} matched`,
+                    asset.truncated ? "truncated" : "",
+                  ].filter(Boolean).join(" · "))}</span>
+                </span>
+              </div>`,
+          )
+          .join("");
+        el("model-inventory").innerHTML =
+          kvRows({
+            Status: inventory?.status || "unknown",
+            Assets: summary.asset_count ?? 0,
+            "Configured size": formatGib(summary.configured_size_gib),
+            "Cache size": formatGib(summary.cache_size_gib),
+          }) + (rows || '<span class="muted">No local model assets are required by this profile.</span>');
       }
 
       async function refreshModelLogs() {
@@ -2293,6 +2344,10 @@
         return String(value || "none").replaceAll("_", " ");
       }
 
+      function formatGib(value) {
+        return value == null ? "-" : `${Number(value).toFixed(3)} GiB`;
+      }
+
       function profileHardwareLabel(hardware) {
         if (!hardware) return "Unknown";
         const memory = hardware.memory_gib ? `${hardware.memory_gib} GiB` : "unknown RAM";
@@ -2308,6 +2363,7 @@
           const processes = await api("/api/models/processes");
           state.modelProcesses = processes;
           renderModelProcesses(processes);
+          await refreshModelInventory();
           await refreshModelLogs();
         } catch (error) {
           el("health").innerHTML = `<span class="muted">${escapeHtml(error.message)}</span>`;
@@ -3081,6 +3137,12 @@
             confirm: false,
           },
           "extension.audit": {},
+          "storage.inspect": {
+            min_free_gib: 5,
+          },
+          "models.inventory": {
+            max_files: 20000,
+          },
           "extension.configure": {
             surface: "mcp_server",
             mode: "upsert",
