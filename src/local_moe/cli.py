@@ -8,15 +8,20 @@ import sys
 
 from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
+from .chat_runtime import generate_chat_turn
+from .chat_store import FileChatStore, chat_session_payload, chat_summary_payload
 from .config import load_config
 from .config_profiles import recommend_config_profile
+from .context_policy import load_context_policy
 from .doctor import build_doctor_report, render_doctor_report_markdown
 from .environment import build_environment_report, render_environment_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
 from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
+from .memory import FileMemoryStore
 from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
 from .orchestrator import LocalMoE
 from .performance_report import build_performance_report, render_performance_report_markdown
+from .providers import ProviderError
 from .profile_activation import activate_config_profile, activate_recommended_config_profile
 from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
 from .runtime_optimizer import (
@@ -39,6 +44,16 @@ def main() -> None:
     parser.add_argument("--prompt")
     parser.add_argument("--eval")
     parser.add_argument("--interactive", action="store_true")
+    chat_session_group = parser.add_mutually_exclusive_group()
+    chat_session_group.add_argument("--chat-session")
+    chat_session_group.add_argument("--new-chat", action="store_true")
+    parser.add_argument("--chat-title")
+    parser.add_argument("--list-chats", action="store_true")
+    parser.add_argument("--chats-limit", type=int, default=20)
+    parser.add_argument("--export-chat")
+    parser.add_argument("--delete-chat")
+    parser.add_argument("--rename-chat")
+    parser.add_argument("--chat-confirm", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--doctor-format", choices=["json", "markdown"], default="json")
@@ -219,6 +234,60 @@ def main() -> None:
             print(json.dumps({"written": str(out)}, indent=2))
         else:
             print(json.dumps(payload, indent=2))
+        return
+
+    if args.list_chats:
+        chat_store = _chat_store(app_config)
+        summaries = chat_store.list_sessions(limit=args.chats_limit)
+        print(
+            json.dumps(
+                {
+                    "count": len(summaries),
+                    "sessions": [chat_summary_payload(item) for item in summaries],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if args.export_chat:
+        try:
+            print(_chat_store(app_config).export_markdown(args.export_chat), end="")
+        except KeyError as exc:
+            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            raise SystemExit(2) from exc
+        return
+
+    if args.rename_chat:
+        if not args.chat_title:
+            print(json.dumps({"error": "bad_request", "message": "--chat-title is required with --rename-chat."}, indent=2), file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            session = _chat_store(app_config).rename_session(args.rename_chat, args.chat_title)
+        except KeyError as exc:
+            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(json.dumps(chat_session_payload(session), indent=2))
+        return
+
+    if args.delete_chat:
+        if not args.chat_confirm:
+            print(
+                json.dumps(
+                    {
+                        "error": "confirmation_required",
+                        "message": "Chat deletion requires --chat-confirm.",
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        deleted = _chat_store(app_config).delete_session(args.delete_chat)
+        if not deleted:
+            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            raise SystemExit(2)
+        print(json.dumps({"deleted": True, "session_id": args.delete_chat}, indent=2))
         return
 
     if args.setup:
@@ -429,18 +498,60 @@ def main() -> None:
     moe = LocalMoE(config)
 
     if args.interactive:
-        _interactive(moe, json_output=args.json_output)
+        _interactive(
+            moe,
+            app_config=app_config,
+            chat_session_id=args.chat_session,
+            new_chat=args.new_chat,
+            chat_title=args.chat_title,
+            json_output=args.json_output,
+        )
         return
 
     if not args.prompt:
         parser.error("--prompt or --interactive is required unless --eval is provided")
 
+    if args.chat_session or args.new_chat or args.chat_title:
+        try:
+            payload = _generate_persistent_prompt(
+                moe,
+                app_config=app_config,
+                prompt=args.prompt,
+                chat_session_id=args.chat_session,
+                new_chat=args.new_chat,
+                chat_title=args.chat_title,
+            )
+        except (KeyError, ProviderError) as exc:
+            print(json.dumps({"error": "chat_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            raise SystemExit(2) from exc
+        _print_chat_payload(payload, json_output=args.json_output)
+        return
+
     response = moe.generate(args.prompt)
     _print_response(response, json_output=args.json_output)
 
 
-def _interactive(moe: LocalMoE, *, json_output: bool) -> None:
-    print("myMoE interactive shell. Type /exit to quit.", file=sys.stderr)
+def _interactive(
+    moe: LocalMoE,
+    *,
+    app_config: object,
+    chat_session_id: str | None,
+    new_chat: bool,
+    chat_title: str | None,
+    json_output: bool,
+) -> None:
+    chat_store = _chat_store(app_config)
+    memory_store = _memory_store(app_config)
+    run_log_store = RunLogStore(_run_log_path(app_config))
+    context_policy = _context_policy(app_config)
+    session_id = _resolve_interactive_session(
+        chat_store,
+        session_id=chat_session_id,
+        new_chat=new_chat,
+        title=chat_title,
+    )
+    print("myMoE interactive shell. Type /help for commands or /exit to quit.", file=sys.stderr)
+    print(f"Active chat session: {session_id}", file=sys.stderr)
     while True:
         try:
             prompt = input("mymoe> ")
@@ -450,11 +561,120 @@ def _interactive(moe: LocalMoE, *, json_output: bool) -> None:
 
         if prompt.strip() in {"/exit", "/quit"}:
             return
+        if prompt.strip() == "/help":
+            print("Commands: /sessions, /session <id>, /new [title], /summary, /exit", file=sys.stderr)
+            continue
+        if prompt.strip() == "/sessions":
+            _print_chat_summaries(chat_store)
+            continue
+        if prompt.strip().startswith("/session "):
+            requested = prompt.strip().split(maxsplit=1)[1].strip()
+            if chat_store.get_session(requested) is None:
+                print(f"Chat session not found: {requested}", file=sys.stderr)
+                continue
+            session_id = requested
+            print(f"Active chat session: {session_id}", file=sys.stderr)
+            continue
+        if prompt.strip().startswith("/new"):
+            title = prompt.strip()[4:].strip() or chat_title or "CLI chat"
+            session_id = chat_store.create_session(title=title).id
+            print(f"Active chat session: {session_id}", file=sys.stderr)
+            continue
+        if prompt.strip() == "/summary":
+            session = chat_store.get_session(session_id)
+            if session is None:
+                print(f"Chat session not found: {session_id}", file=sys.stderr)
+                continue
+            _print_session_summary(session)
+            continue
         if not prompt.strip():
             continue
 
-        response = moe.generate(prompt)
-        _print_response(response, json_output=json_output)
+        try:
+            payload = generate_chat_turn(
+                moe=moe,
+                chat_store=chat_store,
+                memory_store=memory_store,
+                run_log_store=run_log_store,
+                context_policy=context_policy,
+                prompt=prompt.strip(),
+                session_id=session_id,
+                mode="cli-interactive",
+            )
+            session_id = str(payload["session_id"])
+        except (KeyError, ProviderError) as exc:
+            print(f"Generation failed: {exc}", file=sys.stderr)
+            continue
+        _print_chat_payload(payload, json_output=json_output)
+
+
+def _generate_persistent_prompt(
+    moe: LocalMoE,
+    *,
+    app_config: object,
+    prompt: str,
+    chat_session_id: str | None,
+    new_chat: bool,
+    chat_title: str | None,
+) -> dict[str, object]:
+    chat_store = _chat_store(app_config)
+    session_id = chat_session_id
+    if new_chat or (chat_title and not chat_session_id):
+        session_id = chat_store.create_session(title=chat_title or "CLI chat").id
+    return generate_chat_turn(
+        moe=moe,
+        chat_store=chat_store,
+        memory_store=_memory_store(app_config),
+        run_log_store=RunLogStore(_run_log_path(app_config)),
+        context_policy=_context_policy(app_config),
+        prompt=prompt,
+        session_id=session_id,
+        mode="cli-prompt",
+    )
+
+
+def _resolve_interactive_session(
+    chat_store: FileChatStore,
+    *,
+    session_id: str | None,
+    new_chat: bool,
+    title: str | None,
+) -> str:
+    if session_id:
+        if chat_store.get_session(session_id) is None:
+            raise SystemExit(f"Chat session not found: {session_id}")
+        return session_id
+    if new_chat or title:
+        return chat_store.create_session(title=title or "CLI chat").id
+    return chat_store.create_session(title="CLI chat").id
+
+
+def _print_chat_summaries(chat_store: FileChatStore) -> None:
+    summaries = chat_store.list_sessions(limit=20)
+    if not summaries:
+        print("No chat sessions.", file=sys.stderr)
+        return
+    for summary in summaries:
+        print(
+            f"{summary.id}  {summary.title}  messages={summary.message_count}  updated={summary.updated_at}",
+            file=sys.stderr,
+        )
+
+
+def _print_session_summary(session: object) -> None:
+    payload = chat_session_payload(session)
+    print(
+        json.dumps(
+            {
+                "id": payload["id"],
+                "title": payload["title"],
+                "message_count": payload["message_count"],
+                "summary": payload["summary"],
+            },
+            indent=2,
+        ),
+        file=sys.stderr,
+    )
 
 
 def _print_response(response: object, *, json_output: bool) -> None:
@@ -470,6 +690,16 @@ def _print_response(response: object, *, json_output: bool) -> None:
             indent=2,
         )
     )
+
+
+def _print_chat_payload(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, indent=2))
+        return
+
+    print(payload["content"])
+    print()
+    print(json.dumps(_chat_metadata(payload), indent=2))
 
 
 def _response_payload(response: object) -> dict[str, object]:
@@ -489,6 +719,20 @@ def _response_metadata(response: object) -> dict[str, object]:
     }
 
 
+def _chat_metadata(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "session_id": payload.get("session_id", ""),
+        "correlation_id": payload.get("correlation_id", ""),
+        "selected": payload.get("route", {}).get("selected", []) if isinstance(payload.get("route"), dict) else [],
+        "fallback_order": (
+            payload.get("route", {}).get("fallback_order", []) if isinstance(payload.get("route"), dict) else []
+        ),
+        "errors": payload.get("errors", []),
+        "disagreement": payload.get("disagreement"),
+        "context": payload.get("context", {}),
+    }
+
+
 def _registry(app_config: object) -> object:
     return load_extension_registry(
         plugins_dir=app_config.extensions.plugins_dir,
@@ -505,6 +749,21 @@ def _cron_state_path(app_config: object) -> str:
 
 def _run_log_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/runs.jsonl"
+
+
+def _chat_store(app_config: object) -> FileChatStore:
+    return FileChatStore(f"{app_config.runtime.work_dir.rstrip('/')}/chats.json")
+
+
+def _memory_store(app_config: object) -> FileMemoryStore:
+    return FileMemoryStore(f"{app_config.runtime.work_dir.rstrip('/')}/memory.jsonl")
+
+
+def _context_policy(app_config: object) -> object:
+    return load_context_policy(
+        app_config.runtime.context_policy_config,
+        app_config.runtime.context_policy_profile,
+    )
 
 
 if __name__ == "__main__":

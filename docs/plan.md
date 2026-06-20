@@ -38,6 +38,7 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Add privacy-safe support bundle export from CLI, API, and UI.
 - [x] Add sanitized performance decision report from CLI, API, and UI.
 - [x] Add progressive streamed chat responses with non-streaming fallback.
+- [x] Add persistent context-aware CLI chat sessions sharing the web chat store, memory retrieval, and run log.
 - [x] Add local knowledge import into context retrieval.
 - [x] Add guarded local memory and knowledge deletion controls.
 - [x] Add read-only memory maintenance reports and guarded expired-memory pruning.

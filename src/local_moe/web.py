@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import time
 import json
 from http import HTTPStatus
@@ -14,10 +13,15 @@ from .app_config import app_config_payload, load_app_config
 from .audit import AuditLogStore, audit_log_payload, audit_prune_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
+from .chat_runtime import (
+    build_chat_model_context,
+    persist_chat_response,
+    route_payload,
+)
 from .compaction import LocalCompactionProvider
 from .config import load_config
 from .config_profiles import discover_config_profiles, recommend_config_profile
-from .context import ContextBundle, ConversationTurn, MemorySnippet, build_context_bundle
+from .context import ConversationTurn
 from .context_policy import load_context_policy
 from .data_bundle import (
     build_local_data_bundle,
@@ -576,7 +580,7 @@ def _make_handler(
                             status=HTTPStatus.NOT_FOUND,
                         )
                         return
-                model_context = _build_model_context(
+                model_context = build_chat_model_context(
                     session,
                     prompt,
                     context_policy,
@@ -592,27 +596,22 @@ def _make_handler(
                         route_prompt=prompt,
                     ):
                         if event.kind == "route" and event.route is not None:
-                            _send_sse_event(self, "route", {"route": _route_payload(event.route)})
+                            _send_sse_event(self, "route", {"route": route_payload(event.route)})
                             continue
                         if event.kind == "content":
                             _send_sse_event(self, "content", {"content": event.content})
                             continue
                         if event.kind == "final" and event.response is not None:
-                            response_payload = _response_payload(event.response)
-                            response_payload["context"] = model_context["payload"]
                             try:
-                                session = chat_store.append_exchange(
+                                response_payload = persist_chat_response(
+                                    chat_store=chat_store,
+                                    run_log_store=run_log_store,
+                                    prompt=prompt,
+                                    response=event.response,
+                                    context_payload=model_context["payload"],
                                     session_id=session_id,
-                                    user_content=prompt,
-                                    assistant_content=event.response.content,
-                                    assistant_meta={
-                                        "correlation_id": response_payload["correlation_id"],
-                                        "route": response_payload["route"],
-                                        "results": response_payload["results"],
-                                        "errors": response_payload["errors"],
-                                        "disagreement": response_payload["disagreement"],
-                                        "context": response_payload["context"],
-                                    },
+                                    mode="stream",
+                                    started_at=started_at,
                                 )
                             except KeyError:
                                 _send_sse_event(
@@ -621,16 +620,6 @@ def _make_handler(
                                     {"error": "not_found", "message": "Chat session not found."},
                                 )
                                 return
-                            response_payload["session_id"] = session.id
-                            response_payload["session"] = chat_session_payload(session)
-                            run_log_store.record_generation(
-                                mode="stream",
-                                prompt=prompt,
-                                response_payload=response_payload,
-                                context_payload=response_payload["context"],
-                                session_id=session.id,
-                                latency_ms=_elapsed_ms(started_at),
-                            )
                             _send_sse_event(self, "final", response_payload)
                             return
                     _send_sse_event(
@@ -678,7 +667,7 @@ def _make_handler(
                             status=HTTPStatus.NOT_FOUND,
                         )
                         return
-                model_context = _build_model_context(
+                model_context = build_chat_model_context(
                     session,
                     prompt,
                     context_policy,
@@ -700,21 +689,16 @@ def _make_handler(
                     )
                     return
 
-                response_payload = _response_payload(response)
-                response_payload["context"] = model_context["payload"]
                 try:
-                    session = chat_store.append_exchange(
+                    response_payload = persist_chat_response(
+                        chat_store=chat_store,
+                        run_log_store=run_log_store,
+                        prompt=prompt,
+                        response=response,
+                        context_payload=model_context["payload"],
                         session_id=session_id,
-                        user_content=prompt,
-                        assistant_content=response.content,
-                        assistant_meta={
-                            "correlation_id": response_payload["correlation_id"],
-                            "route": response_payload["route"],
-                            "results": response_payload["results"],
-                            "errors": response_payload["errors"],
-                            "disagreement": response_payload["disagreement"],
-                            "context": response_payload["context"],
-                        },
+                        mode="generate",
+                        started_at=started_at,
                     )
                 except KeyError:
                     _send_json(
@@ -723,16 +707,6 @@ def _make_handler(
                         status=HTTPStatus.NOT_FOUND,
                     )
                     return
-                response_payload["session_id"] = session.id
-                response_payload["session"] = chat_session_payload(session)
-                run_log_store.record_generation(
-                    mode="generate",
-                    prompt=prompt,
-                    response_payload=response_payload,
-                    context_payload=response_payload["context"],
-                    session_id=session.id,
-                    latency_ms=_elapsed_ms(started_at),
-                )
                 _send_json(self, response_payload)
                 return
 
@@ -1832,10 +1806,6 @@ def _query_limit(raw: object, *, default: int, maximum: int) -> int:
     return max(1, min(value, maximum))
 
 
-def _elapsed_ms(started_at: float) -> int:
-    return int((time.monotonic() - started_at) * 1000)
-
-
 def _bounded_int(raw: object, *, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(raw)
@@ -1902,89 +1872,6 @@ def _routing_payload(routing: object) -> dict[str, object]:
             "weight": distilled.weight,
         },
     }
-
-
-def _response_payload(response: object) -> dict[str, object]:
-    return {
-        "content": response.content,
-        "correlation_id": response.correlation_id,
-        "route": {
-            "selected": [item.__dict__ for item in response.route.selected],
-            "fallback_order": list(response.route.fallback_order),
-        },
-        "results": [item.__dict__ for item in response.results],
-        "errors": list(response.errors),
-        "disagreement": asdict(response.disagreement) if response.disagreement else None,
-        "context": {},
-    }
-
-
-def _route_payload(route: object) -> dict[str, object]:
-    return {
-        "selected": [item.__dict__ for item in route.selected],
-        "fallback_order": list(route.fallback_order),
-    }
-
-
-def _build_model_context(
-    session: ChatSession | None,
-    prompt: str,
-    context_policy: object,
-    *,
-    memory_store: FileMemoryStore,
-) -> dict[str, object]:
-    memories = _memory_snippets(memory_store, prompt, limit=context_policy.max_memory_items)
-    if session is None or not session.messages:
-        bundle = build_context_bundle(
-            system_prompt="",
-            current_prompt=prompt,
-            turns=(),
-            memories=memories,
-            policy=context_policy,
-        )
-        model_prompt = bundle.as_prompt() if memories else prompt
-        return {"prompt": model_prompt, "payload": _context_payload(bundle, memories=memories)}
-
-    turns = _conversation_turns(session)
-    bundle = build_context_bundle(
-        system_prompt=(
-            "You are continuing a local chat session. "
-            "Use prior messages only as context for the current user message."
-        ),
-        current_prompt=f"Current user message:\n{prompt}",
-        turns=turns,
-        summary=session.summary,
-        memories=memories,
-        policy=context_policy,
-    )
-    return {"prompt": bundle.as_prompt(), "payload": _context_payload(bundle, memories=memories)}
-
-
-def _context_payload(
-    bundle: ContextBundle,
-    *,
-    memories: tuple[MemorySnippet, ...] = (),
-) -> dict[str, object]:
-    return {
-        "token_estimate": bundle.token_estimate,
-        "budget_tokens": bundle.budget_tokens,
-        "compaction_needed": bundle.compaction_needed,
-        "dropped_turns": bundle.dropped_turns,
-        "sections": bundle.by_section(),
-        "memory_ids": [memory.id for memory in memories],
-    }
-
-
-def _memory_snippets(
-    memory_store: FileMemoryStore,
-    prompt: str,
-    *,
-    limit: int,
-) -> tuple[MemorySnippet, ...]:
-    return tuple(
-        MemorySnippet(id=record.id, text=record.text, score=score)
-        for record, score in memory_store.search(prompt, scope="default", limit=limit)
-    )
 
 
 def _conversation_turns(session: ChatSession) -> tuple[ConversationTurn, ...]:

@@ -66,6 +66,105 @@ class CliTests(unittest.TestCase):
         self.assertIn('"correlation_id"', completed.stdout)
         self.assertIn('"disagreement": null', completed.stdout)
 
+    def test_prompt_mode_can_persist_to_cli_chat_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            first = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--prompt",
+                    "Remember this CLI detail: alpha.",
+                    "--new-chat",
+                    "--chat-title",
+                    "CLI persisted",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            first_payload = json.loads(first.stdout)
+            second = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--prompt",
+                    "Use the previous CLI detail.",
+                    "--chat-session",
+                    first_payload["session_id"],
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            second_payload = json.loads(second.stdout)
+            chat_payload = json.loads((root / "runtime" / "chats.json").read_text(encoding="utf-8"))
+            run_log_text = (root / "runtime" / "runs.jsonl").read_text(encoding="utf-8")
+
+        self.assertEqual(first_payload["session"]["title"], "CLI persisted")
+        self.assertEqual(second_payload["session_id"], first_payload["session_id"])
+        self.assertGreater(second_payload["context"]["sections"]["recent_turns"], 0)
+        self.assertEqual(len(chat_payload["sessions"]), 1)
+        self.assertEqual(len(chat_payload["sessions"][0]["messages"]), 4)
+        self.assertIn('"mode": "cli-prompt"', run_log_text)
+        self.assertNotIn("Remember this CLI detail", run_log_text)
+        self.assertNotIn("Use the previous CLI detail", run_log_text)
+
+    def test_interactive_cli_uses_persistent_chat_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root, "tests/fixtures/moe.synthetic.json")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    "tests/fixtures/moe.synthetic.json",
+                    "--interactive",
+                    "--new-chat",
+                    "--chat-title",
+                    "CLI shell",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                input="Hello from the CLI shell.\nContinue from the previous turn.\n/summary\n/exit\n",
+                capture_output=True,
+            )
+            chat_payload = json.loads((root / "runtime" / "chats.json").read_text(encoding="utf-8"))
+            run_log_report = RunLogStore(root / "runtime" / "runs.jsonl").read_report(limit=10)
+
+        self.assertIn("myMoE interactive shell", completed.stderr)
+        self.assertIn("synthetic-", completed.stdout)
+        self.assertEqual(len(chat_payload["sessions"]), 1)
+        session = chat_payload["sessions"][0]
+        self.assertEqual(session["title"], "CLI shell")
+        self.assertEqual(len(session["messages"]), 4)
+        self.assertGreater(session["messages"][3]["meta"]["context"]["sections"]["recent_turns"], 0)
+        self.assertEqual(len(run_log_report.records), 2)
+        self.assertEqual({record.mode for record in run_log_report.records}, {"cli-interactive"})
+
     def test_doctor_prints_runtime_and_extensions(self) -> None:
         completed = subprocess.run(
             [

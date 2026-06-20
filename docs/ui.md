@@ -123,7 +123,7 @@ The UI is a dependency-free shadcn/new-york inspired chat surface. The default v
 - concise model status,
 - Advanced drawer hidden by default.
 
-Chat sessions are stored by the web server in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. When a saved session continues, the web API builds bounded local context with the configured context policy, retrieved local memories, and returns context telemetry with the generation response.
+Chat sessions are stored by the web server and CLI in `<runtime.work_dir>/chats.json`. The browser does not own durable chat state. On startup, the UI lists saved sessions and loads the most recently updated session unless the URL includes `?new_chat=true`. The sidebar can search, rename, compact, export, and delete saved sessions. The CLI can create, list, continue, export, rename, and guarded-delete the same sessions. When a saved session continues, both front ends build bounded local context with the configured context policy, retrieved local memories, and return context telemetry with the generation response.
 
 The browser prefers `/api/generate/stream`, a server-sent event response with `route`, `content`, `final`, and `error` events. The chat bubble updates as content arrives, then the `final` event persists the exchange and refreshes the session list. If streaming is unavailable before content starts, the UI falls back to the regular `/api/generate` JSON endpoint.
 
@@ -264,6 +264,41 @@ Interactive shell:
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli \
   --interactive
+```
+
+The interactive shell is persistent by default. It creates or attaches to a local
+chat session, uses the same context policy and memory retrieval path as the web UI,
+and records metadata-only generation observations in the run log. Inside the shell:
+
+```text
+/sessions
+/session <session-id>
+/new Architecture notes
+/summary
+/exit
+```
+
+Create and continue a named CLI chat from one-shot commands:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prompt "Capture this as a CLI session." \
+  --new-chat \
+  --chat-title "CLI notes" \
+  --json
+
+PYTHONPATH=src .venv/bin/python -m local_moe.cli \
+  --prompt "Continue that CLI session." \
+  --chat-session "<session-id>"
+```
+
+Manage local CLI/UI chat sessions:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --list-chats
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --export-chat "<session-id>"
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --rename-chat "<session-id>" --chat-title "New title"
+PYTHONPATH=src .venv/bin/python -m local_moe.cli --delete-chat "<session-id>" --chat-confirm
 ```
 
 Eval mode:
