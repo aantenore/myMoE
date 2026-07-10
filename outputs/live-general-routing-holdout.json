@@ -431,7 +431,7 @@
   ],
   "provenance": {
     "config_path": "configs/moe.live.general-mlx.example.json",
-    "config_sha256": "3c661e49bdda81493bf1ae70b82b0af27c94aeb0e7c46f2095da123b4b237213",
+    "config_sha256": "08d6d656d6ab8e99e33b35ffcb65d90696f41f12d9caeb44290ac5a3eae63f3c",
     "eval_path": "experiments/eval_set_live_general_holdout_v5.jsonl",
     "eval_sha256": "5de2d8eefc88b6e61a257c852ea0fd8045b00756c7a4f20bfca2ddbb4c18bd21",
     "holdout_data_sha256": "b44d22e73035e8787e38ff82c555e32356d10c337689be114c63f2f2d0d06c22",

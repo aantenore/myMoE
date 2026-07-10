@@ -88,7 +88,10 @@ Both the single-general baseline and routed top-1 must also stay at or below a
 release-ready.
 Release evidence also requires host RAM and swap counters: swap growth must stay
 at or below 4 GiB and observed peak RAM use at or below 95%. These host-wide
-limits intentionally tolerate ordinary desktop noise while rejecting the
+limits require valid before/after and peak counters plus at least 90% periodic
+sample coverage. The bounded coverage tolerance handles transient host-command
+timeouts under accelerator load without accepting missing memory evidence.
+These limits intentionally tolerate ordinary desktop noise while rejecting the
 catastrophic pressure seen with the earlier large-model topology. Missing RAM or
 swap counters fail the release profile; an offline CI run may only skip an
 absent or explicitly blocked live artifact.
