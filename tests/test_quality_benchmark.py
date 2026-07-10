@@ -53,6 +53,10 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertEqual(spec.decision["maximum_top1_truncation_rate"], 0.0)
         self.assertEqual(spec.repetitions, 3)
         self.assertEqual(spec.decision["minimum_top1_routed_case_count"], 6)
+        self.assertEqual(
+            spec.decision["maximum_operational_mean_latency_seconds"],
+            30.0,
+        )
         self.assertTrue(spec.decision["host_memory"]["required"])
         self.assertGreaterEqual(len(cases), 8)
         self.assertTrue(all(case.task_checks and case.quality_rubric for case in cases))
@@ -443,6 +447,40 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertEqual(metrics["moe_top1"]["finish_reason_counts"], {"unknown": 8})
         self.assertTrue(gate["moe_value_checks"][0]["passed"])
         self.assertTrue(gate["diagnostic_checks"][0]["passed"])
+        self.assertTrue(
+            all(
+                check["absolute_latency_passed"]
+                for check in gate["operational_checks"]
+            )
+        )
+
+    def test_absolute_operational_latency_cap_fails_even_when_relative_value_passes(
+        self,
+    ) -> None:
+        metrics = _gate_metrics()
+        metrics["single_general"]["latency_seconds"] = {"mean": 40.0}
+        metrics["moe_top1"]["latency_seconds"] = {"mean": 36.0}
+        comparisons = compare_to_baseline(
+            metrics,
+            {"baseline_variant": "single_general"},
+        )
+
+        gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
+
+        self.assertTrue(gate["moe_value_checks"][0]["passed"])
+        self.assertFalse(gate["passed"])
+        self.assertEqual(
+            gate["operational_thresholds"][
+                "maximum_operational_mean_latency_seconds"
+            ],
+            30.0,
+        )
+        self.assertTrue(
+            all(
+                not check["absolute_latency_passed"]
+                for check in gate["operational_checks"]
+            )
+        )
 
     def test_route_fulfillment_compares_selected_and_actual_experts(self) -> None:
         records = [
@@ -683,6 +721,7 @@ def _gate_decision() -> dict[str, object]:
         "minimum_quality_score": 0.7,
         "maximum_failure_rate": 0.0,
         "maximum_truncation_rate": 0.0,
+        "maximum_operational_mean_latency_seconds": 30.0,
         "minimum_top1_quality_delta": 0.0,
         "minimum_top1_task_success_delta": 0.0,
         "maximum_top1_failure_rate_delta": 0.0,

@@ -337,26 +337,17 @@ def _supports_thinking(params: dict[str, object]) -> bool:
 
 def _prompt_needs_thinking(prompt: str) -> bool:
     normalized = prompt.lower()
+    # Auto mode is intentionally conservative: broad words such as "plan",
+    # "architecture", or "compare" made small local models spend minutes in
+    # hidden reasoning on otherwise routine interactive work. Operators can
+    # still select thinking_policy="on" for dedicated reasoning profiles.
     hard_markers = (
-        "analyze",
-        "architecture",
-        "compare",
-        "debug",
-        "decide",
-        "derive",
-        "diagnose",
-        "evaluate",
-        "multi-step",
-        "optimize",
-        "plan",
-        "prove",
-        "reason",
-        "research",
-        "review",
         "security",
         "threat",
-        "tradeoff",
-        "why",
+        "formal proof",
+        "prove that",
+        "security review",
+        "threat model",
     )
     simple_markers = (
         "summarize",
@@ -370,7 +361,7 @@ def _prompt_needs_thinking(prompt: str) -> bool:
         return False
     if any(marker in normalized for marker in hard_markers):
         return True
-    return len(prompt) > 600 or prompt.count("?") >= 2
+    return False
 
 
 def strip_reasoning_content(content: str) -> str:

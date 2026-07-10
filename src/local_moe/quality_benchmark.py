@@ -569,6 +569,23 @@ def evaluate_benchmark_gate(
     min_quality = float(decision.get("minimum_quality_score", 0.7))
     max_failures = float(decision.get("maximum_failure_rate", 0.05))
     max_truncation_rate = float(decision.get("maximum_truncation_rate", 0.0))
+    raw_max_operational_latency = decision.get(
+        "maximum_operational_mean_latency_seconds"
+    )
+    if raw_max_operational_latency is None:
+        max_operational_latency = None
+        operational_latency_threshold_valid = True
+    else:
+        try:
+            max_operational_latency = float(raw_max_operational_latency)
+        except (TypeError, ValueError):
+            max_operational_latency = None
+            operational_latency_threshold_valid = False
+        else:
+            operational_latency_threshold_valid = bool(
+                math.isfinite(max_operational_latency)
+                and max_operational_latency > 0.0
+            )
     min_delta = float(
         decision.get(
             "minimum_top1_quality_delta",
@@ -618,12 +635,26 @@ def evaluate_benchmark_gate(
                 {"variant": variant, "passed": False, "missing": True}
             )
             continue
+        mean_latency = values.get("latency_seconds", {}).get("mean")
+        absolute_latency_passed = bool(
+            operational_latency_threshold_valid
+            and (
+                max_operational_latency is None
+                or (
+                    isinstance(mean_latency, (int, float))
+                    and not isinstance(mean_latency, bool)
+                    and math.isfinite(float(mean_latency))
+                    and float(mean_latency) <= max_operational_latency
+                )
+            )
+        )
         passed = (
             values["task_success_rate"] >= min_task
             and values["quality_pass_rate"] >= min_quality_pass
             and values["quality_score"] >= min_quality
             and values["failure_rate"] <= max_failures
             and values.get("truncation_rate", 0.0) <= max_truncation_rate
+            and absolute_latency_passed
         )
         operational_checks.append(
             {
@@ -634,6 +665,9 @@ def evaluate_benchmark_gate(
                 "quality_score": values["quality_score"],
                 "failure_rate": values["failure_rate"],
                 "truncation_rate": values.get("truncation_rate", 0.0),
+                "mean_latency_seconds": mean_latency,
+                "maximum_mean_latency_seconds": max_operational_latency,
+                "absolute_latency_passed": absolute_latency_passed,
             }
         )
 
@@ -722,6 +756,10 @@ def evaluate_benchmark_gate(
             "minimum_quality_score": min_quality,
             "maximum_failure_rate": max_failures,
             "maximum_truncation_rate": max_truncation_rate,
+            "maximum_operational_mean_latency_seconds": max_operational_latency,
+            "operational_latency_threshold_valid": (
+                operational_latency_threshold_valid
+            ),
         },
         "value_thresholds": {
             "value_variant": value_variant,

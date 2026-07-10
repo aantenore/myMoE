@@ -79,6 +79,9 @@ report unavailable endpoints, but it cannot declare release readiness.
 
 The live contract runs three repetitions. With the current eight-case dataset,
 the two fast-routed cases therefore contribute six paired latency observations.
+Both the single-general baseline and routed top-1 must also stay at or below a
+30-second mean latency; a relative speedup cannot make an unusably slow pair
+release-ready.
 Release evidence also requires host RAM and swap counters: swap growth must stay
 at or below 4 GiB and observed peak RAM use at or below 95%. These host-wide
 limits intentionally tolerate ordinary desktop noise while rejecting the

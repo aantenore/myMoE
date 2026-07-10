@@ -185,7 +185,7 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.gemma-e4b-mlx.example.json
 ```
 
-Gemma configs declare `supports_thinking = true` and `thinking_policy = auto`. myMoE enables thinking only for prompts that look complex enough to benefit from it, then strips Gemma thinking/channel tokens from the user-visible response.
+Thinking-capable configs declare `supports_thinking = true` and a policy. The default `auto` policy is latency-bounded: explicit security/threat and formal-proof prompts may think, while routine planning and architecture do not. Dedicated reasoning profiles can opt into `thinking_policy = on`; raw thinking/channel tokens are always stripped from the user-visible response.
 
 Optional Gemma 4 12B GGUF coding/agentic specialist:
 

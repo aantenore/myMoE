@@ -270,6 +270,39 @@ class ProviderTests(unittest.TestCase):
             {"enable_thinking": False},
         )
 
+    def test_openai_provider_auto_keeps_routine_planning_interactive(self) -> None:
+        response = {"choices": [{"message": {"content": "final answer"}}]}
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            expert = ExpertConfig(
+                id="reasoner",
+                provider="openai_compatible",
+                model="thinking-model",
+                role="general",
+                base_url=f"http://{host}:{port}/v1",
+                timeout_seconds=1,
+                params={
+                    "supports_thinking": True,
+                    "thinking_policy": "auto",
+                    "temperature": 0.4,
+                },
+            )
+            OpenAICompatibleProvider().generate(
+                expert,
+                GenerationRequest(
+                    prompt=(
+                        "Evaluate this architecture, compare the tradeoffs, and "
+                        "write a practical implementation plan."
+                    ),
+                    correlation_id="case-routine-plan",
+                ),
+            )
+
+        self.assertEqual(
+            _FakeOpenAIHandler.last_payload["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
+
     def test_openai_provider_strips_reasoning_channels_from_content(self) -> None:
         response = {
             "choices": [

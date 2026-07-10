@@ -276,4 +276,4 @@ Experts can declare:
 "thinking_policy": "auto"
 ```
 
-For supported models, `auto` enables thinking only for complex prompts and strips raw thinking/channel tokens from the returned answer. Qwen3 30B-A3B Instruct 2507 remains configured as non-thinking because its public model card says that release supports only non-thinking mode.
+For supported models, `auto` is deliberately latency-bounded: it enables thinking for explicit security/threat or formal-proof work, while routine architecture, comparison, and planning remain non-thinking. A dedicated profile can set `thinking_policy` to `on` when the user accepts the extra latency. Raw thinking/channel tokens are stripped from the returned answer. Qwen3 30B-A3B Instruct 2507 remains configured as non-thinking because its public model card says that release supports only non-thinking mode.
