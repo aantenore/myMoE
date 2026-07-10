@@ -48,7 +48,7 @@ class QualityBenchmarkTests(unittest.TestCase):
         cases = load_benchmark_cases(spec.dataset_path)
 
         self.assertEqual(spec.variants, ("single_general", "moe_top1", "moe_top2"))
-        self.assertEqual(spec.generation_overrides["max_tokens"], 2048)
+        self.assertEqual(spec.generation_overrides["max_tokens"], 768)
         self.assertEqual(spec.decision["maximum_truncation_rate"], 0.0)
         self.assertEqual(spec.decision["maximum_top1_truncation_rate"], 0.0)
         self.assertEqual(spec.repetitions, 3)
