@@ -271,6 +271,39 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertEqual(quality["score"], 0.25)
         self.assertIn("evidence", quality["criteria"][0])
 
+    def test_summary_evidence_limit_accepts_negative_semantic_paraphrases(
+        self,
+    ) -> None:
+        cases = load_benchmark_cases("experiments/quality_benchmark_cases.jsonl")
+        case = next(item for item in cases if item.id == "three_bullet_summary")
+        valid_outputs = (
+            "- Routes between a general model and fallback.\n"
+            "- Keeps memory, health diagnostics, and tools local.\n"
+            "- Current evidence shows no improvement in answer quality over a single model.",
+            "- Routes between a general model and fallback.\n"
+            "- Keeps memory, health diagnostics, and tools local.\n"
+            "- It has not yet demonstrated superior answer quality compared to a single model.",
+        )
+        positive_claim = (
+            "- Routes between a general model and fallback.\n"
+            "- Keeps memory, health diagnostics, and tools local.\n"
+            "- It demonstrates superior answer quality compared to a single model."
+        )
+
+        for output in valid_outputs:
+            _, quality = evaluate_case_output(
+                case,
+                output,
+                quality_pass_threshold=0.7,
+            )
+            self.assertTrue(quality["passed"])
+        _, positive_quality = evaluate_case_output(
+            case,
+            positive_claim,
+            quality_pass_threshold=0.7,
+        )
+        self.assertFalse(positive_quality["passed"])
+
     def test_unavailable_runtime_is_blocked_without_execution(self) -> None:
         with TemporaryDirectory() as tmp:
             spec = _write_synthetic_spec(Path(tmp))
