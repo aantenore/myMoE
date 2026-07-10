@@ -17,7 +17,18 @@ class ModelDownloadTests(unittest.TestCase):
 
         self.assertEqual({request.kind for request in requests}, {"huggingface_snapshot"})
         self.assertEqual({request.backend for request in requests}, {"mlx_lm"})
-        self.assertTrue(any("Qwen3-30B-A3B" in request.repo_id for request in requests if request.repo_id))
+        self.assertEqual(
+            {request.repo_id for request in requests},
+            {"mlx-community/Qwen3-4B-4bit", "mlx-community/Qwen3-1.7B-4bit"},
+        )
+
+    def test_builds_quality_first_qwen30_snapshot_request(self) -> None:
+        config = load_config("configs/moe.live.qwen30-mlx.example.json")
+
+        requests = build_model_download_requests(config, "mlx_lm")
+
+        self.assertEqual(len(requests), 1)
+        self.assertIn("Qwen3-30B-A3B", requests[0].repo_id)
 
     def test_builds_llama_cpp_quantized_gguf_snapshot_request(self) -> None:
         config = load_config("configs/moe.live.gemma-12b-agentic-gguf.example.json")

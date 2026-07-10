@@ -429,6 +429,18 @@
       "score": 1.0
     }
   ],
+  "provenance": {
+    "config_path": "configs/moe.live.general-mlx.example.json",
+    "config_sha256": "206cad8005024c2f6818fb0dc53d3f1c6ed9f7d6eb2a8ade03b133547f8b691d",
+    "eval_path": "experiments/eval_set_live_general_holdout_v5.jsonl",
+    "eval_sha256": "5de2d8eefc88b6e61a257c852ea0fd8045b00756c7a4f20bfca2ddbb4c18bd21",
+    "holdout_data_sha256": "b44d22e73035e8787e38ff82c555e32356d10c337689be114c63f2f2d0d06c22",
+    "training_labels_path": "experiments/route_labels_live_general.jsonl",
+    "training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4",
+    "artifact_path": "outputs/router-distilled-live-general.json",
+    "artifact_sha256": "12409261836173c63f8d5691a47c4fbf5b3b312543c178a23c2942ca14f4ed94",
+    "artifact_training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4"
+  },
   "integrity": {
     "passed": true,
     "training_total": 52,
@@ -456,16 +468,5 @@
     "overlapping_ids": [],
     "overlapping_prompt_hashes": [],
     "artifact_matches_training": true
-  },
-  "provenance": {
-    "config_path": "configs/moe.live.general-mlx.example.json",
-    "config_sha256": "f9b16815e8d4ce0c2ada54ecb08a0de03bc427d3c5140c41f0c817a08fa8bdaf",
-    "eval_path": "experiments/eval_set_live_general_holdout_v5.jsonl",
-    "holdout_data_sha256": "b44d22e73035e8787e38ff82c555e32356d10c337689be114c63f2f2d0d06c22",
-    "training_labels_path": "experiments/route_labels_live_general.jsonl",
-    "training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4",
-    "artifact_path": "outputs/router-distilled-live-general.json",
-    "artifact_sha256": "12409261836173c63f8d5691a47c4fbf5b3b312543c178a23c2942ca14f4ed94",
-    "artifact_training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4"
   }
 }

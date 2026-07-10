@@ -15,7 +15,7 @@ eval:
 eval-holdout:
 	PYTHONPATH=src python3 experiments/run_smoke_eval.py \
 		--config configs/moe.live.general-mlx.example.json \
-		--eval experiments/eval_set_live_general_holdout_v2.jsonl \
+		--eval experiments/eval_set_live_general_holdout_v5.jsonl \
 		--training-labels experiments/route_labels_live_general.jsonl \
 		--out outputs/live-general-routing-holdout.json
 

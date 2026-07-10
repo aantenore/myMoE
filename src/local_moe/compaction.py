@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
 from uuid import uuid4
 
 from .config import ExpertConfig, MoEConfig
@@ -32,10 +33,23 @@ class LocalCompactionProvider:
         turns: tuple[ConversationTurn, ...],
         existing_summary: str = "",
         correlation_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> CompactionResult:
         cid = correlation_id or str(uuid4())
         prompt = build_compaction_prompt(turns=turns, existing_summary=existing_summary)
-        result = self._provider.generate(self._expert, GenerationRequest(prompt=prompt, correlation_id=cid))
+        expert = self._expert
+        if timeout_seconds is not None:
+            timeout = float(timeout_seconds)
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError("timeout_seconds must be finite and positive")
+            expert = replace(
+                expert,
+                timeout_seconds=min(expert.timeout_seconds, timeout),
+            )
+        result = self._provider.generate(
+            expert,
+            GenerationRequest(prompt=prompt, correlation_id=cid),
+        )
         return CompactionResult(
             summary=result.content,
             expert_id=result.expert_id,

@@ -1,6 +1,9 @@
 {
+  "profile": "release",
   "routing_eval": {
     "result_path": "outputs/smoke-eval-extended.json",
+    "config_path": "tests/fixtures/moe.synthetic.json",
+    "eval_path": "experiments/eval_set_extended.jsonl",
     "min_accuracy": 0.9,
     "min_total": 50,
     "required_complexities": ["simple", "medium", "complex", "very_complex"]
@@ -15,7 +18,44 @@
     "min_total": 50,
     "required_complexities": ["simple", "medium", "complex", "very_complex"]
   },
+  "quality_benchmark": {
+    "mode": "required",
+    "result_path": "outputs/quality-benchmark.json",
+    "manifest_path": "configs/quality-benchmark.json",
+    "benchmark_implementation_path": "src/local_moe/quality_benchmark.py",
+    "evaluator_implementation_path": "src/local_moe/deterministic_evaluator.py",
+    "runtime_dependency_paths": [
+      ".gitattributes",
+      "pyproject.toml",
+      "uv.lock",
+      "experiments/run_quality_benchmark.py",
+      "src/local_moe/config.py",
+      "src/local_moe/deterministic_evaluator.py",
+      "src/local_moe/distilled_router.py",
+      "src/local_moe/evaluation_integrity.py",
+      "src/local_moe/orchestrator.py",
+      "src/local_moe/providers.py",
+      "src/local_moe/quality_benchmark.py",
+      "src/local_moe/router.py",
+      "src/local_moe/text_features.py",
+      "outputs/router-distilled-live-general.json"
+    ],
+    "runtime_provenance": {
+      "required_packages": [
+        "local-moe-orchestrator",
+        "mlx",
+        "mlx-metal",
+        "mlx-lm",
+        "transformers",
+        "huggingface-hub"
+      ],
+      "require_model_snapshot_revision": true,
+      "verify_current_environment_in_release": true
+    }
+  },
   "required_files": [
+    ".gitattributes",
+    ".github/workflows/ci.yml",
     "src/local_moe/config.py",
     "src/local_moe/config_profiles.py",
     "src/local_moe/audit.py",
@@ -66,6 +106,7 @@
     "experiments/route_labels_live_general.jsonl",
     "experiments/route_labels_extended.jsonl",
     "experiments/build_route_label_dataset.py",
+    "experiments/run_smoke_eval.py",
     "experiments/train_distilled_router.py",
     "outputs/router-distilled-live-general.json",
     "outputs/router-distilled-extended.json",
@@ -73,10 +114,10 @@
     "outputs/live-general-routing-holdout.json",
     "configs/model-candidates.json",
     "configs/model-benchmark.json",
+    "configs/quality-gate-ci.json",
     "configs/quality-benchmark.json",
     "experiments/quality_benchmark_cases.jsonl",
     "experiments/run_quality_benchmark.py",
-    "outputs/quality-benchmark.json",
     "tests/fixtures/moe.synthetic.json",
     "tests/test_audit.py",
     "tests/test_config_profiles.py",
@@ -101,6 +142,7 @@
     "configs/moe.live.qwen25-coder.json",
     "configs/single.live.qwen25-coder.json",
     "configs/moe.live.general-mlx.example.json",
+    "configs/moe.live.qwen30-mlx.example.json",
     "configs/moe.live.fast-mlx.example.json",
     "configs/moe.live.gemma-e4b-mlx.example.json",
     "configs/moe.live.gemma-12b-coder-gguf.example.json",
@@ -125,7 +167,12 @@
     {
       "host": "127.0.0.1",
       "port": 8101,
-      "name": "llama-server live eval"
+      "name": "general model live eval"
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 8102,
+      "name": "fast fallback model live eval"
     }
   ]
 }

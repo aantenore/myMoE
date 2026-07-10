@@ -1,0 +1,7 @@
+{
+  "extends": "quality-gate.json",
+  "profile": "ci_offline",
+  "quality_benchmark": {
+    "mode": "offline_optional"
+  }
+}

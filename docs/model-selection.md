@@ -20,8 +20,8 @@ The current 1.5B Qwen coder model is only a smoke-test model. It proves the harn
 
 On the tested Apple M5 Pro / 24 GiB machine, the current benchmark selects:
 
-- primary general expert: `Qwen3-30B-A3B-Instruct-2507-MLX-4bit`,
-- fast fallback/compaction expert: `Gemma-4-E4B-it-MLX-4bit`.
+- default resident general expert: `Qwen3-4B-4bit`,
+- fast fallback/compaction expert: `Qwen3-1.7B-4bit`.
 
 Measured short-generation snapshot:
 
@@ -33,12 +33,12 @@ Measured short-generation snapshot:
 | Qwen3 1.7B MLX 4-bit | ok | 191.18 | 1.09 GB |
 | Qwen3.6 35B-A3B OptiQ MLX 4-bit | failed | - | Metal OOM |
 
-The 30B result is strong enough to keep it as the default primary model on this machine class. Gemma 4 E4B is now the selected fallback/compaction model because it loaded successfully with the pinned MLX profile and scored better than Qwen3 4B after quality prior and memory headroom were combined. Qwen3 4B remains the smallest practical fast-first profile.
+The isolated candidate benchmark ranked the 30B model highest, but it did not model the actual desktop working set. Live joint-residency attempts with the 30B candidate caused severe swap pressure even after reducing the fallback to 1.7B. The default therefore uses Qwen3 4B plus Qwen3 1.7B: both are measured, cached, and small enough to preserve OS/app headroom. Qwen3 30B remains available as a quality-first isolated profile, and Gemma remains an explicitly supported isolated regression profile.
 Qwen3.6 OptiQ was tested as the newest stretch candidate and rejected for this 24 GB machine after Metal OOM with both the normal 8192 KV cache benchmark and a tighter 2048 KV retry.
 
-## Recommended Default
+## Quality-First Isolated Profile
 
-Use `Qwen3-30B-A3B-Instruct-2507` in MLX 4-bit as the first serious general-purpose local expert.
+Use `Qwen3-30B-A3B-Instruct-2507` in MLX 4-bit only when answer quality is worth running a single heavy model and the rest of the desktop working set is controlled.
 
 Why:
 
@@ -54,19 +54,21 @@ Start it with:
 ./scripts/start_mlx_general_expert.sh
 ```
 
-Then point the orchestrator to:
+Then point the orchestrator to its isolated profile:
 
 ```bash
-configs/moe.live.general-mlx.example.json
+configs/moe.live.qwen30-mlx.example.json
 ```
 
 ## Stretch Candidates
 
 | Role | Candidate | Why | 24 GB Risk |
 | --- | --- | --- | --- |
-| Primary general default | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best risk-adjusted general model for 24 GB | Still needs capped context and memory monitoring |
+| Primary general default | `Qwen3 4B MLX 4-bit` | Responsive resident general model with room for a small fallback | Lower semantic ceiling than the isolated 30B profile |
+| Quality-first isolated | `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` | Best isolated candidate quality/performance score | Do not co-reside on the tested 24 GB desktop workload |
 | Multimodal general | `Gemma 4 26B-A4B-it` OptiQ MLX 4-bit | Vision, reasoning, tool use, good speed/quality tradeoff | Great alternative, but compare on Antonio-specific evals |
-| Fast fallback | `Gemma 4 E4B it MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Requires pinned MLX package profile for the current artifact |
+| Fast fallback | `Qwen3 1.7B MLX 4-bit` | Summarization, compaction, routing, cheap fallback | Memory-bounded resident choice for the 24 GiB profile |
+| Optional fallback regression | `Gemma 4 E4B it MLX 4-bit` | Isolated Gemma compatibility and quality checks | Do not co-reside with Qwen 30B on the tested 24 GiB host |
 | Optional coding specialist | `Qwen3-Coder-30B-A3B` MLX/GGUF | Use only for explicitly coding-heavy workflows | Not default for this app |
 | Optional GGUF coding/agentic specialist | `Gemma 4 12B Agentic Fable5 Composer 2.5 v2` GGUF | Local coding, terminal, and tool-use experiments through llama.cpp | Newly published; benchmark locally before enabling as default route |
 | Legacy GGUF coding specialist | `Gemma 4 12B Coder Fable5 Composer 2.5 v1` GGUF | Python/coding specialist requested during research | Superseded by the same author's v2 for agentic/coding tasks |
@@ -87,20 +89,23 @@ myMoE therefore adds both:
 - `configs/moe.live.gemma-12b-coder-gguf.example.json` for the v1 model,
 - `configs/moe.live.gemma-12b-agentic-gguf.example.json` for the preferred v2 successor.
 
-Neither replaces Qwen3 30B-A3B as the general-purpose default until it wins local evals against the default on non-coding prompts. For coding/terminal/tool-use slices, the v2 GGUF profile is the more interesting candidate to benchmark next.
+Neither replaces the general-purpose default until it wins local evals on its task slice. For coding/terminal/tool-use slices, the v2 GGUF profile is the more interesting candidate to benchmark next.
 
 ## MoE Runtime Policy
 
-On 24 GB, do not keep multiple large experts resident. Use:
+On 24 GB, keep the default topology explicit:
 
-- resident heavy expert: `1`,
-- resident small expert: `1`,
-- cold-load specialists: yes,
+- resident general expert: Qwen3 4B,
+- resident fallback/compaction expert: Qwen3 1.7B,
+- quality-first isolated expert: Qwen3 30B, selected instead of the default pair,
+- other specialists: manual and isolated unless a dedicated eval justifies them,
 - max initial context: `16K-32K`,
 - compaction trigger: around `70-75%`,
 - routing eval before enabling a specialist by default.
 
-This still gives you MoE behavior at the application level without pretending the machine can host several 17-22 GB models simultaneously.
+This gives application-level MoE behavior without implying that the machine can
+host several 17-22 GB models simultaneously or that automatic cold-loading is
+already implemented.
 
 ## Sources Checked
 

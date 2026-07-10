@@ -1,6 +1,17 @@
 {
+  "profile": "ci_offline",
   "passed": true,
+  "checks_passed": true,
+  "release_ready": false,
   "checks": [
+    {
+      "name": "gate_profile",
+      "profile": "ci_offline",
+      "quality_benchmark_mode": "offline_optional",
+      "expected_quality_benchmark_mode": "offline_optional",
+      "passed": true,
+      "error": null
+    },
     {
       "name": "required_files",
       "passed": true,
@@ -14,7 +25,14 @@
       "total": 56,
       "min_total": 50,
       "missing_complexities": [],
-      "failed_case_ids": []
+      "failed_case_ids": [],
+      "report_matches_recomputed": true,
+      "provenance_matches": {
+        "config_path": true,
+        "config_content": true,
+        "eval_path": true,
+        "eval_content": true
+      }
     },
     {
       "name": "routing_holdout",
@@ -66,6 +84,30 @@
         "artifact": true,
         "artifact_content": true,
         "artifact_path": true
+      }
+    },
+    {
+      "name": "quality_benchmark",
+      "mode": "offline_optional",
+      "status": "skipped",
+      "passed": true,
+      "release_eligible": false,
+      "artifact_status": "blocked",
+      "result_path": "outputs/quality-benchmark.json",
+      "reason": "artifact_blocked",
+      "blocked_artifact_validation": {
+        "passed": true,
+        "checks": {
+          "schema_version_present": true,
+          "created_at_present": true,
+          "provenance_present": true,
+          "deterministic_validation_explicit": true,
+          "readiness_explicit": true,
+          "execution_not_run": true,
+          "metrics_empty": true,
+          "comparisons_not_run": true,
+          "gate_blocked": true
+        }
       }
     },
     {

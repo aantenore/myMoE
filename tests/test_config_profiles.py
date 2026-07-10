@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from local_moe.app_config import load_app_config
-from local_moe.config_profiles import discover_config_profiles, recommend_config_profile
+from local_moe.config_profiles import (
+    DEFAULT_CANDIDATE_PATHS,
+    _candidate_index,
+    discover_config_profiles,
+    recommend_config_profile,
+)
 from local_moe.hardware import HardwareProfile
 
 
@@ -24,6 +27,14 @@ TEST_HARDWARE = HardwareProfile(
 
 
 class ConfigProfileTests(unittest.TestCase):
+    def test_current_runtime_candidates_override_historical_benchmark_roles(self) -> None:
+        candidates = _candidate_index(DEFAULT_CANDIDATE_PATHS)
+        qwen4 = candidates["mlx-community/qwen3-4b-4bit"]
+
+        self.assertEqual(qwen4["id"], "qwen3-4b-mlx-4bit")
+        self.assertEqual(qwen4["role"], "primary_general")
+        self.assertEqual(qwen4["estimated_memory_gb"], 2.49)
+
     def test_discovers_runnable_profiles_with_setup_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -199,6 +210,11 @@ class ConfigProfileTests(unittest.TestCase):
             root = Path(tmp)
             config_dir = root / "configs"
             config_dir.mkdir()
+            fast_model = root / "Fast-4B-Q4.gguf"
+            general_model = root / "Qwen3-30B-A3B-Q4.gguf"
+            fallback_model = root / "Gemma-E4B-Q4.gguf"
+            for model_path in (fast_model, general_model, fallback_model):
+                model_path.write_bytes(b"gguf")
             fast_profile = config_dir / "moe.fast.json"
             fast_profile.write_text(
                 json.dumps(
@@ -209,9 +225,9 @@ class ConfigProfileTests(unittest.TestCase):
                                 "id": "general",
                                 "provider": "openai_compatible",
                                 "base_url": "http://127.0.0.1:8101/v1",
-                                "model": "example/Fast-4B-4bit",
+                                "model": str(fast_model),
                                 "role": "fast-local-general-purpose",
-                                "params": {"runtime_backend": "mlx_lm"},
+                                "params": {"runtime_backend": "llama_cpp"},
                             }
                         ],
                         "rules": [],
@@ -237,17 +253,17 @@ class ConfigProfileTests(unittest.TestCase):
                                 "id": "general",
                                 "provider": "openai_compatible",
                                 "base_url": "http://127.0.0.1:8101/v1",
-                                "model": "example/Qwen3-30B-A3B-4bit",
+                                "model": str(general_model),
                                 "role": "primary-general-purpose",
-                                "params": {"runtime_backend": "mlx_lm"},
+                                "params": {"runtime_backend": "llama_cpp"},
                             },
                             {
                                 "id": "fast_fallback",
                                 "provider": "openai_compatible",
                                 "base_url": "http://127.0.0.1:8102/v1",
-                                "model": "example/Gemma-E4B-4bit",
+                                "model": str(fallback_model),
                                 "role": "fast-summary-and-fallback",
-                                "params": {"runtime_backend": "mlx_lm"},
+                                "params": {"runtime_backend": "llama_cpp"},
                             },
                         ],
                         "rules": [],
@@ -262,19 +278,19 @@ class ConfigProfileTests(unittest.TestCase):
                         "candidates": [
                             {
                                 "id": "fast-general",
-                                "repo": "example/Fast-4B-4bit",
+                                "repo": str(fast_model),
                                 "role": "fast_general",
                                 "estimated_memory_gb": 4.0,
                             },
                             {
                                 "id": "qwen-general",
-                                "repo": "example/Qwen3-30B-A3B-4bit",
+                                "repo": str(general_model),
                                 "role": "primary_general",
                                 "estimated_memory_gb": 18.5,
                             },
                             {
                                 "id": "gemma-fallback",
-                                "repo": "example/Gemma-E4B-4bit",
+                                "repo": str(fallback_model),
                                 "role": "fast_compaction_or_fallback",
                                 "estimated_memory_gb": 5.5,
                             },
@@ -283,28 +299,23 @@ class ConfigProfileTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            hub_cache = root / "hf-cache"
-            _write_hf_cache(hub_cache, "example/Fast-4B-4bit")
-            _write_hf_cache(hub_cache, "example/Qwen3-30B-A3B-4bit")
-            _write_hf_cache(hub_cache, "example/Gemma-E4B-4bit")
             app_config = load_app_config("configs/app.json")
             app_config = replace(app_config, default_moe_config=str(fast_profile))
 
-            with patch.dict(os.environ, {"HF_HUB_CACHE": str(hub_cache)}):
-                payload = discover_config_profiles(
-                    active_config_path=str(fast_profile),
-                    app_config=app_config,
-                    config_dir=config_dir,
-                    hardware_profile=TEST_HARDWARE,
-                    candidate_paths=(candidates,),
-                )
-                recommendation = recommend_config_profile(
-                    active_config_path=str(fast_profile),
-                    app_config=app_config,
-                    config_dir=config_dir,
-                    hardware_profile=TEST_HARDWARE,
-                    candidate_paths=(candidates,),
-                )
+            payload = discover_config_profiles(
+                active_config_path=str(fast_profile),
+                app_config=app_config,
+                config_dir=config_dir,
+                hardware_profile=TEST_HARDWARE,
+                candidate_paths=(candidates,),
+            )
+            recommendation = recommend_config_profile(
+                active_config_path=str(fast_profile),
+                app_config=app_config,
+                config_dir=config_dir,
+                hardware_profile=TEST_HARDWARE,
+                candidate_paths=(candidates,),
+            )
 
         self.assertEqual(payload["recommendation"]["status"], "ready")
         self.assertEqual(payload["recommendation"]["profile_path"], general_profile.as_posix())
@@ -314,12 +325,6 @@ class ConfigProfileTests(unittest.TestCase):
         self.assertTrue(selected["recommended"])
         self.assertFalse(next(item for item in payload["profiles"] if item["path"] == fast_profile.as_posix())["recommended"])
         self.assertIn("start_models", {command["id"] for command in payload["recommendation"]["next_actions"]})
-
-
-def _write_hf_cache(root: Path, repo_id: str) -> None:
-    snapshot = root / f"models--{repo_id.replace('/', '--')}" / "snapshots" / "test"
-    snapshot.mkdir(parents=True)
-    (snapshot / "model.safetensors").write_text("cached", encoding="utf-8")
 
 
 if __name__ == "__main__":

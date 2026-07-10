@@ -2,13 +2,18 @@
 
 Generated: 2026-06-18
 
+> Historical, superseded decision record. This report preserves the initial
+> candidate research, but it is not the current runtime recommendation. Later
+> joint-residency tests selected Qwen3 4B plus Qwen3 1.7B for the default 24 GB
+> profile and retained Qwen3 30B only as a quality-first isolated profile.
+
 ## Correction
 
 The target app is general-purpose, not coding-first. The prior Qwen2.5-Coder 1.5B model remains useful only as a smoke-test endpoint.
 
-## Recommendation
+## Superseded Recommendation
 
-Default first serious local model:
+Initial first serious local-model candidate at the time of this report:
 
 ```text
 lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
+from local_moe.agent_tools import ApprovalRequest, arguments_sha256
+from local_moe.cli import _agent_approval_handler
 from local_moe.run_log import RunLogStore
 from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
@@ -65,6 +71,465 @@ class CliTests(unittest.TestCase):
         self.assertIn("[coding:synthetic-coder]", completed.stdout)
         self.assertIn('"correlation_id"', completed.stdout)
         self.assertIn('"disagreement": null', completed.stdout)
+
+    def test_agent_prompt_runs_openai_compatible_loop_with_metadata_only_trace(self) -> None:
+        def respond(_request_payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>private reasoning</think>Agent result.",
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 21, "completion_tokens": 4},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, _serve_agent(respond) as server:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url=f"http://127.0.0.1:{server.port}/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            private_prompt = "Private CLI agent prompt"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--agent-prompt",
+                    private_prompt,
+                    "--agent-expert",
+                    "general",
+                    "--agent-tool",
+                    "memory.search",
+                    "--agent-max-model-turns",
+                    "2",
+                    "--agent-max-tool-calls",
+                    "1",
+                    "--agent-soft-wall-time-seconds",
+                    "5",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["mode"], "agent")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["final_answer"], "Agent result.")
+        self.assertEqual(payload["trace_policy"], "metadata_only")
+        self.assertNotIn(private_prompt, completed.stdout)
+        self.assertNotIn("private reasoning", completed.stdout)
+        self.assertEqual(len(server.requests), 1)
+        request_payload = server.requests[0]
+        self.assertEqual(request_payload["messages"][1]["content"], private_prompt)
+        self.assertEqual(
+            request_payload["tools"][0]["function"]["name"],
+            "memory__search",
+        )
+        self.assertFalse(request_payload["parallel_tool_calls"])
+        for event in payload["trace"]:
+            self.assertNotIn("content", event)
+            self.assertNotIn("arguments", event)
+            self.assertNotIn("result", event)
+
+    def test_agent_prompt_rejects_remote_endpoint_in_local_model_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url="https://models.example.com/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--agent-prompt",
+                    "Do not send this private prompt off-device.",
+                    "--agent-tool",
+                    "memory.search",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("local_model_required", completed.stderr)
+        self.assertIn("non-loopback", completed.stderr)
+
+    def test_deprecated_agent_max_wall_time_alias_warns(self) -> None:
+        def respond(_request_payload: dict[str, object]) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "Done."}}]}
+
+        with tempfile.TemporaryDirectory() as tmp, _serve_agent(respond) as server:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url=f"http://127.0.0.1:{server.port}/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--agent-prompt",
+                    "Return a final answer.",
+                    "--agent-tool",
+                    "memory.search",
+                    "--agent-max-wall-time-seconds",
+                    "5",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("deprecated", completed.stderr.lower())
+        self.assertEqual(json.loads(completed.stdout)["status"], "completed")
+
+    def test_agent_prompt_requires_and_replays_exact_write_approval(self) -> None:
+        tool_arguments = {
+            "title": "CLI approval note",
+            "content": "Stored only after the exact approval is replayed.",
+        }
+
+        def respond(request_payload: dict[str, object]) -> dict[str, object]:
+            messages = request_payload["messages"]
+            if messages[-1]["role"] == "tool":
+                tool_result = json.loads(messages[-1]["content"])
+                self.assertEqual(tool_result["status"], "success")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "Knowledge stored.",
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-write-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "knowledge__ingest",
+                                        "arguments": json.dumps(tool_arguments),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, _serve_agent(respond) as server:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url=f"http://127.0.0.1:{server.port}/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            command = [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--app-config",
+                str(app_config),
+                "--config",
+                str(config_path),
+                "--agent-prompt",
+                "Store this local note.",
+                "--agent-tool",
+                "knowledge.ingest",
+                "--json",
+            ]
+            guarded = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+            guarded_payload = json.loads(guarded.stdout)
+            approval_token = guarded_payload["approval_requests"][0][
+                "approval_token"
+            ]
+            memory_path = root / "runtime" / "memory.jsonl"
+            self.assertFalse(memory_path.exists())
+
+            approved = subprocess.run(
+                [*command, "--agent-approve", approval_token],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            approved_payload = json.loads(approved.stdout)
+            memory_records = memory_path.read_text(encoding="utf-8")
+
+        self.assertEqual(guarded.returncode, 2)
+        self.assertEqual(guarded_payload["status"], "approval_required")
+        self.assertEqual(
+            guarded_payload["approval_requests"][0]["tool_name"],
+            "knowledge.ingest",
+        )
+        self.assertNotIn("confirm", guarded_payload["approval_requests"][0]["arguments"])
+        self.assertEqual(approved_payload["status"], "completed")
+        self.assertEqual(approved_payload["tool_results"][0]["status"], "success")
+        self.assertTrue(approved_payload["grounded_in_tool_results"])
+        self.assertIn("CLI approval note", memory_records)
+
+    def test_agent_prompt_applies_app_process_execution_deny_policy(self) -> None:
+        def respond(request_payload: dict[str, object]) -> dict[str, object]:
+            messages = request_payload["messages"]
+            if messages[-1]["role"] == "tool":
+                tool_result = json.loads(messages[-1]["content"])
+                self.assertEqual(tool_result["status"], "denied")
+                self.assertEqual(tool_result["code"], "permission_denied")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "Process execution is disabled.",
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call-process-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "mcp__list_tools",
+                                        "arguments": '{"server":"filesystem"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, _serve_agent(respond) as server:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url=f"http://127.0.0.1:{server.port}/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--agent-prompt",
+                    "Inspect the filesystem MCP tools.",
+                    "--agent-tool",
+                    "mcp.list_tools",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["tool_results"][0]["status"], "denied")
+        self.assertFalse(payload["grounded_in_tool_results"])
+        self.assertEqual(payload["approval_requests"], [])
+
+    def test_agent_prompt_connector_deny_overrides_exact_approval(self) -> None:
+        tool_arguments = {
+            "surface": "mcp_server",
+            "definition": {"name": "must-not-be-registered"},
+        }
+
+        def respond(request_payload: dict[str, object]) -> dict[str, object]:
+            messages = request_payload["messages"]
+            if messages[-1]["role"] == "tool":
+                tool_result = json.loads(messages[-1]["content"])
+                self.assertEqual(tool_result["status"], "denied")
+                self.assertEqual(tool_result["code"], "permission_denied")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "Connector configuration is denied.",
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call-connector-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "extension__configure",
+                                        "arguments": json.dumps(tool_arguments),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, _serve_agent(respond) as server:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url=f"http://127.0.0.1:{server.port}/v1",
+            )
+            app_config = _write_temp_app_config(
+                root,
+                config_path,
+                permission_overrides={"connector_install_policy": "deny"},
+            )
+            approval = (
+                "extension.configure:"
+                f"{arguments_sha256(tool_arguments)}"
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--agent-prompt",
+                    "Register this connector.",
+                    "--agent-tool",
+                    "extension.configure",
+                    "--agent-approve",
+                    approval,
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["tool_results"][0]["status"], "denied")
+        self.assertEqual(payload["tool_results"][0]["code"], "permission_denied")
+        self.assertEqual(payload["approval_requests"], [])
+
+    def test_agent_options_require_explicit_agent_prompt(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--agent-tool",
+                "memory.search",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--agent-* options require --agent-prompt", completed.stderr)
+
+    def test_agent_prompt_requires_explicit_tool_selection(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--agent-prompt",
+                "Answer without tools.",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("requires at least one explicit --agent-tool", completed.stderr)
+
+    def test_agent_approval_token_is_single_use_within_one_run(self) -> None:
+        arguments_sha256 = "a" * 64
+        handler = _agent_approval_handler(
+            [f"knowledge.ingest:{arguments_sha256}"]
+        )
+        self.assertIsNotNone(handler)
+        request = ApprovalRequest(
+            call_id="call-1",
+            tool_name="knowledge.ingest",
+            arguments={"title": "note", "content": "body"},
+            arguments_sha256=arguments_sha256,
+            risk_class="write_local",
+            side_effects="writes_memory_records",
+        )
+
+        self.assertTrue(handler(request).approved)
+        self.assertFalse(handler(request).approved)
 
     def test_prompt_mode_can_persist_to_cli_chat_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -677,7 +1142,10 @@ class CliTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["schema_version"], "1.0")
         self.assertIn(payload["status"], {"ready", "ready_partial"})
-        self.assertEqual(payload["decision"]["primary_general"]["candidate_id"], "qwen3-30b-a3b-2507-mlx-4bit")
+        self.assertEqual(
+            payload["decision"]["primary_general"]["candidate_id"],
+            "qwen3-4b-mlx-4bit",
+        )
         self.assertNotIn("content_excerpt", completed.stdout)
 
     def test_performance_report_can_render_markdown(self) -> None:
@@ -1036,7 +1504,48 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["payload"]["content"][0]["text"], "echo:hi")
 
 
-def _write_temp_openai_config(root: Path) -> Path:
+@dataclass(frozen=True)
+class _AgentServer:
+    port: int
+    requests: list[dict[str, object]]
+
+
+@contextmanager
+def _serve_agent(responder):
+    requests: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            request_payload = json.loads(self.rfile.read(content_length))
+            requests.append(request_payload)
+            response_payload = responder(request_payload)
+            encoded = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield _AgentServer(port=int(server.server_port), requests=requests)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def _write_temp_openai_config(
+    root: Path,
+    *,
+    base_url: str = "http://127.0.0.1:9999/v1",
+) -> Path:
     path = root / "moe.openai.json"
     path.write_text(
         json.dumps(
@@ -1046,7 +1555,7 @@ def _write_temp_openai_config(root: Path) -> Path:
                     {
                         "id": "general",
                         "provider": "openai_compatible",
-                        "base_url": "http://127.0.0.1:9999/v1",
+                        "base_url": base_url,
                         "model": "local/model",
                         "role": "general",
                         "params": {"runtime_backend": "mlx_lm"},
@@ -1060,10 +1569,16 @@ def _write_temp_openai_config(root: Path) -> Path:
     return path
 
 
-def _write_temp_app_config(root: Path, config_path: Path | str) -> Path:
+def _write_temp_app_config(
+    root: Path,
+    config_path: Path | str,
+    *,
+    permission_overrides: dict[str, object] | None = None,
+) -> Path:
     raw = json.loads((ROOT / "configs" / "app.json").read_text(encoding="utf-8"))
     raw["default_moe_config"] = str(config_path)
     raw["runtime"]["work_dir"] = str(root / "runtime")
+    raw["permissions"].update(permission_overrides or {})
     path = root / "app.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
     return path

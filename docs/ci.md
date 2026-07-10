@@ -24,29 +24,30 @@ The gate currently performs these steps:
 3. Run the base synthetic routing smoke eval.
 4. Run the extended synthetic routing smoke eval.
 5. Regenerate the leakage-free 52-case live routing holdout report.
-6. Run the project quality gate from `configs/quality-gate.json`, including
-   train/holdout separation and provenance freshness.
+6. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+   train/holdout separation and provenance freshness. The live answer-quality
+   benchmark is reported as non-release-eligible when local model endpoints are
+   unavailable; only `configs/quality-gate.json` can declare release readiness.
+   The live result path is deliberately not a generic `required_files` entry:
+   the profile-aware benchmark check requires it for release and permits it to
+   be absent only in offline CI.
 7. Refresh the hardware profile artifact.
 8. Run the packaging smoke test, which installs the project in a temporary virtual environment and verifies the `mymoe` and `mymoe-web` console scripts.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
 
-## GitHub Actions Template
+## GitHub Actions
 
-The repository does not currently have an active GitHub Actions workflow.
-`docs/github-actions-ci.yml` is the ready-to-install template for Linux, macOS,
-and Windows with Python 3.10 and 3.12. It uses the official uv setup action, a
-read-only token, dependency caching, concurrency cancellation, and
-`uv run --locked` so CI rejects stale dependency state.
+The active workflow is `.github/workflows/ci.yml`; `docs/github-actions-ci.yml`
+is its installable reference copy. It runs Linux, macOS, and Windows with Python
+3.10 and 3.12. It uses the official uv setup action, a read-only token,
+dependency caching, concurrency cancellation, and `uv run --locked` so CI
+rejects stale dependency state.
 
-Install it when using a GitHub credential authorized to manage workflows:
+Keep the active copy synchronized after intentionally changing the template:
 
 ```bash
-mkdir -p .github/workflows
 cp docs/github-actions-ci.yml .github/workflows/ci.yml
-git add .github/workflows/ci.yml
-git commit -m "Add locked cross-platform CI"
-git push origin main
 ```
 
 Action versions follow the current official uv GitHub Actions guide:

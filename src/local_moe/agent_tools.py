@@ -32,7 +32,11 @@ APPROVAL_REQUIRED_RISKS = (
 
 class ToolRunner(Protocol):
     def run(
-        self, name: str, payload: dict[str, Any] | None = None
+        self,
+        name: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> ToolRunResult: ...
 
 
@@ -61,9 +65,12 @@ class AgentPermissionPolicy:
     auto_allow_risks: tuple[str, ...] = AUTO_ALLOW_RISKS
     approval_required_risks: tuple[str, ...] = APPROVAL_REQUIRED_RISKS
     denied_risks: tuple[str, ...] = ()
+    denied_tools: tuple[str, ...] = ()
     approval_required_tools: tuple[str, ...] = ("data.export",)
 
     def decision(self, spec: AgentToolSpec) -> str:
+        if spec.name in self.denied_tools:
+            return "deny"
         if spec.risk_class in self.denied_risks:
             return "deny"
         if spec.name in self.approval_required_tools:
@@ -189,6 +196,7 @@ class AgentToolRegistry:
         call: AgentToolCall,
         *,
         approval_handler: ApprovalHandler | None = None,
+        timeout_seconds: float | None = None,
     ) -> AgentToolExecution:
         spec = self.resolve(call.name)
         if spec is None:
@@ -345,7 +353,11 @@ class AgentToolRegistry:
             arguments.update(LOCAL_TOOL_CONFIRMATIONS.get(spec.name, {}))
 
         try:
-            raw_result = self._runner.run(spec.name, arguments)
+            raw_result = self._runner.run(
+                spec.name,
+                arguments,
+                timeout_seconds=timeout_seconds,
+            )
         except ToolExecutionError as exc:
             return AgentToolExecution(
                 AgentToolResult(

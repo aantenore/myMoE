@@ -2,6 +2,10 @@
 
 Date: 2026-06-18
 
+> Historical foundational experiment. It validates the early routing shell and
+> does not describe the current Qwen3 4B plus Qwen3 1.7B runtime profile or the
+> live release benchmark.
+
 ## What Changed
 
 - Removed the previous Gemma local-test project artifacts.

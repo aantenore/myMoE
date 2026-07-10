@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from typing import Any
 
@@ -644,10 +644,10 @@ def _plugin_payload(entry: PluginManifest, *, include_sensitive: bool) -> dict[s
 def _skill_reference_set(skills: tuple[SkillDefinition, ...]) -> set[str]:
     refs: set[str] = set()
     for skill in skills:
-        path = Path(skill.path)
+        path = PurePosixPath(_canonical_skill_reference(skill.path))
         refs.add(skill.name)
-        refs.add(str(path))
-        refs.add(str(path.parent))
+        refs.add(path.as_posix())
+        refs.add(path.parent.as_posix())
         refs.add(path.parent.name)
         refs.add(f"{path.parent.name}/SKILL.md")
     return refs
@@ -661,7 +661,12 @@ def _missing_refs(
 ) -> list[ExtensionAuditIssue]:
     issues = []
     for reference in references:
-        if reference in available:
+        comparable_reference = (
+            _canonical_skill_reference(reference)
+            if surface == "skill"
+            else reference
+        )
+        if comparable_reference in available:
             continue
         issues.append(
             ExtensionAuditIssue(
@@ -672,6 +677,12 @@ def _missing_refs(
             )
         )
     return issues
+
+
+def _canonical_skill_reference(reference: str) -> str:
+    """Use one manifest representation regardless of the host path separator."""
+
+    return PurePosixPath(reference.replace("\\", "/")).as_posix()
 
 
 def _read_json_if_exists(path: str | Path, default: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 # Gemma 4 E4B Runtime
 
-Gemma 4 E4B is supported, but it must use the validated MLX profile documented here.
+Gemma 4 E4B is supported as an optional isolated profile, but it must use the validated MLX profile documented here. It is not the default resident fallback on the tested 24 GiB machine.
 
 ## What Failed Previously
 
@@ -88,6 +88,8 @@ On the tested Apple M5 Pro / 24 GiB machine:
 | Model | Runtime profile | Status | Avg generation tok/s | Peak memory |
 | --- | --- | --- | ---: | ---: |
 | `mlx-community/gemma-4-e4b-it-4bit` | pinned `.[mlx]` | ok | 70.47 | 4.39 GB |
+
+This isolated result is valid, but it is not a joint-residency result. When Gemma E4B and Qwen3 30B were loaded together for the answer-quality top-2 smoke, host swap exceeded `22 GB` and the Gemma request returned an invalid payload. The default 24 GiB profile therefore uses Qwen3 1.7B as its memory-bounded resident fallback; keep this Gemma profile for isolated compatibility and regression checks.
 
 See:
 

@@ -99,4 +99,5 @@ class AgentModelAdapter(Protocol):
         tools: Sequence[AgentToolSpec],
         *,
         correlation_id: str,
+        timeout_seconds: float | None = None,
     ) -> AgentModelOutput: ...

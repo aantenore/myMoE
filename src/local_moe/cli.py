@@ -4,8 +4,12 @@ import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
+import re
 import sys
 
+from .agent_loop import AgentLoopBudget, AgentRunResult, build_local_agent_loop
+from .agent_provider import validate_local_agent_endpoints
+from .agent_tools import AgentPermissionPolicy, ApprovalDecision, ApprovalRequest
 from .app_config import load_app_config
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_runtime import generate_chat_turn
@@ -44,7 +48,45 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local MoE orchestrator")
     parser.add_argument("--config")
     parser.add_argument("--app-config", default="configs/app.json")
-    parser.add_argument("--prompt")
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt")
+    prompt_group.add_argument(
+        "--agent-prompt",
+        help="Run one bounded local tool-calling agent task.",
+    )
+    parser.add_argument("--agent-expert")
+    parser.add_argument(
+        "--agent-tool",
+        action="append",
+        help="Expose one configured strict-schema tool; repeat to expose more.",
+    )
+    parser.add_argument(
+        "--agent-approve",
+        action="append",
+        metavar="TOOL:ARGUMENTS_SHA256",
+        help="Approve only a tool name and exact argument hash returned by a prior run.",
+    )
+    parser.add_argument("--agent-correlation-id")
+    parser.add_argument("--agent-max-model-turns", type=int)
+    parser.add_argument("--agent-max-tool-calls", type=int)
+    parser.add_argument("--agent-max-proposed-tool-calls", type=int)
+    parser.add_argument("--agent-max-tool-result-chars", type=int)
+    parser.add_argument("--agent-max-task-chars", type=int)
+    parser.add_argument("--agent-max-tool-argument-chars", type=int)
+    parser.add_argument(
+        "--agent-soft-wall-time-seconds",
+        type=float,
+        help=(
+            "Soft run deadline; remaining time also caps built-in HTTP and MCP "
+            "operation timeouts."
+        ),
+    )
+    parser.add_argument(
+        "--agent-max-wall-time-seconds",
+        type=float,
+        dest="agent_deprecated_max_wall_time_seconds",
+        help="Deprecated alias for --agent-soft-wall-time-seconds.",
+    )
     parser.add_argument("--eval")
     parser.add_argument("--interactive", action="store_true")
     chat_session_group = parser.add_mutually_exclusive_group()
@@ -122,10 +164,54 @@ def main() -> None:
     parser.add_argument("--smoke-generate", action="store_true")
     parser.add_argument("--smoke-prompt", default=DEFAULT_SMOKE_PROMPT)
     args = parser.parse_args()
+    _validate_agent_cli_mode(parser, args)
 
     app_config = load_app_config(args.app_config)
     config_path = args.config or app_config.default_moe_config
     config = load_config(config_path)
+
+    if args.agent_prompt is not None:
+        try:
+            if (
+                str(getattr(app_config, "mode", "")).strip().lower()
+                == "local_model_required"
+            ):
+                validate_local_agent_endpoints(config)
+            registry = _registry(app_config)
+            runner = LocalToolRunner(
+                registry,
+                app_config=app_config,
+                moe_config=config,
+                app_config_path=args.app_config,
+                active_config_path=config_path,
+            )
+            agent = build_local_agent_loop(
+                config,
+                runner,
+                registry,
+                expert_id=args.agent_expert,
+                visible_tools=args.agent_tool,
+                permission_policy=_agent_permission_policy(app_config),
+                budget=_agent_budget(args),
+            )
+            result = agent.run(
+                args.agent_prompt,
+                correlation_id=args.agent_correlation_id,
+                approval_handler=_agent_approval_handler(args.agent_approve),
+            )
+        except (ProviderError, ToolExecutionError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {"error": "agent_error", "message": str(exc)},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        _print_agent_result(result, json_output=args.json_output)
+        if result.status != "completed":
+            raise SystemExit(2)
+        return
 
     if args.doctor or args.doctor_out:
         report = build_doctor_report(
@@ -808,6 +894,271 @@ def _print_chat_payload(payload: dict[str, object], *, json_output: bool) -> Non
     print(payload["content"])
     print()
     print(json.dumps(_chat_metadata(payload), indent=2))
+
+
+def _print_agent_result(result: AgentRunResult, *, json_output: bool) -> None:
+    payload = _agent_result_payload(result)
+    if json_output or result.final_answer is None:
+        print(json.dumps(payload, indent=2))
+        return
+
+    print(result.final_answer)
+    print()
+    metadata = dict(payload)
+    metadata.pop("final_answer", None)
+    print(json.dumps(metadata, indent=2))
+
+
+def _agent_result_payload(result: AgentRunResult) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "mode": "agent",
+        "status": result.status,
+        "reason": result.reason,
+        "final_answer": result.final_answer,
+        "correlation_id": result.correlation_id,
+        "model_turns": result.model_turns,
+        "tool_calls": result.tool_calls,
+        "grounded_in_tool_results": result.grounded_in_tool_results,
+        "grounded_tool_call_ids": list(result.grounded_tool_call_ids),
+        "tool_results": [item.payload() for item in result.tool_results],
+        "approval_requests": [
+            {
+                **asdict(item),
+                "arguments": dict(item.arguments),
+                "approval_token": f"{item.tool_name}:{item.arguments_sha256}",
+            }
+            for item in result.approval_requests
+        ],
+        "trace_policy": "metadata_only",
+        "trace": [asdict(item) for item in result.trace],
+    }
+
+
+def _agent_budget(args: argparse.Namespace) -> AgentLoopBudget:
+    defaults = AgentLoopBudget()
+    return AgentLoopBudget(
+        max_model_turns=(
+            args.agent_max_model_turns
+            if args.agent_max_model_turns is not None
+            else defaults.max_model_turns
+        ),
+        max_tool_calls=(
+            args.agent_max_tool_calls
+            if args.agent_max_tool_calls is not None
+            else defaults.max_tool_calls
+        ),
+        max_proposed_tool_calls_per_turn=(
+            args.agent_max_proposed_tool_calls
+            if args.agent_max_proposed_tool_calls is not None
+            else defaults.max_proposed_tool_calls_per_turn
+        ),
+        max_tool_result_chars=(
+            args.agent_max_tool_result_chars
+            if args.agent_max_tool_result_chars is not None
+            else defaults.max_tool_result_chars
+        ),
+        max_task_chars=(
+            args.agent_max_task_chars
+            if args.agent_max_task_chars is not None
+            else defaults.max_task_chars
+        ),
+        max_tool_argument_chars=(
+            args.agent_max_tool_argument_chars
+            if args.agent_max_tool_argument_chars is not None
+            else defaults.max_tool_argument_chars
+        ),
+        soft_wall_time_seconds=(
+            args.agent_soft_wall_time_seconds
+            if args.agent_soft_wall_time_seconds is not None
+            else args.agent_deprecated_max_wall_time_seconds
+            if args.agent_deprecated_max_wall_time_seconds is not None
+            else defaults.soft_wall_time_seconds
+        ),
+    )
+
+
+def _agent_permission_policy(app_config: object) -> AgentPermissionPolicy:
+    """Apply app policy as an additional deny layer over exact agent approvals."""
+
+    denied: set[str] = set()
+    denied_tools: set[str] = set()
+    permissions = getattr(app_config, "permissions", None)
+    if not bool(getattr(permissions, "allow_process_execution", False)):
+        denied.add("process_execution")
+    if str(
+        getattr(permissions, "external_communication_policy", "draft_only")
+    ) != "approval_required":
+        denied.update(("communication", "write_external"))
+    if (
+        str(getattr(permissions, "default_write_policy", "approval_required"))
+        != "approval_required"
+    ):
+        denied.update(("write_local", "write_internal"))
+    if (
+        str(getattr(permissions, "connector_install_policy", "approval_required"))
+        .strip()
+        .lower()
+        != "approval_required"
+    ):
+        denied_tools.add("extension.configure")
+    return AgentPermissionPolicy(
+        denied_risks=tuple(sorted(denied)),
+        denied_tools=tuple(sorted(denied_tools)),
+    )
+
+
+def _agent_approval_handler(
+    raw_approvals: list[str] | None,
+):
+    if not raw_approvals:
+        return None
+
+    approved: set[tuple[str, str]] = set()
+    pattern = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127}):([0-9a-fA-F]{64})$")
+    for value in raw_approvals:
+        match = pattern.fullmatch(value.strip())
+        if match is None:
+            raise ValueError(
+                "--agent-approve must be TOOL:ARGUMENTS_SHA256 using a 64-character hexadecimal hash."
+            )
+        approved.add((match.group(1), match.group(2).lower()))
+
+    def decide(request: ApprovalRequest) -> ApprovalDecision:
+        key = (request.tool_name, request.arguments_sha256.lower())
+        exact = key in approved
+        if exact:
+            approved.remove(key)
+        return ApprovalDecision(
+            approved=exact,
+            reason=(
+                "Exact CLI approval matched."
+                if exact
+                else "No exact CLI approval matched this tool call."
+            ),
+        )
+
+    return decide
+
+
+def _validate_agent_cli_mode(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    agent_option_names = (
+        "agent_expert",
+        "agent_tool",
+        "agent_approve",
+        "agent_correlation_id",
+        "agent_max_model_turns",
+        "agent_max_tool_calls",
+        "agent_max_proposed_tool_calls",
+        "agent_max_tool_result_chars",
+        "agent_max_task_chars",
+        "agent_max_tool_argument_chars",
+        "agent_soft_wall_time_seconds",
+        "agent_deprecated_max_wall_time_seconds",
+    )
+    if args.agent_prompt is None and any(
+        getattr(args, name) is not None for name in agent_option_names
+    ):
+        parser.error("--agent-* options require --agent-prompt")
+    if args.agent_prompt is None:
+        return
+    if not args.agent_tool:
+        parser.error(
+            "--agent-prompt requires at least one explicit --agent-tool; use --prompt for tool-free generation"
+        )
+    if (
+        args.agent_soft_wall_time_seconds is not None
+        and args.agent_deprecated_max_wall_time_seconds is not None
+    ):
+        parser.error(
+            "--agent-soft-wall-time-seconds cannot be combined with deprecated --agent-max-wall-time-seconds"
+        )
+    if args.agent_deprecated_max_wall_time_seconds is not None:
+        print(
+            "warning: --agent-max-wall-time-seconds is deprecated; use --agent-soft-wall-time-seconds",
+            file=sys.stderr,
+        )
+
+    if args.agent_correlation_id is not None and re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}",
+        args.agent_correlation_id,
+    ) is None:
+        parser.error(
+            "--agent-correlation-id must contain 1-96 safe identifier characters"
+        )
+
+    conflicting_actions = (
+        "interactive",
+        "eval",
+        "chat_session",
+        "new_chat",
+        "chat_title",
+        "chat_query",
+        "list_chats",
+        "export_chat",
+        "compact_chat",
+        "compact_expert",
+        "delete_chat",
+        "rename_chat",
+        "chat_confirm",
+        "doctor",
+        "doctor_out",
+        "about",
+        "about_out",
+        "runs",
+        "runs_prune",
+        "runs_confirm",
+        "performance_report",
+        "performance_report_out",
+        "runtime_optimizer",
+        "runtime_optimizer_out",
+        "security_audit",
+        "security_audit_out",
+        "support_bundle",
+        "support_bundle_out",
+        "bootstrap",
+        "setup",
+        "recommend_profile",
+        "activate_profile",
+        "activate_recommended_profile",
+        "profile_confirm",
+        "prepare_runtime",
+        "prepare_profile",
+        "prepare_recommended_profile",
+        "prepare_execute",
+        "prepare_download_models",
+        "prepare_confirm",
+        "startup",
+        "startup_prepare",
+        "startup_download_models",
+        "startup_start_models",
+        "startup_confirm",
+        "startup_only_first",
+        "models_status",
+        "models_logs",
+        "models_log_expert",
+        "start_models",
+        "stop_models",
+        "models_confirm",
+        "models_only_first",
+        "list_extensions",
+        "create_plugin",
+        "run_tool",
+        "cron_status",
+        "run_cron",
+        "cron_dry_run",
+        "cron_confirm_writes",
+        "smoke_generate",
+    )
+    active_conflicts = [
+        name for name in conflicting_actions if bool(getattr(args, name))
+    ]
+    if active_conflicts:
+        rendered = ", ".join(f"--{name.replace('_', '-')}" for name in active_conflicts)
+        parser.error(f"--agent-prompt cannot be combined with {rendered}")
 
 
 def _response_payload(response: object) -> dict[str, object]:

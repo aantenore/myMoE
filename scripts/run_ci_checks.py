@@ -90,7 +90,7 @@ def build_check_plan(python: str) -> list[CheckStep]:
                 python,
                 "experiments/run_quality_gate.py",
                 "--config",
-                "configs/quality-gate.json",
+                "configs/quality-gate-ci.json",
                 "--out",
                 "outputs/quality-gate.json",
             ],

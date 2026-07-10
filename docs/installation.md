@@ -161,6 +161,20 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
   --config configs/moe.live.fast-mlx.example.json
 ```
 
+Quality-first isolated Qwen3 30B config:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py \
+  --config configs/moe.live.qwen30-mlx.example.json \
+  --download-models
+PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
+  --config configs/moe.live.qwen30-mlx.example.json
+```
+
+On the tested 24 GiB desktop workload, run this profile by itself. The default
+Qwen3 4B + 1.7B profile is the responsive resident MoE; the 30B profile trades
+headroom for a higher isolated quality ceiling.
+
 Gemma 4 E4B config:
 
 ```bash

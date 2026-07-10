@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from local_moe.setup_runner import run_runtime_setup, setup_run_payload
 
@@ -35,12 +36,13 @@ class SetupRunnerTests(unittest.TestCase):
     def test_execute_uses_injected_command_runner(self) -> None:
         commands: list[tuple[str, ...]] = []
 
-        result = run_runtime_setup(
-            config_path="tests/fixtures/moe.synthetic.json",
-            execute=True,
-            confirm=True,
-            command_runner=commands.append,
-        )
+        with patch("local_moe.bootstrap.detect_platform_key", return_value="darwin_arm64"):
+            result = run_runtime_setup(
+                config_path="tests/fixtures/moe.synthetic.json",
+                execute=True,
+                confirm=True,
+                command_runner=commands.append,
+            )
 
         payload = setup_run_payload(result)
         self.assertEqual(payload["status"], "ready")
