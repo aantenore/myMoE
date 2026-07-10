@@ -78,7 +78,7 @@ uv run --locked --python 3.12 python scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `355/355` passed
+- unit/contract tests: `356/356` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live training-fit routing diagnostic: `52/52`, accuracy `1.0`

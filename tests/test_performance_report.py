@@ -5,10 +5,20 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from local_moe.performance_report import build_performance_report, render_performance_report_markdown
+from local_moe.performance_report import (
+    _portable_path,
+    build_performance_report,
+    render_performance_report_markdown,
+)
 
 
 class PerformanceReportTests(unittest.TestCase):
+    def test_report_metadata_canonicalizes_windows_paths(self) -> None:
+        self.assertEqual(
+            _portable_path(r"configs\model-candidates.json"),
+            "configs/model-candidates.json",
+        )
+
     def test_builds_sanitized_report_from_benchmark_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

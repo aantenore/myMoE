@@ -146,11 +146,15 @@ def render_performance_report_markdown(report: dict[str, Any]) -> str:
 def _load_manifest(path: str | Path) -> dict[str, Any]:
     manifest_path = Path(path)
     if not manifest_path.exists():
-        return {"path": str(manifest_path), "status": "missing"}
+        return {"path": _portable_path(manifest_path), "status": "missing"}
     try:
         manifest = load_benchmark_manifest(manifest_path)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return {"path": str(manifest_path), "status": "invalid", "error": str(exc)}
+        return {
+            "path": _portable_path(manifest_path),
+            "status": "invalid",
+            "error": str(exc),
+        }
     payload = _manifest_payload(manifest, manifest_path)
     payload["manifest_object"] = manifest
     return payload
@@ -159,7 +163,7 @@ def _load_manifest(path: str | Path) -> dict[str, Any]:
 def _manifest_payload(manifest: BenchmarkManifest, path: str | Path) -> dict[str, Any]:
     categories = sorted({prompt.category for prompt in manifest.prompts})
     return {
-        "path": str(path),
+        "path": _portable_path(path),
         "status": "available",
         "hardware_budget_gb": manifest.hardware_budget_gb,
         "prompt_count": len(manifest.prompts),
@@ -185,12 +189,15 @@ def _manifest_payload(manifest: BenchmarkManifest, path: str | Path) -> dict[str
 def _read_json_artifact(path: str | Path, *, include_data: bool) -> dict[str, Any]:
     artifact_path = Path(path)
     if not artifact_path.exists():
-        return {"path": str(artifact_path), "status": "missing"}
+        return {"path": _portable_path(artifact_path), "status": "missing"}
     try:
         data = json.loads(artifact_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         return {"path": str(artifact_path), "status": "invalid_json", "error": str(exc)}
-    payload: dict[str, Any] = {"path": str(artifact_path), "status": "available"}
+    payload: dict[str, Any] = {
+        "path": _portable_path(artifact_path),
+        "status": "available",
+    }
     if include_data:
         payload["data"] = data
     return payload
@@ -199,9 +206,13 @@ def _read_json_artifact(path: str | Path, *, include_data: bool) -> dict[str, An
 def _text_artifact(path: str | Path) -> dict[str, Any]:
     artifact_path = Path(path)
     if not artifact_path.exists():
-        return {"path": str(artifact_path), "status": "missing", "size_bytes": 0}
+        return {
+            "path": _portable_path(artifact_path),
+            "status": "missing",
+            "size_bytes": 0,
+        }
     return {
-        "path": str(artifact_path),
+        "path": _portable_path(artifact_path),
         "status": "available",
         "size_bytes": artifact_path.stat().st_size,
     }
@@ -323,12 +334,16 @@ def _with_runtime_role(
 def _runtime_selection(path: str | Path) -> dict[str, Any]:
     selection_path = Path(path)
     if not selection_path.is_file():
-        return {"path": str(selection_path), "status": "missing", "recommendation": {}}
+        return {
+            "path": _portable_path(selection_path),
+            "status": "missing",
+            "recommendation": {},
+        }
     try:
         raw = json.loads(selection_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {
-            "path": str(selection_path),
+            "path": _portable_path(selection_path),
             "status": "invalid",
             "recommendation": {},
             "error": str(exc),
@@ -336,13 +351,13 @@ def _runtime_selection(path: str | Path) -> dict[str, Any]:
     recommendation = raw.get("recommendation") if isinstance(raw, dict) else None
     if not isinstance(recommendation, dict):
         return {
-            "path": str(selection_path),
+            "path": _portable_path(selection_path),
             "status": "invalid",
             "recommendation": {},
             "error": "recommendation must be an object",
         }
     return {
-        "path": str(selection_path),
+        "path": _portable_path(selection_path),
         "status": "available",
         "recommendation": {
             "default_primary": str(recommendation.get("default_primary", "")),
@@ -441,6 +456,10 @@ def _fmt(value: object) -> str:
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return "-"
+
+
+def _portable_path(path: str | Path) -> str:
+    return str(path).replace("\\", "/")
 
 
 def _now_iso() -> str:
