@@ -1,19 +1,19 @@
 {
-  "accuracy": 0.75,
+  "accuracy": 1.0,
   "accuracy_ci95": {
-    "lower": 0.6179,
-    "upper": 0.8477
+    "lower": 0.9312,
+    "upper": 1.0
   },
   "total": 52,
   "by_complexity": {
-    "simple": 0.9230769230769231,
-    "complex": 0.7692307692307693,
-    "medium": 0.6923076923076923,
-    "very_complex": 0.6153846153846154
+    "simple": 1.0,
+    "medium": 1.0,
+    "complex": 1.0,
+    "very_complex": 1.0
   },
   "results": [
     {
-      "id": "holdout-v2-en-general-1",
+      "id": "holdout-v5-en-1",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -21,7 +21,15 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-en-general-2",
+      "id": "holdout-v5-en-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-en-3",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -29,15 +37,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-en-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "medium",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-en-fast-fallback-2",
+      "id": "holdout-v5-en-4",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
@@ -45,39 +45,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-it-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-it-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-it-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-it-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "complex",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-es-general-1",
+      "id": "holdout-v5-it-1",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -85,15 +53,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-es-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-es-fast-fallback-1",
+      "id": "holdout-v5-it-2",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
@@ -101,23 +61,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-es-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-fr-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-fr-general-2",
+      "id": "holdout-v5-it-3",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -125,23 +69,15 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-fr-fast-fallback-1",
+      "id": "holdout-v5-it-4",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-fr-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
       "complexity": "very_complex",
-      "score": 0.0
+      "score": 1.0
     },
     {
-      "id": "holdout-v2-de-general-1",
+      "id": "holdout-v5-es-1",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -149,15 +85,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-de-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-de-fast-fallback-1",
+      "id": "holdout-v5-es-2",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
@@ -165,87 +93,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-de-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "very_complex",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-pt-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-pt-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-pt-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-pt-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-nl-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-nl-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-nl-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "medium",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-nl-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "complex",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-pl-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-pl-general-2",
+      "id": "holdout-v5-es-3",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -253,47 +101,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-pl-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-pl-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "very_complex",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-ar-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ar-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ar-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "medium",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-ar-fast-fallback-2",
+      "id": "holdout-v5-es-4",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
@@ -301,39 +109,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-hi-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-hi-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-hi-fast-fallback-1",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "simple",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-hi-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "complex",
-      "score": 0.0
-    },
-    {
-      "id": "holdout-v2-ja-general-1",
+      "id": "holdout-v5-fr-1",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -341,15 +117,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-ja-general-2",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "very_complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ja-fast-fallback-1",
+      "id": "holdout-v5-fr-2",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
@@ -357,23 +125,7 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-ja-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "fast_fallback",
-      "passed": true,
-      "complexity": "complex",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ko-general-1",
-      "expected_expert": "general",
-      "selected_expert": "general",
-      "passed": true,
-      "complexity": "medium",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ko-general-2",
+      "id": "holdout-v5-fr-3",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -381,23 +133,15 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-ko-fast-fallback-1",
+      "id": "holdout-v5-fr-4",
       "expected_expert": "fast_fallback",
       "selected_expert": "fast_fallback",
       "passed": true,
-      "complexity": "simple",
-      "score": 1.0
-    },
-    {
-      "id": "holdout-v2-ko-fast-fallback-2",
-      "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
       "complexity": "very_complex",
-      "score": 0.0
+      "score": 1.0
     },
     {
-      "id": "holdout-v2-zh-general-1",
+      "id": "holdout-v5-de-1",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -405,7 +149,15 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-zh-general-2",
+      "id": "holdout-v5-de-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-de-3",
       "expected_expert": "general",
       "selected_expert": "general",
       "passed": true,
@@ -413,20 +165,268 @@
       "score": 1.0
     },
     {
-      "id": "holdout-v2-zh-fast-fallback-1",
+      "id": "holdout-v5-de-4",
       "expected_expert": "fast_fallback",
-      "selected_expert": "general",
-      "passed": false,
-      "complexity": "medium",
-      "score": 0.0
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
     },
     {
-      "id": "holdout-v2-zh-fast-fallback-2",
-      "expected_expert": "fast_fallback",
+      "id": "holdout-v5-nl-1",
+      "expected_expert": "general",
       "selected_expert": "general",
-      "passed": false,
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-nl-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-nl-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-nl-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
       "complexity": "very_complex",
-      "score": 0.0
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-sv-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-sv-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-sv-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-sv-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ar-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ar-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ar-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ar-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-hi-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-hi-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-hi-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-hi-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ja-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ja-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ja-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ja-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ko-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ko-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ko-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-ko-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-zh-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-zh-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-zh-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-zh-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-tr-1",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "simple",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-tr-2",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "medium",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-tr-3",
+      "expected_expert": "general",
+      "selected_expert": "general",
+      "passed": true,
+      "complexity": "complex",
+      "score": 1.0
+    },
+    {
+      "id": "holdout-v5-tr-4",
+      "expected_expert": "fast_fallback",
+      "selected_expert": "fast_fallback",
+      "passed": true,
+      "complexity": "very_complex",
+      "score": 1.0
     }
   ],
   "integrity": {
@@ -434,7 +434,7 @@
     "training_total": 52,
     "holdout_total": 52,
     "training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4",
-    "holdout_data_sha256": "bd7afb0784865268a654a6d164fab161791f601d3dbde085f9c74db5daa7c1c0",
+    "holdout_data_sha256": "b44d22e73035e8787e38ff82c555e32356d10c337689be114c63f2f2d0d06c22",
     "training_experts": {
       "fast_fallback": 26,
       "general": 26
@@ -459,9 +459,9 @@
   },
   "provenance": {
     "config_path": "configs/moe.live.general-mlx.example.json",
-    "config_sha256": "fe1b73799715de208c7bc466da0fd12fb5af8d125e4a86cb2f5b9b8664829517",
-    "eval_path": "experiments/eval_set_live_general_holdout_v2.jsonl",
-    "holdout_data_sha256": "bd7afb0784865268a654a6d164fab161791f601d3dbde085f9c74db5daa7c1c0",
+    "config_sha256": "f9b16815e8d4ce0c2ada54ecb08a0de03bc427d3c5140c41f0c817a08fa8bdaf",
+    "eval_path": "experiments/eval_set_live_general_holdout_v5.jsonl",
+    "holdout_data_sha256": "b44d22e73035e8787e38ff82c555e32356d10c337689be114c63f2f2d0d06c22",
     "training_labels_path": "experiments/route_labels_live_general.jsonl",
     "training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4",
     "artifact_path": "outputs/router-distilled-live-general.json",

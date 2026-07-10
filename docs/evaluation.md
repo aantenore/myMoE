@@ -13,7 +13,7 @@ Always compare at least:
 | Dimension | Measurement | Gate |
 | --- | --- | --- |
 | Training-fit routing accuracy | expected expert vs selected expert | diagnostic only; never a generalization claim |
-| Holdout routing accuracy | expected expert vs selected expert | >= 0.70 now; >= 0.90 before claiming robust routing |
+| Holdout routing accuracy | expected expert vs selected expert | >= 0.90 for the committed live routing gate |
 | Latency | wall-clock seconds and tokens/sec | must be acceptable interactively |
 | Completeness | rubric per task family | no regression vs single model |
 | Failure transparency | errors preserve correlation id and expert id | required |
@@ -40,7 +40,7 @@ The live routing data has separate roles:
 
 - `eval_set_live_general.jsonl` is the curated source used to create the 52
   training labels. Its score measures training fit only.
-- `eval_set_live_general_holdout_v2.jsonl` is a frozen, independently authored
+- `eval_set_live_general_holdout_v5.jsonl` is a frozen, independently authored
   52-case holdout with 26 cases per expert, 13 per complexity level, and all 13
   supported routing languages.
 - The quality gate requires zero shared ids and zero shared normalized prompt
@@ -58,15 +58,21 @@ unseen set before making a fresh generalization claim.
 - Live single-expert eval: 6 real calls, average latency `0.585 s`, average server-reported generation speed `194.93 tok/s`.
 - Training-fit routing diagnostic: `52/52`; this is expected because those
   cases generated the labels and must not be presented as generalization.
-- Leakage-free live routing holdout: `39/52` (`75%`), 95% Wilson interval
-  `61.8%-84.8%`, with zero id or prompt-hash overlap. Evidence lives in
+- Leakage-free live routing holdout: `52/52` (`100%`), 95% Wilson interval
+  `93.1%-100%`, with zero id or prompt-hash overlap. Evidence lives in
   `outputs/live-general-routing-holdout.json`.
 
-Interpretation: the harness works and the router generalizes beyond its exact
-training prompts, but 75% is not robust enough for a broad quality claim. The
-bidirectional runtime fallback preserves availability when a fast route misses
-or its endpoint is offline. The next product gate is a real single-general vs
-routed top-1/top-2 answer-quality comparison with latency, memory, and failures.
+Interpretation: the harness works and the current router clears the committed
+multilingual routing gate. The bidirectional runtime fallback preserves
+availability when a fast route misses or its endpoint is offline. The next
+product gate is a full single-general vs routed top-1/top-2 answer-quality
+comparison with latency, memory, and failures.
+
+The deterministic answer-quality benchmark scaffold for that product gate lives
+in `configs/quality-benchmark.json`, `experiments/quality_benchmark_cases.jsonl`,
+and `experiments/run_quality_benchmark.py`. Its committed artifact is allowed to
+be `blocked` when local endpoints are not running; it must be rerun against live
+Qwen/Gemma endpoints before claiming answer-quality advantage.
 
 ## Quality Gate
 
@@ -84,7 +90,7 @@ The automated gate checks:
 - a disjoint live routing holdout regenerated on every run,
 - artifact and report provenance freshness,
 - zero train/holdout id or normalized prompt-hash overlap,
-- minimum holdout routing accuracy of `0.70` across at least `50` cases,
+- minimum holdout routing accuracy of `0.90` across at least `50` cases,
 - minimum extended routing accuracy of `0.90`,
 - minimum extended routing eval size of `50`,
 - required project files,

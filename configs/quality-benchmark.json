@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source_config": "configs/moe.live.general-mlx.example.json",
+  "dataset": "experiments/quality_benchmark_cases.jsonl",
+  "general_expert_id": "general",
+  "variants": ["single_general", "moe_top1", "moe_top2"],
+  "repetitions": 1,
+  "readiness": {
+    "timeout_seconds": 2.0,
+    "model_match": "exact"
+  },
+  "generation_overrides": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 128
+  },
+  "evaluator": {
+    "type": "deterministic_rubric",
+    "quality_pass_threshold": 0.7,
+    "limitations": "Checks observable instruction coverage and constraints; it is not a semantic or factual LLM judge."
+  },
+  "decision": {
+    "baseline_variant": "single_general",
+    "minimum_task_success_rate": 0.8,
+    "minimum_quality_score": 0.7,
+    "maximum_failure_rate": 0.05,
+    "minimum_moe_quality_delta": 0.02,
+    "maximum_moe_latency_ratio": 2.0
+  },
+  "store_outputs": true
+}

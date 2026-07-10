@@ -77,7 +77,7 @@ def build_check_plan(python: str) -> list[CheckStep]:
                 "--config",
                 "configs/moe.live.general-mlx.example.json",
                 "--eval",
-                "experiments/eval_set_live_general_holdout_v2.jsonl",
+                "experiments/eval_set_live_general_holdout_v5.jsonl",
                 "--training-labels",
                 "experiments/route_labels_live_general.jsonl",
                 "--out",

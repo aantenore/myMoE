@@ -2,22 +2,24 @@
 
 Gemma 4 E4B is supported, but it must use the validated MLX profile documented here.
 
-## What Failed
+## What Failed Previously
 
-The latest MLX stack tested during this work:
+An unpinned MLX/Transformers stack tested during this work:
 
 - `mlx==0.31.2`
 - `mlx-lm==0.31.3`
 - `mlx-metal==0.31.2`
-- `mlx-vlm==0.6.3`
+- `transformers==5.13.0`
 
-failed to load `mlx-community/gemma-4-e4b-it-4bit` with:
+failed before server startup because `mlx_lm.server` could not import:
 
 ```text
-ValueError: Received 126 parameters not in model
+AttributeError: 'str' object has no attribute '__module__'
 ```
 
-This is not a myMoE routing failure. It is a runtime/artifact compatibility issue in the MLX stack. The same version break is documented upstream in `ml-explore/mlx-lm` issue 1242.
+This is not a myMoE routing failure. It is a runtime package compatibility
+issue, and setup readiness now checks that the configured MLX server module can
+actually import before reporting `ready`.
 
 ## Validated Fix
 
@@ -30,11 +32,13 @@ uv pip install --python .venv/bin/python ".[mlx]"
 
 The `.[mlx]` extra pins:
 
-- `mlx==0.31.1`
-- `mlx-metal==0.31.1`
-- `mlx-lm==0.31.2`
+- `mlx==0.31.2`
+- `mlx-metal==0.31.2`
+- `mlx-lm==0.31.3`
+- `transformers==5.12.1`
 
-With that profile, this command loads and generates:
+With that profile, both configured live servers import, start, and generate
+short smoke responses locally. The performance benchmark can be run with:
 
 ```bash
 PYTHONPATH=src .venv/bin/python experiments/benchmark_models.py \

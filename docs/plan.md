@@ -94,12 +94,11 @@ Run local experts on separate ports:
 
 Create teacher-labelled route data and replace or augment keyword rules with a learned local classifier.
 
-Status: implementation complete, validation partial. The centroid artifact has
-52 curated multilingual training labels. A separate balanced 52-case holdout
-currently scores `39/52` (`75%`) with zero exact id or normalized prompt
-overlap. Reach at least 90% on a newly frozen holdout before claiming robust
-generalization. Add domain-specific slices only when a new tool, model, or
-specialist route is introduced.
+Status: implementation complete and passing the committed routing gate. The
+centroid artifact has 52 curated multilingual training labels. A separate
+balanced 52-case holdout currently scores `52/52` (`100%`) with zero exact id
+or normalized prompt overlap. Add domain-specific slices only when a new tool,
+model, or specialist route is introduced.
 
 ### M4: Distilled Student
 

@@ -62,7 +62,7 @@ class EvaluationIntegrityTests(unittest.TestCase):
     def test_live_holdout_is_disjoint_unique_and_balanced(self) -> None:
         training = _load_jsonl(ROOT / "experiments" / "route_labels_live_general.jsonl")
         holdout = _load_jsonl(
-            ROOT / "experiments" / "eval_set_live_general_holdout_v2.jsonl"
+            ROOT / "experiments" / "eval_set_live_general_holdout_v5.jsonl"
         )
 
         result = analyze_route_holdout(training, holdout)
