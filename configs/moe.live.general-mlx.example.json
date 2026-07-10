@@ -202,7 +202,7 @@
       "model": "mlx-community/Qwen3-4B-4bit",
       "role": "resident-general-purpose",
       "weight": 1.0,
-      "timeout_seconds": 90,
+      "timeout_seconds": 180,
       "params": {
         "runtime_backend": "mlx_lm",
         "supports_thinking": true,

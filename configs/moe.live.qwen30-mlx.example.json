@@ -12,7 +12,7 @@
       "model": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
       "role": "quality-first-isolated-general-purpose",
       "weight": 1.0,
-      "timeout_seconds": 120,
+      "timeout_seconds": 240,
       "params": {
         "runtime_backend": "mlx_lm",
         "supports_thinking": false,
