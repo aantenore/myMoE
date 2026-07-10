@@ -4,7 +4,7 @@ Generated: 2026-07-10
 
 ## Scope
 
-The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, installed console-script packaging smoke checks, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, MCP env redaction in public diagnostic payloads, read-only Security Audit reporting, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, installed console-script packaging smoke checks, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, MCP env redaction in public diagnostic payloads, read-only Security Audit reporting, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, bounded approval-gated agent tool loops, deterministic answer-quality benchmark scaffolding, cron permission policy, background cron automation, and orchestrator correlation behavior.
 
 This pass additionally covers disjoint train/holdout integrity, artifact and
 report provenance, Wilson confidence intervals, stale-evidence rejection,
@@ -44,6 +44,9 @@ multi-expert comparison.
 - `tests/test_startup.py`: read-only startup preview, side-effect confirmation guard, and model-manager based startup action orchestration.
 - `tests/test_tools.py`: allowlisted local tool execution, knowledge ingestion, memory maintenance, storage inspection, model inventory, Security Audit tool execution, guarded expired-memory pruning, guarded memory/document deletion, confirmed local data export/import, extension audit, guarded extension self-configuration for MCP/cron registries, guarded profile activation, write confirmation, MCP capability search, MCP process confirmation, and guarded MCP `tools/call` execution.
 - `tests/test_mcp_client.py`: raw stdio MCP `initialize`, `tools/list`, and `tools/call` behavior against a fake MCP server.
+- `tests/test_agent_provider.py`: OpenAI-compatible agent payload serialization, tool-call parsing, malformed argument preservation for local validation, reasoning stripping, non-text rejection, and expert selection.
+- `tests/test_agent_loop.py`: bounded model/tool/observation loops, strict tool schemas, approval pauses and injected confirmations, secret and non-finite argument rejection, redacted bounded observations, metadata-only traces, and grounding checks.
+- `tests/test_quality_benchmark.py`: deterministic quality benchmark manifest loading, isolated single/MoE variants, endpoint/model readiness gating, deterministic rubric scoring, blocked runtime artifacts, and provenance-rich metrics.
 - `tests/test_model_servers.py`: managed model server specs, confirmation guards, reachable-endpoint skips, sanitized bounded log tail diagnostics, missing log reporting, and managed start/stop lifecycle with fake processes.
 - `tests/test_extensions.py`: registry loading, guided extension templates including storage-inspection presets, plugin-local skill discovery, plugin audit, MCP env redaction in public registry payloads, and runtime plan coverage.
 - `tests/test_security_audit.py`: metadata-only Security Audit posture checks for default local settings, process execution warnings, remote endpoint warnings, cron write-risk warnings, and MCP env name/value omission.
@@ -53,12 +56,14 @@ multi-expert comparison.
 - `tests/test_memory.py`: local memory writes, guarded record/document deletion, knowledge document chunking, scoped listing, temporal validity, keyword retrieval.
 - `experiments/eval_set_extended.jsonl`: 56 router cases across coding, architecture, general writing, and mixed prompts.
 - `experiments/eval_set_live_general.jsonl`: 52 live general-purpose routing cases across English, Italian, Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese prompts.
-- `experiments/eval_set_live_general_holdout_v2.jsonl`: 52 independently
+- `experiments/eval_set_live_general_holdout_v5.jsonl`: 52 independently
   authored, balanced multilingual holdout cases with no training id or prompt
   hash overlap.
 - `experiments/route_labels_extended.jsonl`: 56 regenerated distilled router labels from the curated extended eval.
 - `experiments/route_labels_live_general.jsonl`: 52 regenerated distilled router labels for the live general-purpose router.
 - `experiments/run_quality_gate.py`: project-level quality gate.
+- `experiments/quality_benchmark_cases.jsonl`: deterministic answer-quality benchmark cases for single-general vs routed MoE comparisons.
+- `experiments/run_quality_benchmark.py`: benchmark runner for answer-quality comparison artifacts.
 - `scripts/run_ci_checks.py`: cross-platform Python quality gate runner used by `make check`, the shell compatibility wrapper, and CI templates.
 - `scripts/run_packaging_smoke.py`: temporary-venv editable install smoke test for `mymoe` and `mymoe-web` console scripts without `PYTHONPATH`.
 
@@ -73,18 +78,21 @@ uv run --locked --python 3.12 python scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `258/258` passed
+- unit/contract tests: `296/296` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live training-fit routing diagnostic: `52/52`, accuracy `1.0`
-- leakage-free live routing holdout: `39/52`, accuracy `0.75`, 95% Wilson
-  interval `0.6179-0.8477`
+- leakage-free live routing holdout: `52/52`, accuracy `1.0`, 95% Wilson
+  interval `0.931-1.0`
 - holdout integrity: zero duplicate ids, duplicate prompts, shared ids, or
   shared normalized prompt hashes
-- provenance: config, training labels, full artifact v2 content, holdout, and
+- provenance: config, training labels, full artifact content, holdout, and
   report hashes match; report metrics match a fresh gate recomputation
 - quality gate: passed
 - packaging smoke: passed, editable install exposes `mymoe` and `mymoe-web`
+- agent loop contract tests: passed
+- deterministic quality benchmark framework tests: passed; the committed live
+  artifact remains `blocked` unless the configured local endpoints are running
 - live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
 - forbidden listener check on `127.0.0.1:8101`: passed, no active listener during quality gate
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed
@@ -117,7 +125,7 @@ The router remains intentionally configurable and deterministic. During the exte
 The former `52/52` live result is now labeled correctly as training fit because
 those prompts generated the distilled labels. The quality gate regenerates
 `outputs/live-general-routing-holdout.json` from a separate balanced set and
-rejects leakage or stale evidence before applying the `0.70` accuracy threshold.
+rejects leakage or stale evidence before applying the `0.90` accuracy threshold.
 
 Extension Studio now exposes guided MCP server and cron job presets through `/api/extensions/templates` and guarded writes through `/api/extensions/configure`. It writes only to app-configured registry paths, validates entries before writing, requires confirmation, and refreshes the running web registry and cron runner. The lower-level `extension.configure` tool remains available for CLI and JSON automation.
 

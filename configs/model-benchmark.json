@@ -67,7 +67,7 @@
       "quality_prior": 0.62,
       "speed_target_tps": 65.0,
       "source_url": "https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit",
-      "notes": "Fast local fallback candidate. This artifact is validated with the pinned MLX profile: mlx==0.31.1, mlx-metal==0.31.1, mlx-lm==0.31.2."
+      "notes": "Fast local fallback candidate. This artifact is validated with the pinned MLX profile: mlx==0.31.2, mlx-metal==0.31.2, mlx-lm==0.31.3, transformers==5.12.1."
     },
     {
       "id": "qwen3-30b-a3b-2507-mlx-4bit",

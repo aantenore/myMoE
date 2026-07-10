@@ -44,6 +44,8 @@ flowchart LR
 - `Local Data Bundle`: confirmed export/import path for user-owned chat sessions and memory records, scoped to the configured runtime work directory.
 - `Audit Trail`: local JSONL metadata log for sensitive host-side actions, intentionally excluding chat and memory text.
 - `Generation Run Log`: local JSONL metadata log for successful generations, intentionally excluding prompt and answer text while retaining route, model, latency, token, context, prompt-hash observations, and aggregate health summaries.
+- `Agent Loop`: provider-neutral OpenAI-compatible model/tool/observation loop with strict local tool schemas, approval-gated side effects, bounded redacted observations, and metadata-only traces.
+- `Quality Benchmark`: deterministic answer-quality comparison harness for single-general, routed top-1, and routed top-2 variants, with endpoint/model readiness checks and provenance-rich artifacts.
 
 ## Runtime Modes
 
@@ -82,12 +84,14 @@ The closest local-first assistants usually share the same control-plane shape:
 - Optional automations for scheduled prompts or maintenance jobs.
 
 myMoE implements the local routing, memory, permission metadata, diagnostics,
-manual tools, and MCP control-plane parts of that pattern. It does not yet feed
-model-proposed tool calls back into generation, so it should not be described as
-a complete autonomous agent harness. Open WebUI and AnythingLLM already cover
-the broad assistant workspace. LM Studio, Ollama, and llama.cpp cover model
-serving. The defensible myMoE layer is the privacy-first, hardware-aware routing
-and evidence plane above those runtimes.
+manual tools, MCP control-plane, and a bounded model-proposed tool-call loop for
+local OpenAI-compatible experts. It should still not be described as a
+general-purpose autonomous agent platform: the loop is deliberately narrow,
+approval-gated, schema-validated, and optimized for local evidence gathering.
+Open WebUI and AnythingLLM already cover the broad assistant workspace. LM
+Studio, Ollama, and llama.cpp cover model serving. The defensible myMoE layer is
+the privacy-first, hardware-aware routing, tool-safety, and evidence plane above
+those runtimes.
 
 ## Multilingual Behavior
 
@@ -133,6 +137,9 @@ The practical policy is:
 6. Local endpoint smoke test returns valid text under timeout.
 7. A leakage-free routing holdout passes before routing claims are published.
 8. Doctor and environment diagnostics expose configured runtime storage status without creating missing directories.
-9. Before claiming product advantage, routed top-1/top-2 must match or beat the
+9. Agent tool calls must use strict schemas, reject model-supplied confirmations
+   or secrets, pause risky operations for external approval, and avoid storing
+   prompt/tool-result content in traces.
+10. Before claiming product advantage, routed top-1/top-2 must match or beat the
    single-general baseline on answer quality while reporting latency, memory,
    and failure rate. This gate is not yet satisfied.

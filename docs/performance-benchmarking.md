@@ -23,11 +23,14 @@ uv pip install --python .venv/bin/python ".[mlx]"
 
 The `.[mlx]` extra pins the MLX package versions validated locally:
 
-- `mlx==0.31.1`
-- `mlx-metal==0.31.1`
-- `mlx-lm==0.31.2`
+- `mlx==0.31.2`
+- `mlx-metal==0.31.2`
+- `mlx-lm==0.31.3`
+- `transformers==5.12.1`
 
-This matters for Gemma 4 E4B. Newer MLX packages loaded during testing reproduced the upstream `Received 126 parameters not in model` failure. The pinned profile loads and generates successfully.
+This matters for Gemma 4 E4B and Qwen server startup. `transformers==5.13.0`
+was observed to break `mlx_lm.server` import; the pinned profile loads and
+generates successfully.
 
 ## Run
 

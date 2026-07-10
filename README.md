@@ -2,10 +2,11 @@
 
 Goal: design and prototype a local-first, general-purpose Mixture-of-Experts system that can run on a workstation without requiring cloud inference.
 
-Product status: this is an MVP local control plane, not yet a proven quality win
-over one strong model and not yet an autonomous tool-calling agent. The current
-evidence validates local orchestration, failure handling, and leakage-free router
-generalization; answer-quality A/B evaluation remains an explicit release gate.
+Product status: this is an MVP local control plane with a bounded,
+approval-gated tool-calling agent harness, not yet a proven quality win over one
+strong model. The current evidence validates local orchestration, failure
+handling, and leakage-free router generalization; answer-quality A/B evaluation
+remains an explicit release gate.
 
 This project does not try to train a monolithic MoE from scratch. That would be expensive and brittle for local hardware. The first viable architecture is a system-level MoE:
 
@@ -365,9 +366,9 @@ myMoE is designed to preserve the user's language at runtime: the UI and docs st
 
 The default live router is trained from 52 curated multilingual route labels and
 evaluated separately on a disjoint 52-case holdout across English, Italian,
-Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese,
-Korean, and Chinese. The current holdout result is `39/52` (`75%`, 95% Wilson
-interval `61.8%-84.8%`) with zero shared ids or normalized prompt hashes.
+Spanish, French, German, Dutch, Swedish, Arabic, Hindi, Japanese, Korean,
+Chinese, and Turkish. The current holdout result is `52/52` (`100%`, 95% Wilson
+interval `93.1%-100%`) with zero shared ids or normalized prompt hashes.
 
 Similar local assistant tools already combine chat, RAG, memory, tool calling,
 and agent presets. myMoE is intentionally narrower: a privacy-first,

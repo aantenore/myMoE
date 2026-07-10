@@ -96,6 +96,67 @@ class SetupStatusTests(unittest.TestCase):
         self.assertEqual(payload["models"][0]["command_display"], "ollama pull qwen3:4b")
         self.assertNotIn("PYTHONPATH", payload["models"][0]["command_display"])
 
+    def test_reports_ready_when_mlx_assets_and_runtime_import_are_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub_cache = root / "hub"
+            snapshot = hub_cache / "models--owner--model" / "snapshots" / "abc123"
+            snapshot.mkdir(parents=True)
+            (snapshot / "model.safetensors").write_text("stub", encoding="utf-8")
+            config = _config(model="owner/model", backend="mlx_lm")
+            app_config = _app_config(root / "cache")
+
+            with (
+                patch.dict(os.environ, {"HF_HUB_CACHE": str(hub_cache)}),
+                patch("local_moe.setup_status._python_executable_exists", return_value=True),
+                patch(
+                    "local_moe.setup_status._probe_python_module",
+                    return_value=("available", "Python runtime can import mlx_lm.server."),
+                ),
+            ):
+                payload = setup_status_payload(
+                    inspect_setup_status("configs/mlx.json", config, app_config)
+                )
+
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["models"][0]["status"], "cached")
+        self.assertEqual(payload["runtime_dependencies"][0]["backend"], "mlx_lm")
+        self.assertEqual(payload["runtime_dependencies"][0]["module"], "mlx_lm.server")
+        self.assertEqual(payload["runtime_dependencies"][0]["status"], "available")
+
+    def test_reports_mlx_import_failure_as_setup_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub_cache = root / "hub"
+            snapshot = hub_cache / "models--owner--model" / "snapshots" / "abc123"
+            snapshot.mkdir(parents=True)
+            (snapshot / "model.safetensors").write_text("stub", encoding="utf-8")
+            config = _config(model="owner/model", backend="mlx_lm")
+            app_config = _app_config(root / "cache")
+
+            with (
+                patch.dict(os.environ, {"HF_HUB_CACHE": str(hub_cache)}),
+                patch("local_moe.setup_status._python_executable_exists", return_value=True),
+                patch(
+                    "local_moe.setup_status._probe_python_module",
+                    return_value=(
+                        "missing_runtime",
+                        "Python runtime cannot import mlx_lm.server: AttributeError",
+                    ),
+                ),
+            ):
+                payload = setup_status_payload(
+                    inspect_setup_status("configs/mlx.json", config, app_config)
+                )
+
+        self.assertEqual(payload["status"], "needs_setup")
+        self.assertEqual(payload["models"][0]["status"], "cached")
+        self.assertEqual(payload["runtime_dependencies"][0]["status"], "missing_runtime")
+        self.assertIn(
+            "cannot import mlx_lm.server",
+            payload["runtime_dependencies"][0]["detail"],
+        )
+
 
 def _config(model: str, backend: str):
     return parse_config(

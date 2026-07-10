@@ -15,9 +15,10 @@ gguf = [
   "psutil"
 ]
 mlx = [
-  "mlx==0.31.1",
-  "mlx-metal==0.31.1; platform_system == 'Darwin'",
-  "mlx-lm==0.31.2",
+  "mlx==0.31.2",
+  "mlx-metal==0.31.2; platform_system == 'Darwin'",
+  "mlx-lm==0.31.3",
+  "transformers==5.12.1",
   "huggingface-hub",
   "psutil"
 ]

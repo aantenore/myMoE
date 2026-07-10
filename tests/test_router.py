@@ -95,6 +95,24 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
         self.assertTrue(any(item.startswith("distilled:") for item in decision.selected[0].matched_keywords))
 
+    def test_live_router_routes_structured_extraction_to_fast_fallback(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        router = RuleRouter(config)
+
+        decision = router.route(
+            "From this incident note, return only a JSON array with owner, action, and due_date fields."
+        )
+
+        self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
+
+    def test_live_router_routes_polite_rewrite_to_fast_fallback(self) -> None:
+        config = load_config("configs/moe.live.general-mlx.example.json")
+        router = RuleRouter(config)
+
+        decision = router.route("次の文を丁寧な表現に直してください：今日中に設定を変えてください。")
+
+        self.assertEqual(decision.selected[0].expert_id, "fast_fallback")
+
 
 if __name__ == "__main__":
     unittest.main()

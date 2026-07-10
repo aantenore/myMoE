@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import fnmatch
 import os
 from pathlib import Path
 import shutil
+import subprocess
 from typing import Any
 
 from .app_config import AppConfig
@@ -14,6 +16,7 @@ from .model_downloads import ModelDownloadRequest, build_model_download_requests
 
 
 READY_MODEL_STATUSES = {"available", "cached"}
+READY_RUNTIME_STATUSES = {"available", "not_required"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,15 @@ class ModelAssetStatus:
 
 
 @dataclass(frozen=True)
+class RuntimeDependencyStatus:
+    backend: str
+    status: str
+    detail: str
+    module: str = ""
+    command: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RuntimeSetupStatus:
     status: str
     config_path: str
@@ -37,6 +49,7 @@ class RuntimeSetupStatus:
     download_command: tuple[str, ...]
     runtime_plan: RuntimePlan
     models: tuple[ModelAssetStatus, ...]
+    runtime_dependencies: tuple[RuntimeDependencyStatus, ...] = ()
     error: str = ""
 
 
@@ -59,18 +72,24 @@ def inspect_setup_status(
             download_command=command,
             runtime_plan=plan,
             models=(),
+            runtime_dependencies=_inspect_runtime_dependencies(plan),
             error=str(exc),
         )
 
     models = tuple(_inspect_request(item, app_config.runtime.model_cache_dir) for item in requests)
+    runtime_dependencies = _inspect_runtime_dependencies(plan)
     ready = all(item.status in READY_MODEL_STATUSES for item in models)
+    runtime_ready = all(
+        item.status in READY_RUNTIME_STATUSES for item in runtime_dependencies
+    )
     return RuntimeSetupStatus(
-        status="ready" if ready else "needs_setup",
+        status="ready" if ready and runtime_ready else "needs_setup",
         config_path=config_path,
         model_cache_dir=app_config.runtime.model_cache_dir,
         download_command=command,
         runtime_plan=plan,
         models=models,
+        runtime_dependencies=runtime_dependencies,
     )
 
 
@@ -97,8 +116,102 @@ def setup_status_payload(status: RuntimeSetupStatus) -> dict[str, Any]:
             }
             for item in status.models
         ],
+        "runtime_dependencies": [
+            {
+                "backend": item.backend,
+                "module": item.module,
+                "status": item.status,
+                "detail": item.detail,
+                "command": list(item.command),
+                "command_display": _format_command(item.command) if item.command else "",
+            }
+            for item in status.runtime_dependencies
+        ],
         "error": status.error,
     }
+
+
+def _inspect_runtime_dependencies(
+    plan: RuntimePlan,
+) -> tuple[RuntimeDependencyStatus, ...]:
+    probes: dict[tuple[str, str], tuple[str, ...]] = {}
+    for command in plan.model_commands:
+        if len(command) >= 3 and command[1] == "-m":
+            module = command[2]
+            backend = _module_backend(module)
+            if backend:
+                probes[(backend, module)] = (command[0], "-c", f"import {module}")
+    if not probes:
+        return ()
+
+    return tuple(
+        _inspect_python_module(backend, module, command)
+        for (backend, module), command in sorted(probes.items())
+    )
+
+
+def _module_backend(module: str) -> str:
+    if module == "mlx_lm.server":
+        return "mlx_lm"
+    if module == "mlx_vlm.server":
+        return "mlx_vlm"
+    return ""
+
+
+def _inspect_python_module(
+    backend: str,
+    module: str,
+    command: tuple[str, ...],
+) -> RuntimeDependencyStatus:
+    executable = command[0]
+    if not _python_executable_exists(executable):
+        return RuntimeDependencyStatus(
+            backend=backend,
+            module=module,
+            status="missing_runtime",
+            detail=f"Python runtime was not found at {executable}.",
+            command=command,
+        )
+
+    status, detail = _probe_python_module(executable, module)
+    return RuntimeDependencyStatus(
+        backend=backend,
+        module=module,
+        status=status,
+        detail=detail,
+        command=command,
+    )
+
+
+@lru_cache(maxsize=16)
+def _probe_python_module(executable: str, module: str) -> tuple[str, str]:
+    try:
+        completed = subprocess.run(
+            (executable, "-c", f"import {module}"),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return (
+            "missing_runtime",
+            f"Python runtime cannot import {module}: {type(exc).__name__}: {exc}",
+        )
+
+    if completed.returncode == 0:
+        return ("available", f"Python runtime can import {module}.")
+    detail = _last_nonempty_line(completed.stderr) or _last_nonempty_line(
+        completed.stdout
+    )
+    if not detail:
+        detail = f"exit code {completed.returncode}"
+    return ("missing_runtime", f"Python runtime cannot import {module}: {detail}")
+
+
+def _python_executable_exists(executable: str) -> bool:
+    return Path(executable).exists()
 
 
 def _inspect_request(request: ModelDownloadRequest, model_cache_dir: str) -> ModelAssetStatus:
@@ -236,6 +349,14 @@ def _has_matching_file(files: tuple[Path, ...], allow_patterns: tuple[str, ...])
         if any(fnmatch.fnmatchcase(name, pattern) for pattern in allow_patterns):
             return True
     return False
+
+
+def _last_nonempty_line(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _download_command(config_path: str, app_config_path: str) -> tuple[str, ...]:

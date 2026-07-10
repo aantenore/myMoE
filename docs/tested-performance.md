@@ -8,7 +8,7 @@ This file records the local machine and benchmark results used to choose the def
 - Memory: 24.0 GiB unified memory
 - OS/runtime target: macOS Apple Silicon with MLX
 - Python: 3.12 virtual environment through `uv`
-- MLX runtime: pinned `.[mlx]` profile (`mlx==0.31.1`, `mlx-metal==0.31.1`, `mlx-lm==0.31.2`)
+- MLX runtime: pinned `.[mlx]` profile (`mlx==0.31.2`, `mlx-metal==0.31.2`, `mlx-lm==0.31.3`, `transformers==5.12.1`)
 
 ## Decision
 
@@ -31,7 +31,7 @@ Optional GGUF coding/agentic specialist:
 Why:
 
 - Qwen3 30B-A3B passed the local MLX benchmark and produced the best risk-adjusted score.
-- Gemma 4 E4B failed on the newest MLX stack but passed with the pinned profile and is now the selected fallback/compaction model.
+- Gemma 4 E4B and Qwen 30B both start with the pinned MLX profile; the explicit Transformers pin avoids the observed `mlx_lm.server` import break in newer Transformers.
 - Qwen3 4B is dramatically smaller and remains the best practical low-memory first-run model.
 - Gemma 26B variants remain stretch candidates; one quick run was too slow for the default benchmark loop and should be evaluated separately before making them defaults.
 - The Gemma 12B GGUF specialist is documented and launchable through llama.cpp, but it was not selected as the general default because it is coding/agentic-specialized and has not yet beaten the Qwen general baseline on Antonio's general-purpose eval set.

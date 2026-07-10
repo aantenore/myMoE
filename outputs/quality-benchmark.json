@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "status": "blocked",
+  "created_at": "2026-07-10T09:15:23+00:00",
+  "provenance": {
+    "manifest_path": "configs/quality-benchmark.json",
+    "manifest_sha256": "c90f5b670aeaf5f63a179c7c9f0ba81fc9dbc9638f66249989e442e6c44c60a2",
+    "source_config_path": "configs/moe.live.general-mlx.example.json",
+    "source_config_sha256": "f9b16815e8d4ce0c2ada54ecb08a0de03bc427d3c5140c41f0c817a08fa8bdaf",
+    "dataset_path": "experiments/quality_benchmark_cases.jsonl",
+    "dataset_sha256": "fd02b08008ef35b3cbf569d95dd65039378c6cd562a7d663d6851e2b0f01832c",
+    "case_ids_sha256": "93bbfee9f9ec02593f20b5acc57b6f8775848f6c72d1e83f963ebdae22638075",
+    "case_count": 8,
+    "variants": [
+      "single_general",
+      "moe_top1",
+      "moe_top2"
+    ],
+    "repetitions": 1,
+    "generation_overrides": {
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "max_tokens": 128
+    },
+    "execution_order": "deterministic rotating variant order by case and repetition",
+    "evaluator": {
+      "type": "deterministic_rubric",
+      "quality_pass_threshold": 0.7,
+      "limitations": "Checks observable instruction coverage and constraints; it is not a semantic or factual LLM judge.",
+      "implementation_version": "deterministic-rubric-v1"
+    },
+    "benchmark_implementation_sha256": "3e93aae8809155d1b9dd334fb995c32f5dd7d9e208c208f7e24ecf0f1b04186b",
+    "evaluator_implementation_sha256": "205c3d72ff3086acc163a07af4eb478686eb68b6dee014e959eb91d30a372249",
+    "git_commit": "69d9d82e807a37ea6d22f974ff9472bacaf07814",
+    "git_dirty": true,
+    "python": "3.12.13",
+    "platform": "macOS-26.5.2-arm64-arm-64bit"
+  },
+  "deterministic_validation": {
+    "status": "passed",
+    "checks": [
+      {
+        "id": "general_expert_exists",
+        "passed": true,
+        "detail": "general"
+      },
+      {
+        "id": "dataset_nonempty",
+        "passed": true,
+        "detail": {
+          "case_count": 8
+        }
+      },
+      {
+        "id": "case_ids_unique",
+        "passed": true,
+        "detail": {
+          "case_count": 8
+        }
+      },
+      {
+        "id": "top2_has_two_experts",
+        "passed": true,
+        "detail": {
+          "expert_count": 2
+        }
+      },
+      {
+        "id": "all_cases_have_task_and_quality_checks",
+        "passed": true,
+        "detail": {
+          "case_count": 8
+        }
+      }
+    ]
+  },
+  "readiness": {
+    "status": "blocked",
+    "checked_at": "2026-07-10T09:15:23+00:00",
+    "model_match": "exact",
+    "experts": [
+      {
+        "expert_id": "general",
+        "provider": "openai_compatible",
+        "model": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
+        "base_url": "http://127.0.0.1:8101/v1",
+        "status": "blocked",
+        "models_url": "http://127.0.0.1:8101/v1/models",
+        "message": "<urlopen error [Errno 61] Connection refused>"
+      },
+      {
+        "expert_id": "fast_fallback",
+        "provider": "openai_compatible",
+        "model": "mlx-community/gemma-4-e4b-it-4bit",
+        "base_url": "http://127.0.0.1:8102/v1",
+        "status": "blocked",
+        "models_url": "http://127.0.0.1:8102/v1/models",
+        "message": "<urlopen error [Errno 61] Connection refused>"
+      }
+    ]
+  },
+  "execution": {
+    "status": "not_run",
+    "planned_records": 0,
+    "records": []
+  },
+  "metrics": {},
+  "comparisons": {
+    "status": "not_run"
+  },
+  "gate": {
+    "status": "blocked",
+    "passed": false,
+    "reason": "one or more required endpoints or models are unavailable"
+  }
+}

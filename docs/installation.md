@@ -27,12 +27,15 @@ Editable installs expose the `mymoe` and `mymoe-web` console scripts. The qualit
 Validated Apple Silicon MLX package profile:
 
 ```text
-mlx==0.31.1
-mlx-metal==0.31.1
-mlx-lm==0.31.2
+mlx==0.31.2
+mlx-metal==0.31.2
+mlx-lm==0.31.3
+transformers==5.12.1
 ```
 
-This pin is intentional. Newer MLX packages were observed to reject the current Gemma 4 E4B MLX artifact with `Received 126 parameters not in model`.
+This pin is intentional. `transformers==5.13.0` was observed to break
+`mlx_lm.server` import in this environment; the pinned profile imports and
+generates with the configured Qwen and Gemma MLX servers.
 
 Optional extras:
 

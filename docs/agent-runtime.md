@@ -26,6 +26,27 @@ flowchart LR
 - `skills/*/SKILL.md`: portable skill instructions with progressive disclosure.
 - `plugins/*/plugin.json`: plugin manifests that can reference skills, tools, MCP servers, and cron jobs.
 
+## Agent Tool Loop
+
+The agent loop is intentionally a narrow local harness, not a broad autonomous
+runtime. `src/local_moe/agent_loop.py` asks one configured OpenAI-compatible
+expert for tool calls, executes only visible allowlisted local tools through
+strict JSON schemas, returns bounded observations, and then lets the model
+produce a final answer grounded in delivered successful tool results.
+
+Safety properties:
+
+- model-visible tool names are aliases of configured local tools, not arbitrary commands;
+- tools without strict schemas are not exposed to the model;
+- risky tools pause for an external approval handler and receive exact
+  harness-owned confirmation fields only after approval;
+- model-supplied confirmation, secret-like arguments, and non-finite JSON
+  numbers are rejected before execution;
+- tool results are redacted and size-bounded before being added to model context;
+- traces store operational metadata only: ids, statuses, hashes, token counts,
+  risk classes, and result lengths, never prompts, arguments, tool bodies, or raw
+  reasoning.
+
 ## Extension Execution Matrix
 
 | Surface | Runtime behavior | Safety policy | Entry points |
