@@ -190,8 +190,9 @@ Thinking-capable configs declare `supports_thinking = true` and a policy. The de
 OpenAI-compatible experts can also set `params.system_prompt`. This is consumed
 locally by myMoE rather than forwarded as an arbitrary provider parameter, so
 each profile can define its own response style and length contract. The default
-general profile uses a concise interactive budget; quality-first profiles can
-replace it and raise `max_tokens` without changing provider code.
+general profile uses a concise interactive budget and a loopback-first safety
+default for local services; quality-first profiles can replace it and raise
+`max_tokens` without changing provider code.
 
 Optional Gemma 4 12B GGUF coding/agentic specialist:
 
