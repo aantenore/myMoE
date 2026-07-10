@@ -29,6 +29,7 @@
     "minimum_quality_score": 0.7,
     "maximum_failure_rate": 0.0,
     "maximum_truncation_rate": 0.0,
+    "maximum_operational_mean_latency_seconds": 30.0,
     "minimum_top1_quality_delta": 0.0,
     "minimum_top1_task_success_delta": 0.0,
     "maximum_top1_failure_rate_delta": 0.0,

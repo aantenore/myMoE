@@ -75,7 +75,7 @@ Gemma 4 can emit a thinking channel. myMoE uses a model-level policy:
 "thinking_policy": "auto"
 ```
 
-When the prompt is simple, the provider sends `chat_template_kwargs.enable_thinking = false`. When the prompt asks for analysis, planning, debugging, comparison, or similarly complex work, it sends `enable_thinking = true`.
+In `auto` mode the provider sends `chat_template_kwargs.enable_thinking = true` only for explicit security/threat or formal-proof work. Routine analysis, architecture, planning, and comparison stay non-thinking so a small resident model remains interactive. A dedicated reasoning profile can use `thinking_policy = on` when that latency is intentional.
 
 The provider strips `<think>...</think>` and Gemma channel tokens such as `<|channel>thought ... <channel|>` before returning content to the UI/CLI. This keeps reasoning support available without leaking raw thinking markup into normal chat.
 
