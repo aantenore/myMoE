@@ -79,6 +79,10 @@ report unavailable endpoints, but it cannot declare release readiness.
 
 The live contract runs three repetitions. With the current eight-case dataset,
 the two fast-routed cases therefore contribute six paired latency observations.
+The benchmark keeps the default profile's configurable concise system prompts
+and caps generation at 768 tokens. This represents the interactive product
+contract; operators can use a quality-first profile for intentionally longer
+answers.
 Both the single-general baseline and routed top-1 must also stay at or below a
 30-second mean latency; a relative speedup cannot make an unusably slow pair
 release-ready.

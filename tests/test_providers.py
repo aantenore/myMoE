@@ -193,6 +193,7 @@ class ProviderTests(unittest.TestCase):
                     "runtime_backend": "mlx_lm",
                     "supports_thinking": True,
                     "thinking_policy": "off",
+                    "system_prompt": "Keep the answer concise and locally grounded.",
                     "temperature": 0.1,
                     "chat_template_kwargs": {"enable_thinking": False},
                 },
@@ -202,11 +203,37 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("runtime_backend", _FakeOpenAIHandler.last_payload)
         self.assertNotIn("supports_thinking", _FakeOpenAIHandler.last_payload)
         self.assertNotIn("thinking_policy", _FakeOpenAIHandler.last_payload)
+        self.assertNotIn("system_prompt", _FakeOpenAIHandler.last_payload)
+        self.assertEqual(
+            _FakeOpenAIHandler.last_payload["messages"][0],
+            {
+                "role": "system",
+                "content": "Keep the answer concise and locally grounded.",
+            },
+        )
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.1)
         self.assertEqual(
             _FakeOpenAIHandler.last_payload["chat_template_kwargs"],
             {"enable_thinking": False},
         )
+
+    def test_openai_provider_rejects_invalid_configured_system_prompt(self) -> None:
+        provider = OpenAICompatibleProvider()
+        expert = ExpertConfig(
+            id="invalid-prompt",
+            provider="openai_compatible",
+            model="local-model",
+            role="general",
+            base_url="http://127.0.0.1:1/v1",
+            timeout_seconds=1,
+            params={"system_prompt": "   "},
+        )
+
+        with self.assertRaisesRegex(ProviderError, "non-empty string"):
+            provider.generate(
+                expert,
+                GenerationRequest(prompt="hello", correlation_id="case-system-prompt"),
+            )
 
     def test_openai_provider_auto_enables_thinking_for_complex_prompts(self) -> None:
         response = {"choices": [{"message": {"content": "final answer"}}]}

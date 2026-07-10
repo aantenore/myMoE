@@ -8,7 +8,19 @@ from urllib import request, error
 
 from .config import ExpertConfig
 
-LOCAL_PROVIDER_PARAMS = {"runtime_backend", "supports_thinking", "thinking_policy"}
+LOCAL_PROVIDER_PARAMS = {
+    "runtime_backend",
+    "supports_thinking",
+    "thinking_policy",
+    "system_prompt",
+}
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a local expert in a system-level MoE. "
+    "Return useful, direct answers. Reply in the user's language "
+    "unless they explicitly ask for another language. Preserve "
+    "correlation context."
+)
 
 
 class ProviderError(RuntimeError):
@@ -198,12 +210,7 @@ def _chat_request(
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "You are a local expert in a system-level MoE. "
-                    "Return useful, direct answers. Reply in the user's language "
-                    "unless they explicitly ask for another language. Preserve "
-                    "correlation context."
-                ),
+                "content": _system_prompt(expert),
             },
             {"role": "user", "content": req.prompt},
         ],
@@ -324,6 +331,17 @@ def _remote_params(expert: ExpertConfig, prompt: str) -> dict[str, object]:
     chat_template_kwargs["enable_thinking"] = enable_thinking
     params["chat_template_kwargs"] = chat_template_kwargs
     return params
+
+
+def _system_prompt(expert: ExpertConfig) -> str:
+    raw = expert.params.get("system_prompt")
+    if raw is None:
+        return DEFAULT_SYSTEM_PROMPT
+    if not isinstance(raw, str) or not raw.strip():
+        raise ProviderError(
+            f"Expert {expert.id} system_prompt must be a non-empty string."
+        )
+    return raw.strip()
 
 
 def _supports_thinking(params: dict[str, object]) -> bool:

@@ -187,6 +187,12 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py \
 
 Thinking-capable configs declare `supports_thinking = true` and a policy. The default `auto` policy is latency-bounded: explicit security/threat and formal-proof prompts may think, while routine planning and architecture do not. Dedicated reasoning profiles can opt into `thinking_policy = on`; raw thinking/channel tokens are always stripped from the user-visible response.
 
+OpenAI-compatible experts can also set `params.system_prompt`. This is consumed
+locally by myMoE rather than forwarded as an arbitrary provider parameter, so
+each profile can define its own response style and length contract. The default
+general profile uses a concise interactive budget; quality-first profiles can
+replace it and raise `max_tokens` without changing provider code.
+
 Optional Gemma 4 12B GGUF coding/agentic specialist:
 
 ```bash
