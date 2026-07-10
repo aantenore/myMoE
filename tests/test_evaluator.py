@@ -31,6 +31,8 @@ class EvaluatorTests(unittest.TestCase):
         result = evaluate_router(config, cases)
 
         self.assertEqual(result["accuracy"], 1.0)
+        self.assertGreater(result["accuracy_ci95"]["lower"], 0.0)
+        self.assertEqual(result["accuracy_ci95"]["upper"], 1.0)
         self.assertEqual(result["total"], 8)
         self.assertIn("complex", result["by_complexity"])
         self.assertEqual(len(result["results"]), 8)

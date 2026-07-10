@@ -1,5 +1,9 @@
 {
   "accuracy": 1.0,
+  "accuracy_ci95": {
+    "lower": 0.9358,
+    "upper": 1.0
+  },
   "total": 56,
   "by_complexity": {
     "simple": 1.0,

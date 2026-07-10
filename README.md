@@ -2,11 +2,16 @@
 
 Goal: design and prototype a local-first, general-purpose Mixture-of-Experts system that can run on a workstation without requiring cloud inference.
 
+Product status: this is an MVP local control plane, not yet a proven quality win
+over one strong model and not yet an autonomous tool-calling agent. The current
+evidence validates local orchestration, failure handling, and leakage-free router
+generalization; answer-quality A/B evaluation remains an explicit release gate.
+
 This project does not try to train a monolithic MoE from scratch. That would be expensive and brittle for local hardware. The first viable architecture is a system-level MoE:
 
 1. run one strong resident local expert plus smaller or cold-loaded experts,
 2. route each request with a lightweight configurable router,
-3. optionally synthesize multiple expert answers,
+3. optionally compare or concatenate multiple expert answers,
 4. distill routing decisions and/or expert outputs later.
 
 The current live profile uses a distilled local router: base expert weights, explicit rules, multilingual semantic examples, and a local classifier artifact trained from curated route labels. See `docs/router.md`.
@@ -16,8 +21,7 @@ The current live profile uses a distilled local router: base expert weights, exp
 Install and download the configured local model:
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python ".[mlx]"
+uv sync --locked --python 3.12 --extra mlx
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
 
@@ -47,6 +51,11 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 ```
 
 The web UI can also manage configured model processes from the Advanced Runtime panel. It starts only app-generated model commands, requires the confirmation checkbox, skips endpoints that are already reachable, and stops only processes that were started by the current web server.
+
+`--only-first` keeps only the primary general expert resident. The default
+profile uses a bidirectional fallback order, so summary/translation requests
+routed to an offline fast expert retry against the resident general expert
+instead of failing.
 
 For a faster first run on smaller machines:
 
@@ -354,9 +363,19 @@ The user-facing app requires a real local model. Synthetic providers are confine
 
 myMoE is designed to preserve the user's language at runtime: the UI and docs stay English, while the model is instructed to answer in the user's language unless asked otherwise. Real quality still depends on the selected local model and must be covered by eval cases per language.
 
-The default live router is covered by 52 curated multilingual route cases across English, Italian, Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese prompts.
+The default live router is trained from 52 curated multilingual route labels and
+evaluated separately on a disjoint 52-case holdout across English, Italian,
+Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese,
+Korean, and Chinese. The current holdout result is `39/52` (`75%`, 95% Wilson
+interval `61.8%-84.8%`) with zero shared ids or normalized prompt hashes.
 
-Similar local assistant tools tend to combine chat, local/remote providers, RAG, tool calling, memory, and agent presets. myMoE's differentiator is the configurable local control plane: route cheaply first, keep the heavy model for generation, use MCP and local tools only through allowlists and confirmations, and cold-load specialists only when evals justify them.
+Similar local assistant tools already combine chat, RAG, memory, tool calling,
+and agent presets. myMoE is intentionally narrower: a privacy-first,
+hardware-aware control plane for constrained local workstations. It routes
+cheaply, keeps heavy generation local, exposes diagnostics, and guards MCP/local
+tools through allowlists and confirmations. Tool execution is currently
+operator-invoked from CLI/UI; model-driven tool calls and automatic cold-loading
+are not implemented.
 
 ## Project Layout
 
@@ -431,7 +450,7 @@ The live experiment can plug in real local MLX or GGUF endpoints and compare:
 
 - single general model,
 - system-level MoE top-1 routing,
-- top-2 routing with synthesis.
+- top-2 comparison/concatenation with deterministic disagreement metadata.
 
 On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
@@ -442,7 +461,12 @@ On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
 The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile, adds v2 as the preferred GGUF coding/agentic profile, and leaves Qwen3 30B-A3B as the general-purpose default.
 
-The current quality gate uses `scripts/run_ci_checks.py` to compile source/tests/scripts, run unit and contract tests, evaluate 64 deterministic routing cases across the base and extended sets, verify the 52-case live general routing report, check required files, and verify no live eval server remains on `127.0.0.1:8101`.
+The current quality gate uses `scripts/run_ci_checks.py` to compile source,
+tests, and scripts; run unit and contract tests; evaluate 64 deterministic
+fixture routes; regenerate the 52-case live holdout report; reject any
+train/holdout id or prompt-hash overlap; reject stale config/dataset/artifact
+provenance; check required files; and verify no live eval server remains on
+`127.0.0.1:8101`.
 
 Run local model performance benchmarks with:
 

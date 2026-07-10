@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from local_moe.config import load_config
+from local_moe.config import load_config, parse_config
 from local_moe.orchestrator import LocalMoE
+from local_moe.providers import ProviderError
+
+
+class FailingProvider:
+    def generate(self, expert, req):
+        raise ProviderError("endpoint unavailable")
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -18,7 +24,7 @@ class OrchestratorTests(unittest.TestCase):
         config = type(raw)(
             routing=type(raw.routing)(
                 top_k=2,
-                fallback_order=(),
+                fallback_order=raw.routing.fallback_order,
                 aggregation="compare",
             ),
             experts=raw.experts,
@@ -31,6 +37,48 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("Deterministic disagreement report", response.content)
         self.assertEqual(len(response.disagreement.pairwise_overlaps), 1)
         self.assertIn(response.disagreement.status, {"agreement_likely", "review_recommended"})
+
+    def test_selected_fast_expert_can_fall_back_to_resident_general(self) -> None:
+        config = parse_config(
+            {
+                "routing": {
+                    "top_k": 1,
+                    "fallback_order": ["general", "fast_fallback"],
+                    "aggregation": "best",
+                },
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "synthetic",
+                        "model": "general-model",
+                        "role": "general",
+                        "weight": 1.0,
+                    },
+                    {
+                        "id": "fast_fallback",
+                        "provider": "synthetic",
+                        "model": "fast-model",
+                        "role": "summary",
+                        "weight": 0.4,
+                    },
+                ],
+                "rules": [
+                    {
+                        "expert_id": "fast_fallback",
+                        "keywords": ["summarize"],
+                        "weight": 2.0,
+                    }
+                ],
+            }
+        )
+        moe = LocalMoE(config)
+        moe._providers["fast_fallback"] = FailingProvider()
+
+        response = moe.generate("Summarize this note.")
+
+        self.assertEqual(response.route.selected[0].expert_id, "fast_fallback")
+        self.assertEqual(response.results[0].expert_id, "general")
+        self.assertIn("endpoint unavailable", response.errors[0])
 
     def test_route_prompt_can_differ_from_generation_prompt(self) -> None:
         moe = LocalMoE(load_config("tests/fixtures/moe.synthetic.json"))

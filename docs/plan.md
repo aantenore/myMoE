@@ -94,7 +94,12 @@ Run local experts on separate ports:
 
 Create teacher-labelled route data and replace or augment keyword rules with a learned local classifier.
 
-Status: complete for the current centroid classifier artifact. The live general router now has 52 curated multilingual route labels and the extended fixture eval has 56 cases. Next improvements should add domain-specific slices only when a new tool, model, or specialist route is introduced.
+Status: implementation complete, validation partial. The centroid artifact has
+52 curated multilingual training labels. A separate balanced 52-case holdout
+currently scores `39/52` (`75%`) with zero exact id or normalized prompt
+overlap. Reach at least 90% on a newly frozen holdout before claiming robust
+generalization. Add domain-specific slices only when a new tool, model, or
+specialist route is introduced.
 
 ### M4: Distilled Student
 

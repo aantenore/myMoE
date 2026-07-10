@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from .config import DistilledRoutingConfig
+from .evaluation_integrity import prompt_sha256, records_sha256
 from .text_features import cosine, vectorize
 
 
-ARTIFACT_VERSION = 1
+ARTIFACT_VERSION = 2
+SUPPORTED_ARTIFACT_VERSIONS = {1, ARTIFACT_VERSION}
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,9 @@ class DistilledRouterArtifact:
     training_cases: int
     expert_counts: dict[str, int]
     expert_profiles: dict[str, dict[str, float]]
+    training_data_sha256: str = ""
+    training_prompt_ids: tuple[str, ...] = ()
+    training_prompt_hashes: tuple[str, ...] = ()
 
     def predict(self, prompt: str) -> tuple[str | None, float]:
         prompt_vector = vectorize(prompt, self.ngram_min, self.ngram_max)
@@ -105,6 +110,7 @@ def train_distilled_router_artifact(
     ngram_min: int = 3,
     ngram_max: int = 5,
 ) -> dict[str, Any]:
+    training_records = [_route_label_record(label) for label in labels]
     profiles: dict[str, Counter[str]] = {}
     counts: dict[str, int] = {}
     for label in labels:
@@ -123,6 +129,23 @@ def train_distilled_router_artifact(
         "ngram_max": ngram_max,
         "training_cases": sum(counts.values()),
         "expert_counts": counts,
+        "training_data_sha256": records_sha256(
+            training_records,
+            fields=(
+                "prompt_id",
+                "prompt",
+                "primary",
+                "fallback",
+                "confidence",
+                "reason",
+                "risk",
+                "teacher_source",
+            ),
+        ),
+        "training_prompt_ids": sorted(label.prompt_id for label in labels),
+        "training_prompt_hashes": sorted(
+            {prompt_sha256(label.prompt) for label in labels}
+        ),
         "expert_profiles": {
             expert_id: dict(sorted(profile.items()))
             for expert_id, profile in sorted(profiles.items())
@@ -140,7 +163,8 @@ def load_distilled_router_artifact(config: DistilledRoutingConfig) -> DistilledR
     if not config.enabled:
         return None
     raw = json.loads(Path(config.artifact_path).read_text(encoding="utf-8"))
-    if int(raw.get("version", 0)) != ARTIFACT_VERSION:
+    version = int(raw.get("version", 0))
+    if version not in SUPPORTED_ARTIFACT_VERSIONS:
         raise ValueError(f"Unsupported distilled router artifact version: {raw.get('version')}")
     if raw.get("method") != "char_ngram_centroid":
         raise ValueError(f"Unsupported distilled router method: {raw.get('method')}")
@@ -154,4 +178,22 @@ def load_distilled_router_artifact(config: DistilledRoutingConfig) -> DistilledR
             str(expert_id): {str(feature): float(value) for feature, value in profile.items()}
             for expert_id, profile in raw.get("expert_profiles", {}).items()
         },
+        training_data_sha256=str(raw.get("training_data_sha256", "")),
+        training_prompt_ids=tuple(str(item) for item in raw.get("training_prompt_ids", [])),
+        training_prompt_hashes=tuple(
+            str(item) for item in raw.get("training_prompt_hashes", [])
+        ),
     )
+
+
+def _route_label_record(label: RouteLabel) -> dict[str, Any]:
+    return {
+        "prompt_id": label.prompt_id,
+        "prompt": label.prompt,
+        "primary": label.primary,
+        "fallback": label.fallback,
+        "confidence": label.confidence,
+        "reason": label.reason,
+        "risk": label.risk,
+        "teacher_source": label.teacher_source,
+    }

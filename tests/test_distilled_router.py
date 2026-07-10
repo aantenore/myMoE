@@ -32,6 +32,9 @@ class DistilledRouterTests(unittest.TestCase):
         expert_id, confidence = loaded.predict("Please write Python unit tests")
 
         self.assertEqual(loaded.training_cases, 3)
+        self.assertTrue(loaded.training_data_sha256)
+        self.assertEqual(loaded.training_prompt_ids, ("a", "b", "c"))
+        self.assertEqual(len(loaded.training_prompt_hashes), 3)
         self.assertEqual(expert_id, "coder")
         self.assertGreater(confidence, 0)
 
@@ -47,6 +50,8 @@ class DistilledRouterTests(unittest.TestCase):
 
         self.assertEqual(expert_id, "fast_fallback")
         self.assertGreater(confidence, 0)
+        self.assertEqual(loaded.training_cases, 52)
+        self.assertTrue(loaded.training_data_sha256)
 
 
 if __name__ == "__main__":

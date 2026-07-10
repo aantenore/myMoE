@@ -72,18 +72,28 @@ class LocalMoE:
         route = self._router.route(route_prompt or prompt)
         req = GenerationRequest(prompt=prompt, correlation_id=cid)
 
-        expert_order = [score.expert_id for score in route.selected]
+        selected_order = [score.expert_id for score in route.selected]
+        fallback_order = []
         for fallback in route.fallback_order:
-            if fallback not in expert_order:
-                expert_order.append(fallback)
+            if fallback not in selected_order and fallback not in fallback_order:
+                fallback_order.append(fallback)
 
         results: list[ExpertResult] = []
         errors: list[str] = []
-        experts_by_id = self._config.experts_by_id
 
         if self._config.routing.aggregation in {"concat", "compare"}:
-            results, errors = self._generate_many(expert_order, req)
+            results, errors = self._generate_many(selected_order, req)
+            missing = max(0, len(selected_order) - len(results))
+            if missing:
+                fallback_results, fallback_errors = self._generate_fallbacks(
+                    fallback_order,
+                    req,
+                    limit=missing,
+                )
+                results.extend(fallback_results)
+                errors.extend(fallback_errors)
         else:
+            expert_order = [*selected_order, *fallback_order]
             results, errors = self._generate_best(expert_order, req)
 
         if not results:
@@ -209,6 +219,30 @@ class LocalMoE:
 
         order = {expert_id: index for index, expert_id in enumerate(expert_order)}
         results.sort(key=lambda item: order[item.expert_id])
+        return results, errors
+
+    def _generate_fallbacks(
+        self,
+        expert_order: list[str],
+        req: GenerationRequest,
+        *,
+        limit: int,
+    ) -> tuple[list[ExpertResult], list[str]]:
+        results: list[ExpertResult] = []
+        errors: list[str] = []
+        experts_by_id = self._config.experts_by_id
+
+        for expert_id in expert_order:
+            expert = experts_by_id[expert_id]
+            provider = self._providers[expert_id]
+            try:
+                results.append(provider.generate(expert, req))
+            except ProviderError as exc:
+                errors.append(f"{expert_id}: {exc}")
+                continue
+            if len(results) >= limit:
+                break
+
         return results, errors
 
     def _aggregate(self, results: list[ExpertResult], disagreement: DisagreementReport | None) -> str:

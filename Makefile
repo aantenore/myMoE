@@ -1,4 +1,4 @@
-.PHONY: check test eval distill-router prepare-runtime models-status models-logs cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
+.PHONY: check test eval eval-holdout distill-router prepare-runtime models-status models-logs cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	python3 scripts/run_ci_checks.py
@@ -11,6 +11,13 @@ eval:
 		--config tests/fixtures/moe.synthetic.json \
 		--eval experiments/eval_set_extended.jsonl \
 		--out outputs/smoke-eval-extended.json
+
+eval-holdout:
+	PYTHONPATH=src python3 experiments/run_smoke_eval.py \
+		--config configs/moe.live.general-mlx.example.json \
+		--eval experiments/eval_set_live_general_holdout_v2.jsonl \
+		--training-labels experiments/route_labels_live_general.jsonl \
+		--out outputs/live-general-routing-holdout.json
 
 distill-router:
 	PYTHONPATH=src python3 experiments/build_route_label_dataset.py \
