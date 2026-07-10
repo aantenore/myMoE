@@ -64,15 +64,35 @@ unseen set before making a fresh generalization claim.
 
 Interpretation: the harness works and the current router clears the committed
 multilingual routing gate. The bidirectional runtime fallback preserves
-availability when a fast route misses or its endpoint is offline. The next
-product gate is a full single-general vs routed top-1/top-2 answer-quality
-comparison with latency, memory, and failures.
+availability when a fast route misses or its endpoint is offline. The release
+product gate is the separate single-general vs routed top-1/top-2 answer-quality
+comparison with latency, host memory, and failures.
 
-The deterministic answer-quality benchmark scaffold for that product gate lives
-in `configs/quality-benchmark.json`, `experiments/quality_benchmark_cases.jsonl`,
-and `experiments/run_quality_benchmark.py`. Its committed artifact is allowed to
-be `blocked` when local endpoints are not running; it must be rerun against live
-Qwen/Gemma endpoints before claiming answer-quality advantage.
+The benchmark contract lives in `configs/quality-benchmark.json`,
+`experiments/quality_benchmark_cases.jsonl`, and
+`experiments/run_quality_benchmark.py`. Routed top-1 is the value variant and
+must not regress against the single-general baseline; top-2 is diagnostic and
+must report complete comparison/disagreement evidence without masking a top-1
+regression. The release profile requires a complete provenance-bound artifact
+from the live Qwen3 4B and Qwen3 1.7B endpoints. The offline CI overlay may
+report unavailable endpoints, but it cannot declare release readiness.
+
+The live contract runs three repetitions. With the current eight-case dataset,
+the two fast-routed cases therefore contribute six paired latency observations.
+Release evidence also requires host RAM and swap counters: swap growth must stay
+at or below 4 GiB and observed peak RAM use at or below 95%. These host-wide
+limits intentionally tolerate ordinary desktop noise while rejecting the
+catastrophic pressure seen with the earlier large-model topology. Missing RAM or
+swap counters fail the release profile; an offline CI run may only skip an
+absent or explicitly blocked live artifact.
+
+Provenance binds the benchmark code, wrapper, lockfile, source configuration,
+dataset, router artifact, benchmark-process Python/package versions, and the
+locally cached Hugging Face snapshot revisions. The standard OpenAI-compatible
+`/models` endpoint exposes neither the served snapshot revision nor the
+inference-server package build. Both cache-to-server matching and server-package
+identity are therefore recorded as explicitly unverified rather than presented
+as attested.
 
 ## Quality Gate
 
@@ -94,4 +114,5 @@ The automated gate checks:
 - minimum extended routing accuracy of `0.90`,
 - minimum extended routing eval size of `50`,
 - required project files,
-- no leftover local live eval listener on `127.0.0.1:8101`.
+- no leftover local live eval listener on `127.0.0.1:8101` or
+  `127.0.0.1:8102`.

@@ -75,5 +75,11 @@
       "complexity": "medium",
       "score": 1.0
     }
-  ]
+  ],
+  "provenance": {
+    "config_path": "tests/fixtures/moe.synthetic.json",
+    "config_sha256": "a1757ccacccccd0fc7cdd80ffb1c4525d5093dceb99c4b451e0465f72c10f39b",
+    "eval_path": "experiments/eval_set.jsonl",
+    "eval_sha256": "353537c8798fbb180de107cebae6ecd35b2cf8d435b9d225489573fad83b9e85"
+  }
 }

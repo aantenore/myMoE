@@ -106,7 +106,12 @@ class ProviderTests(unittest.TestCase):
 
     def test_openai_provider_parses_content_usage_and_timings(self) -> None:
         response = {
-            "choices": [{"message": {"content": "ok from fake local model"}}],
+            "choices": [
+                {
+                    "message": {"content": "ok from fake local model"},
+                    "finish_reason": "length",
+                }
+            ],
             "usage": {"prompt_tokens": 11, "completion_tokens": 7},
             "timings": {"predicted_per_second": 123.5},
         }
@@ -123,6 +128,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.prompt_tokens, 11)
         self.assertEqual(result.completion_tokens, 7)
         self.assertEqual(result.predicted_tokens_per_second, 123.5)
+        self.assertEqual(result.finish_reason, "length")
         self.assertEqual(_FakeOpenAIHandler.last_path, "/v1/chat/completions")
         self.assertEqual(_FakeOpenAIHandler.last_payload["model"], "fake-model")
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.2)
@@ -133,6 +139,7 @@ class ProviderTests(unittest.TestCase):
         chunks = (
             'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
             'data: {"choices":[{"delta":{"content":"lo"}}],"usage":{"prompt_tokens":5,"completion_tokens":2},"timings":{"predicted_per_second":42.5}}\n\n',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
             "data: [DONE]\n\n",
         )
 
@@ -152,6 +159,19 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(events[-1].result.prompt_tokens, 5)
         self.assertEqual(events[-1].result.completion_tokens, 2)
         self.assertEqual(events[-1].result.predicted_tokens_per_second, 42.5)
+        self.assertEqual(events[-1].result.finish_reason, "stop")
+
+    def test_openai_provider_keeps_missing_finish_reason_unknown(self) -> None:
+        response = {"choices": [{"message": {"content": "ok"}}]}
+
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            result = OpenAICompatibleProvider().generate(
+                _expert(f"http://{host}:{port}/v1"),
+                GenerationRequest(prompt="hello", correlation_id="case-unknown"),
+            )
+
+        self.assertIsNone(result.finish_reason)
 
     def test_streaming_strip_hides_open_thinking_block(self) -> None:
         self.assertEqual(strip_reasoning_content("<think>private partial"), "")
@@ -209,7 +229,7 @@ class ProviderTests(unittest.TestCase):
             provider.generate(
                 expert,
                 GenerationRequest(
-                    prompt="Analyze the architecture tradeoff and decide a plan.",
+                    prompt="Review this security threat and recommend safe controls.",
                     correlation_id="case-thinking-on",
                 ),
             )

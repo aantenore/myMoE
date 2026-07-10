@@ -4,7 +4,7 @@
   "dataset": "experiments/quality_benchmark_cases.jsonl",
   "general_expert_id": "general",
   "variants": ["single_general", "moe_top1", "moe_top2"],
-  "repetitions": 1,
+  "repetitions": 3,
   "readiness": {
     "timeout_seconds": 2.0,
     "model_match": "exact"
@@ -12,7 +12,7 @@
   "generation_overrides": {
     "temperature": 0.0,
     "top_p": 1.0,
-    "max_tokens": 128
+    "max_tokens": 2048
   },
   "evaluator": {
     "type": "deterministic_rubric",
@@ -21,11 +21,32 @@
   },
   "decision": {
     "baseline_variant": "single_general",
-    "minimum_task_success_rate": 0.8,
+    "value_variant": "moe_top1",
+    "diagnostic_variants": ["moe_top2"],
+    "required_operational_variants": ["single_general", "moe_top1"],
+    "minimum_task_success_rate": 1.0,
+    "minimum_quality_pass_rate": 1.0,
     "minimum_quality_score": 0.7,
-    "maximum_failure_rate": 0.05,
-    "minimum_moe_quality_delta": 0.02,
-    "maximum_moe_latency_ratio": 2.0
+    "maximum_failure_rate": 0.0,
+    "maximum_truncation_rate": 0.0,
+    "minimum_top1_quality_delta": 0.0,
+    "minimum_top1_task_success_delta": 0.0,
+    "maximum_top1_failure_rate_delta": 0.0,
+    "maximum_top1_latency_ratio": 1.05,
+    "maximum_top1_routed_latency_ratio": 0.8,
+    "minimum_top1_routed_case_count": 6,
+    "minimum_top1_non_general_route_rate": 0.2,
+    "minimum_top1_route_fulfillment_rate": 1.0,
+    "maximum_top1_response_error_rate": 0.0,
+    "maximum_top1_truncation_rate": 0.0,
+    "minimum_top2_complete_compare_rate": 1.0,
+    "minimum_top2_disagreement_report_rate": 1.0,
+    "maximum_top2_response_error_rate": 0.0,
+    "host_memory": {
+      "required": true,
+      "maximum_swap_growth_bytes": 4294967296,
+      "maximum_peak_ram_used_percent": 95.0
+    }
   },
   "store_outputs": true
 }

@@ -2,6 +2,10 @@
 
 Date: 2026-06-18
 
+> Historical harness-validation report. Its measurements remain experiment
+> evidence, but its candidate recommendation predates the current Qwen3 4B plus
+> Qwen3 1.7B default and the isolated Qwen3 30B quality-first profile.
+
 ## Machine
 
 - CPU/GPU: Apple M5 Pro
@@ -77,7 +81,7 @@ Summary:
 
 The small coder model is fast and stable, but quality is limited. It asks for missing input on underspecified bug/summarization prompts, which is reasonable. It is not the final model; it is the live harness proof.
 
-## Next Model To Test
+## Historical Next Model Candidate
 
 First serious candidate:
 

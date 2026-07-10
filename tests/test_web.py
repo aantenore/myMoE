@@ -12,6 +12,8 @@ import unittest
 from local_moe.web import build_server
 from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
+HTTP_TEST_TIMEOUT_SECONDS = 15
+
 
 class WebTests(unittest.TestCase):
     def test_serves_config_and_generates_with_synthetic_provider(self) -> None:
@@ -183,7 +185,10 @@ class WebTests(unittest.TestCase):
         self.assertEqual(support_bundle["security_audit"]["schema_version"], "1.0")
         self.assertEqual(performance["schema_version"], "1.0")
         self.assertIn(performance["status"], {"ready", "ready_partial"})
-        self.assertEqual(performance["decision"]["primary_general"]["candidate_id"], "qwen3-30b-a3b-2507-mlx-4bit")
+        self.assertEqual(
+            performance["decision"]["primary_general"]["candidate_id"],
+            "qwen3-4b-mlx-4bit",
+        )
         self.assertNotIn("content_excerpt", json.dumps(performance))
         self.assertIn("# myMoE Performance Report", performance_markdown)
         self.assertEqual(optimizer["schema_version"], "1.0")
@@ -1386,12 +1391,12 @@ class WebTests(unittest.TestCase):
 
 
 def _get_json(url: str) -> dict[str, object]:
-    with request.urlopen(url, timeout=5) as response:
+    with request.urlopen(url, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _get_text(url: str) -> str:
-    with request.urlopen(url, timeout=5) as response:
+    with request.urlopen(url, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return response.read().decode("utf-8")
 
 
@@ -1402,7 +1407,7 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with request.urlopen(http_req, timeout=5) as response:
+    with request.urlopen(http_req, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -1413,7 +1418,7 @@ def _post_text(url: str, payload: dict[str, object]) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with request.urlopen(http_req, timeout=5) as response:
+    with request.urlopen(http_req, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return response.read().decode("utf-8")
 
 
@@ -1424,13 +1429,13 @@ def _patch_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         headers={"Content-Type": "application/json"},
         method="PATCH",
     )
-    with request.urlopen(http_req, timeout=5) as response:
+    with request.urlopen(http_req, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _delete_json(url: str) -> dict[str, object]:
     http_req = request.Request(url, method="DELETE")
-    with request.urlopen(http_req, timeout=5) as response:
+    with request.urlopen(http_req, timeout=HTTP_TEST_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

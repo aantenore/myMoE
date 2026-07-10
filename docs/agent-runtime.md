@@ -47,10 +47,68 @@ Safety properties:
   risk classes, and result lengths, never prompts, arguments, tool bodies, or raw
   reasoning.
 
+### CLI contract
+
+`--agent-prompt` is separate from normal `--prompt` generation and cannot be
+combined with another CLI action. It selects one OpenAI-compatible expert from
+the active MoE config, builds the local tool registry from the active app config,
+and runs the same provider-neutral loop described above. It requires a narrow,
+explicit, repeatable `--agent-tool <canonical-name>` selection for each task:
+
+```bash
+mymoe \
+  --config configs/moe.live.general-mlx.example.json \
+  --agent-prompt "Find local notes about router thresholds." \
+  --agent-expert general \
+  --agent-tool memory.search \
+  --json
+```
+
+With `mode=local_model_required`, the CLI validates every configured HTTP model
+endpoint before the first agent request. Only `localhost`, IPv4 loopback, and
+IPv6 loopback endpoints are accepted. This whole-config check also prevents a
+local primary agent from sending tool data to a remote fallback through a
+model-backed tool. Remote egress requires an explicitly non-local app mode; no
+agent flag silently opts into it.
+
+When a risky call is proposed without approval, the command exits non-zero and
+returns a JSON result with `status=approval_required`, the sanitized approval
+request, and an `approval_token` in
+`<canonical-tool>:<arguments-sha256>` format. After reviewing the exact request,
+the operator can replay the task with `--agent-approve '<approval-token>'`.
+Only a request with the same canonical tool name and argument hash is approved;
+any different request is denied. The provider call id is not trusted as an
+approval because it may change when the task is replayed. Harness-owned
+confirmation fields are injected only after the exact match.
+
+The default app config additionally denies model-facing process execution and
+external communication. An alternate app config may enable process execution,
+but each process/tool call still needs its own exact approval and remains bound
+to the MCP server allowlist. Per-run budget flags expose the existing
+`AgentLoopBudget` limits for model turns, tool calls, proposed calls per turn,
+task/argument/result size, and a soft wall-time deadline. Use
+`--agent-soft-wall-time-seconds`; the old `--agent-max-wall-time-seconds` name is
+accepted only as a deprecated compatibility alias because arbitrary synchronous
+local/custom tools cannot be safely preempted mid-side-effect. The loop checks
+the soft deadline between operations and passes its remaining time into the
+built-in OpenAI-compatible HTTP, MCP, and model-backed compaction timeouts.
+
+`connector_install_policy=deny` is a harness-enforced tool denial: it blocks
+`extension.configure` before approval evaluation, so an exact approval token
+cannot override the app policy.
+
+With `--json`, the top-level result is stable and includes completion status,
+bounded tool observations, sanitized approval requests, grounding ids, and a
+metadata-only trace. The trace never contains prompt, arguments, observations,
+or reasoning. The broader command result can contain the requested final answer
+and sanitized tool data, so it must not be treated as a privacy-safe support
+bundle.
+
 ## Extension Execution Matrix
 
 | Surface | Runtime behavior | Safety policy | Entry points |
 | --- | --- | --- | --- |
+| CLI agent task | Runs a bounded model -> tool -> observation loop against one configured OpenAI-compatible local expert. | Strict-schema configured tools only; narrow tool selection is recommended; risky calls require exact tool+argument-hash approval; app permission policy can deny additional risks; trace is metadata-only. | CLI `--agent-prompt`, repeatable `--agent-tool`, optional exact `--agent-approve`, and `--json`. |
 | `memory.search` | Searches the local memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `memory.maintenance` | Reports local memory totals, active temporal records, pending future records, and expired records. | Read-only; no deletion or path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/maintenance`, Advanced Memory panel, cron. |
 | `memory.prune_expired` | Deletes only records whose `valid_until` timestamp is expired. | Requires `confirm=true` from tools/API and `confirm_writes=true` for cron; future `valid_from` records are preserved. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/prune-expired`, Advanced Memory panel, optional cron. |
@@ -101,7 +159,12 @@ The app config defaults to:
 - external communication: draft-only,
 - process execution: disabled in the model-facing policy.
 
-The current implementation discovers and reports these surfaces. Cron jobs use a local allowlisted runner for supported actions such as `memory.maintenance`, `storage.inspect`, `runtime.optimizer`, `router.distill`, and `extension.audit`. Execution of high-risk tools is intentionally not exposed as a broad `execute_anything` interface.
+The implementation discovers and reports these surfaces, and the explicit CLI
+agent path applies them as an additional deny layer over its exact per-call
+approval policy. Cron jobs use a local allowlisted runner for supported actions
+such as `memory.maintenance`, `storage.inspect`, `runtime.optimizer`,
+`router.distill`, and `extension.audit`. Execution of high-risk tools is
+intentionally not exposed as a broad `execute_anything` interface.
 
 Enabled tools are also executed through a local allowlist in `src/local_moe/tool_runner.py`. The runner maps configured names to concrete Python functions and rejects arbitrary commands. Write-local operations require explicit confirmation in the tool payload or cron request.
 
@@ -181,13 +244,18 @@ Streaming generation is exposed through `POST /api/generate/stream`. It emits `r
 
 The live general profile uses distilled routing. It combines expert base weights, explicit rules, local semantic route examples, and a local centroid classifier artifact trained from route labels. The semantic and distilled matchers are intentionally lightweight: they use normalized character n-grams, so they are cross platform and do not require a third model server.
 
-The heavy general model is not used as the default request classifier. That model is reserved for actual general-purpose answers, while routing stays cheap enough to run before every request. A stronger teacher model can still be used offline to label route datasets for later distillation.
+The resident Qwen3 4B general model is not used as the default request
+classifier. It is reserved for general-purpose answers, while routing stays
+cheap enough to run before every request. Qwen3 30B belongs to a separate
+quality-first profile rather than an automatic escalation path. A stronger
+teacher model can still be used offline to label route datasets for later
+distillation.
 
 ## Multilingual Policy
 
 The default provider system message instructs the model to response in the user's language unless the user asks otherwise. The app config uses `language.mode = auto` and documents supported language hints.
 
-Actual multilingual quality depends on the selected model. Qwen3 30B-A3B 2507 is preferred partly because its public model description emphasizes broad multilingual and instruction-following capability.
+Actual multilingual quality depends on the selected model. The default Qwen3 4B profile prioritizes responsive local operation; Qwen3 30B-A3B 2507 remains the quality-first isolated option when its broader instruction-following ceiling justifies the memory cost.
 
 Routing language coverage depends on route examples and eval coverage. The current live profile includes routing examples and eval cases for English, Italian, French, Spanish, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese intent families. Additional languages should be added by configuration plus matching eval cases, or by swapping the semantic matcher for a local multilingual embedding backend.
 

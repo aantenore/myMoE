@@ -47,6 +47,30 @@ class CiRunnerTests(unittest.TestCase):
             self.assertNotIn("|", step.command)
             self.assertNotIn("PYTHONPATH=src", step.command)
 
+        holdout = next(step for step in steps if step.name == "live routing holdout")
+        self.assertIn(
+            "experiments/eval_set_live_general_holdout_v5.jsonl", holdout.command
+        )
+        quality_gate = next(step for step in steps if step.name == "quality gate")
+        self.assertIn("configs/quality-gate-ci.json", quality_gate.command)
+
+    def test_make_eval_holdout_uses_current_unseen_dataset(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        target = makefile.split("eval-holdout:", 1)[1].split("\n\n", 1)[0]
+
+        self.assertIn("eval_set_live_general_holdout_v5.jsonl", target)
+        self.assertNotIn("eval_set_live_general_holdout_v2.jsonl", target)
+
+    def test_active_github_workflow_matches_documented_template(self) -> None:
+        active = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        template = (ROOT / "docs" / "github-actions-ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(active, template)
+
     def test_build_env_prepends_src_with_platform_separator(self) -> None:
         runner = _load_runner()
 

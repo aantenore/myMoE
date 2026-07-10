@@ -9,6 +9,9 @@ from local_moe.bootstrap import build_runtime_plan
 from local_moe.config import load_config
 from local_moe.extensions import (
     ExtensionError,
+    ExtensionRegistry,
+    PluginManifest,
+    SkillDefinition,
     audit_extension_registry,
     create_plugin_scaffold,
     extension_configuration_templates,
@@ -40,6 +43,38 @@ class ExtensionTests(unittest.TestCase):
         audit = audit_extension_registry(registry)
 
         self.assertTrue(audit["checked"])
+        self.assertEqual(audit["issue_count"], 0)
+
+    def test_extension_audit_canonicalizes_windows_skill_paths(self) -> None:
+        registry = ExtensionRegistry(
+            tools=(),
+            skills=(
+                SkillDefinition(
+                    name="general-assistant",
+                    description="General assistant.",
+                    path=r"skills\general-assistant\SKILL.md",
+                ),
+            ),
+            mcp_servers=(),
+            cron_jobs=(),
+            plugins=(
+                PluginManifest(
+                    id="windows-path-test",
+                    name="Windows Path Test",
+                    version="0.1.0",
+                    description="Exercises cross-platform skill references.",
+                    path=r"plugins\windows-path-test",
+                    skills=("skills/general-assistant",),
+                    tools=(),
+                    mcp_servers=(),
+                    cron_jobs=(),
+                    permissions={"risk_class": "read_only"},
+                ),
+            ),
+        )
+
+        audit = audit_extension_registry(registry)
+
         self.assertEqual(audit["issue_count"], 0)
 
     def test_exposes_guided_extension_configuration_templates(self) -> None:

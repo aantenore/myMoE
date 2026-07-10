@@ -14,15 +14,19 @@ This file records the local machine and benchmark results used to choose the def
 
 Default primary model:
 
-- `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit`
+- `mlx-community/Qwen3-4B-4bit`
 
 Fast fallback / first-run model:
 
+- `mlx-community/Qwen3-1.7B-4bit`
+
+Optional Gemma regression profile:
+
 - `mlx-community/gemma-4-e4b-it-4bit`
 
-Smallest fast demo model:
+Quality-first isolated profile:
 
-- `mlx-community/Qwen3-4B-4bit`
+- `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit`
 
 Optional GGUF coding/agentic specialist:
 
@@ -30,9 +34,12 @@ Optional GGUF coding/agentic specialist:
 
 Why:
 
-- Qwen3 30B-A3B passed the local MLX benchmark and produced the best risk-adjusted score.
-- Gemma 4 E4B and Qwen 30B both start with the pinned MLX profile; the explicit Transformers pin avoids the observed `mlx_lm.server` import break in newer Transformers.
-- Qwen3 4B is dramatically smaller and remains the best practical low-memory first-run model.
+- Qwen3 30B-A3B produced the best isolated candidate score, but the active desktop live test showed that its `17.29 GB` model footprint leaves insufficient headroom for a second resident expert and normal OS/app memory.
+- Qwen3 4B is the default primary because it remains responsive under joint residency with the 1.7B fallback; Qwen3 30B is preserved as an explicit quality-first isolated profile.
+- Qwen3 1.7B is the resident fallback because its measured `1.09 GB` peak leaves ample headroom beside the default Qwen3 4B primary, measured at `2.49 GB` in the isolated performance run.
+- A live joint-residency smoke with Qwen 30B plus Gemma E4B drove the 24 GiB machine beyond `22 GB` of swap and produced an invalid Gemma payload during top-2 generation. Gemma remains supported for isolated regression runs through the pinned MLX profile.
+- In the earlier 30B joint-residency experiment, replacing Gemma with Qwen3 4B fixed the model payload but still drove the already-loaded desktop host to about `24 GB` of swap. That experiment is not the default topology: the default uses Qwen3 4B plus the smaller 1.7B fallback and treats host memory as a release metric.
+- The release benchmark requires observable RAM and swap counters, rejects more than `4 GiB` of host-wide swap growth during the run, and rejects observed peak RAM use above `95%`. The 4 GiB allowance separates ordinary active-desktop noise from the greater-than-10-GiB growth observed with the rejected heavy topology.
 - Gemma 26B variants remain stretch candidates; one quick run was too slow for the default benchmark loop and should be evaluated separately before making them defaults.
 - The Gemma 12B GGUF specialist is documented and launchable through llama.cpp, but it was not selected as the general default because it is coding/agentic-specialized and has not yet beaten the Qwen general baseline on Antonio's general-purpose eval set.
 
@@ -70,9 +77,9 @@ Recommended for the default myMoE profile:
 - Apple Silicon or a strong Linux/Windows local inference setup
 - 24 GiB RAM or more
 - Enough disk for model cache; this test used about 40 GiB after downloading several candidates
-- One heavy resident model at a time, plus optional small fallback if memory remains comfortable
+- Qwen3 4B as the resident primary plus the measured Qwen3 1.7B fallback; monitor host memory during longer top-2 generations
 
 Preferred production-like local profile:
 
 - 32-48 GiB RAM if you want multiple large specialists resident
-- 24 GiB is viable with one heavy model plus a small fallback/compaction model
+- 24 GiB is viable for the measured Qwen3 4B plus Qwen3 1.7B default pair

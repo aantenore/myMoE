@@ -15,6 +15,7 @@ class PerformanceReportTests(unittest.TestCase):
             benchmark = root / "benchmark.json"
             hardware = root / "hardware.json"
             decision = root / "decision.md"
+            selection = root / "selection.json"
             benchmark.write_text(
                 json.dumps(
                     {
@@ -51,11 +52,23 @@ class PerformanceReportTests(unittest.TestCase):
             )
             hardware.write_text('{"cpu_brand": "Test CPU", "machine": "test", "memory_gib": 24}', encoding="utf-8")
             decision.write_text("# Decision\n", encoding="utf-8")
+            selection.write_text(
+                json.dumps(
+                    {
+                        "recommendation": {
+                            "default_primary": "qwen3-30b-a3b-2507-mlx-4bit",
+                            "default_fast_fallback": "qwen3-4b-mlx-4bit",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             report = build_performance_report(
                 benchmark_path=benchmark,
                 hardware_profile_path=hardware,
                 decision_markdown_path=decision,
+                selection_path=selection,
             )
             rendered = render_performance_report_markdown(report)
 
@@ -63,11 +76,45 @@ class PerformanceReportTests(unittest.TestCase):
         self.assertEqual(report["status"], "ready_partial")
         self.assertEqual(report["decision"]["primary_general"]["candidate_id"], "qwen3-30b-a3b-2507-mlx-4bit")
         self.assertEqual(report["decision"]["fast_fallback"]["candidate_id"], "qwen3-4b-mlx-4bit")
+        self.assertEqual(report["decision"]["primary_general"]["role"], "primary_general")
+        self.assertEqual(
+            report["decision"]["fast_fallback"]["role"],
+            "fast_compaction_or_fallback",
+        )
         self.assertIn("ranked", report)
         self.assertNotIn("records", json.dumps(report))
         self.assertNotIn("content_excerpt", json.dumps(report))
         self.assertIn("myMoE Performance Report", rendered)
         self.assertIn("Qwen3 30B-A3B", rendered)
+
+    def test_canonical_runtime_selection_overrides_isolated_ranking(self) -> None:
+        report = build_performance_report()
+
+        self.assertEqual(
+            report["decision"]["primary_general"]["candidate_id"],
+            "qwen3-4b-mlx-4bit",
+        )
+        self.assertEqual(
+            report["decision"]["fast_fallback"]["candidate_id"],
+            "qwen3-1.7b-mlx-4bit",
+        )
+        self.assertEqual(
+            report["decision"]["selection_source"],
+            "configs/model-candidates.json",
+        )
+        self.assertEqual(
+            report["decision"]["primary_general"]["role"],
+            "primary_general",
+        )
+        self.assertEqual(
+            report["decision"]["primary_general"]["benchmark_role"],
+            "fast_compaction_or_fallback",
+        )
+        self.assertIn(
+            "isolated profiles",
+            report["decision"]["recommended_architecture"],
+        )
+        self.assertIn("isolated profiles", report["recommendations"][-1])
 
     def test_missing_benchmark_returns_actionable_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

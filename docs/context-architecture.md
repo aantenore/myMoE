@@ -70,7 +70,7 @@ The active policy is configured through the app runtime fields:
 ```json
 {
   "context_policy_config": "configs/context-policy.json",
-  "context_policy_profile": "qwen3_30b_a3b_general_24gb"
+  "context_policy_profile": "qwen3_4b_general_24gb"
 }
 ```
 

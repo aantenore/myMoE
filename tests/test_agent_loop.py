@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 from typing import Sequence
 import unittest
+import warnings
 
 from local_moe.agent_loop import AgentLoop, AgentLoopBudget, build_local_agent_loop
 from local_moe.agent_tools import (
@@ -30,6 +31,7 @@ class ScriptedModel:
         self.requests: list[
             tuple[tuple[AgentMessage, ...], tuple[AgentToolSpec, ...]]
         ] = []
+        self.timeouts: list[float | None] = []
 
     def generate(
         self,
@@ -37,8 +39,10 @@ class ScriptedModel:
         tools: Sequence[AgentToolSpec],
         *,
         correlation_id: str,
+        timeout_seconds: float | None = None,
     ) -> AgentModelOutput:
         self.requests.append((tuple(messages), tuple(tools)))
+        self.timeouts.append(timeout_seconds)
         return self.outputs.pop(0)
 
 
@@ -53,6 +57,7 @@ class GroundingModel:
         tools: Sequence[AgentToolSpec],
         *,
         correlation_id: str,
+        timeout_seconds: float | None = None,
     ) -> AgentModelOutput:
         self.turn += 1
         if self.turn == 1:
@@ -78,10 +83,18 @@ class GroundingModel:
 class RecordingRunner:
     def __init__(self, payload: dict[str, object] | None = None):
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.timeouts: list[float | None] = []
         self.payload = payload or {"value": "ok"}
 
-    def run(self, name: str, payload: dict[str, object] | None = None) -> ToolRunResult:
+    def run(
+        self,
+        name: str,
+        payload: dict[str, object] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ToolRunResult:
         self.calls.append((name, dict(payload or {})))
+        self.timeouts.append(timeout_seconds)
         return ToolRunResult(
             name=name,
             status="ok",
@@ -93,8 +106,40 @@ class RecordingRunner:
 
 
 class InvalidResultRunner:
-    def run(self, name, payload=None):
+    def run(self, name, payload=None, *, timeout_seconds=None):
         return object()
+
+
+def test_soft_wall_time_is_propagated_and_deprecated_max_alias_is_supported() -> None:
+    runner = RecordingRunner()
+    registry = AgentToolRegistry(runner, (_read_tool_spec(),))
+    model = ScriptedModel(
+        (
+            AgentModelOutput(
+                tool_calls=(
+                    AgentToolCall("call-1", "read__value", {"query": "value"}),
+                )
+            ),
+            AgentModelOutput(final_answer="Done."),
+        )
+    )
+    result = AgentLoop(
+        model,
+        registry,
+        budget=AgentLoopBudget(soft_wall_time_seconds=1.0),
+    ).run("Read a value.")
+
+    assert result.status == "completed"
+    assert all(timeout is not None and 0 < timeout <= 1 for timeout in model.timeouts)
+    assert len(runner.timeouts) == 1
+    assert runner.timeouts[0] is not None
+    assert 0 < runner.timeouts[0] <= 1
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        legacy = AgentLoopBudget(max_wall_time_seconds=2.0)
+    assert legacy.soft_wall_time_seconds == 2.0
+    assert any(item.category is DeprecationWarning for item in caught)
 
 
 def test_final_answer_is_grounded_in_structured_local_tool_result() -> None:

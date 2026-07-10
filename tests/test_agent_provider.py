@@ -6,8 +6,10 @@ import unittest
 
 from local_moe.agent_provider import (
     OpenAICompatibleAgentAdapter,
+    is_loopback_base_url,
     parse_openai_compatible_output,
     select_agent_expert,
+    validate_local_agent_endpoints,
 )
 from local_moe.agent_types import AgentMessage, AgentToolSpec
 from local_moe.config import ExpertConfig, parse_config
@@ -119,6 +121,33 @@ def test_parser_keeps_malformed_arguments_for_local_structured_validation() -> N
 
     assert output.tool_calls[0].arguments == "{not-json"
     assert output.final_answer is None
+
+
+def test_adapter_caps_http_timeout_to_remaining_soft_deadline() -> None:
+    captured: dict[str, float] = {}
+
+    def transport(_http_request, timeout):
+        captured["timeout"] = timeout
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    expert = ExpertConfig(
+        id="general",
+        provider="openai_compatible",
+        model="local-agent",
+        role="general",
+        base_url="http://127.0.0.1:1234/v1",
+        timeout_seconds=12,
+    )
+    adapter = OpenAICompatibleAgentAdapter(expert, transport=transport)
+
+    adapter.generate(
+        (AgentMessage(role="user", content="Finish quickly."),),
+        (),
+        correlation_id="timeout-cap",
+        timeout_seconds=0.25,
+    )
+
+    assert captured["timeout"] == 0.25
 
 
 def test_parser_rejects_non_standard_nan_json_arguments() -> None:
@@ -274,6 +303,47 @@ def test_select_agent_expert_prefers_general_and_validates_explicit_id() -> None
         raise AssertionError(
             "Expected ProviderError for an unknown explicit agent expert"
         )
+
+
+def test_local_agent_endpoint_policy_accepts_loopback_and_rejects_remote() -> None:
+    assert is_loopback_base_url("http://localhost:8101/v1")
+    assert is_loopback_base_url("http://localhost.:8101/v1")
+    assert is_loopback_base_url("http://127.0.0.2:8101/v1")
+    assert is_loopback_base_url("http://[::1]:8101/v1")
+    assert is_loopback_base_url("http://[::ffff:127.0.0.1]:8101/v1")
+    assert not is_loopback_base_url("https://models.example.com/v1")
+    assert not is_loopback_base_url("http://0.0.0.0:8101/v1")
+
+    config = parse_config(
+        {
+            "routing": {"top_k": 1},
+            "experts": [
+                {
+                    "id": "general",
+                    "provider": "openai_compatible",
+                    "model": "general-model",
+                    "role": "general",
+                    "base_url": "http://127.0.0.1:8101/v1",
+                },
+                {
+                    "id": "remote-fallback",
+                    "provider": "openai_compatible",
+                    "model": "remote-model",
+                    "role": "fallback",
+                    "base_url": "https://models.example.com/v1",
+                },
+            ],
+            "rules": [],
+        }
+    )
+
+    try:
+        validate_local_agent_endpoints(config)
+    except ProviderError as exc:
+        assert "remote-fallback" in str(exc)
+        assert "non-loopback" in str(exc)
+    else:
+        raise AssertionError("Expected remote fallback endpoint to be rejected")
 
 
 def load_tests(loader, tests, pattern):

@@ -26,6 +26,12 @@ def main() -> None:
     config = load_config(args.config)
     cases = load_eval_cases(args.eval)
     result = evaluate_router(config, cases)
+    result["provenance"] = {
+        "config_path": args.config,
+        "config_sha256": _file_sha256(Path(args.config)),
+        "eval_path": args.eval,
+        "eval_sha256": _file_sha256(Path(args.eval)),
+    }
     integrity_passed = True
 
     if args.training_labels:
@@ -59,10 +65,7 @@ def main() -> None:
         )
         integrity_passed = bool(integrity["passed"])
         result["integrity"] = integrity
-        result["provenance"] = {
-            "config_path": args.config,
-            "config_sha256": _file_sha256(Path(args.config)),
-            "eval_path": args.eval,
+        result["provenance"].update({
             "holdout_data_sha256": integrity["holdout_data_sha256"],
             "training_labels_path": args.training_labels,
             "training_data_sha256": integrity["training_data_sha256"],
@@ -71,7 +74,7 @@ def main() -> None:
                 _file_sha256(artifact_path) if artifact_path.exists() else ""
             ),
             "artifact_training_data_sha256": artifact_training_data_sha256,
-        }
+        })
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

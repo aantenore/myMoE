@@ -57,9 +57,13 @@ No model required. Validates config, router behavior, evaluator, provider contra
 
 Route to one strong general local endpoint. This is the cheapest real baseline.
 
-### Mode 2: MoE With One Heavy Resident Expert
+### Mode 2: Resident Primary Plus Small Fallback
 
-Keep one heavy general model resident plus one small fast model for compaction/fallback. Cold-load specialists when their eval slice justifies it.
+Keep Qwen3 4B resident as the default general model and Qwen3 1.7B resident as
+the fast compaction/fallback model. Select Qwen3 30B through its isolated
+quality-first profile instead of co-residing it with the default pair. Other
+specialists remain explicit manual profiles; automatic cold-loading is not
+implemented.
 
 ### Mode 3: Top-2 Expert Comparison
 
@@ -88,6 +92,9 @@ manual tools, MCP control-plane, and a bounded model-proposed tool-call loop for
 local OpenAI-compatible experts. It should still not be described as a
 general-purpose autonomous agent platform: the loop is deliberately narrow,
 approval-gated, schema-validated, and optimized for local evidence gathering.
+In `local_model_required` mode, the agent CLI validates the whole configured
+expert set and rejects non-loopback HTTP endpoints before any prompt or tool
+observation can leave the process.
 Open WebUI and AnythingLLM already cover the broad assistant workspace. LM
 Studio, Ollama, and llama.cpp cover model serving. The defensible myMoE layer is
 the privacy-first, hardware-aware routing, tool-safety, and evidence plane above
@@ -110,13 +117,18 @@ This is why the primary general expert matters more than a coding specialist. A 
 
 ## Routing Cost Policy
 
-Do not use the heaviest resident model as the default request classifier. Classification runs before every request, so it should be cheap, deterministic, debuggable, and trainable. The heavy model should be reserved for answer generation, synthesis, or ambiguous fallback.
+Do not use the resident general model as the default request classifier.
+Classification runs before every request, so it should be cheap, deterministic,
+debuggable, and trainable. The resident general model should be reserved for
+answer generation, synthesis, or ambiguous fallback.
 
 The practical policy is:
 
 - Use configured rules, semantic examples, and a distilled local classifier for normal routing.
 - Use the small fallback model for compaction, lightweight classification experiments, and cheap retries.
-- Escalate to the heavy general model only when the router has low confidence or when the request itself requires deep reasoning.
+- Route to the resident Qwen3 4B general expert when confidence or task
+  complexity requires it. Selecting the isolated Qwen3 30B profile remains an
+  explicit operator decision, not an automatic escalation.
 - Use stronger teacher models offline to label routing datasets, then distill those labels into local artifacts.
 
 ## Failure Modes
@@ -140,6 +152,7 @@ The practical policy is:
 9. Agent tool calls must use strict schemas, reject model-supplied confirmations
    or secrets, pause risky operations for external approval, and avoid storing
    prompt/tool-result content in traces.
-10. Before claiming product advantage, routed top-1/top-2 must match or beat the
-   single-general baseline on answer quality while reporting latency, memory,
-   and failure rate. This gate is not yet satisfied.
+10. Before claiming product advantage, routed top-1 must not regress against the
+    single-general baseline while reporting latency, memory, and failure rate.
+    Top-2 is diagnostic evidence and cannot rescue a top-1 regression. This gate
+    is not yet satisfied.

@@ -11,7 +11,10 @@ from .config import ExpertConfig, MoEConfig, load_config
 from .hardware import HardwareProfile, detect_hardware
 from .setup_status import inspect_setup_status, setup_status_payload
 
-DEFAULT_CANDIDATE_PATHS = (Path("configs/model-benchmark.json"), Path("configs/model-candidates.json"))
+DEFAULT_CANDIDATE_PATHS = (
+    Path("configs/model-candidates.json"),
+    Path("configs/model-benchmark.json"),
+)
 
 
 def discover_config_profiles(

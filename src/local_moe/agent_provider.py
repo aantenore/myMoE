@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 import json
+import math
 from typing import Any, Callable, Sequence
 from urllib import error, request
+from urllib.parse import urlparse
 
 from .agent_types import (
     AgentMessage,
@@ -50,6 +53,7 @@ class OpenAICompatibleAgentAdapter:
         tools: Sequence[AgentToolSpec],
         *,
         correlation_id: str,
+        timeout_seconds: float | None = None,
     ) -> AgentModelOutput:
         payload = self.request_payload(messages, tools)
         url = str(self._expert.base_url).rstrip("/") + "/chat/completions"
@@ -60,7 +64,13 @@ class OpenAICompatibleAgentAdapter:
             method="POST",
         )
         try:
-            parsed = self._transport(http_request, self._expert.timeout_seconds)
+            parsed = self._transport(
+                http_request,
+                _effective_timeout_seconds(
+                    self._expert.timeout_seconds,
+                    timeout_seconds,
+                ),
+            )
         except (OSError, error.URLError) as exc:
             raise ProviderError(
                 f"Expert {self._expert.id} agent request failed: {exc}"
@@ -143,6 +153,40 @@ def select_agent_expert(
         (expert for expert in candidates if expert.role.strip().lower() == "general"),
         candidates[0],
     )
+
+
+def validate_local_agent_endpoints(config: MoEConfig) -> None:
+    """Reject configured HTTP model endpoints that are not loopback-only."""
+
+    non_loopback = sorted(
+        expert.id
+        for expert in config.experts
+        if expert.base_url and not is_loopback_base_url(str(expert.base_url))
+    )
+    if non_loopback:
+        rendered = ", ".join(non_loopback)
+        raise ProviderError(
+            "Agent mode requires loopback model endpoints when the app mode is "
+            f"local_model_required; non-loopback expert(s): {rendered}."
+        )
+
+
+def is_loopback_base_url(base_url: str) -> bool:
+    parsed = urlparse(str(base_url).strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return False
+
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost":
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(mapped and mapped.is_loopback)
 
 
 def parse_openai_compatible_output(
@@ -286,3 +330,24 @@ def _optional_int(value: object, key: str) -> int | None:
 
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"Non-standard JSON constant is not allowed: {value}")
+
+
+def _effective_timeout_seconds(
+    configured_timeout: float,
+    remaining_timeout: float | None,
+) -> float:
+    try:
+        configured = float(configured_timeout)
+    except (TypeError, ValueError) as exc:
+        raise ProviderError("Agent expert timeout_seconds must be numeric.") from exc
+    if not math.isfinite(configured) or configured <= 0:
+        raise ProviderError("Agent expert timeout_seconds must be finite and positive.")
+    if remaining_timeout is None:
+        return configured
+    try:
+        remaining = float(remaining_timeout)
+    except (TypeError, ValueError) as exc:
+        raise ProviderError("Agent remaining timeout must be numeric.") from exc
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise ProviderError("Agent remaining timeout must be finite and positive.")
+    return min(configured, remaining)

@@ -14,6 +14,7 @@ def build_performance_report(
     benchmark_path: str | Path = "outputs/performance-benchmark.json",
     hardware_profile_path: str | Path = "outputs/hardware-profile.json",
     decision_markdown_path: str | Path = "outputs/performance-decision.md",
+    selection_path: str | Path = "configs/model-candidates.json",
 ) -> dict[str, Any]:
     manifest_artifact = _load_manifest(manifest_path)
     if manifest_artifact["status"] != "available":
@@ -60,7 +61,8 @@ def build_performance_report(
 
     summary = _sanitize_summary(raw_summary)
     coverage = _coverage(manifest, summary["ranked"], raw_results)
-    decision = _decision(summary)
+    selection = _runtime_selection(selection_path)
+    decision = _decision(summary, selection)
     status = _status(benchmark_artifact["status"], decision, coverage)
 
     return {
@@ -71,6 +73,7 @@ def build_performance_report(
         "benchmark": _benchmark_payload(benchmark_artifact, benchmark_data, raw_results),
         "hardware_profile": _read_json_artifact(hardware_profile_path, include_data=True),
         "decision_markdown": _text_artifact(decision_markdown_path),
+        "runtime_selection": selection,
         "coverage": coverage,
         "decision": decision,
         "ranked": summary["ranked"],
@@ -259,17 +262,94 @@ def _ranked_payload(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _decision(summary: dict[str, Any]) -> dict[str, Any]:
+def _decision(
+    summary: dict[str, Any],
+    selection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     ranked_by_id = {item.get("candidate_id"): item for item in summary["ranked"]}
     raw_decision = summary.get("decision", {})
     primary_raw = raw_decision.get("primary_general")
     fallback_raw = raw_decision.get("fast_fallback")
     primary_id = primary_raw.get("candidate_id") if isinstance(primary_raw, dict) else None
     fallback_id = fallback_raw.get("candidate_id") if isinstance(fallback_raw, dict) else None
+    selection_available = bool(
+        selection and selection.get("status") == "available"
+    )
+    if selection_available:
+        recommendation = selection.get("recommendation", {})
+        configured_primary = recommendation.get("default_primary")
+        configured_fallback = recommendation.get("default_fast_fallback")
+        if configured_primary in ranked_by_id:
+            primary_id = configured_primary
+        if configured_fallback in ranked_by_id:
+            fallback_id = configured_fallback
+    primary = ranked_by_id.get(primary_id)
+    fallback = ranked_by_id.get(fallback_id)
+    if selection_available:
+        primary = _with_runtime_role(primary, "primary_general")
+        fallback = _with_runtime_role(fallback, "fast_compaction_or_fallback")
     return {
-        "primary_general": ranked_by_id.get(primary_id),
-        "fast_fallback": ranked_by_id.get(fallback_id),
-        "recommended_architecture": raw_decision.get("recommended_architecture", ""),
+        "primary_general": primary,
+        "fast_fallback": fallback,
+        "recommended_architecture": (
+            "one resident primary general expert plus one small resident "
+            "fallback/compaction expert; run larger specialists in isolated "
+            "profiles only after eval wins"
+            if selection_available
+            else raw_decision.get("recommended_architecture", "")
+        ),
+        "selection_source": (
+            selection.get("path")
+            if selection_available
+            else "benchmark_summary"
+        ),
+    }
+
+
+def _with_runtime_role(
+    candidate: dict[str, Any] | None,
+    runtime_role: str,
+) -> dict[str, Any] | None:
+    if candidate is None:
+        return None
+    payload = dict(candidate)
+    benchmark_role = payload.get("role")
+    if benchmark_role != runtime_role:
+        payload["benchmark_role"] = benchmark_role
+    payload["role"] = runtime_role
+    return payload
+
+
+def _runtime_selection(path: str | Path) -> dict[str, Any]:
+    selection_path = Path(path)
+    if not selection_path.is_file():
+        return {"path": str(selection_path), "status": "missing", "recommendation": {}}
+    try:
+        raw = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "path": str(selection_path),
+            "status": "invalid",
+            "recommendation": {},
+            "error": str(exc),
+        }
+    recommendation = raw.get("recommendation") if isinstance(raw, dict) else None
+    if not isinstance(recommendation, dict):
+        return {
+            "path": str(selection_path),
+            "status": "invalid",
+            "recommendation": {},
+            "error": "recommendation must be an object",
+        }
+    return {
+        "path": str(selection_path),
+        "status": "available",
+        "recommendation": {
+            "default_primary": str(recommendation.get("default_primary", "")),
+            "default_fast_fallback": str(
+                recommendation.get("default_fast_fallback", "")
+            ),
+        },
     }
 
 
@@ -342,7 +422,11 @@ def _recommendations(
     if coverage.get("failed_candidate_ids"):
         recommendations.append("Keep failed candidates out of default profiles until the failure is reproduced and fixed.")
     if decision.get("primary_general") and decision.get("fast_fallback"):
-        recommendations.append("Keep one heavy resident general expert and one small resident fallback unless new evals beat this policy.")
+        recommendations.append(
+            "Keep one resident primary general expert and one small resident "
+            "fallback unless new evals beat this policy; run larger specialists "
+            "in isolated profiles."
+        )
     return recommendations
 
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import math
 import time
+import warnings
 from typing import Sequence
 from uuid import uuid4
 
@@ -36,15 +37,19 @@ or secrets. Return only the useful final answer in the user's language."""
 
 @dataclass(frozen=True)
 class AgentLoopBudget:
-    # Wall time is checked between model/tool operations. In-flight operations
-    # remain bounded by their provider/tool-specific timeout contracts.
+    # The soft deadline is checked between operations. The remaining time is
+    # also propagated to built-in HTTP/MCP operations, but arbitrary custom or
+    # local synchronous runners cannot be safely preempted mid-side-effect.
     max_model_turns: int = 6
     max_tool_calls: int = 8
     max_proposed_tool_calls_per_turn: int = 16
     max_tool_result_chars: int = 8_000
     max_task_chars: int = 32_000
     max_tool_argument_chars: int = 32_000
-    max_wall_time_seconds: float = 180.0
+    soft_wall_time_seconds: float = 180.0
+    # Deprecated compatibility alias. New callers must use
+    # soft_wall_time_seconds so the public name does not promise preemption.
+    max_wall_time_seconds: float | None = None
 
     def __post_init__(self) -> None:
         integer_fields = {
@@ -72,13 +77,33 @@ class AgentLoopBudget:
             raise ValueError("max_task_chars must be >= 1")
         if self.max_tool_argument_chars < 2:
             raise ValueError("max_tool_argument_chars must be >= 2")
-        if (
-            not isinstance(self.max_wall_time_seconds, (int, float))
-            or isinstance(self.max_wall_time_seconds, bool)
-            or not math.isfinite(float(self.max_wall_time_seconds))
-            or self.max_wall_time_seconds <= 0
-        ):
-            raise ValueError("max_wall_time_seconds must be a finite number > 0")
+        _validate_soft_wall_time(
+            self.soft_wall_time_seconds,
+            name="soft_wall_time_seconds",
+        )
+        deprecated_timeout = self.max_wall_time_seconds
+        if deprecated_timeout is not None:
+            _validate_soft_wall_time(
+                deprecated_timeout,
+                name="max_wall_time_seconds",
+            )
+            if (
+                float(self.soft_wall_time_seconds) != 180.0
+                and float(self.soft_wall_time_seconds) != float(deprecated_timeout)
+            ):
+                raise ValueError(
+                    "soft_wall_time_seconds and deprecated max_wall_time_seconds conflict"
+                )
+            warnings.warn(
+                "max_wall_time_seconds is deprecated; use soft_wall_time_seconds",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            object.__setattr__(
+                self,
+                "soft_wall_time_seconds",
+                float(deprecated_timeout),
+            )
 
 
 @dataclass(frozen=True)
@@ -153,7 +178,7 @@ class AgentLoop:
             )
 
         cid = correlation_id or str(uuid4())
-        deadline = time.monotonic() + self._budget.max_wall_time_seconds
+        deadline = time.monotonic() + self._budget.soft_wall_time_seconds
         messages = [
             AgentMessage(role="system", content=self._system_prompt),
             AgentMessage(role="user", content=clean_task),
@@ -214,6 +239,7 @@ class AgentLoop:
                     messages,
                     self._tools.specs,
                     correlation_id=cid,
+                    timeout_seconds=_remaining_timeout_seconds(deadline),
                 )
             except Exception as exc:
                 model_turns += 1
@@ -366,6 +392,7 @@ class AgentLoop:
                                 execution = self._tools.execute(
                                     call,
                                     approval_handler=approval_handler,
+                                    timeout_seconds=_remaining_timeout_seconds(deadline),
                                 )
                             except Exception:
                                 result = AgentToolResult(
@@ -660,3 +687,17 @@ def _sha256_text(value: str) -> str:
 
 def _safe_trace_label(value: object) -> str:
     return redact_agent_text(str(value))[:160]
+
+
+def _validate_soft_wall_time(value: object, *, name: str) -> None:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    ):
+        raise ValueError(f"{name} must be a finite number > 0")
+
+
+def _remaining_timeout_seconds(deadline: float) -> float:
+    return max(deadline - time.monotonic(), 1e-6)

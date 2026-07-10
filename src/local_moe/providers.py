@@ -30,6 +30,7 @@ class ExpertResult:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     predicted_tokens_per_second: float | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ class OpenAICompatibleProvider:
             prompt_tokens=_maybe_int(usage, "prompt_tokens"),
             completion_tokens=_maybe_int(usage, "completion_tokens"),
             predicted_tokens_per_second=_maybe_float(timings, "predicted_per_second"),
+            finish_reason=_finish_reason(parsed),
         )
 
     def stream_generate(
@@ -118,6 +120,7 @@ class OpenAICompatibleProvider:
         prompt_tokens: int | None = None
         completion_tokens: int | None = None
         predicted_tokens_per_second: float | None = None
+        finish_reason: str | None = None
         saw_sse = False
         non_sse_lines: list[str] = []
 
@@ -152,6 +155,7 @@ class OpenAICompatibleProvider:
                         _maybe_float(timings, "predicted_per_second")
                         or predicted_tokens_per_second
                     )
+                    finish_reason = _finish_reason(parsed) or finish_reason
         except error.URLError as exc:
             raise ProviderError(f"Expert {expert.id} stream request failed: {exc}") from exc
 
@@ -169,6 +173,7 @@ class OpenAICompatibleProvider:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             predicted_tokens_per_second=predicted_tokens_per_second,
+            finish_reason=finish_reason,
         )
         yield ProviderStreamEvent(content=result.content, result=result)
 
@@ -240,6 +245,7 @@ def _parse_non_streaming_result(
         prompt_tokens=_maybe_int(usage, "prompt_tokens"),
         completion_tokens=_maybe_int(usage, "completion_tokens"),
         predicted_tokens_per_second=_maybe_float(timings, "predicted_per_second"),
+        finish_reason=_finish_reason(parsed),
     )
 
 
@@ -260,6 +266,23 @@ def _stream_delta(parsed: object) -> str:
         return str(message["content"])
     text = first.get("text")
     return str(text) if text is not None else ""
+
+
+def _finish_reason(parsed: object) -> str | None:
+    if not isinstance(parsed, dict):
+        return None
+    choices = parsed.get("choices")
+    if (
+        not isinstance(choices, list)
+        or not choices
+        or not isinstance(choices[0], dict)
+    ):
+        return None
+    raw = choices[0].get("finish_reason")
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    return value or None
 
 
 def _maybe_int(raw: object, key: str) -> int | None:
@@ -329,6 +352,9 @@ def _prompt_needs_thinking(prompt: str) -> bool:
         "prove",
         "reason",
         "research",
+        "review",
+        "security",
+        "threat",
         "tradeoff",
         "why",
     )

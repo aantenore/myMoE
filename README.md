@@ -120,6 +120,48 @@ or, after install:
 mymoe --prompt "Analyze the tradeoff between a single local model and a routed MoE."
 ```
 
+Run a bounded tool-calling task against one configured OpenAI-compatible local
+expert by selecting only the tools that task needs:
+
+```bash
+mymoe \
+  --config configs/moe.live.general-mlx.example.json \
+  --agent-prompt "Search local memory for the latest router decision." \
+  --agent-expert general \
+  --agent-tool memory.search \
+  --json
+```
+
+At least one explicit `--agent-tool` is required and the option is repeatable.
+Every exposed tool must be enabled in the active
+extension registry and have a strict local schema. Model-proposed writes never
+inherit confirmation from prompt text: the first run returns
+`status=approval_required` plus an `approval_token` containing the canonical
+tool name and exact argument SHA-256. Re-run the same task with that token only
+after reviewing the sanitized request:
+
+```bash
+mymoe \
+  --config configs/moe.live.general-mlx.example.json \
+  --agent-prompt "Store these notes in local knowledge." \
+  --agent-tool knowledge.ingest \
+  --agent-approve 'knowledge.ingest:<arguments-sha256>' \
+  --json
+```
+
+An approval matches only the same canonical tool and argument hash. Budget
+flags such as `--agent-max-model-turns`, `--agent-max-tool-calls`, and
+`--agent-soft-wall-time-seconds` can tighten the built-in limits per run. The
+soft deadline is checked between operations and its remaining time caps the
+built-in HTTP, MCP, and model-backed compaction timeouts; arbitrary synchronous
+local/custom tools cannot be safely interrupted mid-side-effect. The deprecated
+`--agent-max-wall-time-seconds` alias remains accepted with a warning.
+
+When the app mode is `local_model_required`, agent mode rejects the run before
+the first model request if any configured HTTP model endpoint is not loopback
+(`localhost`, IPv4 loopback, or IPv6 loopback). Remote model egress therefore
+requires an explicit non-local app mode rather than an agent CLI shortcut.
+
 Open the local UI:
 
 ```bash
@@ -337,7 +379,9 @@ Model Logs exposes bounded, sanitized tails from runtime-plan-generated log path
 
 ![myMoE model logs](docs/screenshots/model-logs.png)
 
-Live generation was verified against a local Gemma 4 E4B model on the tested Apple Silicon machine.
+This historical live-generation screenshot was captured with the optional,
+isolated Gemma 4 E4B profile. The current 24 GB default is the Qwen3 4B primary
+plus the Qwen3 1.7B fallback described below.
 
 ![myMoE live local generation](docs/screenshots/live-generation.png)
 
@@ -349,9 +393,10 @@ The layout has also been checked on a mobile viewport.
 
 For Antonio's machine class (Apple Silicon, 24 GB RAM), this is a general-purpose app, so the default is not a coder model.
 
-- `primary general`: Qwen3-30B-A3B-Instruct-2507 MLX 4-bit.
+- `primary general`: Qwen3 4B MLX 4-bit for the default responsive 24 GB profile.
+- `quality-first isolated`: Qwen3-30B-A3B-Instruct-2507 MLX 4-bit through `configs/moe.live.qwen30-mlx.example.json`; do not co-reside it with another model on the tested desktop workload.
 - `multimodal alternative`: Gemma 4 26B-A4B OptiQ MLX 4-bit.
-- `fast fallback`: Qwen3 4B or Gemma 4 E4B, selected by local benchmark and task quality.
+- `fast fallback`: Qwen3 1.7B MLX 4-bit is the memory-bounded resident fallback beside the default Qwen3 4B primary; Gemma 4 E4B remains optional and isolated.
 - `optional specialist`: Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder-30B-A3B only for coding-heavy workflows.
 - `rejected stretch on tested 24 GB`: Qwen3.6-35B-A3B OptiQ MLX 4-bit failed with Metal OOM at both 8192 and 2048 KV cache sizes.
 - `judge/router-teacher`: use Codex/GPT-class teacher offline during dataset creation, not in runtime.
@@ -374,9 +419,10 @@ Similar local assistant tools already combine chat, RAG, memory, tool calling,
 and agent presets. myMoE is intentionally narrower: a privacy-first,
 hardware-aware control plane for constrained local workstations. It routes
 cheaply, keeps heavy generation local, exposes diagnostics, and guards MCP/local
-tools through allowlists and confirmations. Tool execution is currently
-operator-invoked from CLI/UI; model-driven tool calls and automatic cold-loading
-are not implemented.
+tools through allowlists and confirmations. Operator-invoked CLI/UI tools remain
+available, while model-driven tool calls run only through the explicit bounded
+`--agent-prompt` CLI path with selected tools and exact per-call approvals.
+Automatic cold-loading is not implemented.
 
 ## Project Layout
 
@@ -384,12 +430,15 @@ are not implemented.
 configs/
   moe.local.example.json   # template for real llama.cpp/Ollama/LM Studio endpoints
   moe.live.general-mlx.example.json
+  moe.live.qwen30-mlx.example.json
   moe.live.fast-mlx.example.json
   moe.live.gemma-e4b-mlx.example.json
   moe.live.gemma-12b-coder-gguf.example.json
   moe.live.gemma-12b-agentic-gguf.example.json
   moe.live.ollama.example.json
-  quality-gate.json        # thresholds and project artifact checks
+  quality-benchmark.json   # live single-general/top-1/top-2 comparison contract
+  quality-gate.json        # release thresholds and project artifact checks
+  quality-gate-ci.json     # offline CI overlay; cannot declare release readiness
 docs/
   agent-runtime.md
   architecture.md
@@ -443,31 +492,36 @@ tests/
   test_web.py
 ```
 
-## Current Experiment
+## Current Evaluation
 
-The first experiment validates the routing harness, not model quality. It checks that prompts are routed to the intended expert from configuration alone. This is the right first gate because model downloads are large, while a broken router wastes every later run.
-
-The live experiment can plug in real local MLX or GGUF endpoints and compare:
+The routing suites validate deterministic behavior and leakage-free holdout
+performance. The separate live answer-quality benchmark compares:
 
 - single general model,
-- system-level MoE top-1 routing,
-- top-2 comparison/concatenation with deterministic disagreement metadata.
+- system-level MoE top-1 routing as the value variant,
+- top-2 comparison as a diagnostic variant with deterministic disagreement metadata.
+
+Top-2 evidence cannot compensate for a top-1 regression. The release profile
+requires a complete, provenance-bound live benchmark; the offline CI overlay
+can validate the rest of the project but cannot declare release readiness.
 
 On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
-1. Use one strong resident general expert first.
-2. Keep MoE as routing, context, memory, fallback, and cold-load specialist harness.
-3. Keep only small fallback/compaction experts resident alongside the heavy model.
-4. Add large specialist models only if evals beat the general baseline enough to justify memory and latency.
+1. Keep Qwen3 4B resident as the default general expert.
+2. Keep Qwen3 1.7B resident as the bounded fallback/compaction expert.
+3. Run Qwen3 30B alone through its explicit quality-first profile.
+4. Add other large specialists only if their eval slice justifies memory and latency.
 
-The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile, adds v2 as the preferred GGUF coding/agentic profile, and leaves Qwen3 30B-A3B as the general-purpose default.
+The linked `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` model is not worse by definition, but it is a Python/coding specialist and its own model card now points to a v2 agentic successor. myMoE therefore keeps v1 as a legacy optional profile and adds v2 as the preferred GGUF coding/agentic profile. The 24 GB default uses Qwen3 4B as its resident general model; Qwen3 30B remains the quality-first isolated profile.
 
 The current quality gate uses `scripts/run_ci_checks.py` to compile source,
 tests, and scripts; run unit and contract tests; evaluate 64 deterministic
 fixture routes; regenerate the 52-case live holdout report; reject any
 train/holdout id or prompt-hash overlap; reject stale config/dataset/artifact
 provenance; check required files; and verify no live eval server remains on
-`127.0.0.1:8101`.
+`127.0.0.1:8101` or `127.0.0.1:8102`. The release profile additionally requires
+the complete live answer-quality artifact; the offline CI profile reports that
+requirement without claiming release readiness.
 
 Run local model performance benchmarks with:
 

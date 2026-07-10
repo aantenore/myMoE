@@ -72,7 +72,11 @@ The web UI exposes the same sanitized runtime surface through `/api/performance`
 - `lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit`
 - `mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit`
 
-The current policy is to choose one heavy resident general expert and one small resident fallback/compaction expert. Other large specialists should be cold-loaded only after they win evals for their task class.
+The current 24 GB policy keeps Qwen3 4B as the resident general expert and
+Qwen3 1.7B as the resident fallback/compaction expert. Qwen3 30B is an explicit
+quality-first isolated profile. Other large specialists remain manual and
+isolated unless they win an eval slice; automatic cold-loading is not currently
+implemented.
 
 Qwen3.6 OptiQ is intentionally kept in the benchmark manifest as negative evidence: it is a better-looking current candidate on paper, but it did not run reliably on the tested 24 GB Apple Silicon machine. The tight retry is stored in:
 

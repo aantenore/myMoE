@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -105,11 +106,18 @@ class LocalToolRunner:
         self._app_config_path = app_config_path
         self._active_config_path = active_config_path
 
-    def run(self, name: str, payload: dict[str, Any] | None = None) -> ToolRunResult:
+    def run(
+        self,
+        name: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ToolRunResult:
         tool = self._tool(name)
         tool_payload = payload or {}
         if not isinstance(tool_payload, dict):
             raise ToolExecutionError("Tool input must be a JSON object.")
+        operation_timeout = _optional_operation_timeout(timeout_seconds)
 
         if tool.name == "memory.search":
             return self._memory_search(tool, tool_payload)
@@ -126,7 +134,11 @@ class LocalToolRunner:
         if tool.name == "data.import":
             return self._data_import(tool, tool_payload)
         if tool.name == "context.compact":
-            return self._context_compact(tool, tool_payload)
+            return self._context_compact(
+                tool,
+                tool_payload,
+                timeout_seconds=operation_timeout,
+            )
         if tool.name == "extension.audit":
             return self._extension_audit(tool, tool_payload)
         if tool.name == "extension.configure":
@@ -144,9 +156,17 @@ class LocalToolRunner:
         if tool.name == "mcp.search_capabilities":
             return self._mcp_search_capabilities(tool, tool_payload)
         if tool.name == "mcp.list_tools":
-            return self._mcp_list_tools(tool, tool_payload)
+            return self._mcp_list_tools(
+                tool,
+                tool_payload,
+                timeout_seconds=operation_timeout,
+            )
         if tool.name == "mcp.call_tool":
-            return self._mcp_call_tool(tool, tool_payload)
+            return self._mcp_call_tool(
+                tool,
+                tool_payload,
+                timeout_seconds=operation_timeout,
+            )
 
         raise ToolExecutionError(f"Unsupported tool: {tool.name}")
 
@@ -312,7 +332,13 @@ class LocalToolRunner:
             },
         )
 
-    def _context_compact(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+    def _context_compact(
+        self,
+        tool: ToolDefinition,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ToolRunResult:
         turns = _turns(payload.get("turns", []))
         existing_summary = _optional_text(payload, "existing_summary") or ""
         prompt = build_compaction_prompt(turns=turns, existing_summary=existing_summary)
@@ -334,6 +360,7 @@ class LocalToolRunner:
                 turns=turns,
                 existing_summary=existing_summary,
                 correlation_id=_optional_text(payload, "correlation_id") or str(uuid4()),
+                timeout_seconds=timeout_seconds,
             )
             result_payload.update(
                 {
@@ -521,7 +548,13 @@ class LocalToolRunner:
             },
         )
 
-    def _mcp_list_tools(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+    def _mcp_list_tools(
+        self,
+        tool: ToolDefinition,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ToolRunResult:
         if not self._allow_process_execution:
             raise ToolExecutionError(
                 "mcp.list_tools is disabled by app permissions; set allow_process_execution=true in the app config."
@@ -537,13 +570,20 @@ class LocalToolRunner:
             raise ToolExecutionError("timeout_seconds must be a number.") from exc
         if timeout <= 0 or timeout > 30:
             raise ToolExecutionError("timeout_seconds must be greater than 0 and at most 30.")
+        timeout = _bounded_operation_timeout(timeout, timeout_seconds)
         try:
             result = StdioMcpClient(server, timeout_seconds=timeout).list_tools()
         except McpClientError as exc:
             raise ToolExecutionError(str(exc)) from exc
         return _ok(tool, "MCP tools listed.", mcp_tool_list_payload(result))
 
-    def _mcp_call_tool(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:
+    def _mcp_call_tool(
+        self,
+        tool: ToolDefinition,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ToolRunResult:
         if not self._allow_process_execution:
             raise ToolExecutionError(
                 "mcp.call_tool is disabled by app permissions; set allow_process_execution=true in the app config."
@@ -568,6 +608,7 @@ class LocalToolRunner:
             raise ToolExecutionError("timeout_seconds must be a number.") from exc
         if timeout <= 0 or timeout > 30:
             raise ToolExecutionError("timeout_seconds must be greater than 0 and at most 30.")
+        timeout = _bounded_operation_timeout(timeout, timeout_seconds)
         try:
             result = StdioMcpClient(server, timeout_seconds=timeout).call_tool(tool_name, arguments)
         except McpClientError as exc:
@@ -637,6 +678,27 @@ def _float_in_range(raw: object, key: str, *, minimum: float, maximum: float) ->
     if value < minimum or value > maximum:
         raise ToolExecutionError(f"{key} must be between {minimum:g} and {maximum:g}.")
     return value
+
+
+def _optional_operation_timeout(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ToolExecutionError("Operation timeout must be numeric.") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ToolExecutionError("Operation timeout must be finite and positive.")
+    return timeout
+
+
+def _bounded_operation_timeout(
+    configured_timeout: float,
+    remaining_timeout: float | None,
+) -> float:
+    if remaining_timeout is None:
+        return configured_timeout
+    return min(configured_timeout, remaining_timeout)
 
 
 def _turns(raw: object) -> tuple[ConversationTurn, ...]:

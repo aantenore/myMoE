@@ -82,13 +82,17 @@ Status: complete with Qwen2.5-Coder-1.5B Q4_K_M smoke model.
 
 Run one local model server as the `coder`, `single`, or `general` expert. Synthetic experts remain only inside deterministic fixture tests.
 
-### M2: Three Real Experts
+### M2: Two Resident Experts Plus Cold Specialists
 
-Run local experts on separate ports:
+Status: complete for the default 24 GiB profile.
 
-- `primary-general`: Qwen3 30B-A3B MLX 4-bit.
-- `fallback-compaction`: Gemma 4 E4B MLX 4-bit.
+Run the two measured resident experts on separate ports and cold-load larger specialists only when needed:
+
+- `primary-general`: Qwen3 4B MLX 4-bit.
+- `fallback-compaction`: Qwen3 1.7B MLX 4-bit.
 - `coding-agentic`: optional Gemma 4 12B Agentic GGUF v2 or Qwen3-Coder profile.
+
+Qwen3 30B remains a quality-first isolated profile and Gemma 4 E4B remains an isolated regression profile. Joint residency around the earlier 30B candidate topology caused severe swap pressure on the active 24 GiB desktop host and is not the default topology.
 
 ### M3: Distilled Router
 

@@ -1,20 +1,20 @@
 {
   "hardware_class": "apple_silicon_24gb",
-  "updated_at": "2026-06-19",
-  "decision": "general_purpose_moe_single_resident_heavy_expert",
+  "updated_at": "2026-07-10",
+  "decision": "general_purpose_moe_dual_resident_compact_profile",
   "runtime_preference": [
-    "MLX for Apple Silicon heavy experts",
+    "MLX for Apple Silicon resident experts",
     "llama.cpp Metal for GGUF compatibility and broad tooling"
   ],
   "runtime_policy": {
-    "resident_heavy_experts": 1,
-    "resident_small_experts": 1,
+    "resident_heavy_experts": 0,
+    "resident_small_experts": 2,
     "cold_load_specialists": true,
-    "reason": "24 GB unified memory is enough for one strong 4-bit MoE plus app/OS/context headroom, not several large resident experts."
+    "reason": "The tested 24 GB desktop stays responsive with Qwen3 4B plus Qwen3 1.7B resident. Qwen3 30B remains an isolated quality-first profile because concurrent desktop use caused severe swap pressure."
   },
   "recommendation": {
-    "default_primary": "qwen3-30b-a3b-instruct-2507-mlx-4bit",
-    "default_fast_fallback": "gemma4-e4b-it-mlx-4bit",
+    "default_primary": "qwen3-4b-mlx-4bit",
+    "default_fast_fallback": "qwen3-1.7b-mlx-4bit",
     "multimodal_alternative": "gemma4-26b-a4b-it-optiq-mlx-4bit",
     "optional_coding_specialist": "qwen3-coder-30b-a3b-mlx-4bit",
     "rejected_on_tested_24gb": "qwen36-35b-a3b-optiq-mlx-4bit"
@@ -31,12 +31,12 @@
     },
     {
       "id": "qwen3-30b-a3b-instruct-2507-mlx-4bit",
-      "role": "primary_general",
+      "role": "quality_first_isolated",
       "repo": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
       "format": "MLX 4-bit",
       "approx_size_gb": 17.2,
       "source_url": "https://huggingface.co/lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
-      "purpose": "Best risk-adjusted default for general-purpose local assistant on 24 GB: instruction following, reasoning, multilingual, tool use, long-context."
+      "purpose": "Optional quality-first isolated profile for instruction following, reasoning, multilingual work, and tool use. It is not resident beside another model on the tested 24 GB desktop."
     },
     {
       "id": "qwen36-35b-a3b-mlx-4bit",
@@ -81,7 +81,27 @@
       "format": "MLX 4-bit",
       "approx_size_gb": 3.5,
       "source_url": "https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit",
-      "purpose": "Selected small resident expert for summarization, context compaction, cheap classification, and fallback. Requires the pinned MLX profile documented in docs/gemma-e4b-runtime.md."
+      "purpose": "Supported optional fallback for summarization, context compaction, and classification. It requires the pinned MLX profile and is not the 24 GiB resident default because joint Qwen 30B + Gemma live generation caused severe swap pressure."
+    },
+    {
+      "id": "qwen3-4b-mlx-4bit",
+      "role": "primary_general",
+      "repo": "mlx-community/Qwen3-4B-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 2.12,
+      "estimated_memory_gb": 2.49,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
+      "purpose": "Default resident general model on 24 GiB Apple Silicon: materially more headroom than Qwen3 30B while retaining broad chat, reasoning, writing, and multilingual coverage."
+    },
+    {
+      "id": "qwen3-1.7b-mlx-4bit",
+      "role": "fast_compaction_or_fallback",
+      "repo": "mlx-community/Qwen3-1.7B-4bit",
+      "format": "MLX 4-bit",
+      "approx_size_gb": 0.92,
+      "estimated_memory_gb": 1.09,
+      "source_url": "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit",
+      "purpose": "Memory-bounded resident fallback for summaries, rewrites, extraction, and compaction beside Qwen3 4B on the tested 24 GiB Apple Silicon profile."
     },
     {
       "id": "qwen3-coder-30b-a3b-mlx-4bit",
