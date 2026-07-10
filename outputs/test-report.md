@@ -1,10 +1,15 @@
 # Test Report
 
-Generated: 2026-06-20
+Generated: 2026-07-10
 
 ## Scope
 
 The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, installed console-script packaging smoke checks, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, MCP env redaction in public diagnostic payloads, read-only Security Audit reporting, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, cron permission policy, background cron automation, and orchestrator correlation behavior.
+
+This pass additionally covers disjoint train/holdout integrity, artifact and
+report provenance, Wilson confidence intervals, stale-evidence rejection,
+bidirectional single-resident fallback, and strict `top_k` behavior for
+multi-expert comparison.
 
 ## New Test Surface
 
@@ -15,6 +20,10 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_run_log.py`: metadata-only generation run writes, prompt/answer exclusion, latest-first listing, aggregate latency/token/context/error summaries, recommendations, and latest-run retention pruning.
 - `tests/test_providers.py`: fake OpenAI-compatible HTTP server, streaming SSE parsing, usage/timing parsing, invalid payload handling, invalid JSON handling, reasoning-channel stripping, transport error wrapping.
 - `tests/test_evaluator.py`: JSONL eval loading, minimum coverage guards, and accuracy/complexity aggregation.
+- `tests/test_evaluation_integrity.py`: duplicate/leakage detection, stable
+  dataset fingerprints, and balanced 52-case live holdout validation.
+- `tests/test_quality_gate.py`: current holdout evidence acceptance and stale
+  provenance rejection.
 - `tests/test_doctor.py`: normalized setup, health, extension, cron, hardware-fit, and storage checks, required failure for profiles that exceed the detected machine, optional storage pressure warnings, and metadata-only Markdown rendering.
 - `tests/test_environment.py`: metadata-only environment snapshot generation and Markdown rendering for platform, Python, package, git, hardware, storage, config, and configured local model identity handoffs.
 - `tests/test_storage.py`: read-only runtime storage capacity diagnostics for configured model cache and work directories, including missing-path probing without creating directories and low-free-space recommendations.
@@ -44,6 +53,9 @@ The test hardening pass covers configuration validation, runtime profile discove
 - `tests/test_memory.py`: local memory writes, guarded record/document deletion, knowledge document chunking, scoped listing, temporal validity, keyword retrieval.
 - `experiments/eval_set_extended.jsonl`: 56 router cases across coding, architecture, general writing, and mixed prompts.
 - `experiments/eval_set_live_general.jsonl`: 52 live general-purpose routing cases across English, Italian, Spanish, French, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese prompts.
+- `experiments/eval_set_live_general_holdout_v2.jsonl`: 52 independently
+  authored, balanced multilingual holdout cases with no training id or prompt
+  hash overlap.
 - `experiments/route_labels_extended.jsonl`: 56 regenerated distilled router labels from the curated extended eval.
 - `experiments/route_labels_live_general.jsonl`: 52 regenerated distilled router labels for the live general-purpose router.
 - `experiments/run_quality_gate.py`: project-level quality gate.
@@ -55,16 +67,22 @@ The test hardening pass covers configuration validation, runtime profile discove
 Command:
 
 ```bash
-python3 scripts/run_ci_checks.py
+uv run --locked --python 3.12 python scripts/run_ci_checks.py
 ```
 
 Result:
 
 - compileall: passed
-- unit/contract tests: `249/249` passed
+- unit/contract tests: `258/258` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
-- live general routing eval: `52/52`, accuracy `1.0`
+- live training-fit routing diagnostic: `52/52`, accuracy `1.0`
+- leakage-free live routing holdout: `39/52`, accuracy `0.75`, 95% Wilson
+  interval `0.6179-0.8477`
+- holdout integrity: zero duplicate ids, duplicate prompts, shared ids, or
+  shared normalized prompt hashes
+- provenance: config, training labels, full artifact v2 content, holdout, and
+  report hashes match; report metrics match a fresh gate recomputation
 - quality gate: passed
 - packaging smoke: passed, editable install exposes `mymoe` and `mymoe-web`
 - live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
@@ -96,7 +114,10 @@ Result:
 
 The router remains intentionally configurable and deterministic. During the extended eval, a broad `implement` keyword created a false positive by matching `implementation`; it was removed from config and replaced with more specific coding signals such as `client` and `adapter`.
 
-The live general-purpose router now has a balanced multilingual fixture for `general` and `fast_fallback` decisions. Its generated report is stored in `outputs/live-general-routing-eval.json` and is required by the quality gate.
+The former `52/52` live result is now labeled correctly as training fit because
+those prompts generated the distilled labels. The quality gate regenerates
+`outputs/live-general-routing-holdout.json` from a separate balanced set and
+rejects leakage or stale evidence before applying the `0.70` accuracy threshold.
 
 Extension Studio now exposes guided MCP server and cron job presets through `/api/extensions/templates` and guarded writes through `/api/extensions/configure`. It writes only to app-configured registry paths, validates entries before writing, requires confirmation, and refreshes the running web registry and cron runner. The lower-level `extension.configure` tool remains available for CLI and JSON automation.
 

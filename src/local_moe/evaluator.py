@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 
 from .config import MoEConfig
@@ -63,12 +64,14 @@ def evaluate_router(config: MoEConfig, cases: list[EvalCase]) -> dict[str, objec
         )
 
     accuracy = sum(item.score for item in results) / max(len(results), 1)
+    passed_count = sum(1 for item in results if item.passed)
     by_complexity: dict[str, list[float]] = {}
     for item in results:
         by_complexity.setdefault(item.complexity, []).append(item.score)
 
     return {
         "accuracy": accuracy,
+        "accuracy_ci95": _wilson_interval(passed_count, len(results)),
         "total": len(results),
         "by_complexity": {
             key: sum(values) / len(values) for key, values in by_complexity.items()
@@ -76,3 +79,23 @@ def evaluate_router(config: MoEConfig, cases: list[EvalCase]) -> dict[str, objec
         "results": [item.__dict__ for item in results],
     }
 
+
+def _wilson_interval(successes: int, total: int) -> dict[str, float]:
+    if total <= 0:
+        return {"lower": 0.0, "upper": 0.0}
+    z = 1.959963984540054
+    proportion = successes / total
+    denominator = 1.0 + (z * z / total)
+    center = (proportion + z * z / (2.0 * total)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            (proportion * (1.0 - proportion) / total)
+            + (z * z / (4.0 * total * total))
+        )
+        / denominator
+    )
+    return {
+        "lower": round(max(0.0, center - margin), 4),
+        "upper": round(min(1.0, center + margin), 4),
+    }

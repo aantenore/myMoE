@@ -15,10 +15,12 @@ The public configs under `configs/` are live local-model profiles or templates f
 ## Setup
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python ".[mlx]"
+uv sync --locked --python 3.12 --extra mlx
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
+
+`uv.lock` pins all optional dependency graphs. Use `--locked` for reproducible
+installs; update the lock deliberately when testing a newer runtime stack.
 
 Editable installs expose the `mymoe` and `mymoe-web` console scripts. The quality gate runs `scripts/run_packaging_smoke.py` to install the project in a temporary virtual environment and verify both entry points without relying on `PYTHONPATH`.
 

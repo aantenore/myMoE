@@ -47,7 +47,10 @@ Common agent and RAG frameworks use similar separation:
 
 myMoE keeps the same pattern local and config-driven. The current implementation uses deterministic rules, local semantic examples, and a local distilled classifier artifact; the same contract can later host multilingual embeddings without changing the UI or orchestrator.
 
-The current distilled artifact is a local `char_ngram_centroid` classifier trained from curated eval labels. It is not a cloud dependency and can be regenerated with:
+The current distilled artifact is a local `char_ngram_centroid` classifier
+trained from curated route labels. Artifact v2 records a fingerprint plus the
+training prompt ids and hashes. It is not a cloud dependency and can be
+regenerated with:
 
 ```bash
 PYTHONPATH=src python3 experiments/build_route_label_dataset.py \
@@ -57,6 +60,17 @@ PYTHONPATH=src python3 experiments/train_distilled_router.py \
   --labels experiments/route_labels_live_general.jsonl \
   --out outputs/router-distilled-live-general.json
 ```
+
+The source file above is training data, not an unbiased eval. Run the disjoint
+holdout with:
+
+```bash
+make eval-holdout
+```
+
+The full quality gate exits non-zero when ids or normalized prompt hashes
+overlap, when the artifact does not match the labels, when a report differs from
+a fresh recomputation, or when any config/dataset/artifact provenance is stale.
 
 ## Config Shape
 
@@ -99,5 +113,7 @@ Router changes must pass:
 
 - unit tests for config parsing and route decisions,
 - deterministic base and extended eval sets,
-- the live general routing eval with at least 50 multilingual prompts,
+- the live disjoint routing holdout with at least 50 multilingual prompts,
+- zero train/holdout id and normalized prompt-hash overlap,
+- current config/training/artifact/report SHA-256 provenance,
 - browser/API checks for `/api/config`, `/api/generate`, and `/api/evaluate`.

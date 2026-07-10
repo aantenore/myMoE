@@ -6,7 +6,6 @@ import re
 import subprocess
 import time
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from .bootstrap import RuntimePlan, build_runtime_plan, endpoint_is_reachable
 from .config import MoEConfig

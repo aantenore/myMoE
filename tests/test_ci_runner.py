@@ -34,6 +34,7 @@ class CiRunnerTests(unittest.TestCase):
                 "unit tests",
                 "smoke eval",
                 "extended smoke eval",
+                "live routing holdout",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -72,6 +73,12 @@ class CiRunnerTests(unittest.TestCase):
         self.assertEqual(payload["root"], str(ROOT))
         self.assertEqual(payload["steps"][0]["name"], "compile")
         self.assertEqual(payload["steps"][-1]["command"][1], "scripts/run_packaging_smoke.py")
+
+    def test_rejects_unsupported_python_with_actionable_message(self) -> None:
+        runner = _load_runner()
+
+        with self.assertRaisesRegex(SystemExit, "Python >= 3.10"):
+            runner.require_supported_python((3, 9))
 
 
 if __name__ == "__main__":

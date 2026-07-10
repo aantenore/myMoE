@@ -17,6 +17,72 @@
       "failed_case_ids": []
     },
     {
+      "name": "routing_holdout",
+      "passed": true,
+      "accuracy": 0.75,
+      "accuracy_ci95": {
+        "lower": 0.6179,
+        "upper": 0.8477
+      },
+      "min_accuracy": 0.7,
+      "total": 52,
+      "min_total": 50,
+      "missing_complexities": [],
+      "failed_case_ids": [
+        "holdout-v2-en-fast-fallback-1",
+        "holdout-v2-it-fast-fallback-2",
+        "holdout-v2-fr-fast-fallback-2",
+        "holdout-v2-de-fast-fallback-2",
+        "holdout-v2-nl-fast-fallback-1",
+        "holdout-v2-nl-fast-fallback-2",
+        "holdout-v2-pl-fast-fallback-2",
+        "holdout-v2-ar-fast-fallback-1",
+        "holdout-v2-hi-fast-fallback-1",
+        "holdout-v2-hi-fast-fallback-2",
+        "holdout-v2-ko-fast-fallback-2",
+        "holdout-v2-zh-fast-fallback-1",
+        "holdout-v2-zh-fast-fallback-2"
+      ],
+      "integrity": {
+        "passed": true,
+        "training_total": 52,
+        "holdout_total": 52,
+        "training_data_sha256": "93a79dd5d32823c0e97a21253eb70cffb2e2f730d71c161b326d6b9c9827c2f4",
+        "holdout_data_sha256": "bd7afb0784865268a654a6d164fab161791f601d3dbde085f9c74db5daa7c1c0",
+        "training_experts": {
+          "fast_fallback": 26,
+          "general": 26
+        },
+        "holdout_experts": {
+          "fast_fallback": 26,
+          "general": 26
+        },
+        "holdout_complexities": {
+          "complex": 13,
+          "medium": 13,
+          "simple": 13,
+          "very_complex": 13
+        },
+        "duplicate_training_ids": [],
+        "duplicate_holdout_ids": [],
+        "duplicate_training_prompt_hashes": [],
+        "duplicate_holdout_prompt_hashes": [],
+        "overlapping_ids": [],
+        "overlapping_prompt_hashes": []
+      },
+      "artifact_matches_training": true,
+      "artifact_path_matches_config": true,
+      "report_matches_recomputed": true,
+      "provenance_matches": {
+        "config": true,
+        "holdout": true,
+        "training": true,
+        "artifact": true,
+        "artifact_content": true,
+        "artifact_path": true
+      }
+    },
+    {
       "name": "forbidden_listeners",
       "passed": true,
       "active": []

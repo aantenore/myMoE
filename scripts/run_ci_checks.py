@@ -26,6 +26,7 @@ def main() -> None:
                 print(f"{step.name}: {format_command(step.command)}")
         return
 
+    require_supported_python(sys.version_info)
     env = build_env(root)
     for step in steps:
         print(f"==> {step.name}", flush=True)
@@ -69,6 +70,21 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "live routing holdout",
+            [
+                python,
+                "experiments/run_smoke_eval.py",
+                "--config",
+                "configs/moe.live.general-mlx.example.json",
+                "--eval",
+                "experiments/eval_set_live_general_holdout_v2.jsonl",
+                "--training-labels",
+                "experiments/route_labels_live_general.jsonl",
+                "--out",
+                "outputs/live-general-routing-holdout.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,
@@ -82,6 +98,16 @@ def build_check_plan(python: str) -> list[CheckStep]:
         CheckStep("hardware report", [python, "scripts/hardware_report.py"]),
         CheckStep("packaging smoke", [python, "scripts/run_packaging_smoke.py"]),
     ]
+
+
+def require_supported_python(version_info: Any) -> None:
+    major = int(version_info[0])
+    minor = int(version_info[1])
+    if (major, minor) < (3, 10):
+        raise SystemExit(
+            "myMoE requires Python >= 3.10. "
+            "Run uv with Python 3.12 or use the project virtual environment."
+        )
 
 
 def build_env(root: Path) -> dict[str, str]:

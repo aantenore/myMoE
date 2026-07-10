@@ -17,7 +17,7 @@ flowchart LR
   R --> E1["Primary General Expert"]
   R --> E2["Fast Summary / Fallback Expert"]
   R --> E3["Optional Specialist Expert"]
-  E1 --> A["Aggregator / Synthesizer"]
+  E1 --> A["Aggregator / Comparison"]
   E2 --> A
   E3 --> A
   A --> Q["Quality Gate"]
@@ -81,7 +81,13 @@ The closest local-first assistants usually share the same control-plane shape:
 - Agent presets or workspaces that bind a model, instructions, tools, memory, and retrieval settings.
 - Optional automations for scheduled prompts or maintenance jobs.
 
-myMoE follows that pattern, but makes routing and execution policy first-class configuration. Open WebUI emphasizes a broad chat workspace with tools, RAG, memory, automations, and multiple providers. AnythingLLM exposes agents as LLM sessions with custom tools, MCP, and agent flows. LM Studio focuses on running local models behind local REST/OpenAI-compatible endpoints. Ollama exposes local model serving, context length controls, and tool calling primitives. myMoE sits one layer above those runtimes: it can use local OpenAI-compatible servers, but its core value is deciding which local expert, context, memory, and tool policy to use for each request.
+myMoE implements the local routing, memory, permission metadata, diagnostics,
+manual tools, and MCP control-plane parts of that pattern. It does not yet feed
+model-proposed tool calls back into generation, so it should not be described as
+a complete autonomous agent harness. Open WebUI and AnythingLLM already cover
+the broad assistant workspace. LM Studio, Ollama, and llama.cpp cover model
+serving. The defensible myMoE layer is the privacy-first, hardware-aware routing
+and evidence plane above those runtimes.
 
 ## Multilingual Behavior
 
@@ -113,7 +119,7 @@ The practical policy is:
 
 - Router examples overfit narrow phrasing and miss semantic intent outside the evaluated languages.
 - Multiple experts increase latency linearly if called sequentially.
-- Synthesis can hide a bad expert answer instead of exposing disagreement.
+- Concatenation is not synthesis; compare mode exposes only lexical disagreement.
 - Local context limits differ per model; routing must know each expert context budget.
 - Model-specific chat templates can break answer quality if endpoints are not normalized.
 
@@ -125,5 +131,8 @@ The practical policy is:
 4. Streaming and non-streaming generation return the same persisted chat contract.
 5. Streaming and non-streaming generation append metadata-only run records without leaking prompt or answer text.
 6. Local endpoint smoke test returns valid text under timeout.
-7. MoE beats single-model baseline on a small rubric before adding complexity.
+7. A leakage-free routing holdout passes before routing claims are published.
 8. Doctor and environment diagnostics expose configured runtime storage status without creating missing directories.
+9. Before claiming product advantage, routed top-1/top-2 must match or beat the
+   single-general baseline on answer quality while reporting latency, memory,
+   and failure rate. This gate is not yet satisfied.
