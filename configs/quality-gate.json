@@ -46,6 +46,7 @@
     "src/local_moe/ui/index.html",
     "configs/app.json",
     "uv.lock",
+    "docs/github-actions-ci.yml",
     "configs/context-policy.json",
     "configs/tools.json",
     "configs/mcp.json",

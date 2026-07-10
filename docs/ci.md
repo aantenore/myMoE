@@ -31,12 +31,23 @@ The gate currently performs these steps:
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
 
-## GitHub Actions
+## GitHub Actions Template
 
-`.github/workflows/ci.yml` runs the same locked gate on Linux, macOS, and
-Windows with Python 3.10 and 3.12. It uses the official uv setup action, a
+The repository does not currently have an active GitHub Actions workflow.
+`docs/github-actions-ci.yml` is the ready-to-install template for Linux, macOS,
+and Windows with Python 3.10 and 3.12. It uses the official uv setup action, a
 read-only token, dependency caching, concurrency cancellation, and
 `uv run --locked` so CI rejects stale dependency state.
+
+Install it when using a GitHub credential authorized to manage workflows:
+
+```bash
+mkdir -p .github/workflows
+cp docs/github-actions-ci.yml .github/workflows/ci.yml
+git add .github/workflows/ci.yml
+git commit -m "Add locked cross-platform CI"
+git push origin main
+```
 
 Action versions follow the current official uv GitHub Actions guide:
 https://docs.astral.sh/uv/guides/integration/github/
