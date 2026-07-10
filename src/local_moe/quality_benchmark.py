@@ -805,6 +805,7 @@ def evaluate_host_memory_gate(
     try:
         max_swap_growth = int(policy["maximum_swap_growth_bytes"])
         max_peak_ram_percent = float(policy["maximum_peak_ram_used_percent"])
+        min_sample_coverage = float(policy.get("minimum_sample_coverage", 1.0))
     except (KeyError, TypeError, ValueError):
         return {
             "status": "invalid_policy",
@@ -816,6 +817,8 @@ def evaluate_host_memory_gate(
         max_swap_growth < 0
         or not math.isfinite(max_peak_ram_percent)
         or not 0.0 < max_peak_ram_percent <= 100.0
+        or not math.isfinite(min_sample_coverage)
+        or not 0.0 < min_sample_coverage <= 1.0
     ):
         return {
             "status": "invalid_policy",
@@ -836,7 +839,29 @@ def evaluate_host_memory_gate(
         value is not None
         for value in (before_swap, after_swap, total_ram, peak_ram)
     )
-    sampling_complete = observed.get("status") == "available"
+    sample_count = _nonnegative_int(observed.get("sample_count"))
+    available_sample_count = _nonnegative_int(
+        observed.get("available_sample_count")
+    )
+    if sample_count is None and available_sample_count is None:
+        sample_coverage = 1.0 if observed.get("status") == "available" else 0.0
+        sample_counts_valid = observed.get("status") == "available"
+    else:
+        sample_counts_valid = bool(
+            sample_count is not None
+            and sample_count > 0
+            and available_sample_count is not None
+            and available_sample_count <= sample_count
+        )
+        sample_coverage = (
+            float(available_sample_count) / float(sample_count)
+            if sample_counts_valid and sample_count is not None
+            and available_sample_count is not None
+            else 0.0
+        )
+    sampling_complete = bool(
+        sample_counts_valid and sample_coverage >= min_sample_coverage
+    )
     swap_growth = (
         int(after_swap) - int(before_swap)
         if before_swap is not None and after_swap is not None
@@ -859,6 +884,10 @@ def evaluate_host_memory_gate(
         "required": True,
         "sampling_status": observed.get("status", "missing"),
         "sampling_complete": sampling_complete,
+        "sample_count": sample_count,
+        "available_sample_count": available_sample_count,
+        "sample_coverage": round(sample_coverage, 4),
+        "minimum_sample_coverage": min_sample_coverage,
         "counters_available": counters_available,
         "swap_growth_bytes": swap_growth,
         "maximum_swap_growth_bytes": max_swap_growth,

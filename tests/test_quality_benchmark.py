@@ -58,6 +58,10 @@ class QualityBenchmarkTests(unittest.TestCase):
             30.0,
         )
         self.assertTrue(spec.decision["host_memory"]["required"])
+        self.assertEqual(
+            spec.decision["host_memory"]["minimum_sample_coverage"],
+            0.9,
+        )
         self.assertGreaterEqual(len(cases), 8)
         self.assertTrue(all(case.task_checks and case.quality_rubric for case in cases))
 
@@ -148,6 +152,7 @@ class QualityBenchmarkTests(unittest.TestCase):
     ) -> None:
         policy = {
             "required": True,
+            "minimum_sample_coverage": 0.9,
             "maximum_swap_growth_bytes": 50,
             "maximum_peak_ram_used_percent": 95.0,
         }
@@ -199,6 +204,36 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertFalse(unavailable["counters_available"])
         self.assertFalse(integrated_unavailable["passed"])
         self.assertFalse(integrated_unavailable["host_memory_check"]["passed"])
+
+    def test_required_host_memory_gate_tolerates_only_configured_sample_gaps(
+        self,
+    ) -> None:
+        policy = {
+            "required": True,
+            "minimum_sample_coverage": 0.9,
+            "maximum_swap_growth_bytes": 50,
+            "maximum_peak_ram_used_percent": 95.0,
+        }
+        observation = {
+            "status": "partial",
+            "sample_count": 100,
+            "available_sample_count": 96,
+            "before": _host_memory_sample(800, 10),
+            "after": _host_memory_sample(900, 20),
+            "peak_observed": {
+                "memory": {"status": "available", "used_bytes": 940},
+                "swap": {"status": "available", "used_bytes": 20},
+            },
+        }
+
+        sufficient = evaluate_host_memory_gate(observation, policy)
+        observation["available_sample_count"] = 89
+        insufficient = evaluate_host_memory_gate(observation, policy)
+
+        self.assertTrue(sufficient["passed"])
+        self.assertEqual(sufficient["sample_coverage"], 0.96)
+        self.assertFalse(insufficient["passed"])
+        self.assertEqual(insufficient["sample_coverage"], 0.89)
 
     def test_evaluator_separates_task_validation_and_quality_judgment(self) -> None:
         case = BenchmarkCase(

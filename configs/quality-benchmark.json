@@ -45,6 +45,7 @@
     "maximum_top2_response_error_rate": 0.0,
     "host_memory": {
       "required": true,
+      "minimum_sample_coverage": 0.9,
       "maximum_swap_growth_bytes": 4294967296,
       "maximum_peak_ram_used_percent": 95.0
     }
