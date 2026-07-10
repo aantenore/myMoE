@@ -78,7 +78,7 @@ uv run --locked --python 3.12 python scripts/run_ci_checks.py
 Result:
 
 - compileall: passed
-- unit/contract tests: `296/296` passed
+- unit/contract tests: `355/355` passed
 - base routing eval: `8/8`, accuracy `1.0`
 - extended routing eval: `56/56`, accuracy `1.0`
 - live training-fit routing diagnostic: `52/52`, accuracy `1.0`
@@ -88,13 +88,19 @@ Result:
   shared normalized prompt hashes
 - provenance: config, training labels, full artifact content, holdout, and
   report hashes match; report metrics match a fresh gate recomputation
-- quality gate: passed
+- release quality gate: passed with `release_ready: true`
 - packaging smoke: passed, editable install exposes `mymoe` and `mymoe-web`
 - agent loop contract tests: passed
-- deterministic quality benchmark framework tests: passed; the committed live
-  artifact remains `blocked` unless the configured local endpoints are running
-- live setup readiness for `configs/moe.live.general-mlx.example.json`: passed, Qwen and Gemma MLX snapshots cached
-- forbidden listener check on `127.0.0.1:8101`: passed, no active listener during quality gate
+- deterministic live quality benchmark: passed, 72/72 executions complete,
+  zero failures/truncation, baseline and top-1 task/quality pass rates `1.0`
+- top-1 value check: passed; quality delta `0.0`, overall latency ratio `1.0132`,
+  routed median latency ratio `0.6889` across 6 paired routed observations
+- host memory gate: passed; sample coverage `99.13%`, peak RAM `86.6365%`,
+  swap growth `198,369,608` bytes
+- live setup readiness for `configs/moe.live.general-mlx.example.json`: passed,
+  Qwen3 4B and Qwen3 1.7B MLX snapshots cached
+- forbidden listener checks on `127.0.0.1:8101` and `127.0.0.1:8102`:
+  passed, no active listener during the release gate
 - real MCP filesystem discovery through `npx -y @modelcontextprotocol/server-filesystem .`: passed, `14` tools listed
 - real MCP filesystem `tools/call` through `list_allowed_directories`: passed
 - Playwright browser smoke for persisted chat sessions: passed

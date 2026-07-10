@@ -3,10 +3,11 @@
 Goal: design and prototype a local-first, general-purpose Mixture-of-Experts system that can run on a workstation without requiring cloud inference.
 
 Product status: this is an MVP local control plane with a bounded,
-approval-gated tool-calling agent harness, not yet a proven quality win over one
-strong model. The current evidence validates local orchestration, failure
-handling, and leakage-free router generalization; answer-quality A/B evaluation
-remains an explicit release gate.
+approval-gated tool-calling agent harness. The tested Qwen3 4B + 1.7B profile
+passes the provenance-bound release gate: routed top-1 preserves the baseline's
+quality and cuts median latency on routed cases. This deterministic eight-case
+contract validates the current release, not broad semantic superiority over
+every single-model workload.
 
 This project does not try to train a monolithic MoE from scratch. That would be expensive and brittle for local hardware. The first viable architecture is a system-level MoE:
 
@@ -504,6 +505,13 @@ performance. The separate live answer-quality benchmark compares:
 Top-2 evidence cannot compensate for a top-1 regression. The release profile
 requires a complete, provenance-bound live benchmark; the offline CI overlay
 can validate the rest of the project but cannot declare release readiness.
+
+The current live artifact contains 72 executions (8 cases x 3 variants x 3
+repetitions). Single-general and top-1 both achieved 100% task and quality pass
+rates with zero failures or truncation. Mean latency was `7.4902 s` for the
+baseline and `7.5889 s` for top-1; the six actually routed observations achieved
+a median latency ratio of `0.6889` with no quality regression. The independent
+release gate reports `release_ready: true`.
 
 On the detected Apple M5 Pro / 24 GB machine, the current recommendation is:
 
