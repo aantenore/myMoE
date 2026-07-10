@@ -61,12 +61,20 @@ unseen set before making a fresh generalization claim.
 - Leakage-free live routing holdout: `52/52` (`100%`), 95% Wilson interval
   `93.1%-100%`, with zero id or prompt-hash overlap. Evidence lives in
   `outputs/live-general-routing-holdout.json`.
+- Live answer-quality benchmark: 72 completed executions with zero failures or
+  truncation. Single-general and routed top-1 both achieved `1.0` task success,
+  `1.0` quality pass rate, and `0.975` quality score. Mean latency was `7.4902 s`
+  vs `7.5889 s`; the six routed pairs achieved median latency ratio `0.6889`.
+- Host evidence passed with `99.13%` sample coverage, `86.6365%` peak RAM use,
+  and `198,369,608` bytes swap growth. The independent release gate reports
+  `release_ready: true`.
 
-Interpretation: the harness works and the current router clears the committed
-multilingual routing gate. The bidirectional runtime fallback preserves
-availability when a fast route misses or its endpoint is offline. The release
-product gate is the separate single-general vs routed top-1/top-2 answer-quality
-comparison with latency, host memory, and failures.
+Interpretation: the harness works, the current router clears the committed
+multilingual routing gate, and routed top-1 demonstrates benchmark-bounded value
+without quality regression. The bidirectional runtime fallback preserves
+availability when a fast route misses or its endpoint is offline. The
+deterministic rubric does not establish broad semantic superiority, so future
+model/profile changes still require fresh live evidence.
 
 The benchmark contract lives in `configs/quality-benchmark.json`,
 `experiments/quality_benchmark_cases.jsonl`, and

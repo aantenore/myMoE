@@ -154,5 +154,7 @@ The practical policy is:
    prompt/tool-result content in traces.
 10. Before claiming product advantage, routed top-1 must not regress against the
     single-general baseline while reporting latency, memory, and failure rate.
-    Top-2 is diagnostic evidence and cannot rescue a top-1 regression. This gate
-    is not yet satisfied.
+    Top-2 is diagnostic evidence and cannot rescue a top-1 regression. The
+    current 72-record Qwen3 4B + 1.7B artifact satisfies this gate: quality delta
+    `0.0`, routed median latency ratio `0.6889`, zero failures/truncation, and
+    release gate `release_ready: true`.
