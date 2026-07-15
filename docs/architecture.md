@@ -1,5 +1,7 @@
 # Architecture
 
+For a guided end-to-end explanation, start with [How myMoE works](how-it-works/README.md).
+
 ## Design Decision
 
 Use a system-level MoE first, not a trained monolithic sparse transformer.
@@ -11,18 +13,31 @@ The target product is general-purpose. Coding is only one route, not the default
 ## Components
 
 ```mermaid
-flowchart LR
-  U["User prompt"] --> O["MoE Orchestrator"]
-  O --> R["Configurable Router"]
-  R --> E1["Primary General Expert"]
-  R --> E2["Fast Summary / Fallback Expert"]
-  R --> E3["Optional Specialist Expert"]
-  E1 --> A["Aggregator / Comparison"]
-  E2 --> A
-  E3 --> A
-  A --> Q["Quality Gate"]
-  Q --> U
+flowchart TB
+  subgraph Runtime["Online runtime"]
+    U["User prompt"] --> C["Web, persistent CLI, or direct CLI"]
+    C -->|"current prompt only"| R["Configurable Router"]
+    C -->|"budget-aware generation prompt"| O["MoE Orchestrator"]
+    R -->|"selected experts and fallbacks"| O
+    O --> E1["Primary General Expert"]
+    O --> E2["Fast Summary / Fallback Expert"]
+    O --> E3["Optional Specialist Expert"]
+    E1 --> A["Configured aggregation"]
+    E2 --> A
+    E3 --> A
+    A --> U
+  end
+
+  subgraph Offline["Offline verification"]
+    S["Source, configs, datasets and artifacts"] --> T["Tests and evaluations"]
+    T --> Q["Quality and release gate"]
+    Q --> D["CI or release decision"]
+  end
 ```
+
+The quality gate is deliberately outside the online request path. `LocalMoE`
+returns the configured aggregation result directly; tests, routing holdouts,
+and answer-quality benchmarks make offline CI or release decisions.
 
 ## Core Contracts
 
@@ -35,7 +50,7 @@ flowchart LR
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, storage capacity, model process reachability, extension audit, and cron state.
 - `Startup Runbook`: guarded control-plane flow that previews readiness, prepares runtime assets, starts configured local model servers, and returns System Doctor evidence.
-- `Support Bundle`: privacy-safe diagnostic export for issue reports and handoffs, including storage capacity summaries without local file contents.
+- `Support Bundle`: metadata-focused diagnostic export for issue reports and handoffs, including storage capacity summaries without local file contents. Review it before sharing because configured Git remotes and model base URLs are included.
 - `Profile Recommender`: read-only control-plane scorer that chooses the best local runtime profile from setup readiness, hardware fit, general-purpose coverage, routing capability, and active/default tie-breaks.
 - `Profile Preparation`: guarded setup runner entry point for explicit or recommended profiles before activation.
 - `Profile Activation`: guarded write-local control-plane action that updates only the app default MoE profile and requires a restart to change the running instance.
@@ -67,11 +82,18 @@ implemented.
 
 ### Mode 3: Top-2 Expert Comparison
 
-Call two experts in parallel and expose a deterministic disagreement report. More expensive, but useful for high-risk, ambiguous, or multimodal tasks. The current report compares lexical overlap, length delta, and expert-specific terms; it does not call another model to judge the answers.
+Call two experts in parallel and expose a deterministic disagreement report.
+This is more expensive, but useful for high-risk or ambiguous text tasks. The
+current request/provider contracts are text-only. The report compares lexical
+overlap, length delta, and expert-specific terms; it does not call another model
+to judge the answers.
 
 ### Mode 4: Distilled Router
 
-Replace hand-written routing rules with a trained small classifier. The experts remain local.
+Add a trained local classifier contribution to the existing base weights,
+keyword rules, and optional semantic examples. The current `distilled` strategy
+combines these signals; it does not silently replace the configured rules. The
+experts remain local.
 
 ### Mode 5: Distilled Student
 

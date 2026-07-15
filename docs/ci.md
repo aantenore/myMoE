@@ -14,7 +14,7 @@ running most checks and failing later during packaging.
 Inspect the plan without executing it:
 
 ```bash
-python3 scripts/run_ci_checks.py --dry-run --json
+uv run --locked --python 3.12 python scripts/run_ci_checks.py --dry-run --json
 ```
 
 The gate currently performs these steps:
@@ -50,5 +50,4 @@ Keep the active copy synchronized after intentionally changing the template:
 cp docs/github-actions-ci.yml .github/workflows/ci.yml
 ```
 
-Action versions follow the current official uv GitHub Actions guide:
-https://docs.astral.sh/uv/guides/integration/github/
+Action versions follow the [official uv GitHub Actions guide](https://docs.astral.sh/uv/guides/integration/github/).
