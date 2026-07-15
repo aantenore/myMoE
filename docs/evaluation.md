@@ -42,7 +42,9 @@ The live routing data has separate roles:
   training labels. Its score measures training fit only.
 - `eval_set_live_general_holdout_v5.jsonl` is a frozen, independently authored
   52-case holdout with 26 cases per expert, 13 per complexity level, and all 13
-  supported routing languages.
+  evaluated routing languages: Arabic, German, English, Spanish, French, Hindi,
+  Italian, Japanese, Korean, Dutch, Swedish, Turkish, and Chinese. This set is
+  separate from the app-level response-language hints.
 - The quality gate requires zero shared ids and zero shared normalized prompt
   hashes, then binds config, training labels, artifact, holdout, and report with
   SHA-256 provenance.

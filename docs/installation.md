@@ -3,6 +3,13 @@
 myMoE is local-first and requires a real local model for normal CLI/UI usage.
 The public configs under `configs/` are live local-model profiles or templates for live local-model profiles.
 
+For the runtime lifecycle behind these commands, see [How myMoE works](how-it-works/README.md#3-startup-and-model-lifecycle).
+
+Commands below use the POSIX virtual-environment path `.venv/bin/python`. On
+Windows, use `.venv\Scripts\python.exe` or the installed `mymoe` and
+`mymoe-web` entry points. Do not use an older system `python3`: the project
+requires Python 3.10 or newer, and the locked examples use Python 3.12.
+
 ## Supported Platforms
 
 | Platform | Preferred backend | Notes |
@@ -14,10 +21,33 @@ The public configs under `configs/` are live local-model profiles or templates f
 
 ## Setup
 
+### Apple Silicon with MLX
+
 ```bash
 uv sync --locked --python 3.12 --extra mlx
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 ```
+
+### Windows or Linux with Ollama
+
+Install [Ollama](https://ollama.com/download), then use the cross-platform
+profile without installing the MLX extra:
+
+```bash
+uv sync --locked --python 3.12
+ollama pull qwen3:4b
+ollama serve
+```
+
+With Ollama running, start myMoE from another terminal:
+
+```bash
+uv run --locked --python 3.12 mymoe-web --config configs/moe.live.ollama.example.json --port 8089
+```
+
+Open `http://127.0.0.1:8089`. The later POSIX command examples have equivalent
+installed `mymoe` or `mymoe-web` forms, so Windows does not need `PYTHONPATH` or
+the `.venv/bin` path.
 
 `uv.lock` pins all optional dependency graphs. Use `--locked` for reproducible
 installs; update the lock deliberately when testing a newer runtime stack.
@@ -88,6 +118,22 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli \
 ```
 
 `--startup` without side-effect flags is a read-only preview. `--startup-start-models` can also be combined with `--startup-only-first` when a machine should launch only the primary local expert.
+
+```mermaid
+flowchart TD
+  S["Startup request"] --> I["Inspect dependencies and model assets"]
+  I --> X{"Install, download, or model start requested?"}
+  X -->|"No"| P["Return read-only preview and Doctor"]
+  X -->|"Yes"| C{"Explicit confirmation?"}
+  C -->|"No"| R["Return confirmation_required"]
+  C -->|"Yes"| E["Run generated install and download steps"]
+  E --> A{"Setup ready?"}
+  A -->|"No"| K["Skip model start"]
+  A -->|"Yes"| M["Start configured model processes"]
+  M --> W["Wait for reachable endpoints"]
+  K --> D["Run System Doctor"]
+  W --> D
+```
 
 To choose the best local profile for the detected machine and current model cache without editing config files:
 
@@ -288,16 +334,34 @@ PYTHONPATH=src .venv/bin/python -m local_moe.cli --security-audit --security-aud
 
 The web UI exposes the same metadata-only report through `/api/security` and `/api/security/report.md`.
 
-For issue reports or handoffs, generate a privacy-safe support bundle:
+For issue reports or handoffs, generate a metadata-focused support bundle:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m local_moe.cli --support-bundle-out outputs/support-bundle.json
 ```
 
-The bundle includes the Doctor report, quality gate status, sanitized performance report, runtime optimizer summary, security audit summary, storage capacity summary, model asset inventory, hardware profile, runtime file paths, and model log paths. It excludes chat transcripts, memory records, environment variable names and values, benchmark response excerpts, API keys, generation run log contents, MCP tool results, local data bundle contents, and log contents. MCP registry payloads expose only `env_configured` and `env_count`; actual env values remain runtime-only. The web UI exposes the same artifact through Advanced System Doctor.
+The bundle includes the Doctor report, quality gate status, sanitized
+performance report, runtime optimizer summary, security audit summary, storage
+capacity summary, model asset inventory, hardware profile, runtime file paths,
+model log paths, the configured Git remote URL, and model base URLs. It excludes
+chat transcripts, memory records, environment variable names and values,
+benchmark response excerpts, generation run log contents, MCP tool results,
+local data bundle contents, and log contents. Review it before sharing and never
+embed credentials in configured URLs. MCP registry payloads expose only
+`env_configured` and `env_count`; actual env values remain runtime-only. The web
+UI exposes the same artifact through Advanced System Doctor.
 
 ## Background Maintenance
 
-The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web UI starts, it also starts a lightweight in-process scheduler that polls every `runtime.cron_poll_seconds` seconds and runs due safe jobs. The bundled registry includes extension audit, memory maintenance, storage inspection, and runtime optimizer monitoring as safe jobs. By default, `runtime.cron_confirm_writes=false`, so write-local jobs such as expired-memory pruning, router distillation, or `runtime.optimizer --out ...` report exports remain manual and require the CLI `--cron-confirm-writes` flag or the UI confirmation checkbox.
+The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web
+UI starts, it also starts a lightweight in-process scheduler that polls every
+`runtime.cron_poll_seconds` seconds and runs due jobs allowed by their configured
+risk classes. The bundled registry correctly classifies extension audit, memory
+maintenance, storage inspection, and runtime optimizer monitoring as safe jobs.
+By default, `runtime.cron_confirm_writes=false`, so jobs declared write-local,
+such as expired-memory pruning, router distillation, or
+`runtime.optimizer --out ...` report exports, remain manual. The scheduler
+trusts the registry classification, so custom jobs must declare their risk
+honestly.
 
 This design stays cross-platform because it does not require launchd, systemd, Windows Task Scheduler, or a separate daemon. Operators who prefer OS-level scheduling can still call the same CLI commands from their scheduler of choice.

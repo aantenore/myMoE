@@ -2,20 +2,28 @@
 
 myMoE is structured as a local model control plane plus a system-level MoE harness.
 
+For the end-to-end distinction between normal chat and agent mode, see [How myMoE works](how-it-works/README.md#7-the-separate-agent-tool-loop).
+
 ## Components
 
 ```mermaid
-flowchart LR
-  User["User / UI / CLI"] --> App["App Config"]
-  App --> Runtime["Runtime Bootstrap"]
+flowchart TB
+  App["App Config"] --> Profile["Selected MoE Profile"]
+  App --> Runtime["Runtime Bootstrap and Control Plane"]
   App --> Registry["Extension Registry"]
-  User --> Orchestrator["MoE Orchestrator"]
-  Orchestrator --> Router["Router"]
-  Router --> Expert["Local Model Expert"]
-  Registry --> Tools["Tools"]
-  Registry --> Skills["Skills"]
-  Registry --> MCP["MCP Servers"]
-  Registry --> Cron["Cron Jobs"]
+  Profile --> Router["Router"]
+  Profile --> Orchestrator["MoE Orchestrator"]
+  User["User"] --> Chat["Normal Web or CLI Chat"]
+  Chat --> Router
+  Router --> Orchestrator
+  Orchestrator --> Expert["Local Model Expert"]
+  User --> Agent["Separate CLI Agent Task"]
+  Agent --> Guard["Schema, Permission, and Budget Guard"]
+  Registry --> Guard
+  Guard --> Tools["Allowlisted Tools"]
+  Registry --> Skills["Discovered Skills"]
+  Registry --> MCP["Guarded MCP Servers"]
+  Registry --> Cron["Allowlisted Cron Jobs"]
 ```
 
 ## Extension Surfaces
@@ -33,6 +41,24 @@ runtime. `src/local_moe/agent_loop.py` asks one configured OpenAI-compatible
 expert for tool calls, executes only visible allowlisted local tools through
 strict JSON schemas, returns bounded observations, and then lets the model
 produce a final answer grounded in delivered successful tool results.
+
+```mermaid
+flowchart TD
+  T["CLI task plus explicit tool selection"] --> L["Validate local endpoints and budgets"]
+  L --> M["Local model receives task and strict tool schemas"]
+  M --> Q{"Final answer or tool call?"}
+  Q -->|"Final answer"| Z["Strip hidden reasoning, redact, and return"]
+  Q -->|"Tool call"| V["Resolve alias; validate schema, size, numbers, and secrets"]
+  V --> P{"Permission decision"}
+  P -->|"Deny"| O["Return a bounded denial observation"]
+  P -->|"Allow"| X["Execute allowlisted local tool"]
+  P -->|"Approval required"| H["Pause with exact tool:argument-hash token"]
+  H --> R["Operator reviews and replays with the token"]
+  R --> X
+  X --> B["Redact and bound the structured result"]
+  O --> M
+  B --> M
+```
 
 Safety properties:
 
@@ -101,8 +127,8 @@ With `--json`, the top-level result is stable and includes completion status,
 bounded tool observations, sanitized approval requests, grounding ids, and a
 metadata-only trace. The trace never contains prompt, arguments, observations,
 or reasoning. The broader command result can contain the requested final answer
-and sanitized tool data, so it must not be treated as a privacy-safe support
-bundle.
+and sanitized tool data, so it must not be treated as the metadata-focused
+support bundle.
 
 ## Extension Execution Matrix
 
@@ -130,7 +156,7 @@ bundle.
 | Environment Snapshot | Captures app mode, config paths, platform, Python, selected package versions, git revision, hardware summary, storage capacity, routing policy, and configured local model identities. | Read-only and metadata-only; excludes chat transcripts, memory records, environment variables, secrets, model log bodies, and benchmark response excerpts. | CLI `--about`, CLI `--about-format markdown`, web `/api/about`, web `/api/about/report.md`, Advanced Environment panel. |
 | Performance Report | Exposes the latest benchmark decision as a sanitized runtime status. | Read-only; never starts benchmarks or model downloads and excludes benchmark response excerpts. | CLI `--performance-report`, web `/api/performance`, web `/api/performance/report.md`, Advanced Performance panel. |
 | Runtime Optimizer | Combines recent run-log health, profile recommendation, and benchmark status into local next actions. | Read-only; does not start models, download assets, or change profiles. Suggested actions reuse existing guarded commands and include side-effect/confirmation metadata. | CLI `--runtime-optimizer`, CLI `--runtime-optimizer-format markdown`, web `/api/runtime/optimizer`, web `/api/runtime/optimizer/report.md`, Advanced Runtime Optimizer panel. |
-| Support Bundle | Exports a privacy-safe diagnostic bundle for issue reports or handoff. | Read-only; includes Doctor, Environment Snapshot, performance, runtime optimizer summary, storage capacity summary, model asset inventory, quality gate, hardware, paths, model log paths, and the generation run log path; excludes chat transcripts, memory records, generation run log contents, environment variables, secrets, benchmark response excerpts, and log contents. | CLI `--support-bundle`, web `/api/support-bundle`, web `/api/support-bundle/download.json`, Advanced System Doctor panel. |
+| Support Bundle | Exports a metadata-focused diagnostic bundle for issue reports or handoff. | Read-only; includes Doctor, Environment Snapshot, performance, runtime optimizer summary, storage capacity summary, model asset inventory, quality gate, hardware, paths, model log paths, the generation run log path, configured Git remote URL, and model base URLs. It excludes content stores and log bodies, but must still be reviewed before sharing. | CLI `--support-bundle`, web `/api/support-bundle`, web `/api/support-bundle/download.json`, Advanced System Doctor panel. |
 | Streaming generation | Streams local model output as server-sent events and persists the exchange only after the final response is available. | Uses the same routing, context, provider, and chat-store contracts as non-streaming generation; hides reasoning-channel content before emitting visible text. | Web `/api/generate/stream`, chat UI with `/api/generate` fallback. |
 | Runtime setup | Runs configured install commands and model downloads from the runtime plan. | Requires explicit confirmation; executes only app-generated commands, never arbitrary user input. | CLI `--prepare-runtime`, web `/api/setup/run`, Advanced Setup panel. |
 | Startup runbook | Combines setup inspection, optional runtime preparation, optional model starts, and System Doctor verification into one operator flow. | Preview is read-only; installs, downloads, and model starts require confirmation; execution is limited to app-generated setup/model commands. | CLI `--startup`, web `/api/startup`, web `/api/startup/run`, Advanced Startup panel. |
@@ -146,7 +172,7 @@ bundle.
 | `mcp.search_capabilities` | Returns declared MCP servers and capability metadata. | Read-only discovery; it does not launch MCP processes. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.list_tools` | Starts an enabled stdio MCP server, performs the MCP `initialize` handshake, and calls `tools/list`. | Requires `app.permissions.allow_process_execution=true` and `confirm_process_execution=true`; it lists tools only and does not call them. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `mcp.call_tool` | Starts an enabled stdio MCP server and calls `tools/call` for a configured tool. | Requires app process permission, process confirmation, tool-call confirmation, and the tool name in the server `allowed_tools` list. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
-| Cron jobs | Runs due allowlisted actions such as memory maintenance, storage inspection, extension audit, runtime optimization, and router distillation. The web process can auto-run safe jobs in the background. | `write_local` jobs require `confirm_writes=true`; dry runs never persist state; background auto-run skips write-risk jobs unless configured otherwise. `runtime.optimizer` is compute-only unless configured with `--out`, which must be a confirmed write-local job. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
+| Cron jobs | Runs due allowlisted actions such as memory maintenance, storage inspection, extension audit, runtime optimization, and router distillation. The web process can auto-run eligible jobs in the background. | Jobs declared `write_local` require `confirm_writes=true`; dry runs never persist state; background auto-run skips jobs declared write-risk unless configured otherwise. The registry's risk declaration is trusted and must match the command's real side effects. | CLI `--cron-status`, `--run-cron`, web `/api/cron`, Advanced Cron panel. |
 | MCP servers | Parsed from config and exposed for discovery; enabled stdio servers can be inspected for tool metadata. | Disabled by default; process startup requires both app policy and per-call confirmation. | Extension registry, `mcp.search_capabilities`, and `mcp.list_tools`. |
 | Plugins | Discovered from manifests and scaffolded locally. Plugin-local `SKILL.md` files are loaded into the skill registry. | Plugin references are metadata until a tool/skill/MCP/cron entry is configured and allowlisted. | Extension registry, `plugin.create`, and Advanced Plugin Studio. |
 
@@ -170,7 +196,12 @@ Enabled tools are also executed through a local allowlist in `src/local_moe/tool
 
 Local knowledge import is intentionally paste/API based. `knowledge.ingest` chunks caller-provided text, stores it as `knowledge` records with document id, title, and chunk metadata, and reuses the existing scoped memory retrieval path. `memory.forget` and the guarded web DELETE endpoints provide local data removal without exposing arbitrary filesystem access. This gives the app a local RAG layer without granting the browser broad filesystem read permission.
 
-Local data backup lives in `src/local_moe/data_bundle.py`. It intentionally differs from the privacy-safe support bundle: `data.export` includes chat transcripts and memory records for migration or recovery, so it requires confirmation and marks the bundle as containing user content. `data.import` validates the schema, then merges or replaces only the configured runtime chat and memory stores.
+Local data backup lives in `src/local_moe/data_bundle.py`. It intentionally
+differs from the metadata-focused support bundle: `data.export` includes chat
+transcripts and memory records for migration or recovery, so it requires
+confirmation and marks the bundle as containing user content. `data.import`
+validates the schema, then merges or replaces only the configured runtime chat
+and memory stores.
 
 Audit trail logging lives in `src/local_moe/audit.py`. The web host appends JSONL events for sensitive actions, exposes a filtered recent-event view through `/api/audit`, and supports guarded retention through `/api/audit/prune`. Pruning keeps the latest configured number of events, requires confirmation, and records its own `audit.prune` event. Audit metadata is deliberately operational: action, status, risk class, subject id, counts, and short error messages. It does not store prompt text, chat transcript text, memory text, environment variables, or model log bodies.
 
@@ -186,7 +217,16 @@ System Doctor lives in `src/local_moe/doctor.py`. It does not introduce a new po
 
 Environment Snapshot lives in `src/local_moe/environment.py`. It is the reproducibility inventory for a running install: app and config paths, platform, Python, package versions, git revision, hardware strategy, storage capacity, routing policy, and model identities. It deliberately avoids environment variables, secrets, chat content, memory content, log bodies, and benchmark response excerpts.
 
-Support bundle generation lives in `src/local_moe/support_bundle.py`. The bundle is intentionally metadata-only: it includes the Doctor report, Environment Snapshot, quality gate status, hardware profile, storage capacity summary, model asset inventory, runtime file paths, model log paths, and the generation run log path, but never includes chat content, memory content, generation run log contents, environment variable names or values, or log bodies. MCP registry env values are kept in the runtime registry for local process startup, while public payloads expose only `env_configured` and `env_count`.
+Support bundle generation lives in `src/local_moe/support_bundle.py`. The bundle
+is intentionally metadata-focused: it includes the Doctor report, Environment
+Snapshot, quality gate status, hardware profile, storage capacity summary,
+model asset inventory, runtime file paths, model log paths, and the generation
+run log path, but never includes chat content, memory content, generation run
+log contents, environment variable names or values, or log bodies. MCP registry
+env values are kept in the runtime registry for local process startup, while
+public payloads expose only `env_configured` and `env_count`. The Environment
+Snapshot includes the configured Git remote URL and model base URLs, so review
+the bundle before sharing and never embed credentials in those URLs.
 
 Security audit generation lives in `src/local_moe/security_audit.py`. It is read-only and inspects app permission policy, local-model mode, model endpoint locality, MCP env counts, MCP allowlists, cron write-risk automation, enabled write-risk tools, plugin risk classes, and extension registry health. It never includes environment variable names or values, chat content, memory content, MCP tool results, local data bundles, or log bodies.
 
@@ -202,7 +242,16 @@ On the tested machine, the example filesystem MCP server starts through `npx -y 
 
 Cron schedules are evaluated by the local Python runner. A `startup` schedule means the job is due the first time the scheduler is run for the current state file. CLI and API calls can still run jobs manually, and the web server starts a cross-platform in-process background runner when `runtime.cron_auto_run=true`.
 
-The background runner polls every `runtime.cron_poll_seconds` seconds. With the default `runtime.cron_confirm_writes=false`, it auto-runs only jobs whose risk class does not require write confirmation, for example `extension.audit`, read-only `memory.maintenance`, read-only `storage.inspect`, and read-only `runtime.optimizer`. Write-local jobs such as `memory.prune_expired`, `router.distill`, and `runtime.optimizer --out ...` remain manual-only unless `runtime.cron_confirm_writes=true` is set by the operator.
+The background runner polls every `runtime.cron_poll_seconds` seconds. With the
+default `runtime.cron_confirm_writes=false`, it auto-runs only jobs whose
+configured risk class does not require write confirmation, for example
+`extension.audit`, read-only `memory.maintenance`, read-only `storage.inspect`,
+and read-only `runtime.optimizer`. Jobs declared `write_local`, such as
+`memory.prune_expired`, `router.distill`, and `runtime.optimizer --out ...`,
+remain manual-only unless `runtime.cron_confirm_writes=true` is set by the
+operator. The scheduler trusts the registry's `risk_class`; registry authors
+must classify jobs correctly because side effects are not inferred from command
+arguments.
 
 The Advanced Cron panel and `/api/cron` expose the automatic runner state: enabled/running flags, policy, auto-runnable job IDs, manual-only job IDs, due jobs, last run time, and the last run summary. This keeps unattended maintenance observable without introducing OS-specific launchd, systemd, or Task Scheduler services.
 
@@ -257,7 +306,16 @@ The default provider system message instructs the model to response in the user'
 
 Actual multilingual quality depends on the selected model. The default Qwen3 4B profile prioritizes responsive local operation; Qwen3 30B-A3B 2507 remains the quality-first isolated option when its broader instruction-following ceiling justifies the memory cost.
 
-Routing language coverage depends on route examples and eval coverage. The current live profile includes routing examples and eval cases for English, Italian, French, Spanish, German, Portuguese, Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese intent families. Additional languages should be added by configuration plus matching eval cases, or by swapping the semantic matcher for a local multilingual embedding backend.
+Routing language coverage is separate from response-language policy. The
+app-level hints are Italian, English, French, German, Spanish, Portuguese,
+Dutch, Polish, Arabic, Hindi, Japanese, Korean, and Chinese, plus `auto`.
+Profile-owned routing examples may cover a different set. The current disjoint
+52-case router holdout evaluates four cases each in Arabic, German, English,
+Spanish, French, Hindi, Italian, Japanese, Korean, Dutch, Swedish, Turkish, and
+Chinese. A new language should receive both configured routing examples and an
+independent holdout before support is claimed. The current parser supports only
+the character n-gram semantic backend; a multilingual embedding backend would
+require a new implementation and validated config method.
 
 The application UI and documentation are written in English. Model responses follow the user prompt language and the provider system instruction; this keeps the product surface consistent while still allowing multilingual interaction.
 
