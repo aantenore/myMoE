@@ -151,7 +151,13 @@ The Profiles section calls `/api/config/profiles` and `/api/config/recommendatio
 
 Environment calls `/api/about` and shows a metadata-only snapshot of platform, Python, git revision, hardware strategy, storage capacity, active config, and configured local models. The same panel can download a Markdown snapshot from `/api/about/report.md` for issue reports and handoffs.
 
-System Doctor calls `/api/doctor` and combines setup, health, active-profile hardware fit, storage capacity, model process reachability, extension audit, and cron state into one `ready`, `attention`, or `blocked` report with recommendations. The same panel can download a metadata-only Doctor Markdown report from `/api/doctor/report.md` and a privacy-safe support bundle from `/api/support-bundle/download.json`.
+System Doctor calls `/api/doctor` and combines setup, health, active-profile
+hardware fit, storage capacity, model process reachability, extension audit,
+and cron state into one `ready`, `attention`, or `blocked` report with
+recommendations. The same panel can download a metadata-only Doctor Markdown
+report from `/api/doctor/report.md` and a metadata-focused support bundle from
+`/api/support-bundle/download.json`. Review that bundle before sharing because
+its Environment Snapshot includes configured Git and model endpoint URLs.
 
 Security calls `/api/security` and summarizes read-only posture for app permissions, process execution, model endpoint locality, MCP env counts, MCP allowlists, cron write-risk automation, enabled write-risk tools, plugin risk classes, and extension registry health. The Markdown handoff report is available from `/api/security/report.md`. Public payloads include counts and statuses only; they do not include env names or values, chat content, memory content, local data bundle contents, MCP tool results, or log bodies.
 

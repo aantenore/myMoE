@@ -1,5 +1,7 @@
 # Context And Memory Architecture
 
+For the complete request sequence around this layer, see [How myMoE works](how-it-works/README.md#4-a-normal-chat-request).
+
 ## Goal
 
 The app should behave like a local general-purpose assistant, not just a model chat window. That requires an application context layer around the model.
@@ -8,17 +10,25 @@ The app should behave like a local general-purpose assistant, not just a model c
 
 ```mermaid
 flowchart TD
-  U["User request"] --> R["Router"]
-  R --> C["Context Builder"]
-  C --> M["Memory Retrieval"]
-  C --> S["Session Summary"]
-  C --> T["Recent Turns"]
-  C --> E["Selected Expert"]
-  E --> O["Output + Observations"]
-  O --> L["Append-only Run Log"]
-  O --> W["Memory Write Queue"]
-  O --> G["Quality / Safety Gate"]
+  U["Current user request"] --> C["Shared chat runtime"]
+  H[("Saved chat session")] --> B["Context Builder"]
+  M[("Matching local memory")] --> B
+  C -->|"load summary and recent turns"| H
+  C -->|"search using current request"| M
+  C --> B
+  C -->|"current request only"| R["Router"]
+  B -->|"budget-aware generation prompt"| O["MoE Orchestrator"]
+  R -->|"selected experts and fallbacks"| O
+  O --> E["Selected local expert"]
+  E --> F["Successful final response"]
+  F -->|"persist complete exchange"| H
+  F --> L[("Metadata-only Run Log")]
+  A["Explicit memory or knowledge action"] --> M
 ```
+
+Normal chat retrieves memory but does not create durable memory records. The
+quality and release gates are offline evaluation workflows, not nodes in this
+online context path.
 
 ## Context Policy
 
@@ -76,13 +86,17 @@ The active policy is configured through the app runtime fields:
 
 ## Context Pipeline
 
-1. collect active conversation turns,
-2. persist conversation turns in the local chat store,
-3. merge durable memory records,
-4. add the current session summary,
-5. add relevant artifacts or tool output,
-6. fit context to the selected expert budget,
-7. compact when the budget is near exhaustion.
+1. load the existing session when a session id is supplied,
+2. search valid default-scope memory records using the current request,
+3. assemble system instruction, memory, durable summary, recent turns, and the current request in stable order,
+4. reserve output capacity and drop the oldest recent turns when necessary,
+5. route on the raw current request while sending the context-enriched prompt to the selected expert,
+6. persist the complete user/assistant exchange only after a successful final response,
+7. append a metadata-only generation observation after chat persistence.
+
+When context pressure crosses the configured threshold, the bundle reports
+`compaction_needed`. This is advisory: durable model-generated compaction is an
+explicit confirmed CLI, API, UI, or tool action rather than an automatic write.
 
 ## Compression
 
