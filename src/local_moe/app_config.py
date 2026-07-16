@@ -57,6 +57,11 @@ class AppConfig:
 def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     language_raw = raw.get("language", {})
+    _reject_unknown_keys(
+        "language",
+        language_raw,
+        {"mode", "respond_in_user_language", "supported"},
+    )
     runtime_raw = raw.get("runtime", {})
     extensions_raw = raw.get("extensions", {})
     permissions_raw = raw.get("permissions", {})
@@ -66,7 +71,9 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
         default_moe_config=str(raw.get("default_moe_config", "configs/moe.live.general-mlx.example.json")),
         language=LanguagePolicy(
             mode=str(language_raw.get("mode", "auto")),
-            respond_in_user_language=bool(language_raw.get("respond_in_user_language", True)),
+            respond_in_user_language=bool(
+                language_raw.get("respond_in_user_language", True)
+            ),
             supported=tuple(str(item) for item in language_raw.get("supported", ["auto", "en"])),
         ),
         runtime=RuntimePolicy(
@@ -123,3 +130,16 @@ def app_config_payload(config: AppConfig) -> dict[str, Any]:
         "extensions": config.extensions.__dict__,
         "permissions": config.permissions.__dict__,
     }
+
+
+def _reject_unknown_keys(
+    section: str,
+    raw: object,
+    allowed: set[str],
+) -> None:
+    if not isinstance(raw, dict):
+        raise ValueError(f"App config section {section!r} must be an object.")
+    unknown = sorted(str(key) for key in raw if key not in allowed)
+    if unknown:
+        names = ", ".join(unknown)
+        raise ValueError(f"Unknown app config keys in {section!r}: {names}.")

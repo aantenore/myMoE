@@ -177,6 +177,7 @@ The practical policy is:
 10. Before claiming product advantage, routed top-1 must not regress against the
     single-general baseline while reporting latency, memory, and failure rate.
     Top-2 is diagnostic evidence and cannot rescue a top-1 regression. The
-    current 72-record Qwen3 4B + 1.7B artifact satisfies this gate: quality delta
-    `0.0`, routed median latency ratio `0.6889`, zero failures/truncation, and
-    release gate `release_ready: true`.
+    historical 72-record Qwen3 4B + 1.7B run satisfied this gate: quality delta
+    `0.0`, routed median latency ratio `0.6889`, and zero failures or
+    truncation. Any response-contract change requires fresh live evidence before
+    the release gate can return `release_ready: true` again.

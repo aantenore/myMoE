@@ -302,7 +302,7 @@ distillation.
 
 ## Multilingual Policy
 
-The default provider system message instructs the model to response in the user's language unless the user asks otherwise. The app config uses `language.mode = auto` and documents supported language hints.
+The default provider system message instructs the model to respond in the user's language unless the user asks otherwise. The app config uses `language.mode = auto`, enables `language.respond_in_user_language`, and documents supported language hints.
 
 Actual multilingual quality depends on the selected model. The default Qwen3 4B profile prioritizes responsive local operation; Qwen3 30B-A3B 2507 remains the quality-first isolated option when its broader instruction-following ceiling justifies the memory cost.
 

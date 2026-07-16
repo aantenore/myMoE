@@ -1,14 +1,14 @@
 {
-  "profile": "release",
+  "profile": "ci_offline",
   "passed": true,
   "checks_passed": true,
-  "release_ready": true,
+  "release_ready": false,
   "checks": [
     {
       "name": "gate_profile",
-      "profile": "release",
-      "quality_benchmark_mode": "required",
-      "expected_quality_benchmark_mode": "required",
+      "profile": "ci_offline",
+      "quality_benchmark_mode": "offline_optional",
+      "expected_quality_benchmark_mode": "offline_optional",
       "passed": true,
       "error": null
     },
@@ -88,185 +88,27 @@
     },
     {
       "name": "quality_benchmark",
-      "mode": "required",
-      "status": "passed",
+      "mode": "offline_optional",
+      "status": "skipped",
       "passed": true,
-      "release_eligible": true,
-      "artifact_status": "complete",
-      "expected_record_count": 72,
-      "observed_record_count": 72,
-      "checks": {
-        "artifact_complete": true,
-        "schema_matches_manifest": true,
-        "deterministic_validation_passed": true,
-        "readiness_ready": true,
-        "execution_complete": true,
-        "record_count_matches": true,
-        "record_coverage_matches": true,
-        "release_outputs_stored": true,
-        "metrics_planned_matches": true,
-        "record_judgments_match": true,
-        "evidence_recomputed": true,
-        "metrics_match_recomputed": true,
-        "comparisons_match_recomputed": true,
-        "gate_matches_recomputed": true,
-        "comparisons_complete": true,
-        "gate_passed": true,
-        "provenance_matches": true
-      },
-      "provenance_matches": {
-        "manifest_path": true,
-        "manifest_content": true,
-        "source_config_path": true,
-        "source_config_content": true,
-        "dataset_path": true,
-        "dataset_content": true,
-        "case_ids": true,
-        "case_count": true,
-        "variants": true,
-        "repetitions": true,
-        "generation_overrides": true,
-        "benchmark_implementation": true,
-        "evaluator_implementation": true,
-        "git_evidence": true,
-        "runtime_environment": true
-      },
-      "git_evidence": {
-        "git_dirty_is_false": true,
-        "git_commit": "35eb1537eea0b111c6debdb7eb4fd46b14006e91",
-        "git_commit_format_valid": true,
-        "runtime_dependency_paths_valid": true,
-        "runtime_dependency_count": 14,
+      "release_eligible": false,
+      "artifact_status": "blocked",
+      "result_path": "outputs/quality-benchmark.json",
+      "reason": "artifact_blocked",
+      "blocked_artifact_validation": {
         "passed": true,
-        "status": "passed",
-        "repository_root": "/Users/antonioantenore/Documents/my moe",
-        "current_head": "12d07e5dd7282fca29155721c8e4bb19e0de21bd",
-        "repository_shallow": false,
-        "commit_available": true,
-        "ancestor_of_head": true,
-        "runtime_dependencies": {
-          ".gitattributes": {
-            "current_head_sha256": "032c144e810970385dc0f7a0fd0970ab5fe31cab5a3d2f482449ba4f5d1b82be",
-            "benchmark_commit_sha256": "032c144e810970385dc0f7a0fd0970ab5fe31cab5a3d2f482449ba4f5d1b82be",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "pyproject.toml": {
-            "current_head_sha256": "58e89e68da3b21d6d680817568ee8e26b3d487f57b68fa24428c0526a0c1c728",
-            "benchmark_commit_sha256": "58e89e68da3b21d6d680817568ee8e26b3d487f57b68fa24428c0526a0c1c728",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "uv.lock": {
-            "current_head_sha256": "53c0e19f92e834b437885e2e5c954c2fe63637246a2fc2edd123f7137fdd3f89",
-            "benchmark_commit_sha256": "53c0e19f92e834b437885e2e5c954c2fe63637246a2fc2edd123f7137fdd3f89",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "experiments/run_quality_benchmark.py": {
-            "current_head_sha256": "08b566d81f1c60ecfdc231c512c25119c060c510f729e0940653c8fc88202dc2",
-            "benchmark_commit_sha256": "08b566d81f1c60ecfdc231c512c25119c060c510f729e0940653c8fc88202dc2",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/config.py": {
-            "current_head_sha256": "66e948beb90c8281fa418e69159980e9be49e0ff861e1fee36cb2b58632cb78a",
-            "benchmark_commit_sha256": "66e948beb90c8281fa418e69159980e9be49e0ff861e1fee36cb2b58632cb78a",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/deterministic_evaluator.py": {
-            "current_head_sha256": "205c3d72ff3086acc163a07af4eb478686eb68b6dee014e959eb91d30a372249",
-            "benchmark_commit_sha256": "205c3d72ff3086acc163a07af4eb478686eb68b6dee014e959eb91d30a372249",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/distilled_router.py": {
-            "current_head_sha256": "e947aec7f619b2a5dc3878721d70eba08a0ad2c2b0e360a1433af5d500bbde7e",
-            "benchmark_commit_sha256": "e947aec7f619b2a5dc3878721d70eba08a0ad2c2b0e360a1433af5d500bbde7e",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/evaluation_integrity.py": {
-            "current_head_sha256": "f7e2a6d4156e9023c8b8fac21501f29bf3e97de1926e62f3df92383353c50e94",
-            "benchmark_commit_sha256": "f7e2a6d4156e9023c8b8fac21501f29bf3e97de1926e62f3df92383353c50e94",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/orchestrator.py": {
-            "current_head_sha256": "5b6f446e59ea5d22ab5c1dc7e3ef0d2c2f73e378b5fcb18ef525c65236056808",
-            "benchmark_commit_sha256": "5b6f446e59ea5d22ab5c1dc7e3ef0d2c2f73e378b5fcb18ef525c65236056808",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/providers.py": {
-            "current_head_sha256": "e0b620f5b117a320b17ef533999f2788a03111c98e4f4e0aec7031f5fca24024",
-            "benchmark_commit_sha256": "e0b620f5b117a320b17ef533999f2788a03111c98e4f4e0aec7031f5fca24024",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/quality_benchmark.py": {
-            "current_head_sha256": "d1be4b2250f6065dc82540f4e12ababb4b15efa6dba87ad2bef66903d0e5b4d2",
-            "benchmark_commit_sha256": "d1be4b2250f6065dc82540f4e12ababb4b15efa6dba87ad2bef66903d0e5b4d2",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/router.py": {
-            "current_head_sha256": "f57f61cf1cb2a4906d329329586de647064771ac467f3aa84a4c4f244a6f16c6",
-            "benchmark_commit_sha256": "f57f61cf1cb2a4906d329329586de647064771ac467f3aa84a4c4f244a6f16c6",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "src/local_moe/text_features.py": {
-            "current_head_sha256": "11522e94c1231cf29b7fa45bb9a6cafe89926b072e5a3aae7d251e1a8b1fd361",
-            "benchmark_commit_sha256": "11522e94c1231cf29b7fa45bb9a6cafe89926b072e5a3aae7d251e1a8b1fd361",
-            "working_tree_clean": true,
-            "matches": true
-          },
-          "outputs/router-distilled-live-general.json": {
-            "current_head_sha256": "12409261836173c63f8d5691a47c4fbf5b3b312543c178a23c2942ca14f4ed94",
-            "benchmark_commit_sha256": "12409261836173c63f8d5691a47c4fbf5b3b312543c178a23c2942ca14f4ed94",
-            "working_tree_clean": true,
-            "matches": true
-          }
-        },
-        "release_eligible": true
-      },
-      "runtime_provenance": {
-        "status": "passed",
-        "passed": true,
-        "release_eligible": true,
-        "policy_valid": true,
-        "python_valid": true,
-        "platform_valid": true,
-        "required_packages": [
-          "local-moe-orchestrator",
-          "mlx",
-          "mlx-metal",
-          "mlx-lm",
-          "transformers",
-          "huggingface-hub"
-        ],
-        "packages_valid": true,
-        "server_runtime_identity_explicitly_unverified": true,
-        "model_snapshots_valid": true,
-        "current_runtime_matches": true,
-        "current_model_snapshots_match": true,
-        "verification_scope": "current_environment_and_local_model_cache",
-        "server_runtime_limitation": "The OpenAI-compatible models endpoint does not expose inference server package identity; this remains explicitly unverified."
-      },
-      "evidence_matches": {
-        "metrics": true,
-        "comparisons": true,
-        "gate": true
-      },
-      "judgment_validation": {
-        "passed": true,
-        "successful_records_checked": 72,
-        "mismatch_count": 0,
-        "mismatches": []
-      },
-      "recomputation_error": null
+        "checks": {
+          "schema_version_present": true,
+          "created_at_present": true,
+          "provenance_present": true,
+          "deterministic_validation_explicit": true,
+          "readiness_explicit": true,
+          "execution_not_run": true,
+          "metrics_empty": true,
+          "comparisons_not_run": true,
+          "gate_blocked": true
+        }
+      }
     },
     {
       "name": "forbidden_listeners",

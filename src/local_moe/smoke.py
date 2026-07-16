@@ -9,7 +9,7 @@ from .config import MoEConfig
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 
-DEFAULT_SMOKE_PROMPT = "response in one short English sentence: myMoE local generation smoke test passed."
+DEFAULT_SMOKE_PROMPT = "Respond in one short English sentence: myMoE local generation smoke test passed."
 
 
 def build_generation_smoke_report(

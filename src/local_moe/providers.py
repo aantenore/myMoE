@@ -17,7 +17,7 @@ LOCAL_PROVIDER_PARAMS = {
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a local expert in a system-level MoE. "
-    "Return useful, direct answers. response in the user's language "
+    "Return useful, direct answers. Respond in the user's language "
     "unless they explicitly ask for another language. Preserve "
     "correlation context."
 )

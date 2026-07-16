@@ -465,6 +465,6 @@
     "config_path": "tests/fixtures/moe.synthetic.json",
     "config_sha256": "a1757ccacccccd0fc7cdd80ffb1c4525d5093dceb99c4b451e0465f72c10f39b",
     "eval_path": "experiments/eval_set_extended.jsonl",
-    "eval_sha256": "792f9b0456cc8bdf4f842e549147772ce8280446481c7cbcfd0f69b8c9169e79"
+    "eval_sha256": "8c15da3754e97456b1c2e404b6afa063d3bdd7bb1e81e199d001404d726866d0"
   }
 }

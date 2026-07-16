@@ -351,6 +351,14 @@ embed credentials in configured URLs. MCP registry payloads expose only
 `env_configured` and `env_count`; actual env values remain runtime-only. The web
 UI exposes the same artifact through Advanced System Doctor.
 
+## Configuration Migration
+
+The response-language boolean is `language.respond_in_user_language`. Config
+files created by earlier checkouts must rename their obsolete language boolean
+to this key while preserving its value. This is an intentional breaking config
+migration: the loader now rejects unknown keys inside the `language` section
+instead of silently applying a default.
+
 ## Background Maintenance
 
 The default `configs/app.json` enables `runtime.cron_auto_run=true`. When the web

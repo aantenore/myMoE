@@ -133,7 +133,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(_FakeOpenAIHandler.last_payload["model"], "fake-model")
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.2)
         system = _FakeOpenAIHandler.last_payload["messages"][0]["content"]
-        self.assertIn("response in the user's language", system)
+        self.assertIn("Respond in the user's language", system)
 
     def test_openai_provider_streams_sse_content_and_final_result(self) -> None:
         chunks = (

@@ -342,7 +342,7 @@ def _format_prompt(tokenizer: Any, prompt: str) -> str:
     messages = [
         {
             "role": "system",
-            "content": "You are a concise local general-purpose assistant. response in English only for this benchmark.",
+            "content": "You are a concise local general-purpose assistant. Respond in English only for this benchmark.",
         },
         {"role": "user", "content": prompt},
     ]
@@ -364,7 +364,7 @@ def _format_vlm_prompt(processor: Any, prompt: str) -> str:
     messages = [
         {
             "role": "system",
-            "content": "You are a concise local general-purpose assistant. response in English only for this benchmark.",
+            "content": "You are a concise local general-purpose assistant. Respond in English only for this benchmark.",
         },
         {"role": "user", "content": prompt},
     ]

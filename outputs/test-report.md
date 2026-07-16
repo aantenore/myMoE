@@ -2,6 +2,12 @@
 
 Generated: 2026-07-10
 
+This is a historical verification snapshot. The response-language contract has
+since changed, so its live benchmark evidence is retained as context rather
+than current release proof. The checked-in benchmark artifact is now blocked
+until the local model endpoints are available for a fresh run; the evidence
+described below is preserved in `outputs/quality-benchmark-2026-07-10.json`.
+
 ## Scope
 
 The test hardening pass covers configuration validation, runtime profile discovery with hardware fit, profile recommendation, guarded profile preparation, guarded profile activation, guarded startup runbook orchestration, and copyable launch hints, routing evaluation, multilingual routing coverage, OpenAI-compatible provider contracts, streaming provider contracts, runtime server specs, cross-platform quality gate orchestration, installed console-script packaging smoke checks, generation smoke testing, metadata-only generation run logging, analytics, and retention pruning, sanitized model log diagnostics, runtime setup readiness, model asset inventory, System Doctor readiness reporting with active-profile hardware fit, storage capacity diagnostics, cron-safe storage inspection, and Markdown export, metadata-only Environment Snapshot reporting, sanitized performance decision reporting, privacy-safe support bundle export, MCP env redaction in public diagnostic payloads, read-only Security Audit reporting, guarded runtime preparation, guarded model process management, plugin-local skill discovery, manual extension registry auditing, guided Extension Studio configuration, local audit trail logging and retention pruning, guarded extension self-configuration, runtime health checks, CLI behavior, persistent context-aware CLI chat sessions, CLI chat search and guarded compaction, web UI endpoints, streamed chat generation, persisted local chat sessions, context assembly, file-backed memory, local knowledge ingestion, guarded local memory deletion, read-only memory maintenance, guarded expired-memory pruning, confirmed local data backup and restore, MCP stdio discovery and guarded tool calls, allowlisted local tools, bounded approval-gated agent tool loops, deterministic answer-quality benchmark scaffolding, cron permission policy, background cron automation, and orchestrator correlation behavior.
@@ -88,7 +94,7 @@ Result:
   shared normalized prompt hashes
 - provenance: config, training labels, full artifact content, holdout, and
   report hashes match; report metrics match a fresh gate recomputation
-- release quality gate: passed with `release_ready: true`
+- release quality gate at the time of this snapshot: passed with `release_ready: true`
 - packaging smoke: passed, editable install exposes `mymoe` and `mymoe-web`
 - agent loop contract tests: passed
 - deterministic live quality benchmark: passed, 72/72 executions complete,
