@@ -1019,11 +1019,7 @@ def execute_process(
             cwd=launch_cwd,
             env=launch_env,
         )
-    elif selected_policy.require_launcher_chain and _command_has_script_chain(
-        executable,
-        argv_tail,
-        cwd=launch_cwd,
-    ):
+    elif selected_policy.require_launcher_chain:
         raise LauncherChainError(
             "Execution policy requires an explicitly attested launcher chain"
         )
@@ -1855,12 +1851,67 @@ def _verify_working_directory(path: Path, identity: tuple[int, int]) -> None:
         )
 
 
-def _read_shebang(path: Path) -> tuple[str, ...]:
+def _regular_file_open_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
+
+def _stat_identity(metadata: os.stat_result) -> tuple[object, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        getattr(metadata, "st_uid", None),
+        getattr(metadata, "st_gid", None),
+    )
+
+
+def _open_regular_file_descriptor(path: Path) -> tuple[int, os.stat_result]:
+    descriptor = -1
     try:
-        with path.open("rb") as handle:
-            first_line = handle.readline(4097)
-    except OSError as exc:
-        raise LauncherChainError("Launcher shebang cannot be read") from exc
+        descriptor = os.open(path, _regular_file_open_flags())
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, "Path is not a regular file", path)
+        return descriptor, metadata
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
+def _read_stable_first_line(path: Path) -> bytes:
+    descriptor, before = _open_regular_file_descriptor(path)
+    first_line = bytearray()
+    try:
+        while len(first_line) < 4097:
+            chunk = os.read(descriptor, 4097 - len(first_line))
+            if not chunk:
+                break
+            newline = chunk.find(b"\n")
+            if newline >= 0:
+                first_line.extend(chunk[: newline + 1])
+                break
+            first_line.extend(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if _stat_identity(before) != _stat_identity(after):
+        raise OSError(
+            getattr(errno, "ESTALE", errno.EIO),
+            "File changed while its first line was read",
+            path,
+        )
+    return bytes(first_line)
+
+
+def _parse_shebang(first_line: bytes) -> tuple[str, ...]:
     if not first_line.startswith(b"#!"):
         return ()
     if len(first_line) > 4096 or not first_line.endswith((b"\n", b"\r")):
@@ -1873,6 +1924,14 @@ def _read_shebang(path: Path) -> tuple[str, ...]:
     if not words or any("\x00" in word for word in words):
         raise LauncherChainError("Launcher shebang is empty or malformed")
     return words
+
+
+def _read_shebang(path: Path) -> tuple[str, ...]:
+    try:
+        first_line = _read_stable_first_line(path)
+    except OSError as exc:
+        raise LauncherChainError("Launcher shebang cannot be read") from exc
+    return _parse_shebang(first_line)
 
 
 def _resolve_shebang_chain(
@@ -2047,27 +2106,29 @@ def _undeclared_script_argument(
             if Path(argument).suffix.lower() in _SCRIPT_SUFFIXES:
                 return argument
             continue
-        if not normalized.is_file():
+        try:
+            first_line = _read_stable_first_line(normalized)
+        except FileNotFoundError:
             continue
+        except OSError as exc:
+            try:
+                metadata = normalized.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                raise LauncherChainError(
+                    "Path-shaped launcher argument cannot be inspected"
+                ) from exc
+            if stat.S_ISDIR(metadata.st_mode):
+                continue
+            raise LauncherChainError(
+                "Path-shaped launcher arguments must be regular files"
+            ) from exc
         if normalized.suffix.lower() in _SCRIPT_SUFFIXES or bool(
-            _read_shebang(normalized)
+            _parse_shebang(first_line)
         ):
             return argument
     return None
-
-
-def _command_has_script_chain(
-    executable: ExecutableIdentity,
-    argv: Sequence[str],
-    *,
-    cwd: Path | None,
-) -> bool:
-    if _read_shebang(Path(executable.resolved_path)):
-        return True
-    if Path(executable.launch_path).suffix.lower() in {".bat", ".cmd"}:
-        return True
-    root = Path.cwd().resolve() if cwd is None else cwd
-    return _undeclared_script_argument(argv, cwd=root) is not None
 
 
 def _launch_path_binding(
@@ -2107,16 +2168,12 @@ def _launch_path_binding(
 
 
 def _attest_executable_file(path: Path) -> _FileAttestation:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     try:
-        descriptor = os.open(path, flags)
+        descriptor, before = _open_regular_file_descriptor(path)
     except OSError as exc:
         raise ExecutableResolutionError(f"Could not open executable: {path}") from exc
     digest = hashlib.sha256()
     try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise ExecutableResolutionError("Executable is not a regular file")
         while True:
             chunk = os.read(descriptor, _HASH_CHUNK_BYTES)
             if not chunk:
@@ -2127,25 +2184,7 @@ def _attest_executable_file(path: Path) -> _FileAttestation:
         raise ExecutableResolutionError(f"Could not attest executable: {path}") from exc
     finally:
         os.close(descriptor)
-    before_identity = (
-        before.st_dev,
-        before.st_ino,
-        before.st_mode,
-        before.st_size,
-        before.st_mtime_ns,
-        getattr(before, "st_uid", None),
-        getattr(before, "st_gid", None),
-    )
-    after_identity = (
-        after.st_dev,
-        after.st_ino,
-        after.st_mode,
-        after.st_size,
-        after.st_mtime_ns,
-        getattr(after, "st_uid", None),
-        getattr(after, "st_gid", None),
-    )
-    if before_identity != after_identity:
+    if _stat_identity(before) != _stat_identity(after):
         raise ExecutableResolutionError(
             "Executable changed while it was being attested"
         )

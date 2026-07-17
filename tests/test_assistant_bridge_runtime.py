@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -37,6 +38,26 @@ STRICT_EXECUTION_AVAILABLE = runtime_capabilities().strict_tree_supported
 
 
 class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
+    def _assert_isolated_python_succeeds(self, source: str) -> None:
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", source],
+                cwd=Path(__file__).resolve().parents[1],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=3.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("Isolated FIFO regression process exceeded its safety timeout")
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+        )
+
     def test_environment_fingerprint_is_order_independent_and_value_sensitive(
         self,
     ) -> None:
@@ -91,6 +112,108 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                     execute_process(identity, timeout_seconds=1.0)
 
             popen.assert_not_called()
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_launch_symlink_retarget_during_popen_is_rejected_and_reaped(
+        self,
+    ) -> None:
+        sleep = shutil.which("sleep")
+        replacement = shutil.which("false")
+        if sleep is None or replacement is None:
+            self.skipTest("POSIX sleep/false fixtures unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            launch_path = Path(tmp) / "bridge-tool"
+            launch_path.symlink_to(sleep)
+            identity = resolve_executable(launch_path)
+            spawned: list[object] = []
+            real_popen = bridge_runtime.subprocess.Popen
+
+            def retarget_after_spawn(*args: object, **kwargs: object) -> object:
+                process = real_popen(*args, **kwargs)
+                spawned.append(process)
+                launch_path.unlink()
+                launch_path.symlink_to(replacement)
+                return process
+
+            with patch.object(
+                bridge_runtime.subprocess,
+                "Popen",
+                side_effect=retarget_after_spawn,
+            ):
+                with self.assertRaisesRegex(
+                    ProcessLaunchError,
+                    "executable identity",
+                ):
+                    execute_process(identity, ("30",), timeout_seconds=2.0)
+
+            self.assertEqual(len(spawned), 1)
+            self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO fixture")
+    def test_fifo_executable_replacement_is_rejected_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bridge-tool"
+            source = (
+                "import os\n"
+                "from pathlib import Path\n"
+                "from local_moe.assistant_bridge_runtime import "
+                "ExecutableChangedError, ProcessExecutionPolicy, execute_process, "
+                "resolve_executable\n"
+                f"target = Path({str(target)!r})\n"
+                "target.write_text('#!/bin/sh\\nexit 0\\n', encoding='utf-8')\n"
+                "target.chmod(0o700)\n"
+                "identity = resolve_executable(target)\n"
+                "target.unlink()\n"
+                "os.mkfifo(target, 0o700)\n"
+                "try:\n"
+                "    execute_process(identity, timeout_seconds=1.0, "
+                "policy=ProcessExecutionPolicy(require_tree_isolation=False))\n"
+                "except ExecutableChangedError:\n"
+                "    pass\n"
+                "else:\n"
+                "    raise AssertionError('FIFO executable replacement was accepted')\n"
+            )
+            self._assert_isolated_python_succeeds(source)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO fixture")
+    def test_fifo_shebang_read_is_rejected_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "launcher.py"
+            os.mkfifo(target, 0o600)
+            source = (
+                "from pathlib import Path\n"
+                "import local_moe.assistant_bridge_runtime as runtime\n"
+                "from local_moe.assistant_bridge_runtime import LauncherChainError\n"
+                f"target = Path({str(target)!r})\n"
+                "try:\n"
+                "    runtime._read_shebang(target)\n"
+                "except LauncherChainError:\n"
+                "    pass\n"
+                "else:\n"
+                "    raise AssertionError('FIFO shebang was accepted')\n"
+            )
+            self._assert_isolated_python_succeeds(source)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO fixture")
+    def test_fifo_undeclared_script_is_rejected_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "launcher.py"
+            os.mkfifo(target, 0o600)
+            source = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "from local_moe.assistant_bridge_runtime import "
+                "LauncherChainError, resolve_executable, resolve_launcher_chain\n"
+                f"target = Path({str(target)!r})\n"
+                "try:\n"
+                "    resolve_launcher_chain(resolve_executable(sys.executable), "
+                "(str(target),), cwd=target.parent, strict=True)\n"
+                "except LauncherChainError:\n"
+                "    pass\n"
+                "else:\n"
+                "    raise AssertionError('FIFO script argument was accepted')\n"
+            )
+            self._assert_isolated_python_succeeds(source)
 
     @unittest.skipUnless(
         STRICT_EXECUTION_AVAILABLE, "strict process-tree control unavailable"
@@ -379,6 +502,23 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
 
                 popen.assert_not_called()
 
+    def test_strict_policy_rejects_missing_chain_for_native_executable(self) -> None:
+        identity = resolve_executable(sys.executable)
+
+        with patch.object(bridge_runtime.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(LauncherChainError, "explicitly attested"):
+                execute_process(
+                    identity,
+                    ("-c", "pass"),
+                    timeout_seconds=1.0,
+                    policy=ProcessExecutionPolicy(
+                        require_tree_isolation=False,
+                        require_launcher_chain=True,
+                    ),
+                )
+
+        popen.assert_not_called()
+
     def test_strict_policy_rejects_non_strict_launcher_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -436,6 +576,33 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
 
             popen.assert_not_called()
 
+    def test_entrypoint_replacement_is_rejected_before_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entrypoint = root / "wrapper.py"
+            entrypoint.write_text("print('attested')\n", encoding="utf-8")
+            identity = resolve_executable(sys.executable)
+            chain = resolve_launcher_chain(
+                identity,
+                (str(entrypoint),),
+                entrypoint=entrypoint,
+                cwd=root,
+            )
+            entrypoint.write_text("print('replacement')\n", encoding="utf-8")
+
+            with patch.object(bridge_runtime.subprocess, "Popen") as popen:
+                with self.assertRaises(LauncherChainChangedError):
+                    execute_process(
+                        identity,
+                        (str(entrypoint),),
+                        cwd=root,
+                        timeout_seconds=1.0,
+                        launcher_chain=chain,
+                        policy=ProcessExecutionPolicy(require_launcher_chain=True),
+                    )
+
+            popen.assert_not_called()
+
     def test_companion_replacement_during_popen_is_rejected_and_reaped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -461,6 +628,48 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 process = real_popen(*args, **kwargs)
                 spawned.append(process)
                 companion.write_text("replaced", encoding="utf-8")
+                return process
+
+            with patch.object(
+                bridge_runtime.subprocess,
+                "Popen",
+                side_effect=replace_after_spawn,
+            ):
+                with self.assertRaisesRegex(ProcessLaunchError, "launcher chain"):
+                    execute_process(
+                        identity,
+                        (str(entrypoint),),
+                        cwd=root,
+                        timeout_seconds=2.0,
+                        launcher_chain=chain,
+                        policy=ProcessExecutionPolicy(require_launcher_chain=True),
+                    )
+
+            self.assertEqual(len(spawned), 1)
+            self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
+
+    def test_entrypoint_replacement_during_popen_is_rejected_and_reaped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entrypoint = root / "wrapper.py"
+            entrypoint.write_text(
+                "import time; time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            identity = resolve_executable(sys.executable)
+            chain = resolve_launcher_chain(
+                identity,
+                (str(entrypoint),),
+                entrypoint=entrypoint,
+                cwd=root,
+            )
+            spawned: list[object] = []
+            real_popen = bridge_runtime.subprocess.Popen
+
+            def replace_after_spawn(*args: object, **kwargs: object) -> object:
+                process = real_popen(*args, **kwargs)
+                spawned.append(process)
+                entrypoint.write_text("print('replacement')\n", encoding="utf-8")
                 return process
 
             with patch.object(
