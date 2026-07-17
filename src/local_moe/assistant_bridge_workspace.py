@@ -1130,7 +1130,7 @@ def _resolve_trusted_git_identity(
                 executable_path=candidate,
             )
             return resolve_executable(str(candidate), env=environment)
-        except (OSError, AssistantBridgeRuntimeError):
+        except (OSError, ValueError, AssistantBridgeRuntimeError):
             continue
     if required:
         raise WorkspaceSecurityError(
@@ -1308,9 +1308,11 @@ def _sanitized_git_environment(
     env["PATH"] = os.pathsep.join(dict.fromkeys(str(item) for item in trusted_path))
     env.update(
         {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_SYSTEM": os.devnull,
-            "GIT_CONFIG_GLOBAL": os.devnull,
+            # HOME and XDG_CONFIG_HOME are deliberately absent from this
+            # allowlisted environment, so Git cannot discover user-controlled
+            # global configuration. System configuration remains in the OS
+            # trust boundary; command-local -c overrides below disable the
+            # execution-capable features used by these fixed Git operations.
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_NO_REPLACE_OBJECTS": "1",

@@ -14,6 +14,7 @@ from unittest import mock
 from uuid import uuid4
 
 import local_moe.assistant_bridge_workspace as workspace_module
+from local_moe.assistant_bridge_runtime import fingerprint_environment
 from local_moe.assistant_bridge_workspace import (
     IgnoredPathRule,
     WorkspaceScopePolicy,
@@ -30,6 +31,24 @@ from local_moe.assistant_bridge_workspace import (
 
 
 class AssistantBridgeWorkspaceTests(unittest.TestCase):
+    def test_git_environment_is_minimal_and_runtime_compatible(self) -> None:
+        poisoned = {
+            "HOME": "/untrusted/home",
+            "XDG_CONFIG_HOME": "/untrusted/config",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.fsmonitor",
+            "GIT_CONFIG_VALUE_0": "/untrusted/helper",
+        }
+        with mock.patch.dict(os.environ, poisoned, clear=False):
+            environment = workspace_module._sanitized_git_environment(
+                identity=False,
+                executable_path=Path(sys.executable),
+            )
+
+        for name in poisoned:
+            self.assertNotIn(name, environment)
+        self.assertTrue(fingerprint_environment(environment).sha256)
+
     def test_unborn_git_and_ignored_scope_are_attested_without_real_git_metadata(
         self,
     ) -> None:
