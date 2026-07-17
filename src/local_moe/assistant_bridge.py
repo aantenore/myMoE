@@ -31,6 +31,7 @@ from .assistant_bridge_ledger import (
 from .assistant_bridge_runtime import (
     AssistantBridgeRuntimeError,
     ExecutableIdentity,
+    LauncherChainIdentity,
     ProcessCleanupError,
     ProcessExecutionPolicy,
     ProcessLaunchLifecycleError,
@@ -39,6 +40,7 @@ from .assistant_bridge_runtime import (
     execute_process,
     fingerprint_environment,
     resolve_executable,
+    resolve_launcher_chain,
     runtime_capabilities,
     validate_environment_name,
 )
@@ -260,6 +262,8 @@ class ProviderSpec:
     network_access: bool = False
     timeout_seconds: float = 900.0
     launcher_args: tuple[str, ...] = ()
+    launcher_entrypoint: str = field(default="", repr=False)
+    launcher_companions: tuple[str, ...] = field(default=(), repr=False)
     extra_args: tuple[str, ...] = ()
     environment_allowlist: tuple[str, ...] = ()
 
@@ -268,6 +272,7 @@ class ProviderSpec:
             "capabilities",
             "tools",
             "launcher_args",
+            "launcher_companions",
             "extra_args",
             "environment_allowlist",
         ):
@@ -345,12 +350,21 @@ class ProviderSpec:
             )
         for label, values in (
             ("launcher_args", self.launcher_args),
+            ("launcher_companions", self.launcher_companions),
             ("extra_args", self.extra_args),
         ):
             if any(not item or "\x00" in item for item in values):
                 raise AssistantBridgeError(
                     f"Provider {self.id} {label} contains an invalid value."
                 )
+        if "\x00" in self.launcher_entrypoint:
+            raise AssistantBridgeError(
+                f"Provider {self.id} launcher_entrypoint contains an invalid value."
+            )
+        if len(set(self.launcher_companions)) != len(self.launcher_companions):
+            raise AssistantBridgeError(
+                f"Provider {self.id} launcher_companions contains duplicates."
+            )
         _validate_safe_extra_args(self.extra_args, provider_id=self.id)
         if len(set(self.environment_allowlist)) != len(self.environment_allowlist):
             raise AssistantBridgeError(
@@ -385,6 +399,8 @@ class ProviderSpec:
             "network_access": self.network_access,
             "timeout_seconds": self.timeout_seconds,
             "launcher_arg_count": len(self.launcher_args),
+            "launcher_entrypoint_declared": bool(self.launcher_entrypoint),
+            "launcher_companion_count": len(self.launcher_companions),
             "extra_arg_count": len(self.extra_args),
             "environment_keys": list(self.environment_allowlist),
             "planning_probe": "none",
@@ -476,6 +492,8 @@ class CommandVerifierSpec:
     purpose: str = "hygiene"
     execution_boundary: str = "disposable_workspace"
     network_policy: str = "not_enforced"
+    launcher_entrypoint: str = field(default="", repr=False)
+    launcher_companions: tuple[str, ...] = field(default=(), repr=False)
     environment_allowlist: tuple[str, ...] = ()
     required_for_capabilities: tuple[str, ...] = ()
     required_for_tools: tuple[str, ...] = ()
@@ -484,6 +502,7 @@ class CommandVerifierSpec:
     def __post_init__(self) -> None:
         for name in (
             "argv",
+            "launcher_companions",
             "environment_allowlist",
             "required_for_capabilities",
             "required_for_tools",
@@ -495,6 +514,16 @@ class CommandVerifierSpec:
         if not self.argv or any(not item or "\x00" in item for item in self.argv):
             raise AssistantBridgeError(
                 f"Command verifier {self.id} requires safe argv values."
+            )
+        if "\x00" in self.launcher_entrypoint or any(
+            not item or "\x00" in item for item in self.launcher_companions
+        ):
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} launcher declarations are invalid."
+            )
+        if len(set(self.launcher_companions)) != len(self.launcher_companions):
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} launcher companions contain duplicates."
             )
         if not 1 <= self.timeout_seconds <= 3600:
             raise AssistantBridgeError(
@@ -562,6 +591,15 @@ class CommandVerifierSpec:
             "purpose": self.purpose,
             "execution_boundary": self.execution_boundary,
             "network_policy": self.network_policy,
+            "launcher_entrypoint_sha256": (
+                _sha256_text(self.launcher_entrypoint)
+                if self.launcher_entrypoint
+                else None
+            ),
+            "launcher_companions_sha256": _sha256_text(
+                _canonical_json(list(self.launcher_companions))
+            ),
+            "launcher_companion_count": len(self.launcher_companions),
             "environment_keys": list(self.environment_allowlist),
             "required_for_capabilities": list(self.required_for_capabilities),
             "required_for_tools": list(self.required_for_tools),
@@ -705,6 +743,7 @@ class VerificationEvidence:
 class BridgeRuntimePolicy:
     require_tree_isolation: bool = True
     require_psutil: bool = True
+    require_launcher_chain: bool = True
     stdin_limit_bytes: int = 8 * 1024 * 1024
     stdout_limit_bytes: int = _MAX_STREAM_BYTES
     stderr_limit_bytes: int = _MAX_STREAM_BYTES
@@ -712,9 +751,16 @@ class BridgeRuntimePolicy:
     cleanup_kill_seconds: float = 0.75
 
     def __post_init__(self) -> None:
-        if self.require_tree_isolation is not True or self.require_psutil is not True:
+        if any(
+            value is not True
+            for value in (
+                self.require_tree_isolation,
+                self.require_psutil,
+                self.require_launcher_chain,
+            )
+        ):
             raise AssistantBridgeError(
-                "Bridge runtime must require tree isolation and psutil."
+                "Bridge runtime must require tree isolation, psutil, and launcher chains."
             )
         try:
             self.process_policy()
@@ -734,12 +780,14 @@ class BridgeRuntimePolicy:
             cleanup_kill_seconds=self.cleanup_kill_seconds,
             require_tree_isolation=self.require_tree_isolation,
             require_psutil=self.require_psutil,
+            require_launcher_chain=self.require_launcher_chain,
         )
 
     def payload(self) -> dict[str, object]:
         return {
             "require_tree_isolation": self.require_tree_isolation,
             "require_psutil": self.require_psutil,
+            "require_launcher_chain": self.require_launcher_chain,
             "stdin_limit_bytes": self.stdin_limit_bytes,
             "stdout_limit_bytes": self.stdout_limit_bytes,
             "stderr_limit_bytes": self.stderr_limit_bytes,
@@ -961,6 +1009,9 @@ class CommandPlan:
     environment_sha256: str
     runtime: Mapping[str, object]
     runtime_policy: BridgeRuntimePolicy = field(repr=False)
+    launcher_chain: LauncherChainIdentity = field(repr=False)
+    launcher_authority_sha256: str
+    ephemeral_workspace: bool
     launcher_artifact_sha256: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1000,6 +1051,8 @@ class CommandPlan:
             "environment_sha256": self.environment_sha256,
             "runtime": _deep_thaw(self.runtime),
             "runtime_policy": self.runtime_policy.payload(),
+            "launcher_chain": self.launcher_chain.payload(),
+            "launcher_authority_sha256": self.launcher_authority_sha256,
             "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
         }
 
@@ -1010,6 +1063,8 @@ class BoundVerifierPlan:
     argv: tuple[str, ...] = field(repr=False)
     executable_identity: ExecutableIdentity = field(repr=False)
     environment_sha256: str
+    launcher_chain: LauncherChainIdentity = field(repr=False)
+    launcher_authority_sha256: str
     launcher_artifact_sha256: tuple[str, ...]
     plan_sha256: str
     runtime_policy: BridgeRuntimePolicy = field(repr=False)
@@ -1028,6 +1083,8 @@ class BoundVerifierPlan:
             "plan_sha256": self.plan_sha256,
             "executable": _public_executable_payload(self.executable_identity),
             "environment_sha256": self.environment_sha256,
+            "launcher_chain": self.launcher_chain.payload(),
+            "launcher_authority_sha256": self.launcher_authority_sha256,
             "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
             "execution_boundary": self.spec.execution_boundary,
             "network_policy": self.spec.network_policy,
@@ -1365,6 +1422,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
         {
             "cleanup_grace_seconds",
             "cleanup_kill_seconds",
+            "require_launcher_chain",
             "require_psutil",
             "require_tree_isolation",
             "stderr_limit_bytes",
@@ -1524,6 +1582,10 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
         ),
         require_psutil=_bool_value(
             runtime_raw.get("require_psutil", True), "runtime.require_psutil"
+        ),
+        require_launcher_chain=_bool_value(
+            runtime_raw.get("require_launcher_chain", True),
+            "runtime.require_launcher_chain",
         ),
         stdin_limit_bytes=_int_value(
             runtime_raw.get("stdin_limit_bytes", 8 * 1024 * 1024),
@@ -1981,10 +2043,6 @@ def build_codex_command_plan(
             f"Provider {provider.id} executable attestation failed."
         ) from None
     runtime = runtime_capabilities().payload()
-    launcher_artifacts = _launcher_artifact_digests(
-        provider.launcher_args,
-        workspace=resolved_workspace,
-    )
     selected_local = ""
     argv = [executable_identity.resolved_path, *provider.launcher_args]
     argv.append("--strict-config")
@@ -2035,11 +2093,39 @@ def build_codex_command_plan(
         resolved_output = str(Path(output_path).expanduser().resolve())
         argv.extend(("--output-last-message", resolved_output))
     argv.append("-")
+    effective_ephemeral_workspace = (
+        ephemeral_workspace or effective_workspace_access == "capsule_only"
+    )
+    try:
+        launcher_chain = _build_bridge_launcher_chain(
+            executable_identity,
+            tuple(argv[1:]),
+            entrypoint=provider.launcher_entrypoint,
+            companions=provider.launcher_companions,
+            workspace=resolved_workspace,
+            environment=planning_environment,
+        )
+    except (AssistantBridgeError, AssistantBridgeRuntimeError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Provider {provider.id} launcher-chain attestation failed."
+        ) from None
+    launcher_authority_sha256 = _launcher_chain_authority_sha256(
+        launcher_chain,
+        executable=executable_identity,
+        workspace=resolved_workspace,
+        output_path=resolved_output,
+        environment=planning_environment,
+        ephemeral_workspace=effective_ephemeral_workspace,
+        ephemeral_environment_keys=("CODEX_HOME", "HOME"),
+    )
+    launcher_artifacts = _launcher_artifact_authority_digests(
+        launcher_chain,
+        workspace=resolved_workspace,
+        ephemeral_workspace=effective_ephemeral_workspace,
+    )
     semantic_argv = _normalize_ephemeral_paths(
         tuple(argv),
-        ephemeral_workspace=(
-            ephemeral_workspace or effective_workspace_access == "capsule_only"
-        ),
+        ephemeral_workspace=effective_ephemeral_workspace,
     )
     command_payload = {
         "provider_id": provider.id,
@@ -2061,6 +2147,7 @@ def build_codex_command_plan(
         "executable": executable_identity.binding_payload(),
         "runtime": runtime,
         "runtime_policy": selected_runtime_policy.payload(),
+        "launcher_authority_sha256": launcher_authority_sha256,
         "launcher_artifact_sha256": list(launcher_artifacts),
     }
     return CommandPlan(
@@ -2082,6 +2169,9 @@ def build_codex_command_plan(
         environment_sha256=executable_identity.resolution_environment.sha256,
         runtime=runtime,
         runtime_policy=selected_runtime_policy,
+        launcher_chain=launcher_chain,
+        launcher_authority_sha256=launcher_authority_sha256,
+        ephemeral_workspace=effective_ephemeral_workspace,
         launcher_artifact_sha256=launcher_artifacts,
     )
 
@@ -2150,23 +2240,33 @@ def execute_codex_command(
         raise AssistantBridgeError(
             "Execution environment no longer matches the confirmed plan."
         )
-    if (
-        _launcher_artifact_digests(
-            plan.argv[1 : plan.argv.index("--strict-config")],
-            workspace=plan.workspace,
-        )
-        != plan.launcher_artifact_sha256
-    ):
-        raise AssistantBridgeError(
-            "A launcher artifact no longer matches the confirmed plan."
-        )
     env = _sanitized_environment(
         plan.environment_allowlist,
         overrides=environment_overrides or {},
     )
     try:
         _preflight_process_runtime(plan, base_env)
-    except (AssistantBridgeRuntimeError, OSError, ValueError):
+        launcher_chain = _rebind_bridge_launcher_chain(
+            plan.launcher_chain,
+            plan.executable_identity,
+            plan.argv[1:],
+            workspace=plan.workspace,
+            environment=env,
+        )
+        launcher_authority_sha256 = _launcher_chain_authority_sha256(
+            launcher_chain,
+            executable=plan.executable_identity,
+            workspace=plan.workspace,
+            output_path=resolved_output,
+            environment=env,
+            ephemeral_workspace=plan.ephemeral_workspace,
+            ephemeral_environment_keys=("CODEX_HOME", "HOME"),
+        )
+        if launcher_authority_sha256 != plan.launcher_authority_sha256:
+            raise AssistantBridgeRuntimeError(
+                "Launcher chain no longer matches the confirmed plan."
+            )
+    except (AssistantBridgeError, AssistantBridgeRuntimeError, OSError, ValueError):
         return _blocked_command_result(plan, "runtime_attestation_failed")
     try:
         outcome = execute_process(
@@ -2177,6 +2277,7 @@ def execute_codex_command(
             env=env,
             timeout_seconds=timeout_seconds,
             policy=plan.runtime_policy.process_policy(),
+            launcher_chain=launcher_chain,
             reserve_launch=reserve_launch,
         )
     except ProcessLaunchNotAuthorizedError:
@@ -3793,6 +3894,8 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
             "extra_args",
             "id",
             "launcher_args",
+            "launcher_companions",
+            "launcher_entrypoint",
             "local_provider",
             "max_risk",
             "mode",
@@ -3841,6 +3944,12 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
             "provider.timeout_seconds",
         ),
         launcher_args=_string_tuple(raw.get("launcher_args", []), "launcher_args"),
+        launcher_entrypoint=_string_value(
+            raw.get("launcher_entrypoint", ""), "launcher_entrypoint"
+        ),
+        launcher_companions=_string_tuple(
+            raw.get("launcher_companions", []), "launcher_companions"
+        ),
         extra_args=_string_tuple(raw.get("extra_args", []), "extra_args"),
         environment_allowlist=_string_tuple(
             raw.get("environment_allowlist", []),
@@ -3895,6 +4004,8 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 "id",
                 "environment_allowlist",
                 "execution_boundary",
+                "launcher_companions",
+                "launcher_entrypoint",
                 "network_policy",
                 "purpose",
                 "required_for_capabilities",
@@ -3924,6 +4035,14 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 network_policy=_string_value(
                     value.get("network_policy", "not_enforced"),
                     f"command_verifiers[{index}].network_policy",
+                ),
+                launcher_entrypoint=_string_value(
+                    value.get("launcher_entrypoint", ""),
+                    f"command_verifiers[{index}].launcher_entrypoint",
+                ),
+                launcher_companions=_string_tuple(
+                    value.get("launcher_companions", []),
+                    f"command_verifiers[{index}].launcher_companions",
                 ),
                 environment_allowlist=_string_tuple(
                     value.get("environment_allowlist", []),
@@ -4127,11 +4246,28 @@ def _build_verifier_plan(
     execution_environment: Mapping[str, str] | None = None,
 ) -> BoundVerifierPlan:
     root = str(Path(workspace).expanduser().resolve())
-    argv = tuple(
-        sys.executable
-        if item == "{python}"
-        else item.replace("{workspace}", root)
-        for item in spec.argv
+
+    def expand(value: str) -> str:
+        return (
+            sys.executable
+            if value == "{python}"
+            else value.replace("{workspace}", root)
+        )
+
+    def expand_launcher(value: str) -> str:
+        prefix = "{workspace}/"
+        if value.startswith(prefix):
+            return value[len(prefix) :]
+        return expand(value)
+
+    argv = tuple(expand(item) for item in spec.argv)
+    launcher_entrypoint = (
+        expand_launcher(spec.launcher_entrypoint)
+        if spec.launcher_entrypoint
+        else ""
+    )
+    launcher_companions = tuple(
+        expand_launcher(item) for item in spec.launcher_companions
     )
     environment = (
         _sanitized_environment(spec.environment_allowlist)
@@ -4148,13 +4284,40 @@ def _build_verifier_plan(
         raise AssistantBridgeError(
             f"Verifier {spec.id} executable attestation failed."
         ) from None
-    artifacts = _launcher_artifact_digests(argv[1:], workspace=root)
+    try:
+        launcher_chain = _build_bridge_launcher_chain(
+            executable,
+            argv[1:],
+            entrypoint=launcher_entrypoint,
+            companions=launcher_companions,
+            workspace=root,
+            environment=environment,
+        )
+    except (AssistantBridgeError, AssistantBridgeRuntimeError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Verifier {spec.id} launcher-chain attestation failed."
+        ) from None
+    launcher_authority_sha256 = _launcher_chain_authority_sha256(
+        launcher_chain,
+        executable=executable,
+        workspace=root,
+        output_path="",
+        environment=environment,
+        ephemeral_workspace=True,
+        ephemeral_environment_keys=(),
+    )
+    artifacts = _launcher_artifact_authority_digests(
+        launcher_chain,
+        workspace=root,
+        ephemeral_workspace=True,
+    )
     semantic_argv = [item.replace(root, "<ephemeral-workspace>") for item in argv]
     payload = {
         "spec_sha256": spec.spec_sha256,
         "argv": semantic_argv,
         "executable": executable.binding_payload(),
         "environment_sha256": environment_sha256,
+        "launcher_authority_sha256": launcher_authority_sha256,
         "launcher_artifact_sha256": list(artifacts),
         "runtime_capabilities": runtime_capabilities().payload(),
         "runtime_policy": runtime_policy.payload(),
@@ -4164,6 +4327,8 @@ def _build_verifier_plan(
         argv=argv,
         executable_identity=executable,
         environment_sha256=environment_sha256,
+        launcher_chain=launcher_chain,
+        launcher_authority_sha256=launcher_authority_sha256,
         launcher_artifact_sha256=artifacts,
         plan_sha256=_sha256_text(_canonical_json(payload)),
         runtime_policy=runtime_policy,
@@ -4197,17 +4362,20 @@ def _run_bound_verifier(
         "plan_sha256": plan.plan_sha256,
         "environment_sha256": environment_sha256,
         "executable_fingerprint": plan.executable_identity.fingerprint,
+        "launcher_authority_sha256": current.launcher_authority_sha256,
+        "launcher_chain_fingerprint": current.launcher_chain.fingerprint,
         "launcher_artifact_sha256": list(plan.launcher_artifact_sha256),
     }
     try:
         outcome = execute_process(
-            plan.executable_identity,
+            current.executable_identity,
             current.argv[1:],
             stdin=b"",
             cwd=verifier_workspace,
             env=environment,
             timeout_seconds=plan.spec.timeout_seconds,
             policy=plan.runtime_policy.process_policy(stdin_limit_bytes=0),
+            launcher_chain=current.launcher_chain,
         )
         passed = outcome.ok
         code = "command_passed" if passed else f"command_{_safe_code(outcome.code)}"
@@ -4542,49 +4710,285 @@ def _validate_safe_extra_args(values: Sequence[str], *, provider_id: str) -> Non
         )
 
 
-def _launcher_artifact_digests(
-    values: Sequence[str],
+def _bridge_launcher_path(value: str, *, workspace: str | Path) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(workspace) / candidate
+    return Path(os.path.abspath(os.fspath(candidate)))
+
+
+def _validate_bridge_launcher_declarations(
     *,
+    entrypoint: str,
+    companions: Sequence[str],
     workspace: str | Path,
-) -> tuple[str, ...]:
-    artifacts: list[str] = []
-    base = Path(workspace)
-    for value in values:
-        candidate = Path(value).expanduser()
-        path_shaped = candidate.is_absolute() or len(candidate.parts) > 1
-        if not path_shaped:
-            continue
-        if not candidate.is_absolute():
-            candidate = base / candidate
-        if candidate.is_symlink():
-            raise AssistantBridgeError(
-                "A launcher artifact must not be a symbolic link."
-            )
-        if candidate.is_dir():
-            continue
+) -> None:
+    for value in ((entrypoint,) if entrypoint else ()) + tuple(companions):
+        candidate = _bridge_launcher_path(value, workspace=workspace)
         try:
-            resolved = candidate.resolve(strict=True)
+            metadata = candidate.lstat()
         except OSError:
             raise AssistantBridgeError(
-                "A path-shaped launcher artifact cannot be attested."
+                "A declared launcher artifact cannot be attested."
             ) from None
-        if not resolved.is_file():
+        if stat.S_ISLNK(metadata.st_mode):
             raise AssistantBridgeError(
-                "A launcher artifact must be a regular non-symlink file."
+                "A declared launcher artifact must not be a symbolic link."
             )
-        digest, size = _hash_file(resolved)
-        artifacts.append(
-            _sha256_text(
-                _canonical_json(
-                    {
-                        "path_sha256": _sha256_text(str(resolved)),
-                        "sha256": digest,
-                        "size": size,
-                    }
+        if not stat.S_ISREG(metadata.st_mode):
+            raise AssistantBridgeError(
+                "A declared launcher artifact must be a regular file."
+            )
+
+
+def _build_bridge_launcher_chain(
+    executable: ExecutableIdentity,
+    argv: Sequence[str],
+    *,
+    entrypoint: str,
+    companions: Sequence[str],
+    workspace: str | Path,
+    environment: Mapping[str, str],
+) -> LauncherChainIdentity:
+    _validate_bridge_launcher_declarations(
+        entrypoint=entrypoint,
+        companions=companions,
+        workspace=workspace,
+    )
+    return resolve_launcher_chain(
+        executable,
+        argv,
+        entrypoint=entrypoint or None,
+        companions=companions,
+        cwd=workspace,
+        env=environment,
+        strict=True,
+    )
+
+
+def _rebind_bridge_launcher_chain(
+    planned: LauncherChainIdentity,
+    executable: ExecutableIdentity,
+    argv: Sequence[str],
+    *,
+    workspace: str | Path,
+    environment: Mapping[str, str],
+) -> LauncherChainIdentity:
+    entrypoint = ""
+    if (
+        planned.entrypoint is not None
+        and planned.entrypoint.resolved_path != executable.resolved_path
+    ):
+        entrypoint = planned.entrypoint.requested_path
+    companions = tuple(item.requested_path for item in planned.companions)
+    return _build_bridge_launcher_chain(
+        executable,
+        argv,
+        entrypoint=entrypoint,
+        companions=companions,
+        workspace=workspace,
+        environment=environment,
+    )
+
+
+def _authority_environment(
+    environment: Mapping[str, str],
+    *,
+    ephemeral_keys: Sequence[str],
+) -> dict[str, object]:
+    normalized = dict(environment)
+    for key in ephemeral_keys:
+        normalized[key.upper() if os.name == "nt" else key] = (
+            "<ephemeral-runtime>"
+        )
+    return fingerprint_environment(normalized).payload()
+
+
+def _path_is_within(path: str, root: Path) -> bool:
+    try:
+        Path(path).relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _semantic_authority_path(
+    value: str,
+    *,
+    workspace: Path,
+    ephemeral_workspace: bool,
+) -> str:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    candidate = Path(os.path.abspath(os.fspath(candidate)))
+    if ephemeral_workspace and _path_is_within(str(candidate), workspace):
+        relative = candidate.relative_to(workspace)
+        if relative == Path("."):
+            return "<ephemeral-workspace>"
+        return f"<ephemeral-workspace>/{relative.as_posix()}"
+    return str(candidate)
+
+
+def _semantic_executable_payload(
+    identity: ExecutableIdentity | None,
+    *,
+    authority_environment: Mapping[str, object],
+) -> dict[str, object] | None:
+    if identity is None:
+        return None
+    payload = identity.binding_payload()
+    payload["resolution_environment"] = dict(authority_environment)
+    return payload
+
+
+def _semantic_launcher_artifact_payload(
+    identity: Any,
+    *,
+    workspace: Path,
+    ephemeral_workspace: bool,
+) -> dict[str, object]:
+    payload = identity.binding_payload()
+    internal = (
+        ephemeral_workspace
+        and not Path(identity.requested_path).expanduser().is_absolute()
+        and _path_is_within(identity.resolved_path, workspace)
+    )
+    if internal:
+        for key in ("requested_path", "launch_path", "resolved_path"):
+            payload[key] = _semantic_authority_path(
+                str(payload[key]),
+                workspace=workspace,
+                ephemeral_workspace=ephemeral_workspace,
+            )
+        for key in (
+            "device_id",
+            "inode",
+            "launch_path_binding_sha256",
+            "mtime_ns",
+        ):
+            payload.pop(key, None)
+    return payload
+
+
+def _semantic_launcher_argv(
+    argv: Sequence[str],
+    *,
+    workspace: Path,
+    output_path: str,
+    ephemeral_workspace: bool,
+) -> list[str]:
+    normalized = list(
+        _normalize_ephemeral_paths(
+            tuple(argv),
+            ephemeral_workspace=ephemeral_workspace,
+        )
+    )
+    if ephemeral_workspace:
+        root = str(workspace)
+        normalized = [
+            item.replace(root, "<ephemeral-workspace>") for item in normalized
+        ]
+    if output_path:
+        normalized = [
+            item.replace(output_path, "<ephemeral-output>") for item in normalized
+        ]
+    return normalized
+
+
+def _launcher_chain_authority_payload(
+    chain: LauncherChainIdentity,
+    *,
+    executable: ExecutableIdentity,
+    workspace: str | Path,
+    output_path: str,
+    environment: Mapping[str, str],
+    ephemeral_workspace: bool,
+    ephemeral_environment_keys: Sequence[str],
+) -> dict[str, object]:
+    root = Path(workspace).expanduser().resolve()
+    authority_environment = _authority_environment(
+        environment,
+        ephemeral_keys=ephemeral_environment_keys,
+    )
+    return {
+        "schema_version": chain.schema_version,
+        "executable": _semantic_executable_payload(
+            executable,
+            authority_environment=authority_environment,
+        ),
+        "argv": _semantic_launcher_argv(
+            chain.argv,
+            workspace=root,
+            output_path=output_path,
+            ephemeral_workspace=ephemeral_workspace,
+        ),
+        "cwd": (
+            "<ephemeral-workspace>" if ephemeral_workspace else chain.cwd
+        ),
+        "environment": authority_environment,
+        "entrypoint": (
+            None
+            if chain.entrypoint is None
+            else _semantic_launcher_artifact_payload(
+                chain.entrypoint,
+                workspace=root,
+                ephemeral_workspace=ephemeral_workspace,
+            )
+        ),
+        "interpreter": _semantic_executable_payload(
+            chain.interpreter,
+            authority_environment=authority_environment,
+        ),
+        "env_launcher": _semantic_executable_payload(
+            chain.env_launcher,
+            authority_environment=authority_environment,
+        ),
+        "companions": [
+            _semantic_launcher_artifact_payload(
+                item,
+                workspace=root,
+                ephemeral_workspace=ephemeral_workspace,
+            )
+            for item in chain.companions
+        ],
+        "shebang": list(chain.shebang),
+        "strict": chain.strict,
+    }
+
+
+def _launcher_chain_authority_sha256(
+    chain: LauncherChainIdentity,
+    **kwargs: Any,
+) -> str:
+    return _sha256_text(
+        _canonical_json(_launcher_chain_authority_payload(chain, **kwargs))
+    )
+
+
+def _launcher_artifact_authority_digests(
+    chain: LauncherChainIdentity,
+    *,
+    workspace: str | Path,
+    ephemeral_workspace: bool,
+) -> tuple[str, ...]:
+    root = Path(workspace).expanduser().resolve()
+    artifacts = (
+        (() if chain.entrypoint is None else (chain.entrypoint,))
+        + tuple(chain.companions)
+    )
+    return tuple(
+        _sha256_text(
+            _canonical_json(
+                _semantic_launcher_artifact_payload(
+                    item,
+                    workspace=root,
+                    ephemeral_workspace=ephemeral_workspace,
                 )
             )
         )
-    return tuple(artifacts)
+        for item in artifacts
+    )
 
 
 def _public_executable_payload(identity: ExecutableIdentity) -> dict[str, object]:
@@ -4675,6 +5079,7 @@ def _command_authority_sha256(plan: CommandPlan) -> str:
                 "executable_fingerprint": plan.executable_identity.fingerprint,
                 "runtime": _deep_thaw(plan.runtime),
                 "runtime_policy": plan.runtime_policy.payload(),
+                "launcher_authority_sha256": plan.launcher_authority_sha256,
                 "launcher_artifact_sha256": list(
                     plan.launcher_artifact_sha256
                 ),

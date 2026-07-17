@@ -293,6 +293,212 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
         self.assertNotEqual(first.command_sha256, second.command_sha256)
 
+    @unittest.skipIf(os.name == "nt", "POSIX env shebang fixture")
+    def test_direct_codex_shebang_chain_is_private_and_passed_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            launcher = root / "direct-codex-secret"
+            launcher.write_text(
+                "#!/usr/bin/env python3\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "argv = sys.argv[1:]\n"
+                "output = Path(argv[argv.index('--output-last-message') + 1])\n"
+                "sys.stdin.read()\n"
+                "output.write_text('VERIFIED', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            launcher.chmod(0o700)
+            provider = replace(
+                self.config.local,
+                executable=str(launcher),
+                launcher_args=(),
+                launcher_entrypoint="",
+                launcher_companions=(),
+            )
+            output = root / "final.txt"
+            plan = build_codex_command_plan(
+                provider,
+                prompt="private prompt",
+                workspace=root,
+                output_path=output,
+                runtime_policy=self.config.runtime,
+            )
+            rendered_chain = json.dumps(
+                plan.launcher_chain.payload(), sort_keys=True
+            )
+
+            with patch.object(
+                assistant_bridge_module,
+                "execute_process",
+                wraps=assistant_bridge_runtime.execute_process,
+            ) as execute:
+                result = execute_codex_command(
+                    plan,
+                    prompt="private prompt",
+                    output_path=output,
+                    timeout_seconds=10,
+                )
+
+        passed_chain = execute.call_args.kwargs["launcher_chain"]
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(execute.call_args.kwargs["policy"].require_launcher_chain)
+        self.assertEqual(passed_chain, plan.launcher_chain)
+        self.assertEqual(passed_chain.argv, plan.argv[1:])
+        self.assertIsNotNone(passed_chain.env_launcher)
+        self.assertIsNotNone(passed_chain.interpreter)
+        self.assertNotIn(str(root), rendered_chain)
+        self.assertNotIn(str(launcher), rendered_chain)
+        self.assertNotIn("#!/usr/bin/env python3", rendered_chain)
+        self.assertNotIn(os.environ.get("HOME", "<missing-home>"), rendered_chain)
+        self.assertNotIn(provider.model, rendered_chain)
+
+    def test_launcher_authority_is_semantic_across_ephemeral_roots_and_homes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+            roots = (Path(first_tmp), Path(second_tmp))
+            for root in roots:
+                _initialize_git(root)
+                (root / "launcher.py").write_text(
+                    "print('same launcher')\n", encoding="utf-8"
+                )
+            provider = replace(
+                self.config.local,
+                executable=sys.executable,
+                launcher_args=("launcher.py",),
+                launcher_entrypoint="launcher.py",
+                launcher_companions=(),
+            )
+            with patch.dict(os.environ, {"HOME": str(roots[0] / "home-a")}):
+                first = build_codex_command_plan(
+                    provider,
+                    prompt="semantic",
+                    workspace=roots[0],
+                    output_path=roots[0] / "out.txt",
+                    runtime_policy=self.config.runtime,
+                    ephemeral_workspace=True,
+                )
+            with patch.dict(os.environ, {"HOME": str(roots[1] / "home-b")}):
+                second = build_codex_command_plan(
+                    provider,
+                    prompt="semantic",
+                    workspace=roots[1],
+                    output_path=roots[1] / "out.txt",
+                    runtime_policy=self.config.runtime,
+                    ephemeral_workspace=True,
+                )
+
+            self.assertEqual(
+                first.launcher_authority_sha256,
+                second.launcher_authority_sha256,
+            )
+            self.assertNotEqual(
+                first.launcher_chain.fingerprint,
+                second.launcher_chain.fingerprint,
+            )
+            (roots[1] / "launcher.py").write_text(
+                "print('content drift')\n", encoding="utf-8"
+            )
+            drifted = build_codex_command_plan(
+                provider,
+                prompt="semantic",
+                workspace=roots[1],
+                output_path=roots[1] / "out.txt",
+                runtime_policy=self.config.runtime,
+                ephemeral_workspace=True,
+            )
+
+        self.assertNotEqual(
+            first.launcher_authority_sha256,
+            drifted.launcher_authority_sha256,
+        )
+
+    def test_launcher_chain_policy_and_declarations_fail_closed(self) -> None:
+        self.assertTrue(self.config.runtime.require_launcher_chain)
+        self.assertTrue(
+            self.config.runtime.process_policy().require_launcher_chain
+        )
+        with self.assertRaisesRegex(AssistantBridgeError, "launcher chains"):
+            replace(self.config.runtime, require_launcher_chain=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            script = root / "wrapper.py"
+            script.write_text("print('not launched')\n", encoding="utf-8")
+            undeclared = replace(
+                self.config.local,
+                executable=sys.executable,
+                launcher_args=("wrapper.py",),
+                launcher_entrypoint="",
+                launcher_companions=(),
+            )
+            with self.assertRaisesRegex(AssistantBridgeError, "attestation"):
+                build_codex_command_plan(
+                    undeclared,
+                    prompt="strict",
+                    workspace=root,
+                    runtime_policy=self.config.runtime,
+                )
+
+            link = root / "wrapper-link.py"
+            link.symlink_to(script.name)
+            linked = replace(
+                undeclared,
+                launcher_args=("wrapper-link.py",),
+                launcher_entrypoint="wrapper-link.py",
+            )
+            with self.assertRaisesRegex(AssistantBridgeError, "attestation"):
+                build_codex_command_plan(
+                    linked,
+                    prompt="strict",
+                    workspace=root,
+                    runtime_policy=self.config.runtime,
+                )
+
+    def test_entrypoint_drift_blocks_before_process_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            script = root / "wrapper.py"
+            script.write_text("print('planned')\n", encoding="utf-8")
+            provider = replace(
+                self.config.local,
+                executable=sys.executable,
+                launcher_args=("wrapper.py",),
+                launcher_entrypoint="wrapper.py",
+                launcher_companions=(),
+            )
+            output = root / "out.txt"
+            plan = build_codex_command_plan(
+                provider,
+                prompt="strict",
+                workspace=root,
+                output_path=output,
+                runtime_policy=self.config.runtime,
+            )
+            script.write_text("print('drifted')\n", encoding="utf-8")
+            reservations = 0
+
+            def reserve():
+                nonlocal reservations
+                reservations += 1
+                return None
+
+            result = execute_codex_command(
+                plan,
+                prompt="strict",
+                output_path=output,
+                timeout_seconds=10,
+                reserve_launch=reserve,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "runtime_attestation_failed")
+        self.assertEqual(reservations, 0)
+
     def test_provider_config_rejects_pre_confirmation_version_probes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw = json.loads(
@@ -350,49 +556,108 @@ class AssistantBridgeContractTests(unittest.TestCase):
             receipt.task["profile"] = "quality"  # type: ignore[index]
 
     def test_verifier_executes_the_exact_environment_bound_to_its_plan(self) -> None:
-        spec = assistant_bridge_module.CommandVerifierSpec(
-            id="environment-binding",
-            argv=(
-                sys.executable,
-                "-c",
-                (
-                    "import os,sys; "
-                    "sys.exit(os.environ.get('BRIDGE_TEST_MARKER') != 'first')"
-                ),
-            ),
-            timeout_seconds=10,
-            environment_allowlist=("BRIDGE_TEST_MARKER",),
-        )
-        task = build_assistant_task("Verify a bounded environment.")
-        workspace = attest_workspace(ROOT)
-        real_build = assistant_bridge_module._build_verifier_plan
-
-        with patch.dict(os.environ, {"BRIDGE_TEST_MARKER": "first"}):
-            plan = real_build(
-                spec,
-                workspace=ROOT,
-                runtime_policy=self.config.runtime,
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            verifier = root / "environment_verifier.py"
+            verifier.write_text(
+                "import os\n"
+                "raise SystemExit(\n"
+                "    os.environ.get('BRIDGE_TEST_MARKER') != 'first'\n"
+                ")\n",
+                encoding="utf-8",
             )
+            spec = assistant_bridge_module.CommandVerifierSpec(
+                id="environment-binding",
+                argv=(sys.executable, "{workspace}/environment_verifier.py"),
+                launcher_entrypoint="{workspace}/environment_verifier.py",
+                timeout_seconds=10,
+                environment_allowlist=("BRIDGE_TEST_MARKER",),
+            )
+            task = build_assistant_task("Verify a bounded environment.")
+            workspace = attest_workspace(root)
+            real_build = assistant_bridge_module._build_verifier_plan
 
-            def drift_after_binding(*args, **kwargs):
-                current = real_build(*args, **kwargs)
-                os.environ["BRIDGE_TEST_MARKER"] = "second"
-                return current
-
-            with patch.object(
-                assistant_bridge_module,
-                "_build_verifier_plan",
-                side_effect=drift_after_binding,
-            ):
-                evidence = assistant_bridge_module._run_bound_verifier(
-                    plan,
-                    task=task,
-                    workspace=workspace,
-                    verifier_workspace=ROOT,
+            with patch.dict(os.environ, {"BRIDGE_TEST_MARKER": "first"}):
+                plan = real_build(
+                    spec,
+                    workspace=root,
+                    runtime_policy=self.config.runtime,
                 )
+
+                def drift_after_binding(*args, **kwargs):
+                    current = real_build(*args, **kwargs)
+                    os.environ["BRIDGE_TEST_MARKER"] = "second"
+                    return current
+
+                with patch.object(
+                    assistant_bridge_module,
+                    "_build_verifier_plan",
+                    side_effect=drift_after_binding,
+                ), patch.object(
+                    assistant_bridge_module,
+                    "execute_process",
+                    wraps=assistant_bridge_runtime.execute_process,
+                ) as execute:
+                    evidence = assistant_bridge_module._run_bound_verifier(
+                        plan,
+                        task=task,
+                        workspace=workspace,
+                        verifier_workspace=root,
+                    )
 
         self.assertTrue(evidence.passed)
         self.assertEqual(evidence.code, "command_passed")
+        self.assertTrue(execute.call_args.kwargs["policy"].require_launcher_chain)
+        self.assertIsNotNone(execute.call_args.kwargs["launcher_chain"])
+
+    def test_verifier_rebuilds_exact_chain_in_disposable_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+            roots = (Path(first_tmp), Path(second_tmp))
+            for root in roots:
+                _initialize_git(root)
+                (root / "verifier.py").write_text(
+                    "print('verified')\n", encoding="utf-8"
+                )
+            spec = assistant_bridge_module.CommandVerifierSpec(
+                id="disposable-chain",
+                argv=(sys.executable, "{workspace}/verifier.py"),
+                launcher_entrypoint="{workspace}/verifier.py",
+                timeout_seconds=10,
+            )
+            plan = assistant_bridge_module._build_verifier_plan(
+                spec,
+                workspace=roots[0],
+                runtime_policy=self.config.runtime,
+            )
+            with patch.object(
+                assistant_bridge_module,
+                "execute_process",
+                wraps=assistant_bridge_runtime.execute_process,
+            ) as execute:
+                evidence = assistant_bridge_module._run_bound_verifier(
+                    plan,
+                    task=build_assistant_task("Verify disposable copy."),
+                    workspace=attest_workspace(roots[0]),
+                    verifier_workspace=roots[1],
+                )
+
+        current = execute.call_args.kwargs["launcher_chain"]
+        self.assertTrue(evidence.passed)
+        self.assertEqual(current.cwd, str(roots[1].resolve()))
+        self.assertNotEqual(current.fingerprint, plan.launcher_chain.fingerprint)
+        self.assertEqual(
+            assistant_bridge_module._launcher_chain_authority_sha256(
+                current,
+                executable=execute.call_args.args[0],
+                workspace=roots[1],
+                output_path="",
+                environment=execute.call_args.kwargs["env"],
+                ephemeral_workspace=True,
+                ephemeral_environment_keys=(),
+            ),
+            plan.launcher_authority_sha256,
+        )
 
     def test_provider_and_verifier_deny_environment_injection_variables(
         self,
@@ -984,6 +1249,31 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
 
         self.assertEqual(recovered.status, "completed")
         self.assertEqual([item["mode"] for item in invocations], ["premium"])
+
+    def test_premium_launcher_drift_is_rejected_before_budget_reservation(
+        self,
+    ) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            launcher = Path(fixture.config.premium.launcher_entrypoint)
+            launcher.write_text(
+                launcher.read_text(encoding="utf-8") + "\n# content drift\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                fixture.runner,
+                "_reserve_budget",
+                wraps=fixture.runner._reserve_budget,
+            ) as reserve, self.assertRaises(AssistantBridgeError):
+                fixture.runner.run(
+                    task,
+                    workspace=fixture.root,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+
+        self.assertEqual(reserve.call_count, 0)
 
     def test_premium_auth_mismatch_does_not_consume_budget(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -1609,9 +1899,11 @@ def _fake_bridge(
     process_proxy: bool = False,
 ):
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
+        fixture_root = Path(tmp)
+        root = fixture_root / "workspace"
+        root.mkdir()
         _initialize_git(root)
-        launcher = root / "fake_codex.py"
+        launcher = fixture_root / "fake_codex.py"
         launcher.write_text(
             """from __future__ import annotations
 import json
@@ -1663,7 +1955,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         process_executable = sys.executable
         if process_proxy:
             process_log = root / "process-probe.log"
-            proxy = root / "python_proxy.py"
+            proxy = fixture_root / "python_proxy.py"
             proxy.write_text(
                 f"#!{sys.executable}\n"
                 "from pathlib import Path\n"
@@ -1689,6 +1981,41 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         raw["providers"]["local"]["launcher_args"] = launcher_args
         raw["providers"]["premium"]["executable"] = process_executable
         raw["providers"]["premium"]["launcher_args"] = [str(launcher)]
+        local_uses_fixture_launcher = local_launcher_args is None
+        local_uses_direct_proxy = process_proxy and executable == process_executable
+        raw["providers"]["local"]["launcher_entrypoint"] = (
+            str(launcher)
+            if local_uses_fixture_launcher and not local_uses_direct_proxy
+            else ""
+        )
+        raw["providers"]["local"]["launcher_companions"] = (
+            [str(launcher)]
+            if local_uses_fixture_launcher and local_uses_direct_proxy
+            else []
+        )
+        raw["providers"]["premium"]["launcher_entrypoint"] = (
+            "" if process_proxy else str(launcher)
+        )
+        raw["providers"]["premium"]["launcher_companions"] = (
+            [str(launcher)] if process_proxy else []
+        )
+        verifier = root / "fixture_task_verifier.py"
+        verifier.write_text(
+            "from pathlib import Path\n"
+            "import os\n"
+            "relative = os.environ.get('FAKE_WRITE_RELATIVE', '')\n"
+            "expected = os.environ.get('FAKE_VERIFIER_EXPECT_CONTENT', '')\n"
+            "delta_visible = (\n"
+            "    not relative\n"
+            "    or Path(relative).read_text(encoding='utf-8') == expected\n"
+            ")\n"
+            "raise SystemExit(\n"
+            "    int(os.environ.get('FAKE_VERIFIER_EXIT', '0'))\n"
+            "    if delta_visible\n"
+            "    else 91\n"
+            ")\n",
+            encoding="utf-8",
+        )
         allowed_env = [
             "FAKE_CODEX_LOG",
             "FAKE_EXIT_CODE",
@@ -1721,13 +2048,16 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
                 "id": "fixture-task-verifier",
                 "argv": [
                     process_executable,
-                    "-c",
-                    "from pathlib import Path; import os; "
-                    "relative=os.environ.get('FAKE_WRITE_RELATIVE', ''); "
-                    "expected=os.environ.get('FAKE_VERIFIER_EXPECT_CONTENT', ''); "
-                    "delta_visible=(not relative or Path(relative).read_text(encoding='utf-8') == expected); "
-                    "raise SystemExit(int(os.environ.get('FAKE_VERIFIER_EXIT', '0')) if delta_visible else 91)",
+                    "{workspace}/fixture_task_verifier.py",
                 ],
+                "launcher_entrypoint": (
+                    "" if process_proxy else "{workspace}/fixture_task_verifier.py"
+                ),
+                "launcher_companions": (
+                    ["{workspace}/fixture_task_verifier.py"]
+                    if process_proxy
+                    else []
+                ),
                 "timeout_seconds": 30,
                 "purpose": "task",
                 "execution_boundary": "disposable_workspace",
