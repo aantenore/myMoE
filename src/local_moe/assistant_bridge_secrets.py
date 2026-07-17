@@ -612,7 +612,15 @@ def _redact_residual_lines(
                 )
             secrets.add(secret)
         redacted_line = line
-        for secret in sorted(secrets, key=len, reverse=True):
+        # Several detectors can report overlapping fragments for the same
+        # credential.  Keep only maximal values so a short fragment such as
+        # ``e`` cannot recursively redact the replacement text itself.
+        maximal = {
+            secret
+            for secret in secrets
+            if not any(secret != other and secret in other for other in secrets)
+        }
+        for secret in sorted(maximal, key=len, reverse=True):
             replacements = redacted_line.count(secret)
             if replacements:
                 redacted_line = redacted_line.replace(secret, replacement)

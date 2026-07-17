@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import local_moe.assistant_bridge as assistant_bridge_module
 from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
@@ -27,6 +28,10 @@ from local_moe.assistant_bridge import (
     plan_assistant_route,
 )
 from local_moe.app_config import load_app_config
+from local_moe.assistant_bridge_workspace import (
+    WorkspaceScopePolicy,
+    snapshot_workspace,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,6 +228,32 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertEqual(plan.sandbox, "read-only")
         self.assertIn("sandbox_workspace_write.network_access=false", plan.argv)
 
+    def test_command_plan_payload_hides_executable_path_and_version_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = "private-version-material"
+            executable = Path(tmp) / f"tool-{secret}"
+            executable.write_text(
+                f"#!/bin/sh\necho '{secret}'\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o700)
+            provider = replace(
+                self.config.local,
+                executable=str(executable),
+                launcher_args=(),
+            )
+            plan = build_codex_command_plan(
+                provider,
+                prompt="safe",
+                workspace=ROOT,
+                runtime_policy=self.config.runtime,
+            )
+
+        rendered = json.dumps(plan.payload(), sort_keys=True)
+        self.assertNotIn(str(executable), rendered)
+        self.assertNotIn(secret, rendered)
+        self.assertIn(plan.executable_identity.sha256, rendered)
+
     def test_dangerous_extra_args_are_rejected(self) -> None:
         for value in (
             "--dangerously-bypass-approvals-and-sandbox",
@@ -361,6 +392,175 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
 
 class AssistantBridgeExecutionTests(unittest.TestCase):
+    def test_write_local_candidate_is_verified_then_applied_to_source(self) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                write_relative="tracked.txt",
+                write_content="verified-candidate\n",
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            result = fixture.run(task)
+            source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(source, "verified-candidate\n")
+
+    def test_failed_task_verifier_never_applies_candidate(self) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                verifier_exit=1,
+                write_relative="tracked.txt",
+                write_content="must-not-apply\n",
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            result = fixture.run(task)
+            source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(source, "initial\n")
+
+    def test_read_only_mutation_is_rejected_and_discarded(self) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(fixture, write_relative="forbidden.txt"),
+        ):
+            task = build_assistant_task("Inspect only.", profile="offline")
+            result = fixture.run(task)
+            leaked = (fixture.root / "forbidden.txt").exists()
+
+        self.assertEqual(result.code, "workspace_authority_violated")
+        self.assertFalse(leaked)
+
+    def test_source_drift_before_apply_is_never_overwritten(self) -> None:
+        real_apply = assistant_bridge_module.apply_changeset
+
+        def drift_then_apply(**kwargs):
+            source = Path(kwargs["source_snapshot"].root)
+            (source / "tracked.txt").write_text(
+                "concurrent-source-change\n", encoding="utf-8"
+            )
+            return real_apply(**kwargs)
+
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                write_relative="tracked.txt",
+                write_content="candidate-must-not-win\n",
+            ),
+            patch.object(
+                assistant_bridge_module,
+                "apply_changeset",
+                side_effect=drift_then_apply,
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            with self.assertRaisesRegex(AssistantBridgeError, "changed after"):
+                fixture.run(task)
+            source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(source, "concurrent-source-change\n")
+
+    def test_confirmation_ticket_is_one_shot(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Inspect only.", profile="offline")
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            token = str(plan["confirmation_id"])
+            first = fixture.runner.run(
+                task, workspace=fixture.root, confirmation=token
+            )
+            with self.assertRaisesRegex(AssistantBridgeError, "consumed"):
+                fixture.runner.run(task, workspace=fixture.root, confirmation=token)
+
+        self.assertEqual(first.status, "completed")
+
+    def test_auth_unavailable_downgrades_balanced_but_blocks_quality(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            auth = Path(os.environ["CODEX_HOME"]) / "auth.json"
+            auth.unlink()
+            balanced = fixture.runner.plan(
+                build_assistant_task("Use local first."), workspace=fixture.root
+            )
+            quality = fixture.runner.plan(
+                build_assistant_task("Use premium.", profile="quality"),
+                workspace=fixture.root,
+            )
+
+        self.assertEqual(balanced["route_receipt"]["route"], "local")
+        self.assertIn(
+            "premium_auth_unavailable",
+            balanced["route_receipt"]["rationale_codes"],
+        )
+        self.assertEqual(quality["route_receipt"]["route"], "blocked")
+
+    def test_unknown_task_verifier_is_rejected_before_launch(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task(
+                "Change code.",
+                profile="offline",
+                risk_class="write_local",
+                required_verifier_ids=("unknown-verifier",),
+            )
+            with self.assertRaisesRegex(AssistantBridgeError, "Unknown required"):
+                fixture.runner.plan(task, workspace=fixture.root)
+
+        self.assertEqual(_read_jsonl(fixture.log), [])
+
+    def test_node_like_write_without_selected_task_verifier_stays_unverified(
+        self,
+    ) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(fixture, write_relative="src/index.js"),
+        ):
+            (fixture.root / "package.json").write_text(
+                '{"scripts":{"test":"node --test"}}', encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "add", "package.json"], cwd=fixture.root, check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "node fixture"],
+                cwd=fixture.root,
+                check=True,
+            )
+            task = build_assistant_task(
+                "Change the Node source.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+            )
+            result = fixture.run(task)
+
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(
+            any(item.code == "verification_required" for item in result.verification)
+        )
+
     def test_quality_profile_executes_the_exact_confirmed_premium_plan(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
             result = fixture.run(
@@ -386,6 +586,8 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                 "Make a bounded local change.",
                 required_capabilities=("code",),
                 risk_class="write_local",
+                no_change_expected=True,
+                required_verifier_ids=("fixture-task-verifier",),
                 allow_remote=True,
                 allow_remote_workspace=True,
             )
@@ -518,12 +720,10 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                     local_launcher_args=(),
                 ) as fixture,
                 _fake_environment(fixture),
+                self.assertRaisesRegex(AssistantBridgeError, "attestation"),
             ):
                 task = build_assistant_task("Keep this local-first.", allow_remote=True)
-                result = fixture.run(task)
-
-            self.assertEqual(result.status, "blocked")
-            self.assertEqual(result.code, "local_launcher_unavailable")
+                fixture.run(task)
 
     def test_shell_shaped_objective_is_stdin_only_and_environment_is_sanitized(
         self,
@@ -661,7 +861,7 @@ class AssistantBridgeCliTests(unittest.TestCase):
 
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["route_receipt"]["route"], "local_then_verify")
-        self.assertTrue(str(payload["confirmation_id"]).startswith("confirm-"))
+        self.assertTrue(str(payload["confirmation_id"]).startswith("confirm-v2-"))
         self.assertNotIn("Refactor the parser", completed.stdout)
 
     def test_cli_execute_requires_exact_receipt_not_boolean(self) -> None:
@@ -743,14 +943,16 @@ class AssistantBridgeCliTests(unittest.TestCase):
                 plan,
                 profile="offline",
             )
+            audit = _read_jsonl(fixture.root / "runtime" / "audit.jsonl")
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("policy disables", completed.stderr)
+        self.assertEqual([event["status"] for event in audit], ["denied"])
 
     def test_cli_records_failed_terminal_audit_when_receipt_is_rejected(self) -> None:
         with _fake_bridge() as fixture:
             plan = _run_cli_plan(fixture, "Run a safe task.", profile="offline")
-            plan["confirmation_id"] = f"confirm-{'0' * 64}"
+            plan["confirmation_id"] = f"confirm-v2-{'A' * 43}"
             completed = _run_cli_execution(
                 fixture,
                 "Run a safe task.",
@@ -854,6 +1056,12 @@ output_bytes = int(os.environ.get("FAKE_OUTPUT_BYTES", "0"))
 if output_bytes:
     content = "V" * output_bytes
 output_path.write_text(content, encoding="utf-8")
+write_relative = os.environ.get("FAKE_WRITE_RELATIVE")
+if write_relative:
+    workspace = Path(argv[argv.index("--cd") + 1])
+    target = workspace / write_relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(os.environ.get("FAKE_WRITE_CONTENT", "candidate-change\\n"), encoding="utf-8")
 log_path = Path(os.environ["FAKE_CODEX_LOG"])
 with log_path.open("a", encoding="utf-8") as handle:
     handle.write(
@@ -896,6 +1104,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             "FAKE_OUTPUT_BYTES",
             "FAKE_PREMIUM_OUTPUT",
             "FAKE_STDOUT_BYTES",
+            "FAKE_VERIFIER_EXIT",
+            "FAKE_WRITE_CONTENT",
+            "FAKE_WRITE_RELATIVE",
         ]
         raw["providers"]["local"]["environment_allowlist"] = allowed_env
         raw["providers"]["premium"]["environment_allowlist"] = allowed_env
@@ -907,7 +1118,30 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             },
             *raw["verification"]["output_checks"][1:],
         ]
-        raw["state"]["budget_ledger_path"] = str(root / "runtime" / "budget.json")
+        raw["state"]["ledger_path"] = str(root / "runtime" / "bridge-state.json")
+        raw["state"]["namespace"] = "fixture-assistant-bridge"
+        raw["workspace"]["transaction_state_dir"] = str(
+            root / "runtime" / "transactions"
+        )
+        raw["verification"]["command_verifiers"] = [
+            *raw["verification"]["command_verifiers"],
+            {
+                "id": "fixture-task-verifier",
+                "argv": [
+                    sys.executable,
+                    "-c",
+                    "import os; raise SystemExit(int(os.environ.get('FAKE_VERIFIER_EXIT', '0')))",
+                ],
+                "timeout_seconds": 30,
+                "purpose": "task",
+                "execution_boundary": "disposable_workspace",
+                "network_policy": "not_enforced",
+                "environment_allowlist": ["FAKE_VERIFIER_EXIT"],
+                "required_for_capabilities": [],
+                "required_for_tools": [],
+                "required_for_risks": [],
+            },
+        ]
         config_path = root / "assistant-bridge.json"
         config_path.write_text(json.dumps(raw), encoding="utf-8")
 
@@ -917,12 +1151,18 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         app_raw["runtime"]["work_dir"] = str(root / "runtime")
         app_config_path = root / "app.json"
         app_config_path.write_text(json.dumps(app_raw), encoding="utf-8")
-        yield _FakeBridgeFixture(
-            root,
-            config_path,
-            app_config_path,
-            root / "invocations.jsonl",
+        auth_home = root / "runtime" / "codex-home"
+        auth_home.mkdir(parents=True)
+        (auth_home / "auth.json").write_text(
+            '{"fixture":"credential"}', encoding="utf-8"
         )
+        with patch.dict(os.environ, {"CODEX_HOME": str(auth_home)}):
+            yield _FakeBridgeFixture(
+                root,
+                config_path,
+                app_config_path,
+                root / "invocations.jsonl",
+            )
 
 
 @contextmanager
@@ -933,6 +1173,9 @@ def _fake_environment(
     premium_output: str = "VERIFIED remotely",
     output_bytes: int = 0,
     stdout_bytes: int = 0,
+    verifier_exit: int = 0,
+    write_relative: str = "",
+    write_content: str = "candidate-change\n",
 ):
     with patch.dict(
         os.environ,
@@ -942,6 +1185,9 @@ def _fake_environment(
             "FAKE_PREMIUM_OUTPUT": premium_output,
             "FAKE_OUTPUT_BYTES": str(output_bytes),
             "FAKE_STDOUT_BYTES": str(stdout_bytes),
+            "FAKE_VERIFIER_EXIT": str(verifier_exit),
+            "FAKE_WRITE_RELATIVE": write_relative,
+            "FAKE_WRITE_CONTENT": write_content,
             "FAKE_EXIT_CODE": "0",
         },
     ):
@@ -982,7 +1228,9 @@ def _initialize_git(root: Path) -> None:
 
 
 def _external_evidence(task, workspace: Path, *, passed: bool) -> VerificationEvidence:
-    workspace_fingerprint = attest_workspace(workspace).fingerprint
+    workspace_fingerprint = snapshot_workspace(
+        workspace, WorkspaceScopePolicy()
+    ).manifest_sha256
     code = "tests-passed" if passed else "tests-failed"
     return VerificationEvidence(
         id="focused-tests",

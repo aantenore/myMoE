@@ -301,7 +301,21 @@ def main() -> None:
                     )
                 )
                 return
-            _validate_assistant_bridge_authority(app_config, task)
+            authority_receipt = bridge.inspect_route(
+                task,
+                workspace=args.assistant_workspace,
+                local_provider_override=args.assistant_local_provider,
+                external_evidence=external_evidence,
+                include_diff=args.assistant_include_diff,
+                capsule_out=args.assistant_capsule_out,
+            )
+            try:
+                _validate_assistant_bridge_authority(
+                    app_config, task, authority_receipt.route
+                )
+            except AssistantBridgeError as exc:
+                _record_assistant_bridge_denied(app_config, task, exc)
+                raise
             _record_assistant_bridge_started(
                 app_config,
                 task,
@@ -1669,9 +1683,31 @@ def _record_assistant_bridge_failed(
     )
 
 
+def _record_assistant_bridge_denied(
+    app_config: object,
+    task: AssistantTaskEnvelope,
+    error: Exception,
+) -> None:
+    AuditLogStore(_audit_log_path(app_config)).record(
+        "assistant_bridge.execute",
+        "denied",
+        risk_class=task.capability_demand.risk_class,
+        subject=task.task_id,
+        metadata={
+            "task_fingerprint": task.task_fingerprint,
+            "error_type": type(error).__name__,
+            "error_message_sha256": hashlib.sha256(
+                str(error).encode("utf-8")
+            ).hexdigest(),
+            "content_logged": False,
+        },
+    )
+
+
 def _validate_assistant_bridge_authority(
     app_config: object,
     task: AssistantTaskEnvelope,
+    route: str,
 ) -> None:
     execution_policy = (
         str(
@@ -1693,13 +1729,10 @@ def _validate_assistant_bridge_authority(
         "hybrid_receipt_confirmation",
     }:
         raise AssistantBridgeError("Application Assistant Bridge policy is invalid.")
-    remote_possible = (
-        task.profile != "offline"
-        and task.allow_remote is not False
-        and (task.profile != "privacy" or task.allow_remote is True)
-        and task.budget.max_premium_calls != 0
-    )
-    if execution_policy == "local_only" and remote_possible:
+    if execution_policy == "local_only" and route in {
+        "local_then_verify",
+        "premium",
+    }:
         raise AssistantBridgeError(
             "Application local_only policy forbids a route that can invoke premium execution."
         )

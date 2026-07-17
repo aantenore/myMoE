@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
-import hmac
 import json
 import math
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 from types import MappingProxyType
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -47,6 +45,8 @@ from .assistant_bridge_workspace import (
     MaterializedWorkspace,
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
+    WorkspaceChange,
+    WorkspaceFile,
     WorkspaceSnapshot,
     apply_changeset,
     build_changeset,
@@ -91,31 +91,6 @@ _BASE_ENV_KEYS = {
     "TMPDIR",
     "WINDIR",
 }
-_SECRET_PATTERNS = (
-    re.compile(r"(?i)\b(bearer\s+)[^\s,;]+"),
-    re.compile(r"(?i)\b(basic\s+)[A-Za-z0-9+/=]{8,}"),
-    re.compile(
-        r"""(?imx)
-        (^|[,{\s])
-        (["']?[A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)[A-Z0-9_.-]*["']?)
-        \s*[:=]\s*
-        (?:"[^"]*"|'[^']*'|[^\r\n,;}]+)
-        """
-    ),
-    re.compile(
-        r"(?i)([?&](?:api[_-]?key|access[_-]?token|token|secret|password)=)[^&#\s]+"
-    ),
-    re.compile(r"(?i)(https?://[^:/\s]+:)[^@/\s]+@"),
-    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
-    re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,}|gh[a-z]_[A-Za-z0-9]{12,})\b"),
-    re.compile(
-        r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
-        flags=re.DOTALL,
-    ),
-)
-
-
 class AssistantBridgeError(ValueError):
     """Raised when a bridge contract, policy, or binding is invalid."""
 
@@ -1008,11 +983,42 @@ class CommandPlan:
             "model": self.model,
             "local_provider": self.local_provider or None,
             "environment_keys": list(self.environment_allowlist),
-            "executable": self.executable_identity.payload(),
+            "executable": _public_executable_payload(self.executable_identity),
             "environment_sha256": self.environment_sha256,
             "runtime": _deep_thaw(self.runtime),
             "runtime_policy": self.runtime_policy.payload(),
             "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
+        }
+
+
+@dataclass(frozen=True)
+class BoundVerifierPlan:
+    spec: CommandVerifierSpec
+    argv: tuple[str, ...] = field(repr=False)
+    executable_identity: ExecutableIdentity = field(repr=False)
+    environment_sha256: str
+    launcher_artifact_sha256: tuple[str, ...]
+    plan_sha256: str
+    runtime_policy: BridgeRuntimePolicy = field(repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(
+            self, "launcher_artifact_sha256", tuple(self.launcher_artifact_sha256)
+        )
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "id": self.spec.id,
+            "purpose": self.spec.purpose,
+            "spec_sha256": self.spec.spec_sha256,
+            "plan_sha256": self.plan_sha256,
+            "executable": _public_executable_payload(self.executable_identity),
+            "environment_sha256": self.environment_sha256,
+            "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
+            "execution_boundary": self.spec.execution_boundary,
+            "network_policy": self.spec.network_policy,
+            "runtime_policy": self.runtime_policy.payload(),
         }
 
 
@@ -1056,6 +1062,21 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
+class PremiumAuthAttestation:
+    source_path: str = field(repr=False)
+    sha256: str = field(repr=False)
+    size_bytes: int
+    content: bytes | None = field(default=None, repr=False)
+
+    def binding_payload(self) -> dict[str, object]:
+        return {
+            "source_path_sha256": _sha256_text(self.source_path),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+        }
+
+
+@dataclass(frozen=True)
 class EscalationCapsule:
     capsule_id: str
     task_id: str
@@ -1070,6 +1091,8 @@ class EscalationCapsule:
     failure_codes: tuple[str, ...]
     diff: DiffEvidence = field(repr=False)
     redaction_count: int
+    residual_assured: bool
+    residual_detector: str
     truncated: bool
 
     def __post_init__(self) -> None:
@@ -1094,6 +1117,8 @@ class EscalationCapsule:
             "diff": self.diff.payload(),
             "redaction": {
                 "count": self.redaction_count,
+                "residual_assured": self.residual_assured,
+                "residual_detector": self.residual_detector,
                 "truncated": self.truncated,
             },
             "excluded": [
@@ -1117,6 +1142,8 @@ class EscalationCapsule:
             "failure_codes": list(self.failure_codes),
             "diff_sha256": self.diff.sha256 or None,
             "redaction_count": self.redaction_count,
+            "residual_assured": self.residual_assured,
+            "residual_detector": self.residual_detector,
             "truncated": self.truncated,
             "content_in_metadata": False,
         }
@@ -1164,93 +1191,6 @@ class BridgeRunResult:
                 "characters": len(self.final_output),
             },
         }
-
-
-class PremiumBudgetLedger:
-    """Cross-process, fail-closed call accounting using an atomic directory lock."""
-
-    def __init__(self, path: str | Path):
-        self.path = Path(path).expanduser().resolve()
-        self._thread_lock = threading.Lock()
-
-    def consume(self, key: str, limit: int) -> bool:
-        if limit <= 0:
-            return False
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._thread_lock, self._file_lock():
-            data = self._read()
-            used = data.get(key, 0)
-            if isinstance(used, bool) or not isinstance(used, int) or used < 0:
-                raise AssistantBridgeError(
-                    "Premium budget ledger contains invalid state."
-                )
-            if used >= limit:
-                return False
-            data[key] = used + 1
-            self._write(data)
-            return True
-
-    @contextmanager
-    def _file_lock(self) -> Iterator[None]:
-        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        deadline = time.monotonic() + 5.0
-        while True:
-            try:
-                lock_path.mkdir(mode=0o700)
-                break
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    raise AssistantBridgeError("Premium budget ledger is busy.")
-                time.sleep(0.02)
-            except OSError as exc:
-                raise AssistantBridgeError(
-                    "Could not lock premium budget ledger."
-                ) from exc
-        try:
-            yield
-        finally:
-            try:
-                lock_path.rmdir()
-            except OSError:
-                pass
-
-    def _read(self) -> dict[str, int]:
-        if not self.path.exists():
-            return {}
-        try:
-            if self.path.stat().st_size > _MAX_JSON_BYTES:
-                raise AssistantBridgeError(
-                    "Premium budget ledger exceeds its size limit."
-                )
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise AssistantBridgeError("Could not read premium budget ledger.") from exc
-        if not isinstance(raw, dict) or set(raw).difference(
-            {"schema_version", "usage"}
-        ):
-            raise AssistantBridgeError("Premium budget ledger has an invalid contract.")
-        usage = raw.get("usage", {})
-        if not isinstance(usage, dict):
-            raise AssistantBridgeError("Premium budget ledger usage must be an object.")
-        return {str(key): value for key, value in usage.items()}
-
-    def _write(self, usage: Mapping[str, int]) -> None:
-        payload = {
-            "schema_version": BRIDGE_SCHEMA_VERSION,
-            "usage": dict(sorted(usage.items())),
-        }
-        temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        try:
-            temp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-            try:
-                temp.chmod(0o600)
-            except OSError:
-                pass
-            temp.replace(self.path)
-        except OSError as exc:
-            raise AssistantBridgeError(
-                "Could not persist premium budget ledger."
-            ) from exc
 
 
 def load_assistant_task(path: str | Path) -> AssistantTaskEnvelope:
@@ -1672,14 +1612,35 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
     )
 
 
+def _receipt_workspace_attestation(snapshot: WorkspaceSnapshot) -> WorkspaceAttestation:
+    return WorkspaceAttestation(
+        root=snapshot.root,
+        fingerprint=snapshot.manifest_sha256,
+        git_repository=snapshot.git_repository,
+        head_sha=snapshot.head_sha,
+        status_sha256=snapshot.status_sha256,
+        staged_diff_sha256=snapshot.index_sha256,
+        unstaged_diff_sha256=snapshot.manifest_sha256,
+        untracked_manifest_sha256=snapshot.manifest_sha256,
+        tracked_change_count=(len(snapshot.files) if snapshot.git_repository else 0),
+        untracked_count=(0 if snapshot.git_repository else len(snapshot.files)),
+    )
+
+
 def plan_assistant_route(
     task: AssistantTaskEnvelope,
     config: AssistantBridgeConfig,
     *,
     workspace: str | Path = ".",
     local_provider_override: str | None = None,
+    workspace_snapshot: WorkspaceSnapshot | None = None,
 ) -> RouteDecisionReceipt:
-    workspace_attestation = attest_workspace(workspace)
+    if workspace_snapshot is None:
+        try:
+            workspace_snapshot = snapshot_workspace(workspace, config.workspace.scope)
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+    workspace_attestation = _receipt_workspace_attestation(workspace_snapshot)
     profile = config.profiles[task.profile]
     local_gaps = provider_gaps(config.local, task)
     premium_gaps = provider_gaps(config.premium, task)
@@ -1842,7 +1803,7 @@ def provider_gaps(
     return tuple(sorted(set(gaps)))
 
 
-def confirmation_id(
+def _confirmation_binding_sha256(
     receipt: RouteDecisionReceipt,
     execution_binding: Mapping[str, object],
 ) -> str:
@@ -1856,7 +1817,7 @@ def confirmation_id(
         "premium_runtime": _deep_thaw(receipt.premium_runtime),
         "execution_binding": _deep_thaw(execution_binding),
     }
-    return f"confirm-{_sha256_text(_canonical_json(payload))}"
+    return _sha256_text(_canonical_json(payload))
 
 
 def build_local_prompt(task: AssistantTaskEnvelope) -> str:
@@ -2041,6 +2002,7 @@ def build_codex_command_plan(
     local_provider_override: str | None = None,
     workspace_access: str | None = None,
     runtime_policy: BridgeRuntimePolicy | None = None,
+    ephemeral_workspace: bool = False,
 ) -> CommandPlan:
     demand = demand or CapabilityDemand()
     selected_runtime_policy = runtime_policy or BridgeRuntimePolicy()
@@ -2129,7 +2091,9 @@ def build_codex_command_plan(
     argv.append("-")
     semantic_argv = _normalize_ephemeral_paths(
         tuple(argv),
-        capsule_workspace=effective_workspace_access == "capsule_only",
+        ephemeral_workspace=(
+            ephemeral_workspace or effective_workspace_access == "capsule_only"
+        ),
     )
     command_payload = {
         "provider_id": provider.id,
@@ -2137,8 +2101,8 @@ def build_codex_command_plan(
         "argv": list(semantic_argv),
         "stdin_sha256": _sha256_text(prompt),
         "workspace_sha256": (
-            _sha256_text("capsule_only")
-            if effective_workspace_access == "capsule_only"
+            _sha256_text("ephemeral_workspace")
+            if ephemeral_workspace or effective_workspace_access == "capsule_only"
             else _sha256_text(resolved_workspace)
         ),
         "sandbox": sandbox,
@@ -2236,11 +2200,12 @@ def execute_codex_command(
             command_sha256=plan.command_sha256,
         )
     status = "completed" if outcome.ok else "failed"
-    code = (
-        "launcher_completed"
-        if status == "completed"
-        else f"launcher_{_safe_code(outcome.code)}"
-    )
+    if status == "completed":
+        code = "launcher_completed"
+    elif outcome.code in {"stdout_limit_exceeded", "stderr_limit_exceeded"}:
+        code = "launcher_output_limit_exceeded"
+    else:
+        code = f"launcher_{_safe_code(outcome.code)}"
     output = ""
     if status == "completed":
         try:
@@ -2359,6 +2324,7 @@ def verify_command_result(
     workspace: WorkspaceAttestation,
     external_evidence: Sequence[VerificationEvidence] = (),
     verifier_workspace: str | Path,
+    verifier_plans: Sequence[BoundVerifierPlan] = (),
 ) -> tuple[VerificationEvidence, ...]:
     evidence: list[VerificationEvidence] = []
     if result.status != "completed":
@@ -2398,23 +2364,27 @@ def verify_command_result(
             )
         )
 
-    for spec in config.command_verifiers:
-        if spec.applies_to(task.capability_demand):
-            evidence.append(
-                _run_command_verifier(
-                    spec,
-                    task=task,
-                    workspace=workspace,
-                    verifier_workspace=verifier_workspace,
-                )
+    for plan in verifier_plans:
+        evidence.append(
+            _run_bound_verifier(
+                plan,
+                task=task,
+                workspace=workspace,
+                verifier_workspace=verifier_workspace,
             )
+        )
 
     for item in external_evidence:
         _validate_external_evidence(item, config, task, workspace)
         evidence.append(item)
 
     if _requires_independent_evidence(task.capability_demand, config) and not any(
-        item.kind in {"command", "external"} and item.passed for item in evidence
+        (
+            (item.kind == "external")
+            or (item.kind == "command" and item.verifier == "command-task")
+        )
+        and item.passed
+        for item in evidence
     ):
         policy_spec = _sha256_text(
             _canonical_json(
@@ -2441,6 +2411,28 @@ def verify_command_result(
     return tuple(evidence)
 
 
+def _redact_capsule_text(
+    value: str,
+    max_chars: int,
+    policy: SecretRedactionPolicy,
+) -> tuple[str, int, bool, str]:
+    try:
+        result = redact_text(value, policy)
+    except ResidualAssuranceUnavailableError:
+        raise AssistantBridgeError(
+            "Residual secret assurance is unavailable; capsule creation failed closed."
+        ) from None
+    if not result.residual_assured or not result.residual_detector:
+        raise AssistantBridgeError(
+            "Residual secret assurance is required for escalation capsules."
+        )
+    redacted = str(result.value)
+    truncated = len(redacted) > max_chars
+    if truncated:
+        redacted = redacted[: max(0, max_chars - 16)] + "...[truncated]"
+    return redacted, result.redaction_count, truncated, result.residual_detector
+
+
 def build_escalation_capsule(
     task: AssistantTaskEnvelope,
     receipt: RouteDecisionReceipt,
@@ -2452,9 +2444,16 @@ def build_escalation_capsule(
     diff_evidence: DiffEvidence | None = None,
     workspace_fingerprint: str | None = None,
 ) -> EscalationCapsule:
-    objective, objective_redactions, objective_truncated = redact_and_bound(
+    if len(task.objective) > policy.max_objective_chars:
+        raise AssistantBridgeError(
+            "Objective cannot be represented safely inside the escalation capsule."
+        )
+    objective, objective_redactions, objective_truncated, residual_detector = (
+        _redact_capsule_text(
         task.objective,
         policy.max_objective_chars,
+        policy.secret_redaction,
+        )
     )
     if objective_truncated:
         raise AssistantBridgeError(
@@ -2468,7 +2467,10 @@ def build_escalation_capsule(
             raise AssistantBridgeError(
                 "Constraints cannot be represented safely inside the escalation capsule."
             )
-        value, count, was_truncated = redact_and_bound(raw, remaining)
+        value, count, was_truncated, detector = _redact_capsule_text(
+            raw, remaining, policy.secret_redaction
+        )
+        residual_detector = detector or residual_detector
         if was_truncated:
             raise AssistantBridgeError(
                 "Constraints cannot be represented safely inside the escalation capsule."
@@ -2478,10 +2480,12 @@ def build_escalation_capsule(
         remaining -= len(value)
 
     if diff_evidence is None:
-        diff_excerpt, count, diff_truncated = redact_and_bound(
+        diff_excerpt, count, diff_truncated, detector = _redact_capsule_text(
             diff_text,
             policy.max_diff_chars,
+            policy.secret_redaction,
         )
+        residual_detector = detector or residual_detector
         redaction_count += count
         diff_evidence = DiffEvidence(
             sha256=_sha256_text(diff_text) if diff_text else "",
@@ -2492,13 +2496,39 @@ def build_escalation_capsule(
             unstaged_sha256="",
             untracked_manifest_sha256="",
         )
+    elif diff_evidence.excerpt:
+        diff_excerpt, count, diff_truncated, detector = _redact_capsule_text(
+            diff_evidence.excerpt,
+            policy.max_diff_chars,
+            policy.secret_redaction,
+        )
+        redaction_count += count
+        residual_detector = detector or residual_detector
+        diff_evidence = replace(
+            diff_evidence,
+            excerpt=diff_excerpt,
+            truncated=diff_evidence.truncated or diff_truncated,
+        )
     safe_failures = tuple(sorted({_safe_code(item) for item in failure_codes if item}))
     effective_workspace = workspace_fingerprint or receipt.workspace.fingerprint
+    safe_verification: list[VerificationEvidence] = []
     for item in verification:
         if item.task_fingerprint != task.task_fingerprint:
             raise AssistantBridgeError(
                 "Escalation evidence is bound to a different task."
             )
+        evidence_ref = item.evidence_ref
+        if evidence_ref:
+            _, count, _, detector = _redact_capsule_text(
+                evidence_ref,
+                len(evidence_ref),
+                policy.secret_redaction,
+            )
+            residual_detector = detector or residual_detector
+            redaction_count += count
+            if count:
+                evidence_ref = ""
+        safe_verification.append(replace(item, evidence_ref=evidence_ref))
     base = {
         "task_id": task.task_id,
         "task_fingerprint": task.task_fingerprint,
@@ -2508,10 +2538,12 @@ def build_escalation_capsule(
         "constraints": constraints,
         "route_receipt_id": receipt.receipt_id,
         "workspace_fingerprint": effective_workspace,
-        "verification": [item.payload() for item in verification],
+        "verification": [item.payload() for item in safe_verification],
         "failure_codes": list(safe_failures),
         "diff": diff_evidence.payload(),
         "redaction_count": redaction_count,
+        "residual_assured": True,
+        "residual_detector": residual_detector,
     }
     capsule = EscalationCapsule(
         capsule_id=f"capsule-{_sha256_text(_canonical_json(base))[:32]}",
@@ -2523,10 +2555,12 @@ def build_escalation_capsule(
         constraints=tuple(constraints),
         route_receipt_id=receipt.receipt_id,
         workspace_fingerprint=effective_workspace,
-        verification=tuple(verification),
+        verification=tuple(safe_verification),
         failure_codes=safe_failures,
         diff=diff_evidence,
         redaction_count=redaction_count,
+        residual_assured=True,
+        residual_detector=residual_detector,
         truncated=diff_evidence.truncated,
     )
     if len(_canonical_json(capsule.payload())) > policy.max_chars:
@@ -2536,17 +2570,25 @@ def build_escalation_capsule(
     return capsule
 
 
+@dataclass(frozen=True)
+class _PreparedExecution:
+    receipt: RouteDecisionReceipt
+    source_snapshot: WorkspaceSnapshot = field(repr=False)
+    commands: tuple[CommandPlan, ...] = field(repr=False)
+    verifier_plans: tuple[BoundVerifierPlan, ...] = field(repr=False)
+    confirmation_binding_sha256: str
+    premium_auth: PremiumAuthAttestation | None = field(repr=False)
+
+
 class AssistantBridgeRunner:
     def __init__(
         self,
         config: AssistantBridgeConfig,
         *,
-        budget_ledger: PremiumBudgetLedger | None = None,
+        state_ledger: BridgeStateLedger | None = None,
     ) -> None:
         self.config = config
-        self.budget_ledger = budget_ledger or PremiumBudgetLedger(
-            config.budget_ledger_path
-        )
+        self.state_ledger = state_ledger or config.state.ledger()
 
     def plan(
         self,
@@ -2558,7 +2600,7 @@ class AssistantBridgeRunner:
         include_diff: bool = False,
         capsule_out: str | Path | None = None,
     ) -> dict[str, object]:
-        receipt, commands, execution_binding = self._prepare_execution(
+        prepared = self._prepare_execution(
             task,
             workspace=workspace,
             local_provider_override=local_provider_override,
@@ -2566,22 +2608,55 @@ class AssistantBridgeRunner:
             include_diff=include_diff,
             capsule_out=capsule_out,
         )
+        try:
+            ticket = self.state_ledger.issue_confirmation(
+                prepared.confirmation_binding_sha256,
+                ttl_seconds=self.config.state.confirmation_ttl_seconds,
+            )
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
         return {
             "schema_version": BRIDGE_SCHEMA_VERSION,
             "mode": "assistant_bridge_plan",
             "execute": False,
-            "route_receipt": receipt.payload(),
-            "confirmation_id": confirmation_id(receipt, execution_binding),
-            "execution_binding": _deep_thaw(execution_binding),
-            "commands": [command.payload() for command in commands],
+            "route_receipt": prepared.receipt.payload(),
+            "confirmation_id": ticket.token,
+            "confirmation": ticket.metadata_payload(),
+            "commands": [command.payload() for command in prepared.commands],
+            "verifiers": [item.payload() for item in prepared.verifier_plans],
             "authority": {
-                "process_execution": "requires_exact_confirmation_id",
-                "workspace": str(receipt.local_runtime["workspace_access"]),
-                "remote_workspace": str(receipt.premium_runtime["workspace_access"]),
+                "process_execution": "requires_one_shot_confirmation_ticket",
+                "workspace": str(
+                    prepared.receipt.local_runtime["workspace_access"]
+                ),
+                "remote_workspace": str(
+                    prepared.receipt.premium_runtime["workspace_access"]
+                ),
                 "external_effects": "forbidden",
             },
             "privacy": "metadata_only",
         }
+
+    def inspect_route(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        workspace: str | Path,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+        capsule_out: str | Path | None = None,
+    ) -> RouteDecisionReceipt:
+        """Inspect effective route authority without issuing a confirmation ticket."""
+
+        return self._prepare_execution(
+            task,
+            workspace=workspace,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+            capsule_out=capsule_out,
+        ).receipt
 
     def _prepare_execution(
         self,
@@ -2592,17 +2667,36 @@ class AssistantBridgeRunner:
         external_evidence: Sequence[VerificationEvidence],
         include_diff: bool,
         capsule_out: str | Path | None,
-    ) -> tuple[
-        RouteDecisionReceipt,
-        tuple[CommandPlan, ...],
-        Mapping[str, object],
-    ]:
+    ) -> _PreparedExecution:
+        self._validate_verifier_selection(task)
+        try:
+            source_snapshot = snapshot_workspace(workspace, self.config.workspace.scope)
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
         receipt = plan_assistant_route(
             task,
             self.config,
             workspace=workspace,
             local_provider_override=local_provider_override,
+            workspace_snapshot=source_snapshot,
         )
+        premium_auth: PremiumAuthAttestation | None = None
+        if receipt.route in {"local_then_verify", "premium"}:
+            try:
+                premium_auth = _attest_premium_auth()
+            except AssistantBridgeError:
+                if receipt.route == "local_then_verify" and not receipt.local_gaps:
+                    receipt = _receipt_with_route(
+                        receipt,
+                        route="local",
+                        rationale_code="premium_auth_unavailable",
+                    )
+                else:
+                    receipt = _receipt_with_route(
+                        receipt,
+                        route="blocked",
+                        rationale_code="premium_auth_unavailable",
+                    )
         bound_external = self._validate_external(
             external_evidence,
             task,
@@ -2620,14 +2714,22 @@ class AssistantBridgeRunner:
                     output_path=_preview_output_path("local"),
                     local_provider_override=local_provider_override,
                     workspace_access=str(receipt.local_runtime["workspace_access"]),
+                    runtime_policy=self.config.runtime,
+                    ephemeral_workspace=True,
                 )
             )
         if receipt.route == "premium":
-            preview_diff = collect_git_evidence(
-                workspace,
-                self.config.capsule,
-                include_excerpt=include_diff,
-            )
+            try:
+                with materialize_workspace(
+                    source_snapshot, self.config.workspace.scope
+                ) as preview_candidate:
+                    preview_diff = collect_git_evidence(
+                        preview_candidate.root,
+                        self.config.capsule,
+                        include_excerpt=include_diff,
+                    )
+            except WorkspaceSecurityError as exc:
+                raise AssistantBridgeError(str(exc)) from None
             preview_capsule = build_escalation_capsule(
                 task,
                 receipt,
@@ -2647,15 +2749,73 @@ class AssistantBridgeRunner:
                     premium_prompt,
                     receipt,
                     workspace=workspace,
+                    runtime_policy=self.config.runtime,
                 )
             )
+        elif receipt.route == "local_then_verify":
+            commands.append(
+                _premium_preview_plan(
+                    self.config.premium,
+                    task,
+                    "<dynamic-capsule-bound-at-runtime>",
+                    receipt,
+                    workspace=workspace,
+                    runtime_policy=self.config.runtime,
+                )
+            )
+        selected_verifiers = self._selected_verifiers(task)
+        verifier_plans = tuple(
+            _build_verifier_plan(
+                spec,
+                workspace=workspace,
+                runtime_policy=self.config.runtime,
+            )
+            for spec in selected_verifiers
+        )
         execution_binding = _execution_binding(
             external_evidence=bound_external,
             include_diff=include_diff,
             capsule_out=capsule_out,
             commands=commands,
+            verifier_plans=verifier_plans,
+            source_snapshot=source_snapshot,
+            config=self.config,
+            premium_auth=premium_auth,
         )
-        return receipt, tuple(commands), _deep_freeze(execution_binding)
+        return _PreparedExecution(
+            receipt=receipt,
+            source_snapshot=source_snapshot,
+            commands=tuple(commands),
+            verifier_plans=verifier_plans,
+            confirmation_binding_sha256=_confirmation_binding_sha256(
+                receipt, execution_binding
+            ),
+            premium_auth=premium_auth,
+        )
+
+    def _validate_verifier_selection(self, task: AssistantTaskEnvelope) -> None:
+        catalog = {item.id: item for item in self.config.command_verifiers}
+        for verifier_id in task.required_verifier_ids:
+            spec = catalog.get(verifier_id)
+            if spec is None:
+                raise AssistantBridgeError(
+                    f"Unknown required task verifier {verifier_id!r}."
+                )
+            if spec.purpose != "task":
+                raise AssistantBridgeError(
+                    f"Required verifier {verifier_id!r} is not a task verifier."
+                )
+
+    def _selected_verifiers(
+        self, task: AssistantTaskEnvelope
+    ) -> tuple[CommandVerifierSpec, ...]:
+        requested = set(task.required_verifier_ids)
+        return tuple(
+            item
+            for item in self.config.command_verifiers
+            if (item.purpose == "task" and item.id in requested)
+            or (item.purpose == "hygiene" and item.applies_to(task.capability_demand))
+        )
 
     def run(
         self,
@@ -2668,7 +2828,7 @@ class AssistantBridgeRunner:
         include_diff: bool = False,
         capsule_out: str | Path | None = None,
     ) -> BridgeRunResult:
-        receipt, initial_commands, execution_binding = self._prepare_execution(
+        prepared = self._prepare_execution(
             task,
             workspace=workspace,
             local_provider_override=local_provider_override,
@@ -2676,80 +2836,159 @@ class AssistantBridgeRunner:
             include_diff=include_diff,
             capsule_out=capsule_out,
         )
-        expected = confirmation_id(receipt, execution_binding)
-        if not confirmation or not _constant_time_equal(confirmation, expected):
-            raise AssistantBridgeError(
-                "Execution confirmation does not match the current task, config, runtime, and workspace receipt."
+        try:
+            transaction_id = self.state_ledger.consume_confirmation(
+                confirmation,
+                prepared.confirmation_binding_sha256,
             )
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(
+                "Execution confirmation is invalid, expired, consumed, or no longer bound."
+            ) from None
+        receipt = prepared.receipt
         if receipt.route == "blocked":
             return BridgeRunResult(
                 status="blocked", code="route_blocked", receipt=receipt
             )
 
-        if receipt.route == "premium":
-            current = attest_workspace(workspace)
-            bound_external = self._validate_external(external_evidence, task, current)
-            diff = collect_git_evidence(
-                workspace,
-                self.config.capsule,
-                include_excerpt=include_diff,
-            )
-            capsule = build_escalation_capsule(
-                task,
-                receipt,
-                bound_external,
-                self.config.capsule,
-                failure_codes=(
-                    "policy_selected_premium",
-                    *(item.code for item in bound_external if not item.passed),
-                ),
-                diff_evidence=diff,
-                workspace_fingerprint=current.fingerprint,
-            )
-            self._write_capsule(capsule, capsule_out)
-            if not self._consume_budget(task, receipt):
-                return BridgeRunResult(
-                    status="blocked",
-                    code="durable_premium_budget_exhausted",
-                    receipt=receipt,
-                    verification=bound_external,
-                    capsule=capsule,
-                )
-            return self._run_premium(
-                task,
-                receipt,
-                capsule,
-                workspace=workspace,
-                prior_commands=(),
-                prior_evidence=bound_external,
-                expected_initial_command_sha256=(
-                    initial_commands[0].command_sha256 if initial_commands else None
-                ),
-            )
+        try:
+            with materialize_workspace(
+                prepared.source_snapshot, self.config.workspace.scope
+            ) as candidate:
+                if receipt.route == "premium":
+                    return self._execute_premium_candidate(
+                        task,
+                        prepared,
+                        candidate,
+                        transaction_id=transaction_id,
+                        external_evidence=external_evidence,
+                        include_diff=include_diff,
+                        capsule_out=capsule_out,
+                        prior_commands=(),
+                        prior_evidence=(),
+                        failure_codes=("policy_selected_premium",),
+                        expected_plan=prepared.commands[0],
+                    )
 
-        local_prompt = build_local_prompt(task)
-        with tempfile.TemporaryDirectory(prefix="mymoe-assistant-") as tmp:
+                local_result = self._execute_local_candidate(
+                    task,
+                    prepared,
+                    candidate,
+                    local_provider_override=local_provider_override,
+                )
+                local_evidence, candidate_files, changes = self._verify_candidate(
+                    task,
+                    candidate,
+                    local_result,
+                    prepared.verifier_plans,
+                    external_evidence=external_evidence,
+                )
+                if local_result.status == "blocked":
+                    return BridgeRunResult(
+                        status="blocked",
+                        code="local_runtime_unavailable",
+                        receipt=receipt,
+                        verification=local_evidence,
+                        commands=(local_result,),
+                        final_provider=self.config.local.id,
+                    )
+                if _all_passed(local_evidence):
+                    self._apply_verified_candidate(
+                        task,
+                        prepared,
+                        candidate,
+                        candidate_files,
+                        changes,
+                        transaction_id=transaction_id,
+                    )
+                    return BridgeRunResult(
+                        status="completed",
+                        code="local_verification_passed",
+                        receipt=receipt,
+                        verification=local_evidence,
+                        commands=(local_result,),
+                        final_provider=self.config.local.id,
+                        final_output=local_result.output,
+                    )
+                if any(
+                    item.code == "workspace_mutation_forbidden"
+                    for item in local_evidence
+                ):
+                    return BridgeRunResult(
+                        status="failed",
+                        code="workspace_authority_violated",
+                        receipt=receipt,
+                        verification=local_evidence,
+                        commands=(local_result,),
+                        final_provider=self.config.local.id,
+                    )
+                if receipt.route == "local":
+                    return BridgeRunResult(
+                        status="failed",
+                        code="local_verification_failed_remote_forbidden",
+                        receipt=receipt,
+                        verification=local_evidence,
+                        commands=(local_result,),
+                        final_provider=self.config.local.id,
+                        final_output=local_result.output,
+                    )
+                return self._execute_premium_candidate(
+                    task,
+                    prepared,
+                    candidate,
+                    transaction_id=transaction_id,
+                    external_evidence=external_evidence,
+                    include_diff=include_diff,
+                    capsule_out=capsule_out,
+                    prior_commands=(local_result,),
+                    prior_evidence=local_evidence,
+                    failure_codes=tuple(
+                        item.code for item in local_evidence if not item.passed
+                    ),
+                    expected_plan=(
+                        prepared.commands[1]
+                        if len(prepared.commands) > 1
+                        else None
+                    ),
+                )
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+
+    def _execute_local_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        prepared: _PreparedExecution,
+        candidate: MaterializedWorkspace,
+        *,
+        local_provider_override: str | None,
+    ) -> CommandResult:
+        prompt = build_local_prompt(task)
+        with tempfile.TemporaryDirectory(prefix="mymoe-assistant-output-") as tmp:
             output_path = Path(tmp) / "local-final.txt"
-            local_plan = build_codex_command_plan(
+            plan = build_codex_command_plan(
                 self.config.local,
-                prompt=local_prompt,
-                workspace=workspace,
+                prompt=prompt,
+                workspace=candidate.root,
                 demand=task.capability_demand,
                 output_path=output_path,
                 local_provider_override=local_provider_override,
-                workspace_access=str(receipt.local_runtime["workspace_access"]),
+                workspace_access=str(
+                    prepared.receipt.local_runtime["workspace_access"]
+                ),
+                runtime_policy=self.config.runtime,
+                ephemeral_workspace=True,
             )
             if (
-                not initial_commands
-                or local_plan.command_sha256 != initial_commands[0].command_sha256
+                not prepared.commands
+                or plan.command_sha256 != prepared.commands[0].command_sha256
             ):
                 raise AssistantBridgeError(
-                    "Execution command no longer matches the confirmed plan."
+                    "Local command no longer matches the confirmed plan."
                 )
             with _isolated_codex_home(copy_auth=False) as codex_home:
-                local_result = execute_codex_command(
-                    local_plan,
-                    prompt=local_prompt,
+                return execute_codex_command(
+                    plan,
+                    prompt=prompt,
                     output_path=output_path,
                     timeout_seconds=self.config.local.timeout_seconds,
                     environment_overrides={
@@ -2757,152 +2996,90 @@ class AssistantBridgeRunner:
                         "HOME": str(codex_home),
                     },
                 )
-        current = attest_workspace(workspace)
-        bound_external = self._validate_external(external_evidence, task, current)
-        local_evidence = verify_command_result(
-            local_result,
-            self.config,
-            task=task,
-            workspace=current,
-            external_evidence=bound_external,
-            verifier_workspace=workspace,
-        )
-        if local_result.status == "blocked":
-            return BridgeRunResult(
-                status="blocked",
-                code="local_launcher_unavailable",
-                receipt=receipt,
-                verification=local_evidence,
-                commands=(local_result,),
-                final_provider=self.config.local.id,
-            )
-        if _all_passed(local_evidence):
-            return BridgeRunResult(
-                status="completed",
-                code="local_verification_passed",
-                receipt=receipt,
-                verification=local_evidence,
-                commands=(local_result,),
-                final_provider=self.config.local.id,
-                final_output=local_result.output,
-            )
-        if receipt.route == "local":
-            return BridgeRunResult(
-                status="failed",
-                code="local_verification_failed_remote_forbidden",
-                receipt=receipt,
-                verification=local_evidence,
-                commands=(local_result,),
-                final_provider=self.config.local.id,
-                final_output=local_result.output,
-            )
 
+    def _execute_premium_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        prepared: _PreparedExecution,
+        candidate: MaterializedWorkspace,
+        *,
+        transaction_id: str,
+        external_evidence: Sequence[VerificationEvidence],
+        include_diff: bool,
+        capsule_out: str | Path | None,
+        prior_commands: tuple[CommandResult, ...],
+        prior_evidence: tuple[VerificationEvidence, ...],
+        failure_codes: Sequence[str],
+        expected_plan: CommandPlan | None,
+    ) -> BridgeRunResult:
+        receipt = prepared.receipt
+        current_snapshot = snapshot_workspace(
+            candidate.root, self.config.workspace.scope
+        )
+        current_attestation = _receipt_workspace_attestation(current_snapshot)
+        bound_external = self._validate_external(
+            external_evidence, task, current_attestation
+        )
+        capsule_evidence = list(prior_evidence)
+        existing = {(item.kind, item.id) for item in capsule_evidence}
+        capsule_evidence.extend(
+            item
+            for item in bound_external
+            if (item.kind, item.id) not in existing
+        )
         diff = collect_git_evidence(
-            workspace,
+            candidate.root,
             self.config.capsule,
             include_excerpt=include_diff,
         )
         capsule = build_escalation_capsule(
             task,
             receipt,
-            local_evidence,
+            capsule_evidence,
             self.config.capsule,
-            failure_codes=tuple(
-                item.code for item in local_evidence if not item.passed
-            ),
+            failure_codes=failure_codes,
             diff_evidence=diff,
-            workspace_fingerprint=current.fingerprint,
+            workspace_fingerprint=current_attestation.fingerprint,
         )
         self._write_capsule(capsule, capsule_out)
-        if not self._consume_budget(task, receipt):
+        if not self._consume_budget(task, prepared):
             return BridgeRunResult(
                 status="blocked",
                 code="durable_premium_budget_exhausted",
                 receipt=receipt,
-                verification=local_evidence,
-                commands=(local_result,),
+                verification=prior_evidence,
+                commands=prior_commands,
                 capsule=capsule,
-                final_provider=self.config.local.id,
-                final_output=local_result.output,
+                final_provider=(
+                    prior_commands[-1].provider_id if prior_commands else None
+                ),
             )
-        return self._run_premium(
+        premium_result = self._execute_premium_command(
             task,
-            receipt,
+            prepared,
+            candidate,
             capsule,
-            workspace=workspace,
-            prior_commands=(local_result,),
-            prior_evidence=local_evidence,
-            expected_initial_command_sha256=None,
+            expected_plan=expected_plan,
         )
-
-    def _run_premium(
-        self,
-        task: AssistantTaskEnvelope,
-        receipt: RouteDecisionReceipt,
-        capsule: EscalationCapsule,
-        *,
-        workspace: str | Path,
-        prior_commands: tuple[CommandResult, ...],
-        prior_evidence: tuple[VerificationEvidence, ...],
-        expected_initial_command_sha256: str | None,
-    ) -> BridgeRunResult:
-        premium_prompt = build_premium_prompt(capsule)
-        with (
-            _premium_workspace(
-                self.config.premium,
-                task,
-                capsule,
-                original_workspace=workspace,
-            ) as premium_workspace,
-            tempfile.TemporaryDirectory(prefix="mymoe-assistant-output-") as tmp,
-        ):
-            output_path = Path(tmp) / "premium-final.txt"
-            workspace_access = _effective_workspace_access(
-                self.config.premium,
-                task.capability_demand,
-                allow_remote_workspace=task.allow_remote_workspace,
-            )
-            premium_plan = build_codex_command_plan(
-                self.config.premium,
-                prompt=premium_prompt,
-                workspace=premium_workspace,
-                demand=task.capability_demand,
-                output_path=output_path,
-                workspace_access=workspace_access,
-            )
-            if (
-                expected_initial_command_sha256 is not None
-                and premium_plan.command_sha256 != expected_initial_command_sha256
-            ):
-                raise AssistantBridgeError(
-                    "Execution command no longer matches the confirmed plan."
-                )
-            with _isolated_codex_home(copy_auth=True) as codex_home:
-                premium_result = execute_codex_command(
-                    premium_plan,
-                    prompt=premium_prompt,
-                    output_path=output_path,
-                    timeout_seconds=self.config.premium.timeout_seconds,
-                    environment_overrides={
-                        "CODEX_HOME": str(codex_home),
-                        "HOME": str(codex_home),
-                    },
-                )
-            verification_workspace = (
-                workspace if workspace_access == "read_write" else premium_workspace
-            )
-            current = attest_workspace(verification_workspace)
-            premium_evidence = verify_command_result(
-                premium_result,
-                self.config,
-                task=task,
-                workspace=current,
-                verifier_workspace=verification_workspace,
-            )
-        combined = (*prior_evidence, *premium_evidence)
+        premium_evidence, candidate_files, changes = self._verify_candidate(
+            task,
+            candidate,
+            premium_result,
+            prepared.verifier_plans,
+            external_evidence=(),
+        )
+        combined = (*capsule_evidence, *premium_evidence)
         if premium_result.status == "blocked":
-            status, code = "blocked", "premium_launcher_unavailable"
+            status, code = "blocked", "premium_runtime_unavailable"
         elif _all_passed(premium_evidence):
+            self._apply_verified_candidate(
+                task,
+                prepared,
+                candidate,
+                candidate_files,
+                changes,
+                transaction_id=transaction_id,
+            )
             status, code = "completed", "premium_verification_passed"
         else:
             status, code = "failed", "premium_verification_failed"
@@ -2918,20 +3095,235 @@ class AssistantBridgeRunner:
             premium_calls_used=1,
         )
 
+    def _execute_premium_command(
+        self,
+        task: AssistantTaskEnvelope,
+        prepared: _PreparedExecution,
+        candidate: MaterializedWorkspace,
+        capsule: EscalationCapsule,
+        *,
+        expected_plan: CommandPlan | None,
+    ) -> CommandResult:
+        if prepared.premium_auth is None:
+            raise AssistantBridgeError(
+                "Premium authentication was not bound to the plan."
+            )
+        prompt = build_premium_prompt(capsule)
+        with (
+            _premium_workspace(
+                self.config.premium,
+                task,
+                capsule,
+                original_workspace=candidate.root,
+            ) as premium_workspace,
+            tempfile.TemporaryDirectory(prefix="mymoe-assistant-output-") as tmp,
+        ):
+            output_path = Path(tmp) / "premium-final.txt"
+            workspace_access = _effective_workspace_access(
+                self.config.premium,
+                task.capability_demand,
+                allow_remote_workspace=task.allow_remote_workspace,
+            )
+            plan = build_codex_command_plan(
+                self.config.premium,
+                prompt=prompt,
+                workspace=premium_workspace,
+                demand=task.capability_demand,
+                output_path=output_path,
+                workspace_access=workspace_access,
+                runtime_policy=self.config.runtime,
+                ephemeral_workspace=True,
+            )
+            if expected_plan is not None:
+                exact = prepared.receipt.route == "premium"
+                matches = (
+                    plan.command_sha256 == expected_plan.command_sha256
+                    if exact
+                    else _command_authority_sha256(plan)
+                    == _command_authority_sha256(expected_plan)
+                )
+                if not matches:
+                    raise AssistantBridgeError(
+                        "Premium command no longer matches the confirmed plan."
+                    )
+            with _isolated_codex_home(
+                copy_auth=True,
+                expected_auth=prepared.premium_auth,
+            ) as codex_home:
+                return execute_codex_command(
+                    plan,
+                    prompt=prompt,
+                    output_path=output_path,
+                    timeout_seconds=self.config.premium.timeout_seconds,
+                    environment_overrides={
+                        "CODEX_HOME": str(codex_home),
+                        "HOME": str(codex_home),
+                    },
+                )
+
+    def _verify_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        candidate: MaterializedWorkspace,
+        result: CommandResult,
+        verifier_plans: Sequence[BoundVerifierPlan],
+        *,
+        external_evidence: Sequence[VerificationEvidence],
+    ) -> tuple[
+        tuple[VerificationEvidence, ...],
+        tuple[WorkspaceFile, ...],
+        tuple[WorkspaceChange, ...],
+    ]:
+        final_snapshot = snapshot_workspace(
+            candidate.root, self.config.workspace.scope
+        )
+        candidate_files = snapshot_materialized(
+            candidate.root, self.config.workspace.scope
+        )
+        changes = build_changeset(candidate.baseline_files, candidate_files)
+        attestation = _receipt_workspace_attestation(final_snapshot)
+        with _disposable_verifier_workspace(
+            candidate.root,
+            expected_snapshot=final_snapshot,
+            policy=self.config.workspace.scope,
+        ) as verifier_workspace:
+            evidence = verify_command_result(
+                result,
+                self.config,
+                task=task,
+                workspace=attestation,
+                external_evidence=external_evidence,
+                verifier_workspace=verifier_workspace,
+                verifier_plans=verifier_plans,
+            )
+        evidence = self._enforce_completion_contract(
+            task,
+            evidence,
+            attestation,
+            change_count=len(changes),
+        )
+        return evidence, candidate_files, changes
+
+    def _enforce_completion_contract(
+        self,
+        task: AssistantTaskEnvelope,
+        evidence: Sequence[VerificationEvidence],
+        workspace: WorkspaceAttestation,
+        *,
+        change_count: int,
+    ) -> tuple[VerificationEvidence, ...]:
+        result = list(evidence)
+        if task.capability_demand.risk_class != "write_local" and change_count:
+            result.append(
+                self._policy_evidence(
+                    task,
+                    workspace,
+                    code="workspace_mutation_forbidden",
+                    artifact=str(change_count),
+                )
+            )
+            return tuple(result)
+        if task.capability_demand.risk_class == "write_local":
+            task_verified = any(
+                item.kind == "command"
+                and item.verifier == "command-task"
+                and item.passed
+                for item in result
+            )
+            if not task_verified:
+                result.append(
+                    self._policy_evidence(
+                        task,
+                        workspace,
+                        code="verification_required",
+                        artifact="task-verifier",
+                    )
+                )
+            if change_count == 0 and not task.no_change_expected:
+                result.append(
+                    self._policy_evidence(
+                        task,
+                        workspace,
+                        code="workspace_delta_required",
+                        artifact="no-delta",
+                    )
+                )
+        return tuple(result)
+
+    def _policy_evidence(
+        self,
+        task: AssistantTaskEnvelope,
+        workspace: WorkspaceAttestation,
+        *,
+        code: str,
+        artifact: str,
+    ) -> VerificationEvidence:
+        return VerificationEvidence(
+            id=_safe_code(code),
+            verifier="completion-policy",
+            kind="policy",
+            passed=False,
+            code=_safe_code(code),
+            artifact_sha256=_sha256_text(artifact),
+            task_fingerprint=task.task_fingerprint,
+            workspace_fingerprint=workspace.fingerprint,
+            verifier_spec_sha256=_sha256_text(
+                _canonical_json(
+                    {
+                        "risk": task.capability_demand.risk_class,
+                        "no_change_expected": task.no_change_expected,
+                        "required_verifier_ids": list(
+                            task.required_verifier_ids
+                        ),
+                    }
+                )
+            ),
+        )
+
+    def _apply_verified_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        prepared: _PreparedExecution,
+        candidate: MaterializedWorkspace,
+        candidate_files: Sequence[WorkspaceFile],
+        changes: Sequence[WorkspaceChange],
+        *,
+        transaction_id: str,
+    ) -> None:
+        if not changes:
+            return
+        if task.capability_demand.risk_class != "write_local":
+            raise AssistantBridgeError(
+                "A non-write task cannot apply candidate workspace changes."
+            )
+        apply_changeset(
+            source_snapshot=prepared.source_snapshot,
+            candidate_root=candidate.root,
+            candidate_files=candidate_files,
+            changes=changes,
+            policy=self.config.workspace.scope,
+            state_dir=self.config.workspace.transaction_state_dir,
+            transaction_id=transaction_id,
+            lock_ttl_seconds=self.config.workspace.transaction_lock_ttl_seconds,
+        )
+
     def _consume_budget(
         self,
         task: AssistantTaskEnvelope,
-        receipt: RouteDecisionReceipt,
+        prepared: _PreparedExecution,
     ) -> bool:
-        key = _sha256_text(
-            _canonical_json(
-                {
-                    "task_fingerprint": task.task_fingerprint,
-                    "config_sha256": receipt.config_sha256,
-                }
+        try:
+            key = budget_key(
+                namespace=self.config.state.namespace,
+                task_fingerprint=task.task_fingerprint,
+                config_sha256=prepared.receipt.config_sha256,
+                workspace_fingerprint=prepared.source_snapshot.fingerprint,
             )
-        )
-        return self.budget_ledger.consume(key, receipt.premium_call_budget)
+            return self.state_ledger.consume_budget(
+                key, prepared.receipt.premium_call_budget
+            )
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
 
     def _validate_external(
         self,
@@ -2967,22 +3359,12 @@ class AssistantBridgeRunner:
 
 
 def redact_and_bound(value: str, max_chars: int) -> tuple[str, int, bool]:
-    redacted = value
-    count = 0
-    for pattern in _SECRET_PATTERNS:
-        redacted, replacements = pattern.subn(_redaction_replacement, redacted)
-        count += replacements
-    truncated = len(redacted) > max_chars
-    if truncated:
-        redacted = redacted[: max(0, max_chars - 16)] + "...[truncated]"
+    redacted, count, truncated, _ = _redact_capsule_text(
+        value,
+        max_chars,
+        SecretRedactionPolicy(),
+    )
     return redacted, count, truncated
-
-
-def _redaction_replacement(match: re.Match[str]) -> str:
-    if match.lastindex and match.lastindex >= 2:
-        return f"{match.group(1)}{match.group(2)}=[redacted]"
-    prefix = match.group(1) if match.lastindex else ""
-    return f"{prefix}[redacted]"
 
 
 def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
@@ -3330,195 +3712,121 @@ def _validate_external_evidence(
         )
 
 
-def _run_command_verifier(
+def _build_verifier_plan(
     spec: CommandVerifierSpec,
+    *,
+    workspace: str | Path,
+    runtime_policy: BridgeRuntimePolicy,
+) -> BoundVerifierPlan:
+    root = str(Path(workspace).expanduser().resolve())
+    argv = tuple(
+        sys.executable
+        if item == "{python}"
+        else item.replace("{workspace}", root)
+        for item in spec.argv
+    )
+    environment = _sanitized_environment(spec.environment_allowlist)
+    try:
+        executable = inspect_executable(
+            argv[0],
+            env=environment,
+            version_args=("--version",),
+            version_timeout_seconds=runtime_policy.version_timeout_seconds,
+            version_output_limit_bytes=runtime_policy.version_output_limit_bytes,
+            policy=runtime_policy.process_policy(stdin_limit_bytes=0),
+        )
+    except (AssistantBridgeRuntimeError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Verifier {spec.id} executable attestation failed."
+        ) from None
+    if (
+        executable.version is None
+        or executable.version.status != "completed"
+        or executable.version.returncode != 0
+        or executable.version.truncated
+    ):
+        raise AssistantBridgeError(f"Verifier {spec.id} version attestation failed.")
+    artifacts = _launcher_artifact_digests(argv[1:], workspace=root)
+    semantic_argv = [item.replace(root, "<ephemeral-workspace>") for item in argv]
+    payload = {
+        "spec_sha256": spec.spec_sha256,
+        "argv": semantic_argv,
+        "executable": executable.payload(),
+        "environment_sha256": fingerprint_environment(environment).sha256,
+        "launcher_artifact_sha256": list(artifacts),
+        "runtime_capabilities": runtime_capabilities().payload(),
+        "runtime_policy": runtime_policy.payload(),
+    }
+    return BoundVerifierPlan(
+        spec=spec,
+        argv=argv,
+        executable_identity=executable,
+        environment_sha256=fingerprint_environment(environment).sha256,
+        launcher_artifact_sha256=artifacts,
+        plan_sha256=_sha256_text(_canonical_json(payload)),
+        runtime_policy=runtime_policy,
+    )
+
+
+def _run_bound_verifier(
+    plan: BoundVerifierPlan,
     *,
     task: AssistantTaskEnvelope,
     workspace: WorkspaceAttestation,
     verifier_workspace: str | Path,
 ) -> VerificationEvidence:
-    root = str(Path(verifier_workspace).expanduser().resolve())
-    argv = tuple(
-        sys.executable
-        if item == "{python}"
-        else root
-        if item == "{workspace}"
-        else item
-        for item in spec.argv
+    current = _build_verifier_plan(
+        plan.spec,
+        workspace=verifier_workspace,
+        runtime_policy=plan.runtime_policy,
     )
-    outcome = _execute_bounded_process(
-        argv,
-        stdin=b"",
-        cwd=root,
-        env=_sanitized_environment(()),
-        timeout_seconds=spec.timeout_seconds,
-    )
-    passed = not outcome["launch_error"] and outcome["returncode"] == 0
-    artifact = _sha256_text(
-        _canonical_json(
-            {
-                "returncode": outcome["returncode"],
-                "stdout_sha256": outcome["stdout_sha256"],
-                "stdout_bytes": outcome["stdout_bytes"],
-                "stderr_sha256": outcome["stderr_sha256"],
-                "stderr_bytes": outcome["stderr_bytes"],
-            }
+    if current.plan_sha256 != plan.plan_sha256:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} no longer matches the confirmed plan."
         )
+    environment = _sanitized_environment(plan.spec.environment_allowlist)
+    try:
+        outcome = execute_process(
+            plan.executable_identity,
+            current.argv[1:],
+            stdin=b"",
+            cwd=verifier_workspace,
+            env=environment,
+            timeout_seconds=plan.spec.timeout_seconds,
+            policy=plan.runtime_policy.process_policy(stdin_limit_bytes=0),
+        )
+        passed = outcome.ok
+        code = "command_passed" if passed else f"command_{_safe_code(outcome.code)}"
+        result_payload = {
+            "returncode": outcome.returncode,
+            "stdout_sha256": outcome.stdout_sha256,
+            "stdout_bytes": outcome.stdout_bytes,
+            "stderr_sha256": outcome.stderr_sha256,
+            "stderr_bytes": outcome.stderr_bytes,
+            "cleanup": outcome.cleanup.payload(),
+        }
+        observed = outcome.stdout_bytes + outcome.stderr_bytes
+    except AssistantBridgeRuntimeError:
+        passed = False
+        code = "runtime_attestation_failed"
+        result_payload = {"code": code}
+        observed = 0
+    artifact = _sha256_text(
+        _canonical_json(result_payload)
     )
     return VerificationEvidence(
-        id=spec.id,
-        verifier="command",
+        id=plan.spec.id,
+        verifier=f"command-{plan.spec.purpose}",
         kind="command",
         passed=passed,
-        code="command_passed" if passed else _safe_code(str(outcome["code"])),
+        code=code,
         artifact_sha256=artifact,
-        observed_chars=int(outcome["stdout_bytes"]) + int(outcome["stderr_bytes"]),
-        evidence_ref=f"command://{spec.id}",
+        observed_chars=observed,
+        evidence_ref=f"command://{plan.spec.id}",
         task_fingerprint=task.task_fingerprint,
         workspace_fingerprint=workspace.fingerprint,
-        verifier_spec_sha256=spec.spec_sha256,
+        verifier_spec_sha256=plan.spec.spec_sha256,
     )
-
-
-def _execute_bounded_process(
-    argv: Sequence[str],
-    *,
-    stdin: bytes,
-    cwd: str | Path,
-    env: Mapping[str, str],
-    timeout_seconds: float,
-) -> dict[str, object]:
-    started = time.monotonic()
-    try:
-        process = subprocess.Popen(
-            list(argv),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(cwd),
-            env=dict(env),
-            shell=False,
-        )
-    except FileNotFoundError:
-        return _process_error_payload(started, "launcher_unavailable")
-    except OSError:
-        return _process_error_payload(started, "launcher_os_error")
-
-    stdout_state = _StreamState()
-    stderr_state = _StreamState()
-    overflow = threading.Event()
-    readers = (
-        threading.Thread(
-            target=_drain_stream,
-            args=(process.stdout, stdout_state, overflow, process),
-            daemon=True,
-        ),
-        threading.Thread(
-            target=_drain_stream,
-            args=(process.stderr, stderr_state, overflow, process),
-            daemon=True,
-        ),
-    )
-    for reader in readers:
-        reader.start()
-    try:
-        if process.stdin is not None:
-            try:
-                process.stdin.write(stdin)
-                process.stdin.flush()
-            except (BrokenPipeError, OSError):
-                pass
-            finally:
-                try:
-                    process.stdin.close()
-                except OSError:
-                    pass
-        try:
-            returncode = process.wait(timeout=timeout_seconds)
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            process.kill()
-            returncode = process.wait()
-    finally:
-        for reader in readers:
-            reader.join(timeout=2.0)
-        for stream in (process.stdout, process.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
-    if timed_out:
-        code = "launcher_timeout"
-    elif overflow.is_set():
-        code = "launcher_output_limit_exceeded"
-    elif returncode != 0:
-        code = "launcher_nonzero_exit"
-    else:
-        code = "launcher_completed"
-    return {
-        "launch_error": False,
-        "code": code,
-        "returncode": returncode,
-        "duration_ms": _duration_ms(started),
-        "stdout_sha256": stdout_state.hexdigest,
-        "stdout_bytes": stdout_state.count,
-        "stderr_sha256": stderr_state.hexdigest,
-        "stderr_bytes": stderr_state.count,
-    }
-
-
-class _StreamState:
-    def __init__(self) -> None:
-        self.count = 0
-        self._digest = hashlib.sha256()
-
-    def update(self, chunk: bytes) -> None:
-        self.count += len(chunk)
-        self._digest.update(chunk)
-
-    @property
-    def hexdigest(self) -> str:
-        return self._digest.hexdigest()
-
-
-def _drain_stream(
-    stream: Any,
-    state: _StreamState,
-    overflow: threading.Event,
-    process: subprocess.Popen[bytes],
-) -> None:
-    if stream is None:
-        return
-    try:
-        while True:
-            chunk = stream.read(65_536)
-            if not chunk:
-                return
-            state.update(chunk)
-            if state.count > _MAX_STREAM_BYTES and not overflow.is_set():
-                overflow.set()
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-    except OSError:
-        return
-
-
-def _process_error_payload(started: float, code: str) -> dict[str, object]:
-    empty = _sha256_bytes(b"")
-    return {
-        "launch_error": True,
-        "code": code,
-        "returncode": None,
-        "duration_ms": _duration_ms(started),
-        "stdout_sha256": empty,
-        "stdout_bytes": 0,
-        "stderr_sha256": empty,
-        "stderr_bytes": 0,
-    }
 
 
 def _sanitized_environment(
@@ -3552,8 +3860,56 @@ def _sanitized_environment(
     return env
 
 
+def _attest_premium_auth(*, include_content: bool = False) -> PremiumAuthAttestation:
+    source_home = Path(
+        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+    ).expanduser()
+    source = source_home / "auth.json"
+    try:
+        before = source.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise AssistantBridgeError(
+                "Premium authentication must be a regular non-symlink file."
+            )
+        if before.st_size > _MAX_JSON_BYTES:
+            raise AssistantBridgeError("Premium authentication artifact is too large.")
+        content = source.read_bytes()
+        after = source.lstat()
+    except AssistantBridgeError:
+        raise
+    except OSError:
+        raise AssistantBridgeError(
+            "Premium authentication is unavailable for the confirmed route."
+        ) from None
+    stable = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    ) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    if not stable or len(content) != after.st_size:
+        raise AssistantBridgeError(
+            "Premium authentication changed during attestation."
+        )
+    return PremiumAuthAttestation(
+        source_path=str(source.resolve()),
+        sha256=_sha256_bytes(content),
+        size_bytes=len(content),
+        content=content if include_content else None,
+    )
+
+
 @contextmanager
-def _isolated_codex_home(*, copy_auth: bool) -> Iterator[Path]:
+def _isolated_codex_home(
+    *,
+    copy_auth: bool,
+    expected_auth: PremiumAuthAttestation | None = None,
+) -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="mymoe-codex-home-") as tmp:
         target = Path(tmp)
         try:
@@ -3561,26 +3917,27 @@ def _isolated_codex_home(*, copy_auth: bool) -> Iterator[Path]:
         except OSError:
             pass
         if copy_auth:
-            source_home = Path(
-                os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-            ).expanduser()
-            source = source_home / "auth.json"
-            if source.is_file() and not source.is_symlink():
-                try:
-                    if source.stat().st_size > _MAX_JSON_BYTES:
-                        raise AssistantBridgeError(
-                            "Codex authentication artifact is too large."
-                        )
-                    destination = target / "auth.json"
-                    shutil.copyfile(source, destination)
-                    try:
-                        destination.chmod(0o600)
-                    except OSError:
-                        pass
-                except OSError as exc:
-                    raise AssistantBridgeError(
-                        "Could not stage isolated Codex authentication."
-                    ) from exc
+            if expected_auth is None:
+                raise AssistantBridgeError(
+                    "Premium authentication was not bound to the execution plan."
+                )
+            current = _attest_premium_auth(include_content=True)
+            if current.binding_payload() != expected_auth.binding_payload():
+                raise AssistantBridgeError(
+                    "Premium authentication no longer matches the confirmed plan."
+                )
+            assert current.content is not None
+            destination = target / "auth.json"
+            try:
+                with destination.open("xb") as handle:
+                    handle.write(current.content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                destination.chmod(0o600)
+            except OSError:
+                raise AssistantBridgeError(
+                    "Could not stage isolated Codex authentication."
+                ) from None
         yield target
 
 
@@ -3613,6 +3970,33 @@ def _premium_workspace(
         yield root
 
 
+@contextmanager
+def _disposable_verifier_workspace(
+    source: str | Path,
+    *,
+    expected_snapshot: WorkspaceSnapshot,
+    policy: WorkspaceScopePolicy,
+) -> Iterator[Path]:
+    source_root = Path(source).resolve()
+    if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
+        raise WorkspaceSecurityError(
+            "Candidate changed before verifier workspace materialization."
+        )
+    with tempfile.TemporaryDirectory(prefix="mymoe-verifier-") as tmp:
+        target = Path(tmp) / "workspace"
+        shutil.copytree(source_root, target, symlinks=False)
+        if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
+            raise WorkspaceSecurityError(
+                "Candidate changed while verifier workspace was materialized."
+            )
+        copied = snapshot_workspace(target, policy)
+        if copied.manifest_sha256 != expected_snapshot.manifest_sha256:
+            raise WorkspaceSecurityError(
+                "Verifier workspace does not match the final candidate manifest."
+            )
+        yield target
+
+
 def _premium_preview_plan(
     provider: ProviderSpec,
     task: AssistantTaskEnvelope,
@@ -3620,6 +4004,7 @@ def _premium_preview_plan(
     receipt: RouteDecisionReceipt,
     *,
     workspace: str | Path,
+    runtime_policy: BridgeRuntimePolicy,
 ) -> CommandPlan:
     access = str(receipt.premium_runtime["workspace_access"])
     preview_workspace = (
@@ -3634,6 +4019,8 @@ def _premium_preview_plan(
         demand=task.capability_demand,
         workspace_access=access,
         output_path=_preview_output_path("premium"),
+        runtime_policy=runtime_policy,
+        ephemeral_workspace=True,
     )
 
 
@@ -3747,13 +4134,19 @@ def _launcher_artifact_digests(
             continue
         if not candidate.is_absolute():
             candidate = base / candidate
+        if candidate.is_symlink():
+            raise AssistantBridgeError(
+                "A launcher artifact must not be a symbolic link."
+            )
+        if candidate.is_dir():
+            continue
         try:
             resolved = candidate.resolve(strict=True)
         except OSError:
             raise AssistantBridgeError(
                 "A path-shaped launcher artifact cannot be attested."
             ) from None
-        if not resolved.is_file() or resolved.is_symlink():
+        if not resolved.is_file():
             raise AssistantBridgeError(
                 "A launcher artifact must be a regular non-symlink file."
             )
@@ -3772,16 +4165,40 @@ def _launcher_artifact_digests(
     return tuple(artifacts)
 
 
+def _public_executable_payload(identity: ExecutableIdentity) -> dict[str, object]:
+    version = identity.version
+    return {
+        "requested_sha256": _sha256_text(identity.requested),
+        "resolved_path_sha256": _sha256_text(identity.resolved_path),
+        "binary_sha256": identity.sha256,
+        "size_bytes": identity.size_bytes,
+        "mtime_ns": identity.mtime_ns,
+        "resolution_environment": identity.resolution_environment.payload(),
+        "version": (
+            None
+            if version is None
+            else {
+                "args_sha256": _sha256_text(_canonical_json(list(version.args))),
+                "status": version.status,
+                "returncode": version.returncode,
+                "output_sha256": version.output_sha256,
+                "output_bytes": version.output_bytes,
+                "truncated": version.truncated,
+            }
+        ),
+    }
+
+
 def _normalize_ephemeral_paths(
     argv: tuple[str, ...],
     *,
-    capsule_workspace: bool,
+    ephemeral_workspace: bool,
 ) -> tuple[str, ...]:
     normalized = list(argv)
-    if capsule_workspace and "--cd" in normalized:
+    if ephemeral_workspace and "--cd" in normalized:
         index = normalized.index("--cd")
         if index + 1 < len(normalized):
-            normalized[index + 1] = "<capsule-workspace>"
+            normalized[index + 1] = "<ephemeral-workspace>"
     if "--output-last-message" in normalized:
         index = normalized.index("--output-last-message")
         if index + 1 < len(normalized):
@@ -3799,6 +4216,10 @@ def _execution_binding(
     include_diff: bool,
     capsule_out: str | Path | None,
     commands: Sequence[CommandPlan],
+    verifier_plans: Sequence[BoundVerifierPlan],
+    source_snapshot: WorkspaceSnapshot,
+    config: AssistantBridgeConfig,
+    premium_auth: PremiumAuthAttestation | None,
 ) -> dict[str, object]:
     evidence_payload = [item.payload() for item in external_evidence]
     capsule_target = (
@@ -3812,7 +4233,78 @@ def _execution_binding(
         "external_evidence_count": len(evidence_payload),
         "external_evidence_sha256": _sha256_text(_canonical_json(evidence_payload)),
         "initial_command_sha256": [item.command_sha256 for item in commands],
+        "command_authority_sha256": [
+            _command_authority_sha256(item) for item in commands
+        ],
+        "verifier_plan_sha256": [item.plan_sha256 for item in verifier_plans],
+        "source_snapshot": source_snapshot.payload(),
+        "source_snapshot_fingerprint": source_snapshot.fingerprint,
+        "state": config.state.effective_descriptor(),
+        "workspace_policy": config.workspace.effective_descriptor(),
+        "runtime_policy": config.runtime.payload(),
+        "runtime_capabilities": runtime_capabilities().payload(),
+        "premium_auth": (
+            premium_auth.binding_payload() if premium_auth is not None else None
+        ),
+        "ephemeral_environment_overrides": {
+            "CODEX_HOME": "isolated-runtime-placeholder",
+            "HOME": "isolated-runtime-placeholder",
+        },
     }
+
+
+def _command_authority_sha256(plan: CommandPlan) -> str:
+    semantic_argv = _normalize_ephemeral_paths(
+        plan.argv,
+        ephemeral_workspace=True,
+    )
+    return _sha256_text(
+        _canonical_json(
+            {
+                "provider_id": plan.provider_id,
+                "mode": plan.mode,
+                "argv": list(semantic_argv),
+                "sandbox": plan.sandbox,
+                "network_access": plan.network_access,
+                "workspace_access": plan.workspace_access,
+                "model": plan.model,
+                "local_provider": plan.local_provider,
+                "environment_sha256": plan.environment_sha256,
+                "executable_fingerprint": plan.executable_identity.fingerprint,
+                "runtime": _deep_thaw(plan.runtime),
+                "runtime_policy": plan.runtime_policy.payload(),
+                "launcher_artifact_sha256": list(
+                    plan.launcher_artifact_sha256
+                ),
+            }
+        )
+    )
+
+
+def _receipt_with_route(
+    receipt: RouteDecisionReceipt,
+    *,
+    route: str,
+    rationale_code: str,
+) -> RouteDecisionReceipt:
+    expected_flow = {
+        "blocked": ("stop",),
+        "local": ("local", "verify", "stop"),
+    }[route]
+    candidate = replace(
+        receipt,
+        receipt_id="",
+        route=route,
+        premium_provider=None,
+        rationale_codes=(*receipt.rationale_codes, rationale_code),
+        expected_flow=expected_flow,
+    )
+    payload = candidate.payload()
+    payload.pop("receipt_id", None)
+    return replace(
+        candidate,
+        receipt_id=f"route-{_sha256_text(_canonical_json(payload))[:32]}",
+    )
 
 
 def _redacted_argv_shape(argv: Sequence[str]) -> list[str]:
@@ -3855,14 +4347,6 @@ def _all_passed(evidence: Sequence[VerificationEvidence]) -> bool:
 def _safe_code(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())[:96]
     return normalized or "unspecified_failure"
-
-
-def _duration_ms(started: float) -> int:
-    return max(0, round((time.monotonic() - started) * 1000))
-
-
-def _optional_returncode(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
@@ -3965,14 +4449,6 @@ def _deep_thaw(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_deep_thaw(item) for item in value]
     return value
-
-
-def _constant_time_equal(first: str, second: str) -> bool:
-    return (
-        isinstance(first, str)
-        and isinstance(second, str)
-        and hmac.compare_digest(first.encode("utf-8"), second.encode("utf-8"))
-    )
 
 
 def _canonical_json(value: object) -> str:

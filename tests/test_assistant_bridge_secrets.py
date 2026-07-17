@@ -51,6 +51,13 @@ class _BrokenResidualDetector:
 
 
 class AssistantBridgeSecretRedactionTests(unittest.TestCase):
+    @unittest.skipUnless(HAS_DETECT_SECRETS, "detect-secrets 1.5 optional dependency")
+    def test_overlapping_findings_do_not_redact_the_replacement_recursively(self) -> None:
+        result = redact_text("Bearer bearer-secret")
+
+        self.assertEqual(result.value, "[redacted] [redacted]")
+        self.assertNotIn("[r[", str(result.value))
+
     def test_redacts_named_provider_and_structured_secret_repros(self) -> None:
         slack = "xoxb" + "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
         slack_webhook = (
