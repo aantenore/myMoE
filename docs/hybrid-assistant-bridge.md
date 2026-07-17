@@ -61,18 +61,25 @@ authorization from a model response.
   demand, risk class, and bounded premium-call budget.
 - `CapabilityDemand`: required capabilities and tools. Provider support comes
   from configuration, not hardcoded model names.
-- `WorkspaceAttestation`: the Git `HEAD`, status, staged and unstaged diff
-  digests, plus a content digest for every untracked artifact. Evidence is
-  rejected if the workspace changes.
+- `WorkspaceAttestation`: the exact workspace snapshot fingerprint plus Git
+  `HEAD`, index and status digests, the complete in-scope file-manifest digest,
+  file count, and byte count. Diff evidence is collected separately when an
+  escalation needs it; snapshot telemetry never relabels manifest data as a
+  staged, unstaged, or untracked diff.
 - `RouteDecisionReceipt`: deterministic metadata-only proof of the chosen route,
   policy rules, effective model/adapter/sandbox, workspace fingerprint, budget,
   and configuration digest.
 - `VerificationEvidence`: mechanical evidence bound to the exact task,
   workspace state, verifier contract, and artifact digest. It records no
-  assistant output or hidden reasoning.
+  assistant output or hidden reasoning. Run telemetry separates `prior`
+  evidence used to explain escalation from `final` evidence produced against
+  the completed candidate; only the final phase can satisfy completion.
 - `EscalationCapsule`: a bounded, redacted task objective plus constraints,
   failure codes, evidence references, and an optional bounded diff. It excludes
-  the original conversation and local execution transcript.
+  the original conversation and local execution transcript. Before publication,
+  a final recursive pass covers every non-generated string, capability/tool
+  identifier, and mapping key; validated generated hashes and ids remain opaque
+  lineage metadata.
 
 Routes are `local`, `premium`, `local_then_verify`, and `blocked`. Profiles are
 `economy`, `balanced`, `quality`, `privacy`, and `offline`.
@@ -89,8 +96,11 @@ Routes are `local`, `premium`, `local_then_verify`, and `blocked`. Profiles are
 
 1. `offline` never invokes a remote provider.
 2. `privacy` never invokes a remote provider unless the task explicitly opts in.
-3. Premium calls cannot exceed the lower of profile and task budgets.
-   Consumption is reserved in an atomic, durable local ledger before launch.
+3. Premium calls cannot exceed the lower of profile and task budgets. The
+   current ledger consumes the budget after bridge-level preflight and directly
+   before the hardened runtime call. A two-phase reservation is still required
+   to release that authority when the runtime rejects the executable, working
+   directory, or process launch after this last bridge preflight.
 4. Missing capabilities, required tools, or unsupported risk classes fail
    closed or escalate only when policy and budget both permit it.
 5. A successful local verification stops the flow before any premium invocation.
@@ -131,7 +141,9 @@ private wire protocol.
 Planning is the default and does not launch Codex. The output contains a
 metadata-only `RouteDecisionReceipt`, a redacted argv shape, and a
 `confirmation_id`. The task remains stdin data and is represented only by a
-digest and character count.
+digest and character count. Planning resolves the configured executable through
+the sanitized `PATH` and binds its stat/content identity, but never invokes it;
+provider and verifier version-probe configuration is intentionally unsupported.
 
 ```bash
 .venv/bin/mymoe \
@@ -153,16 +165,19 @@ external evidence, diff policy, and capsule target:
   --json
 ```
 
-The app-level `permissions.assistant_bridge_execution_policy` must remain
-`receipt_confirmation`. The shipped app config opts in explicitly; an omitted
-setting defaults to `disabled`. Setting it to `disabled` hard-blocks execution
-without changing the planning surface.
+The app-level `permissions.assistant_bridge_execution_policy` supports
+`disabled`, `local_only`, and `hybrid_receipt_confirmation`. The shipped app
+config opts in explicitly; an omitted setting defaults to `disabled`. Both
+denial policies are checked without invoking provider or verifier binaries.
 
 `--assistant-capsule-out` writes bounded but still task-bearing data. Review it
 before sharing. `--assistant-include-diff` is also explicit because even a
 bounded, redacted diff can contain proprietary code. Diff collection reflects
 the current worktree diff, including pre-existing edits, so use it from a known
-baseline.
+baseline. Capsule persistence uses an unpredictable exclusive peer file,
+rejects link/reparse targets and unsafe parents, synchronizes content, and then
+performs an atomic same-directory replacement (write-through replacement on
+Windows).
 
 Provider commands, explicit models, capabilities, tools, risk ceilings,
 timeouts, profiles, trusted verifier contracts, durable state, and capsule
@@ -215,6 +230,10 @@ the launcher itself is outside your trust boundary.
 - a missing Codex binary fails closed;
 - task, receipt, prompt, evidence, runtime override, and confirmation hashes are
   collision-resistant bindings;
-- staged, unstaged, committed, and untracked Git state participates in lineage;
+- Git index/status plus the complete in-scope file manifest participate in
+  lineage, while exact staged/unstaged/untracked content is separate diff
+  evidence;
+- prior escalation evidence and final candidate evidence are reported as
+  distinct phases, and only final evidence gates completion;
 - final output is user-visible while audit/run logs remain metadata-only;
 - full repository checks remain green.
