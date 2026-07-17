@@ -346,6 +346,79 @@ class AssistantBridgeContractTests(unittest.TestCase):
                 failure_codes=("failed",),
             )
 
+    def test_capsule_output_uses_exclusive_atomic_peer_and_syncs_directory(
+        self,
+    ) -> None:
+        task = build_assistant_task("Persist bounded evidence.", allow_remote=True)
+        receipt = plan_assistant_route(task, self.config, workspace=ROOT)
+        capsule = build_escalation_capsule(
+            task,
+            receipt,
+            (),
+            self.config.capsule,
+            failure_codes=("verification_failed",),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "capsule.json"
+            predictable = Path(tmp) / "capsule.json.tmp"
+            predictable.write_text("must-survive", encoding="utf-8")
+            with patch.object(
+                assistant_bridge_module.os,
+                "fsync",
+                wraps=assistant_bridge_module.os.fsync,
+            ) as fsync:
+                AssistantBridgeRunner._write_capsule(capsule, target)
+            rendered = json.loads(target.read_text(encoding="utf-8"))
+            leftovers = sorted(
+                item.name
+                for item in Path(tmp).iterdir()
+                if item.name not in {"capsule.json", "capsule.json.tmp"}
+            )
+            predictable_content = predictable.read_text(encoding="utf-8")
+
+        self.assertEqual(rendered["capsule_id"], capsule.capsule_id)
+        self.assertEqual(predictable_content, "must-survive")
+        self.assertEqual(leftovers, [])
+        self.assertGreaterEqual(fsync.call_count, 1 if os.name == "nt" else 2)
+
+    def test_capsule_output_rejects_target_and_parent_links(self) -> None:
+        task = build_assistant_task("Persist bounded evidence.", allow_remote=True)
+        receipt = plan_assistant_route(task, self.config, workspace=ROOT)
+        capsule = build_escalation_capsule(
+            task,
+            receipt,
+            (),
+            self.config.capsule,
+            failure_codes=("verification_failed",),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_target = root / "real.json"
+            real_target.write_text("do-not-overwrite", encoding="utf-8")
+            target_link = root / "target-link.json"
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            parent_link = root / "parent-link"
+            try:
+                target_link.symlink_to(real_target)
+                parent_link.symlink_to(real_parent, target_is_directory=True)
+            except OSError as exc:  # pragma: no cover - host policy dependent.
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            with self.assertRaisesRegex(AssistantBridgeError, "link|reparse"):
+                AssistantBridgeRunner._write_capsule(capsule, target_link)
+            with self.assertRaisesRegex(AssistantBridgeError, "link|reparse"):
+                AssistantBridgeRunner._write_capsule(
+                    capsule,
+                    parent_link / "capsule.json",
+                )
+
+            preserved = real_target.read_text(encoding="utf-8")
+            parent_contents = list(real_parent.iterdir())
+
+        self.assertEqual(preserved, "do-not-overwrite")
+        self.assertEqual(parent_contents, [])
+
     def test_evidence_file_rejects_raw_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "evidence.json"
@@ -583,6 +656,153 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.final_provider, "codex-premium")
         self.assertEqual(result.premium_calls_used, 1)
+
+    def test_direct_premium_failure_codes_match_the_confirmed_preview(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task(
+                "Use premium with prior evidence.",
+                profile="quality",
+            )
+            external = (_external_evidence(task, fixture.root, passed=False),)
+            capsule_path = fixture.root / "capsule.json"
+
+            result = fixture.run(
+                task,
+                external_evidence=external,
+                capsule_out=capsule_path,
+            )
+            capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            capsule["failure_codes"],
+            ["policy_selected_premium", "tests-failed"],
+        )
+
+    def test_premium_budget_is_reserved_once_and_never_for_local(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            with patch.object(
+                fixture.runner,
+                "_consume_budget",
+                wraps=fixture.runner._consume_budget,
+            ) as consume:
+                premium = fixture.run(
+                    build_assistant_task("Use premium.", profile="quality")
+                )
+            premium_reservations = consume.call_count
+
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            with patch.object(
+                fixture.runner,
+                "_consume_budget",
+                wraps=fixture.runner._consume_budget,
+            ) as consume:
+                local = fixture.run(
+                    build_assistant_task("Stay local.", profile="offline")
+                )
+            local_reservations = consume.call_count
+
+        self.assertEqual(premium.status, "completed")
+        self.assertEqual(premium_reservations, 1)
+        self.assertEqual(local.status, "completed")
+        self.assertEqual(local_reservations, 0)
+
+    def test_premium_plan_mismatch_does_not_consume_budget(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            real_build = assistant_bridge_module.build_codex_command_plan
+            calls = 0
+
+            def mismatched_runtime_plan(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                command = real_build(*args, **kwargs)
+                if calls == 2:
+                    return replace(command, command_sha256="0" * 64)
+                return command
+
+            with (
+                patch.object(
+                    assistant_bridge_module,
+                    "build_codex_command_plan",
+                    side_effect=mismatched_runtime_plan,
+                ),
+                self.assertRaisesRegex(AssistantBridgeError, "confirmed plan"),
+            ):
+                fixture.runner.run(
+                    task,
+                    workspace=fixture.root,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+
+            recovered = fixture.run(task)
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual([item["mode"] for item in invocations], ["premium"])
+
+    def test_premium_auth_mismatch_does_not_consume_budget(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            auth = Path(os.environ["CODEX_HOME"]) / "auth.json"
+            original_auth = auth.read_text(encoding="utf-8")
+            real_workspace = assistant_bridge_module._premium_workspace
+
+            @contextmanager
+            def workspace_with_auth_drift(*args, **kwargs):
+                with real_workspace(*args, **kwargs) as premium_workspace:
+                    auth.write_text('{"fixture":"changed"}', encoding="utf-8")
+                    try:
+                        yield premium_workspace
+                    finally:
+                        auth.write_text(original_auth, encoding="utf-8")
+
+            with (
+                patch.object(
+                    assistant_bridge_module,
+                    "_premium_workspace",
+                    workspace_with_auth_drift,
+                ),
+                self.assertRaisesRegex(AssistantBridgeError, "authentication"),
+            ):
+                fixture.runner.run(
+                    task,
+                    workspace=fixture.root,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+
+            recovered = fixture.run(task)
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual([item["mode"] for item in invocations], ["premium"])
+
+    def test_premium_runtime_preflight_failure_does_not_consume_budget(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            with patch.object(
+                assistant_bridge_module,
+                "_preflight_process_runtime",
+                side_effect=assistant_bridge_module.AssistantBridgeRuntimeError(
+                    "runtime unavailable"
+                ),
+            ):
+                blocked = fixture.runner.run(
+                    task,
+                    workspace=fixture.root,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+
+            recovered = fixture.run(task)
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(blocked.code, "premium_runtime_unavailable")
+        self.assertEqual(blocked.premium_calls_used, 0)
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual([item["mode"] for item in invocations], ["premium"])
 
     def test_verified_local_result_is_returned_to_the_user_without_premium(
         self,

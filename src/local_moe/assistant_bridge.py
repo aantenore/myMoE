@@ -8,13 +8,14 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 from types import MappingProxyType
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from .deterministic_evaluator import (
     QualityBenchmarkError,
@@ -2125,6 +2126,47 @@ def build_codex_command_plan(
     )
 
 
+def _preflight_process_runtime(
+    plan: CommandPlan,
+    resolution_environment: Mapping[str, str],
+) -> None:
+    """Validate every observable launch prerequisite without starting a process."""
+
+    policy = plan.runtime_policy.process_policy()
+    capabilities = runtime_capabilities()
+    if policy.require_psutil and not capabilities.psutil_available:
+        raise AssistantBridgeRuntimeError(
+            "Execution policy requires unavailable process-tree observation."
+        )
+    if policy.require_tree_isolation and not capabilities.strict_tree_supported:
+        raise AssistantBridgeRuntimeError(
+            "Strict process-tree isolation is unavailable on this host."
+        )
+    current = resolve_executable(
+        plan.executable_identity.requested,
+        env=resolution_environment,
+    )
+    if current != plan.executable_identity:
+        raise AssistantBridgeRuntimeError(
+            "Executable identity no longer matches the confirmed plan."
+        )
+
+
+def _blocked_command_result(plan: CommandPlan, code: str) -> CommandResult:
+    return CommandResult(
+        provider_id=plan.provider_id,
+        status="blocked",
+        code=code,
+        returncode=None,
+        duration_ms=0,
+        stdout_sha256=_sha256_bytes(b""),
+        stdout_bytes=0,
+        stderr_sha256=_sha256_bytes(b""),
+        stderr_bytes=0,
+        command_sha256=plan.command_sha256,
+    )
+
+
 def execute_codex_command(
     plan: CommandPlan,
     *,
@@ -2132,6 +2174,7 @@ def execute_codex_command(
     output_path: str | Path,
     timeout_seconds: float,
     environment_overrides: Mapping[str, str] | None = None,
+    launch_authorizer: Callable[[], bool] | None = None,
 ) -> CommandResult:
     if _sha256_text(prompt) != plan.stdin_sha256 or len(prompt) != plan.stdin_chars:
         raise AssistantBridgeError(
@@ -2162,6 +2205,12 @@ def execute_codex_command(
         overrides=environment_overrides or {},
     )
     try:
+        _preflight_process_runtime(plan, base_env)
+    except (AssistantBridgeRuntimeError, OSError, ValueError):
+        return _blocked_command_result(plan, "runtime_attestation_failed")
+    if launch_authorizer is not None and not launch_authorizer():
+        return _blocked_command_result(plan, "launch_not_authorized")
+    try:
         outcome = execute_process(
             plan.executable_identity,
             plan.argv[1:],
@@ -2172,18 +2221,7 @@ def execute_codex_command(
             policy=plan.runtime_policy.process_policy(),
         )
     except AssistantBridgeRuntimeError:
-        return CommandResult(
-            provider_id=plan.provider_id,
-            status="blocked",
-            code="runtime_attestation_failed",
-            returncode=None,
-            duration_ms=0,
-            stdout_sha256=_sha256_bytes(b""),
-            stdout_bytes=0,
-            stderr_sha256=_sha256_bytes(b""),
-            stderr_bytes=0,
-            command_sha256=plan.command_sha256,
-        )
+        return _blocked_command_result(plan, "runtime_attestation_failed")
     status = "completed" if outcome.ok else "failed"
     if status == "completed":
         code = "launcher_completed"
@@ -2851,7 +2889,14 @@ class AssistantBridgeRunner:
                         capsule_out=capsule_out,
                         prior_commands=(),
                         prior_evidence=(),
-                        failure_codes=("policy_selected_premium",),
+                        failure_codes=(
+                            "policy_selected_premium",
+                            *(
+                                item.code
+                                for item in external_evidence
+                                if not item.passed
+                            ),
+                        ),
                         expected_plan=prepared.commands[0],
                     )
 
@@ -3027,7 +3072,14 @@ class AssistantBridgeRunner:
             workspace_fingerprint=current_attestation.fingerprint,
         )
         self._write_capsule(capsule, capsule_out)
-        if not self._consume_budget(task, prepared):
+        premium_result, premium_reserved = self._execute_premium_command(
+            task,
+            prepared,
+            candidate,
+            capsule,
+            expected_plan=expected_plan,
+        )
+        if premium_result.code == "durable_premium_budget_exhausted":
             return BridgeRunResult(
                 status="blocked",
                 code="durable_premium_budget_exhausted",
@@ -3039,13 +3091,6 @@ class AssistantBridgeRunner:
                     prior_commands[-1].provider_id if prior_commands else None
                 ),
             )
-        premium_result = self._execute_premium_command(
-            task,
-            prepared,
-            candidate,
-            capsule,
-            expected_plan=expected_plan,
-        )
         premium_evidence, candidate_files, changes = self._verify_candidate(
             task,
             candidate,
@@ -3077,7 +3122,7 @@ class AssistantBridgeRunner:
             capsule=capsule,
             final_provider=self.config.premium.id,
             final_output=premium_result.output,
-            premium_calls_used=1,
+            premium_calls_used=int(premium_reserved),
         )
 
     def _execute_premium_command(
@@ -3088,7 +3133,7 @@ class AssistantBridgeRunner:
         capsule: EscalationCapsule,
         *,
         expected_plan: CommandPlan | None,
-    ) -> CommandResult:
+    ) -> tuple[CommandResult, bool]:
         if prepared.premium_auth is None:
             raise AssistantBridgeError(
                 "Premium authentication was not bound to the plan."
@@ -3135,7 +3180,20 @@ class AssistantBridgeRunner:
                 copy_auth=True,
                 expected_auth=prepared.premium_auth,
             ) as codex_home:
-                return execute_codex_command(
+                premium_reserved = False
+                authorization_requested = False
+
+                def reserve_premium_launch() -> bool:
+                    nonlocal authorization_requested, premium_reserved
+                    if authorization_requested:
+                        raise AssistantBridgeError(
+                            "Premium launch authorization was requested more than once."
+                        )
+                    authorization_requested = True
+                    premium_reserved = self._consume_budget(task, prepared)
+                    return premium_reserved
+
+                result = execute_codex_command(
                     plan,
                     prompt=prompt,
                     output_path=output_path,
@@ -3144,7 +3202,14 @@ class AssistantBridgeRunner:
                         "CODEX_HOME": str(codex_home),
                         "HOME": str(codex_home),
                     },
+                    launch_authorizer=reserve_premium_launch,
                 )
+                if result.code == "launch_not_authorized":
+                    result = replace(
+                        result,
+                        code="durable_premium_budget_exhausted",
+                    )
+                return result, premium_reserved
 
     def _verify_candidate(
         self,
@@ -3327,20 +3392,245 @@ class AssistantBridgeRunner:
     ) -> None:
         if capsule_out is None:
             return
-        path = Path(capsule_out).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.is_symlink():
-            raise AssistantBridgeError("Capsule output cannot target a symbolic link.")
-        temp = path.with_suffix(path.suffix + ".tmp")
+        payload = (json.dumps(capsule.payload(), indent=2) + "\n").encode("utf-8")
+        _write_capsule_atomic(capsule_out, payload)
+
+
+def _write_capsule_atomic(target: str | Path, payload: bytes) -> None:
+    raw = Path(target).expanduser()
+    path = Path(os.path.abspath(os.fspath(raw)))
+    if path.name in {"", ".", ".."}:
+        raise AssistantBridgeError("Capsule output must name a regular file.")
+    parent = path.parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        _validate_capsule_parent(parent)
+        if os.name == "nt":
+            _write_capsule_windows(path, payload)
+        else:
+            _write_capsule_posix(path, payload)
+    except AssistantBridgeError:
+        raise
+    except OSError as exc:
+        raise AssistantBridgeError(
+            "Could not persist escalation capsule atomically."
+        ) from exc
+
+
+def _validate_capsule_parent(parent: Path) -> None:
+    try:
+        resolved = parent.resolve(strict=True)
+    except OSError as exc:
+        raise AssistantBridgeError("Capsule output parent is unavailable.") from exc
+    if not resolved.is_dir():
+        raise AssistantBridgeError("Capsule output parent is not a directory.")
+    current = parent
+    while True:
         try:
-            temp.write_text(json.dumps(capsule.payload(), indent=2), encoding="utf-8")
-            try:
-                temp.chmod(0o600)
-            except OSError:
-                pass
-            temp.replace(path)
+            details = current.lstat()
         except OSError as exc:
-            raise AssistantBridgeError("Could not persist escalation capsule.") from exc
+            raise AssistantBridgeError(
+                "Capsule output parent could not be attested."
+            ) from exc
+        if _is_link_or_reparse(details):
+            if not _trusted_system_path_alias(current, details):
+                raise AssistantBridgeError(
+                    "Capsule output parent cannot traverse a symbolic link or reparse point."
+                )
+        elif not stat.S_ISDIR(details.st_mode):
+            raise AssistantBridgeError(
+                "Capsule output parent must contain only real directories."
+            )
+        if current == current.parent:
+            break
+        current = current.parent
+
+
+def _trusted_system_path_alias(path: Path, details: os.stat_result) -> bool:
+    """Allow only root-managed POSIX aliases such as macOS ``/var``."""
+
+    if os.name != "posix" or not stat.S_ISLNK(details.st_mode):
+        return False
+    try:
+        container = path.parent.lstat()
+    except OSError:
+        return False
+    return (
+        int(getattr(details, "st_uid", -1)) == 0
+        and int(getattr(container, "st_uid", -1)) == 0
+        and not container.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
+
+
+def _write_capsule_posix(path: Path, payload: bytes) -> None:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(path.parent, directory_flags)
+    temporary_name = ""
+    try:
+        before = _capsule_target_state(path.name, directory_fd=parent_fd)
+        temporary_name, temporary_fd = _open_capsule_temp(
+            path.name,
+            directory_fd=parent_fd,
+        )
+        try:
+            _write_and_sync_file(temporary_fd, payload)
+        finally:
+            os.close(temporary_fd)
+        after = _capsule_target_state(path.name, directory_fd=parent_fd)
+        if before != after:
+            raise AssistantBridgeError(
+                "Capsule output changed while the atomic write was prepared."
+            )
+        os.replace(
+            temporary_name,
+            path.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temporary_name = ""
+        os.fsync(parent_fd)
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        os.close(parent_fd)
+
+
+def _write_capsule_windows(path: Path, payload: bytes) -> None:
+    """Windows backend using an exclusive peer temp and write-through replace."""
+
+    before = _capsule_target_state(path)
+    descriptor, temporary_raw = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_raw)
+    try:
+        opened = os.fstat(descriptor)
+        observed = temporary.lstat()
+        if (
+            _is_link_or_reparse(observed)
+            or not stat.S_ISREG(observed.st_mode)
+            or (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino)
+        ):
+            raise AssistantBridgeError(
+                "Capsule temporary file failed exclusive identity validation."
+            )
+        try:
+            os.fchmod(descriptor, 0o600)
+        except AttributeError:  # pragma: no cover - absent on some Windows builds.
+            pass
+        _write_and_sync_file(descriptor, payload)
+        os.close(descriptor)
+        descriptor = -1
+        _validate_capsule_parent(path.parent)
+        after = _capsule_target_state(path)
+        if before != after:
+            raise AssistantBridgeError(
+                "Capsule output changed while the atomic write was prepared."
+            )
+        _windows_replace_write_through(temporary, path, replace=before is not None)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _open_capsule_temp(name: str, *, directory_fd: int) -> tuple[str, int]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(32):
+        candidate = f".{name}.{secrets.token_hex(16)}.tmp"
+        try:
+            return candidate, os.open(
+                candidate,
+                flags,
+                0o600,
+                dir_fd=directory_fd,
+            )
+        except FileExistsError:
+            continue
+    raise AssistantBridgeError("Could not allocate an exclusive capsule temp file.")
+
+
+def _write_and_sync_file(descriptor: int, payload: bytes) -> None:
+    try:
+        os.fchmod(descriptor, 0o600)
+    except AttributeError:  # pragma: no cover - absent on some Windows builds.
+        pass
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(view):
+        written = os.write(descriptor, view[offset:])
+        if written <= 0:
+            raise OSError("capsule write made no progress")
+        offset += written
+    os.fsync(descriptor)
+
+
+def _capsule_target_state(
+    target: str | Path,
+    *,
+    directory_fd: int | None = None,
+) -> tuple[int, int, int, int, int] | None:
+    try:
+        if directory_fd is None:
+            details = Path(target).lstat()
+        else:
+            details = os.stat(
+                os.fspath(target),
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+    except FileNotFoundError:
+        return None
+    if _is_link_or_reparse(details) or not stat.S_ISREG(details.st_mode):
+        raise AssistantBridgeError(
+            "Capsule output cannot replace a link, reparse point, or non-file target."
+        )
+    return (
+        details.st_dev,
+        details.st_ino,
+        details.st_mode,
+        details.st_size,
+        details.st_mtime_ns,
+    )
+
+
+def _is_link_or_reparse(details: os.stat_result) -> bool:
+    attributes = int(getattr(details, "st_file_attributes", 0))
+    reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    return stat.S_ISLNK(details.st_mode) or bool(attributes & reparse)
+
+
+def _windows_replace_write_through(
+    source: Path,
+    target: Path,
+    *,
+    replace: bool,
+) -> None:
+    if os.name != "nt":  # pragma: no cover - guarded by backend dispatch.
+        raise AssistantBridgeError("Windows capsule backend used on another platform.")
+    import ctypes
+
+    move_file_replace_existing = 0x1
+    move_file_write_through = 0x8
+    flags = move_file_write_through
+    if replace:
+        flags |= move_file_replace_existing
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    move_file = kernel32.MoveFileExW
+    move_file.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move_file.restype = ctypes.c_int
+    if not move_file(str(source), str(target), flags):
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 def redact_and_bound(value: str, max_chars: int) -> tuple[str, int, bool]:
