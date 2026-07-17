@@ -10,7 +10,10 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Iterator, Sequence
+import unicodedata
+from uuid import uuid4
 
 
 class WorkspaceSecurityError(ValueError):
@@ -204,69 +207,117 @@ def apply_changeset(
     policy: WorkspaceScopePolicy,
     state_dir: str | Path,
     transaction_id: str,
+    lock_ttl_seconds: float = 120.0,
 ) -> WorkspaceSnapshot:
     source = Path(source_snapshot.root)
     state = Path(state_dir).expanduser().resolve()
     state.mkdir(parents=True, exist_ok=True)
     lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
-    try:
-        lock.mkdir(mode=0o700)
-    except FileExistsError as exc:
-        raise WorkspaceSecurityError("Workspace transaction lock is busy.") from exc
-    journal = state / f"transaction-{transaction_id}.json"
-    backups: dict[str, tuple[bytes, int] | None] = {}
-    applied: list[WorkspaceChange] = []
+    _acquire_transaction_lock(lock, lock_ttl_seconds)
+    transaction = state / f"transaction-{transaction_id}"
+    transaction.mkdir(mode=0o700)
+    backup_dir = transaction / "backups"
+    backup_dir.mkdir(mode=0o700)
+    journal = transaction / "journal.json"
+    records = [
+        {
+            "path": item.path,
+            "before": item.before.payload() if item.before else None,
+            "after": item.after.payload() if item.after else None,
+            "backup": None,
+            "backup_sha256": None,
+            "status": "pending",
+        }
+        for item in changes
+    ]
+    journal_payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "transaction_id": transaction_id,
+        "source_root_sha256": _sha256_text(str(source)),
+        "source_fingerprint": source_snapshot.fingerprint,
+        "status": "prepared",
+        "changes": records,
+    }
     try:
         current = snapshot_workspace(source, policy)
         if current.fingerprint != source_snapshot.fingerprint:
             raise WorkspaceSecurityError(
                 "Workspace changed after confirmation; transaction was not applied."
             )
-        journal.write_text(
-            json.dumps(
-                {
-                    "schema_version": "1.0",
-                    "transaction_id": transaction_id,
-                    "source_fingerprint": source_snapshot.fingerprint,
-                    "change_count": len(changes),
-                    "status": "applying",
-                },
-                sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
-        for change in changes:
+        journal_payload["status"] = "applying"
+        _write_journal(journal, journal_payload)
+        for index, change in enumerate(changes):
             target = source / change.path
             _assert_current_entry(target, change.before)
             if target.exists():
-                backups[change.path] = (
-                    target.read_bytes(),
-                    stat.S_IMODE(target.stat().st_mode),
-                )
-            else:
-                backups[change.path] = None
+                backup = backup_dir / f"{index:08d}.bin"
+                data = target.read_bytes()
+                backup.write_bytes(data)
+                records[index]["backup"] = backup.name
+                records[index]["backup_sha256"] = _sha256_bytes(data)
+            records[index]["status"] = "backed_up"
+            _write_journal(journal, journal_payload)
             if change.after is None:
                 target.unlink()
             else:
                 candidate = Path(candidate_root) / change.path
                 _atomic_copy(candidate, target, change.after.mode)
-            applied.append(change)
+            records[index]["status"] = "applied"
+            _write_journal(journal, journal_payload)
         result = snapshot_workspace(source, policy)
         expected = tuple(sorted(candidate_files))
         if tuple(sorted(result.files)) != expected:
             raise WorkspaceSecurityError(
                 "Post-transaction workspace does not match the verified candidate."
             )
-        journal.unlink(missing_ok=True)
+        journal_payload["status"] = "committed"
+        _write_journal(journal, journal_payload)
+        shutil.rmtree(transaction)
         return result
-    except Exception:
-        _rollback(source, applied, backups)
+    except Exception as original:
+        try:
+            _rollback_from_journal(source, journal_payload, backup_dir)
+            journal_payload["status"] = "rolled_back"
+            _write_journal(journal, journal_payload)
+        except (OSError, WorkspaceSecurityError) as recovery_error:
+            journal_payload["status"] = "recovery_required"
+            journal_payload["recovery_error"] = type(recovery_error).__name__
+            _write_journal(journal, journal_payload)
+            raise WorkspaceSecurityError(
+                "Workspace transaction failed and requires journal recovery."
+            ) from original
         raise
     finally:
-        try:
-            lock.rmdir()
-        except OSError:
-            pass
+        _release_transaction_lock(lock)
+
+
+def recover_workspace_transaction(
+    *,
+    state_dir: str | Path,
+    transaction_id: str,
+    source_root: str | Path,
+    lock_ttl_seconds: float = 120.0,
+) -> None:
+    state = Path(state_dir).expanduser().resolve()
+    source = Path(source_root).expanduser().resolve()
+    transaction = state / f"transaction-{transaction_id}"
+    journal = transaction / "journal.json"
+    if not journal.is_file():
+        raise WorkspaceSecurityError("Workspace recovery journal does not exist.")
+    lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
+    _acquire_transaction_lock(lock, lock_ttl_seconds)
+    try:
+        payload = json.loads(journal.read_text(encoding="utf-8"))
+        if payload.get("source_root_sha256") != _sha256_text(str(source)):
+            raise WorkspaceSecurityError(
+                "Workspace recovery journal targets another root."
+            )
+        _rollback_from_journal(source, payload, transaction / "backups")
+        payload["status"] = "recovered"
+        _write_journal(journal, payload)
+        shutil.rmtree(transaction)
+    finally:
+        _release_transaction_lock(lock)
 
 
 def _snapshot_once(root: Path, policy: WorkspaceScopePolicy) -> WorkspaceSnapshot:
@@ -416,9 +467,14 @@ def _assert_current_entry(path: Path, expected: WorkspaceFile | None) -> None:
         if path.exists():
             raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
         return
-    if not path.is_file() or path.is_symlink():
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
         raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
-    if _hash_file(path) != expected.sha256:
+    if (
+        int(metadata.st_size) != expected.size
+        or stat.S_IMODE(metadata.st_mode) != expected.mode
+        or _hash_file(path) != expected.sha256
+    ):
         raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
 
 
@@ -438,27 +494,36 @@ def _atomic_copy(source: Path, target: Path, mode: int) -> None:
             temp.unlink()
 
 
-def _rollback(
+def _rollback_from_journal(
     root: Path,
-    applied: Sequence[WorkspaceChange],
-    backups: dict[str, tuple[bytes, int] | None],
+    payload: dict[str, object],
+    backup_dir: Path,
 ) -> None:
-    for change in reversed(applied):
+    raw_changes = payload.get("changes")
+    if not isinstance(raw_changes, list):
+        raise WorkspaceSecurityError("Workspace recovery journal is malformed.")
+    for raw in reversed(raw_changes):
+        if not isinstance(raw, dict) or raw.get("status") != "applied":
+            continue
+        change = _change_from_payload(raw)
         target = root / change.path
-        try:
-            _assert_current_entry(target, change.after)
-            backup = backups[change.path]
-            if backup is None:
-                target.unlink(missing_ok=True)
-            else:
-                data, mode = backup
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
-                target.chmod(mode)
-        except OSError as exc:
-            raise WorkspaceSecurityError(
-                "Workspace rollback could not prove safe restoration; inspect the journal."
-            ) from exc
+        _assert_current_entry(target, change.after)
+        backup_name = raw.get("backup")
+        if backup_name is None:
+            target.unlink(missing_ok=True)
+        elif isinstance(backup_name, str) and change.before is not None:
+            backup = backup_dir / backup_name
+            data = backup.read_bytes()
+            if _sha256_bytes(data) != raw.get("backup_sha256"):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery backup digest mismatch."
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(change.before.mode)
+        else:
+            raise WorkspaceSecurityError("Workspace recovery backup is malformed.")
+        raw["status"] = "rolled_back"
 
 
 def _is_git_workspace(root: Path) -> bool:
@@ -518,7 +583,7 @@ def _run(
 
 
 def _safe_relative(value: str) -> str:
-    normalized = value.replace("\\", "/").strip("/")
+    normalized = unicodedata.normalize("NFC", value.replace("\\", "/")).strip("/")
     path = Path(normalized)
     if (
         not normalized
@@ -532,6 +597,92 @@ def _safe_relative(value: str) -> str:
             "Real Git metadata cannot enter the workspace scope."
         )
     return path.as_posix()
+
+
+def _change_from_payload(raw: dict[str, object]) -> WorkspaceChange:
+    path = _safe_relative(str(raw.get("path", "")))
+    return WorkspaceChange(
+        path=path,
+        before=_file_from_payload(raw.get("before")),
+        after=_file_from_payload(raw.get("after")),
+    )
+
+
+def _file_from_payload(raw: object) -> WorkspaceFile | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise WorkspaceSecurityError("Workspace journal file entry is malformed.")
+    return WorkspaceFile(
+        path=_safe_relative(str(raw.get("path", ""))),
+        kind=str(raw.get("kind", "")),
+        sha256=str(raw.get("sha256", "")),
+        size=int(raw.get("size", -1)),
+        mode=int(raw.get("mode", -1)),
+        direction=str(raw.get("direction", "round_trip")),
+    )
+
+
+def _write_journal(path: Path, payload: dict[str, object]) -> None:
+    temp = path.with_suffix(f".{uuid4().hex}.tmp")
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    with temp.open("w", encoding="utf-8") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp, path)
+
+
+def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
+    if ttl_seconds < 1:
+        raise WorkspaceSecurityError("Workspace lock TTL is invalid.")
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        owner = path / "owner.json"
+        age = time.time() - path.stat().st_mtime
+        pid = -1
+        try:
+            raw = json.loads(owner.read_text(encoding="utf-8"))
+            pid = int(raw.get("pid", -1))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+        if age <= ttl_seconds or _pid_is_alive(pid):
+            raise WorkspaceSecurityError("Workspace transaction lock is busy.")
+        stale = path.with_name(f"{path.name}.stale-{uuid4().hex}")
+        try:
+            os.replace(path, stale)
+            shutil.rmtree(stale)
+            path.mkdir(mode=0o700)
+        except OSError as exc:
+            raise WorkspaceSecurityError(
+                "Stale workspace transaction lock could not be recovered."
+            ) from exc
+    owner = path / "owner.json"
+    owner.write_text(
+        json.dumps({"pid": os.getpid(), "created_at": time.time()}),
+        encoding="utf-8",
+    )
+
+
+def _release_transaction_lock(path: Path) -> None:
+    try:
+        (path / "owner.json").unlink(missing_ok=True)
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _hash_file(path: Path) -> str:

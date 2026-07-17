@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from uuid import uuid4
 
@@ -11,9 +14,11 @@ from local_moe.assistant_bridge_workspace import (
     IgnoredPathRule,
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
+    WorkspaceFile,
     apply_changeset,
     build_changeset,
     materialize_workspace,
+    recover_workspace_transaction,
     snapshot_materialized,
     snapshot_workspace,
 )
@@ -148,6 +153,154 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                         transaction_id=uuid4().hex,
                     )
             self.assertEqual((root / "tracked.txt").read_text(), "concurrent\n")
+
+    def test_mode_only_drift_fails_compare_and_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            with materialize_workspace(snapshot, policy) as materialized:
+                candidate = snapshot_materialized(materialized.root, policy)
+                changes = build_changeset(materialized.baseline_files, candidate)
+                (root / "tracked.txt").chmod(0o700)
+                with self.assertRaisesRegex(WorkspaceSecurityError, "changed"):
+                    apply_changeset(
+                        source_snapshot=snapshot,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=Path(tmp) / "state",
+                        transaction_id=uuid4().hex,
+                    )
+
+    def test_unicode_normalization_collision_is_rejected(self) -> None:
+        with self.assertRaisesRegex(WorkspaceSecurityError, "collision"):
+            WorkspaceScopePolicy(
+                ignored_paths=(
+                    IgnoredPathRule("caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt"),
+                    IgnoredPathRule("cafe\N{COMBINING ACUTE ACCENT}.txt"),
+                )
+            )
+
+    def test_stale_dead_lock_is_recovered_but_live_lock_is_not_stolen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            state.mkdir()
+            resolved_root = root.resolve()
+            lock = (
+                state
+                / f"workspace-{hashlib.sha256(str(resolved_root).encode()).hexdigest()[:24]}.lock"
+            )
+            lock.mkdir()
+            (lock / "owner.json").write_text(
+                json.dumps({"pid": 999_999_999, "created_at": 0}),
+                encoding="utf-8",
+            )
+            old = time.time() - 3600
+            os.utime(lock, (old, old))
+            with materialize_workspace(snapshot, policy) as materialized:
+                candidate = snapshot_materialized(materialized.root, policy)
+                apply_changeset(
+                    source_snapshot=snapshot,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=(),
+                    policy=policy,
+                    state_dir=state,
+                    transaction_id=uuid4().hex,
+                    lock_ttl_seconds=1,
+                )
+
+            lock.mkdir()
+            (lock / "owner.json").write_text(
+                json.dumps({"pid": os.getpid(), "created_at": time.time()}),
+                encoding="utf-8",
+            )
+            with materialize_workspace(
+                snapshot_workspace(root, policy), policy
+            ) as materialized:
+                candidate = snapshot_materialized(materialized.root, policy)
+                with self.assertRaisesRegex(WorkspaceSecurityError, "busy"):
+                    apply_changeset(
+                        source_snapshot=snapshot_workspace(root, policy),
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=(),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=uuid4().hex,
+                    )
+
+    def test_crash_journal_recovers_only_the_recorded_applied_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            before_data = b"before\n"
+            after_data = b"after\n"
+            target.write_bytes(after_data)
+            transaction_id = uuid4().hex
+            transaction = Path(tmp) / "state" / f"transaction-{transaction_id}"
+            backups = transaction / "backups"
+            backups.mkdir(parents=True)
+            (backups / "00000000.bin").write_bytes(before_data)
+            before = WorkspaceFile(
+                "tracked.txt",
+                "file",
+                hashlib.sha256(before_data).hexdigest(),
+                len(before_data),
+                0o644,
+            )
+            after = WorkspaceFile(
+                "tracked.txt",
+                "file",
+                hashlib.sha256(after_data).hexdigest(),
+                len(after_data),
+                0o644,
+            )
+            (transaction / "journal.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "transaction_id": transaction_id,
+                        "source_root_sha256": hashlib.sha256(
+                            str(root.resolve()).encode()
+                        ).hexdigest(),
+                        "source_fingerprint": "0" * 64,
+                        "status": "applying",
+                        "changes": [
+                            {
+                                "path": "tracked.txt",
+                                "before": before.payload(),
+                                "after": after.payload(),
+                                "backup": "00000000.bin",
+                                "backup_sha256": hashlib.sha256(
+                                    before_data
+                                ).hexdigest(),
+                                "status": "applied",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            recover_workspace_transaction(
+                state_dir=Path(tmp) / "state",
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+
+            self.assertEqual(target.read_bytes(), before_data)
+            self.assertFalse(transaction.exists())
 
 
 def _initialize_repo(root: Path) -> None:
