@@ -319,10 +319,10 @@ class DetectSecretsResidualDetector:
                     logger.disabled = previous_disabled
         except ResidualAssuranceUnavailableError:
             raise
-        except Exception as exc:
+        except Exception:
             raise ResidualAssuranceUnavailableError(
                 "detect-secrets residual assurance failed closed."
-            ) from exc
+            ) from None
         return _restore_generated_text_values(redacted, generated_values), count
 
 
@@ -343,10 +343,10 @@ def redact_text(
             redacted, residual_count = detector.redact(redacted, active.replacement)
         except ResidualAssuranceUnavailableError:
             raise
-        except Exception as exc:
+        except Exception:
             raise ResidualAssuranceUnavailableError(
                 "Residual secret assurance failed closed."
-            ) from exc
+            ) from None
     return SecretRedactionResult(
         value=redacted,
         redaction_count=pattern_count + residual_count,
@@ -482,10 +482,10 @@ def _redact_structure(
                 )
             except ResidualAssuranceUnavailableError:
                 raise
-            except Exception as exc:
+            except Exception:
                 raise ResidualAssuranceUnavailableError(
                     "Residual secret assurance failed closed."
-                ) from exc
+                ) from None
             counters.residual += residual_count
         return redacted
     if isinstance(value, (str, int, float, bool)) or value is None:

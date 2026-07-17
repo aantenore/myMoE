@@ -205,6 +205,8 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
             )
         self.assertNotIn("sensitive diagnostic", str(raised.exception))
         self.assertNotIn("source-secret", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertTrue(raised.exception.__suppress_context__)
 
     def test_missing_optional_dependency_is_explicit_when_assurance_required(
         self,
