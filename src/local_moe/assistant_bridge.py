@@ -737,6 +737,11 @@ class BridgeStatePolicy:
     confirmation_ttl_seconds: float = 300.0
     lock_timeout_seconds: float = 5.0
     stale_lock_seconds: float = 120.0
+    budget_retention_seconds: float = 90 * 24 * 60 * 60
+    max_budget_entries: int = 4096
+    confirmation_retention_seconds: float = 24 * 60 * 60
+    max_confirmation_entries: int = 4096
+    budget_lease_ttl_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         try:
@@ -754,6 +759,11 @@ class BridgeStatePolicy:
             namespace=self.namespace,
             lock_timeout_seconds=self.lock_timeout_seconds,
             stale_lock_seconds=self.stale_lock_seconds,
+            budget_retention_seconds=self.budget_retention_seconds,
+            max_budget_entries=self.max_budget_entries,
+            confirmation_retention_seconds=self.confirmation_retention_seconds,
+            max_confirmation_entries=self.max_confirmation_entries,
+            budget_lease_ttl_seconds=self.budget_lease_ttl_seconds,
         )
 
     def effective_descriptor(self) -> dict[str, object]:
@@ -1354,6 +1364,11 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "lock_timeout_seconds",
             "namespace",
             "stale_lock_seconds",
+            "budget_retention_seconds",
+            "max_budget_entries",
+            "confirmation_retention_seconds",
+            "max_confirmation_entries",
+            "budget_lease_ttl_seconds",
         },
     )
     workspace_raw = _as_object(raw.get("workspace", {}), "workspace")
@@ -1462,6 +1477,26 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
         stale_lock_seconds=_number_value(
             state_raw.get("stale_lock_seconds", 120),
             "state.stale_lock_seconds",
+        ),
+        budget_retention_seconds=_number_value(
+            state_raw.get("budget_retention_seconds", 90 * 24 * 60 * 60),
+            "state.budget_retention_seconds",
+        ),
+        max_budget_entries=_int_value(
+            state_raw.get("max_budget_entries", 4096),
+            "state.max_budget_entries",
+        ),
+        confirmation_retention_seconds=_number_value(
+            state_raw.get("confirmation_retention_seconds", 24 * 60 * 60),
+            "state.confirmation_retention_seconds",
+        ),
+        max_confirmation_entries=_int_value(
+            state_raw.get("max_confirmation_entries", 4096),
+            "state.max_confirmation_entries",
+        ),
+        budget_lease_ttl_seconds=_number_value(
+            state_raw.get("budget_lease_ttl_seconds", 60),
+            "state.budget_lease_ttl_seconds",
         ),
     )
     runtime_policy = BridgeRuntimePolicy(

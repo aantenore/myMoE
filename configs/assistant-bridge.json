@@ -201,7 +201,12 @@
     "namespace": "assistant-bridge-v2",
     "confirmation_ttl_seconds": 300,
     "lock_timeout_seconds": 5,
-    "stale_lock_seconds": 120
+    "stale_lock_seconds": 120,
+    "budget_retention_seconds": 7776000,
+    "max_budget_entries": 4096,
+    "confirmation_retention_seconds": 86400,
+    "max_confirmation_entries": 4096,
+    "budget_lease_ttl_seconds": 60
   },
   "workspace": {
     "max_files": 5000,
