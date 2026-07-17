@@ -23,9 +23,40 @@ from .deterministic_evaluator import (
     evaluate_check,
     validate_checks,
 )
+from .assistant_bridge_ledger import (
+    BridgeLedgerError,
+    BridgeStateLedger,
+    budget_key,
+)
+from .assistant_bridge_runtime import (
+    AssistantBridgeRuntimeError,
+    ExecutableIdentity,
+    ProcessExecutionPolicy,
+    execute_process,
+    fingerprint_environment,
+    inspect_executable,
+    runtime_capabilities,
+)
+from .assistant_bridge_secrets import (
+    ResidualAssuranceUnavailableError,
+    SecretRedactionPolicy,
+    redact_text,
+)
+from .assistant_bridge_workspace import (
+    IgnoredPathRule,
+    MaterializedWorkspace,
+    WorkspaceScopePolicy,
+    WorkspaceSecurityError,
+    WorkspaceSnapshot,
+    apply_changeset,
+    build_changeset,
+    materialize_workspace,
+    snapshot_materialized,
+    snapshot_workspace,
+)
 
 
-BRIDGE_SCHEMA_VERSION = "1.0"
+BRIDGE_SCHEMA_VERSION = "2.0"
 ROUTES = {"blocked", "local", "local_then_verify", "premium"}
 PROFILES = {"balanced", "economy", "offline", "privacy", "quality"}
 RISK_LEVELS = {
@@ -96,6 +127,8 @@ class CapabilityDemand:
     risk_class: str = "read_only"
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "required", tuple(self.required))
+        object.__setattr__(self, "tools", tuple(self.tools))
         _validate_identifiers("required capability", self.required)
         _validate_identifiers("required tool", self.tools)
         if self.risk_class not in RISK_LEVELS:
@@ -133,12 +166,16 @@ class AssistantTaskEnvelope:
     profile: str = "balanced"
     capability_demand: CapabilityDemand = field(default_factory=CapabilityDemand)
     constraints: tuple[str, ...] = field(repr=False, default=())
+    required_verifier_ids: tuple[str, ...] = ()
+    no_change_expected: bool = False
     allow_remote: bool | None = None
     allow_remote_workspace: bool = False
     budget: AssistantTaskBudget = field(default_factory=AssistantTaskBudget)
     task_id: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.no_change_expected, bool):
+            raise AssistantBridgeError("no_change_expected must be boolean.")
         if self.allow_remote is not None and not isinstance(self.allow_remote, bool):
             raise AssistantBridgeError("allow_remote must be boolean or omitted.")
         if not isinstance(self.allow_remote_workspace, bool):
@@ -174,6 +211,12 @@ class AssistantTaskEnvelope:
             )
         object.__setattr__(self, "objective", objective)
         object.__setattr__(self, "constraints", clean_constraints)
+        object.__setattr__(
+            self, "required_verifier_ids", tuple(self.required_verifier_ids)
+        )
+        _validate_identifiers("required verifier", self.required_verifier_ids)
+        if len(set(self.required_verifier_ids)) != len(self.required_verifier_ids):
+            raise AssistantBridgeError("required_verifier_ids contains duplicates.")
         if not self.task_id:
             object.__setattr__(self, "task_id", f"task-{self.task_fingerprint[:24]}")
 
@@ -190,6 +233,8 @@ class AssistantTaskEnvelope:
                     "profile": self.profile,
                     "capability_demand": self.capability_demand.payload(),
                     "constraints": list(self.constraints),
+                    "no_change_expected": self.no_change_expected,
+                    "required_verifier_ids": list(self.required_verifier_ids),
                     "allow_remote": self.allow_remote,
                     "allow_remote_workspace": self.allow_remote_workspace,
                     "max_premium_calls": self.budget.max_premium_calls,
@@ -206,6 +251,8 @@ class AssistantTaskEnvelope:
             "profile": self.profile,
             "capability_demand": self.capability_demand.payload(),
             "constraint_count": len(self.constraints),
+            "no_change_expected": self.no_change_expected,
+            "required_verifier_ids": list(self.required_verifier_ids),
             "allow_remote": self.allow_remote,
             "allow_remote_workspace": self.allow_remote_workspace,
             "max_premium_calls": self.budget.max_premium_calls,
@@ -232,8 +279,18 @@ class ProviderSpec:
     launcher_args: tuple[str, ...] = ()
     extra_args: tuple[str, ...] = ()
     environment_allowlist: tuple[str, ...] = ()
+    version_args: tuple[str, ...] = ("--version",)
 
     def __post_init__(self) -> None:
+        for name in (
+            "capabilities",
+            "tools",
+            "launcher_args",
+            "extra_args",
+            "environment_allowlist",
+            "version_args",
+        ):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         if _SAFE_ID.fullmatch(self.id) is None:
             raise AssistantBridgeError(
                 "Provider id must contain 1-96 safe identifier characters."
@@ -308,6 +365,7 @@ class ProviderSpec:
         for label, values in (
             ("launcher_args", self.launcher_args),
             ("extra_args", self.extra_args),
+            ("version_args", self.version_args),
         ):
             if any(not item or "\x00" in item for item in values):
                 raise AssistantBridgeError(
@@ -343,6 +401,9 @@ class ProviderSpec:
             "launcher_arg_count": len(self.launcher_args),
             "extra_arg_count": len(self.extra_args),
             "environment_keys": list(self.environment_allowlist),
+            "version_args_sha256": _sha256_text(
+                _canonical_json(list(self.version_args))
+            ),
         }
 
 
@@ -390,6 +451,10 @@ class CapsulePolicy:
     max_objective_chars: int = 3000
     max_constraint_chars: int = 1000
     max_diff_chars: int = 2500
+    secret_redaction: SecretRedactionPolicy = field(
+        default_factory=SecretRedactionPolicy,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         values = (
@@ -413,6 +478,10 @@ class CapsulePolicy:
         ):
             if not 0 <= value <= self.max_chars:
                 raise AssistantBridgeError(f"capsule.{name} must fit inside max_chars.")
+        if not self.secret_redaction.require_residual_assurance:
+            raise AssistantBridgeError(
+                "Capsule residual secret assurance cannot be disabled."
+            )
 
 
 @dataclass(frozen=True)
@@ -420,11 +489,23 @@ class CommandVerifierSpec:
     id: str
     argv: tuple[str, ...] = field(repr=False)
     timeout_seconds: float
+    purpose: str = "hygiene"
+    execution_boundary: str = "disposable_workspace"
+    network_policy: str = "not_enforced"
+    environment_allowlist: tuple[str, ...] = ()
     required_for_capabilities: tuple[str, ...] = ()
     required_for_tools: tuple[str, ...] = ()
     required_for_risks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        for name in (
+            "argv",
+            "environment_allowlist",
+            "required_for_capabilities",
+            "required_for_tools",
+            "required_for_risks",
+        ):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         if _SAFE_ID.fullmatch(self.id) is None:
             raise AssistantBridgeError("Command verifier id must be a safe identifier.")
         if not self.argv or any(not item or "\x00" in item for item in self.argv):
@@ -435,6 +516,23 @@ class CommandVerifierSpec:
             raise AssistantBridgeError(
                 f"Command verifier {self.id} timeout_seconds must be between 1 and 3600."
             )
+        if self.purpose not in {"hygiene", "task"}:
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} purpose must be hygiene or task."
+            )
+        if self.execution_boundary != "disposable_workspace":
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} requires a disposable workspace boundary."
+            )
+        if self.network_policy != "not_enforced":
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} has unsupported network policy."
+            )
+        for name in self.environment_allowlist:
+            if _SAFE_ENV.fullmatch(name) is None:
+                raise AssistantBridgeError(
+                    f"Command verifier {self.id} environment allowlist is invalid."
+                )
         _validate_identifiers("verifier capability", self.required_for_capabilities)
         _validate_identifiers("verifier tool", self.required_for_tools)
         unknown_risks = sorted(set(self.required_for_risks).difference(RISK_LEVELS))
@@ -442,12 +540,24 @@ class CommandVerifierSpec:
             raise AssistantBridgeError(
                 f"Command verifier {self.id} has unsupported risks: {', '.join(unknown_risks)}."
             )
+        if self.purpose == "task" and any(
+            (
+                self.required_for_capabilities,
+                self.required_for_tools,
+                self.required_for_risks,
+            )
+        ):
+            raise AssistantBridgeError(
+                f"Task verifier {self.id} must be selected explicitly by id."
+            )
 
     @property
     def spec_sha256(self) -> str:
         return _sha256_text(_canonical_json(self.payload()))
 
     def applies_to(self, demand: CapabilityDemand) -> bool:
+        if self.purpose != "hygiene":
+            return False
         return bool(
             set(self.required_for_capabilities).intersection(demand.required)
             or set(self.required_for_tools).intersection(demand.tools)
@@ -459,6 +569,10 @@ class CommandVerifierSpec:
             "id": self.id,
             "argv_sha256": _sha256_text(_canonical_json(list(self.argv))),
             "timeout_seconds": self.timeout_seconds,
+            "purpose": self.purpose,
+            "execution_boundary": self.execution_boundary,
+            "network_policy": self.network_policy,
+            "environment_keys": list(self.environment_allowlist),
             "required_for_capabilities": list(self.required_for_capabilities),
             "required_for_tools": list(self.required_for_tools),
             "required_for_risks": list(self.required_for_risks),
@@ -598,6 +712,129 @@ class VerificationEvidence:
 
 
 @dataclass(frozen=True)
+class BridgeRuntimePolicy:
+    require_tree_isolation: bool = True
+    require_psutil: bool = True
+    stdin_limit_bytes: int = 8 * 1024 * 1024
+    stdout_limit_bytes: int = _MAX_STREAM_BYTES
+    stderr_limit_bytes: int = _MAX_STREAM_BYTES
+    cleanup_grace_seconds: float = 0.25
+    cleanup_kill_seconds: float = 0.75
+    version_timeout_seconds: float = 3.0
+    version_output_limit_bytes: int = 32 * 1024
+
+    def __post_init__(self) -> None:
+        if self.require_tree_isolation is not True or self.require_psutil is not True:
+            raise AssistantBridgeError(
+                "Bridge runtime must require tree isolation and psutil."
+            )
+        try:
+            self.process_policy()
+        except ValueError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+        if not 0.1 <= self.version_timeout_seconds <= 30:
+            raise AssistantBridgeError(
+                "runtime.version_timeout_seconds is outside safe bounds."
+            )
+        if not 1024 <= self.version_output_limit_bytes <= 1024 * 1024:
+            raise AssistantBridgeError(
+                "runtime.version_output_limit_bytes is outside safe bounds."
+            )
+
+    def process_policy(self, *, stdin_limit_bytes: int | None = None) -> ProcessExecutionPolicy:
+        return ProcessExecutionPolicy(
+            stdin_limit_bytes=(
+                self.stdin_limit_bytes
+                if stdin_limit_bytes is None
+                else stdin_limit_bytes
+            ),
+            stdout_limit_bytes=self.stdout_limit_bytes,
+            stderr_limit_bytes=self.stderr_limit_bytes,
+            cleanup_grace_seconds=self.cleanup_grace_seconds,
+            cleanup_kill_seconds=self.cleanup_kill_seconds,
+            require_tree_isolation=self.require_tree_isolation,
+            require_psutil=self.require_psutil,
+        )
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "require_tree_isolation": self.require_tree_isolation,
+            "require_psutil": self.require_psutil,
+            "stdin_limit_bytes": self.stdin_limit_bytes,
+            "stdout_limit_bytes": self.stdout_limit_bytes,
+            "stderr_limit_bytes": self.stderr_limit_bytes,
+            "cleanup_grace_seconds": self.cleanup_grace_seconds,
+            "cleanup_kill_seconds": self.cleanup_kill_seconds,
+            "version_timeout_seconds": self.version_timeout_seconds,
+            "version_output_limit_bytes": self.version_output_limit_bytes,
+        }
+
+
+@dataclass(frozen=True)
+class BridgeStatePolicy:
+    ledger_path: str = field(repr=False)
+    namespace: str
+    confirmation_ttl_seconds: float = 300.0
+    lock_timeout_seconds: float = 5.0
+    stale_lock_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        try:
+            self.ledger()
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+        if not 1 <= self.confirmation_ttl_seconds <= 3600:
+            raise AssistantBridgeError(
+                "state.confirmation_ttl_seconds must be between 1 and 3600."
+            )
+
+    def ledger(self) -> BridgeStateLedger:
+        return BridgeStateLedger(
+            self.ledger_path,
+            namespace=self.namespace,
+            lock_timeout_seconds=self.lock_timeout_seconds,
+            stale_lock_seconds=self.stale_lock_seconds,
+        )
+
+    def effective_descriptor(self) -> dict[str, object]:
+        descriptor = self.ledger().effective_descriptor()
+        descriptor["confirmation_ttl_seconds"] = self.confirmation_ttl_seconds
+        return descriptor
+
+
+@dataclass(frozen=True)
+class BridgeWorkspacePolicy:
+    scope: WorkspaceScopePolicy
+    transaction_state_dir: str = field(repr=False)
+    transaction_lock_ttl_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        if not self.transaction_state_dir:
+            raise AssistantBridgeError(
+                "workspace.transaction_state_dir is required."
+            )
+        if not 1 <= self.transaction_lock_ttl_seconds <= 86_400:
+            raise AssistantBridgeError(
+                "workspace.transaction_lock_ttl_seconds is outside safe bounds."
+            )
+
+    def effective_descriptor(self) -> dict[str, object]:
+        return {
+            "max_files": self.scope.max_files,
+            "max_total_bytes": self.scope.max_total_bytes,
+            "max_file_bytes": self.scope.max_file_bytes,
+            "ignored_paths": [
+                {"path": item.path, "direction": item.direction}
+                for item in self.scope.ignored_paths
+            ],
+            "transaction_state_dir_sha256": _sha256_text(
+                str(Path(self.transaction_state_dir).resolve())
+            ),
+            "transaction_lock_ttl_seconds": self.transaction_lock_ttl_seconds,
+        }
+
+
+@dataclass(frozen=True)
 class AssistantBridgeConfig:
     local: ProviderSpec
     premium: ProviderSpec
@@ -609,7 +846,9 @@ class AssistantBridgeConfig:
     independent_tools: tuple[str, ...]
     independent_risks: tuple[str, ...]
     capsule: CapsulePolicy
-    budget_ledger_path: str = field(repr=False)
+    runtime: BridgeRuntimePolicy
+    state: BridgeStatePolicy
+    workspace: BridgeWorkspacePolicy
     source_sha256: str
 
     def __post_init__(self) -> None:
@@ -624,6 +863,13 @@ class AssistantBridgeConfig:
             "external_verifiers",
             MappingProxyType(dict(self.external_verifiers)),
         )
+        for name in (
+            "command_verifiers",
+            "independent_capabilities",
+            "independent_tools",
+            "independent_risks",
+        ):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         missing = sorted(PROFILES.difference(self.profiles))
         if missing:
             raise AssistantBridgeError(
@@ -643,10 +889,12 @@ class AssistantBridgeConfig:
             raise AssistantBridgeError(
                 "Independent evidence policy contains unknown risks."
             )
-        if not self.budget_ledger_path:
-            raise AssistantBridgeError(
-                "A durable premium budget ledger path is required."
-            )
+
+    @property
+    def budget_ledger_path(self) -> str:
+        """Compatibility alias for callers that inspected the v1 config."""
+
+        return self.state.ledger_path
 
 
 @dataclass(frozen=True)
@@ -675,6 +923,13 @@ class RouteDecisionReceipt:
         object.__setattr__(self, "task", _deep_freeze(self.task))
         object.__setattr__(self, "local_runtime", _deep_freeze(self.local_runtime))
         object.__setattr__(self, "premium_runtime", _deep_freeze(self.premium_runtime))
+        for name in (
+            "local_gaps",
+            "premium_gaps",
+            "rationale_codes",
+            "expected_flow",
+        ):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
 
     def payload(self) -> dict[str, object]:
         return {
@@ -714,6 +969,21 @@ class CommandPlan:
     model: str
     local_provider: str
     environment_allowlist: tuple[str, ...]
+    executable_identity: ExecutableIdentity = field(repr=False)
+    environment_sha256: str
+    runtime: Mapping[str, object]
+    runtime_policy: BridgeRuntimePolicy = field(repr=False)
+    launcher_artifact_sha256: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(
+            self, "environment_allowlist", tuple(self.environment_allowlist)
+        )
+        object.__setattr__(
+            self, "launcher_artifact_sha256", tuple(self.launcher_artifact_sha256)
+        )
+        object.__setattr__(self, "runtime", _deep_freeze(self.runtime))
 
     def payload(self) -> dict[str, object]:
         return {
@@ -738,6 +1008,11 @@ class CommandPlan:
             "model": self.model,
             "local_provider": self.local_provider or None,
             "environment_keys": list(self.environment_allowlist),
+            "executable": self.executable_identity.payload(),
+            "environment_sha256": self.environment_sha256,
+            "runtime": _deep_thaw(self.runtime),
+            "runtime_policy": self.runtime_policy.payload(),
+            "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
         }
 
 
@@ -797,6 +1072,10 @@ class EscalationCapsule:
     redaction_count: int
     truncated: bool
 
+    def __post_init__(self) -> None:
+        for name in ("constraints", "verification", "failure_codes"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+
     def payload(self) -> dict[str, object]:
         return {
             "schema_version": BRIDGE_SCHEMA_VERSION,
@@ -854,6 +1133,10 @@ class BridgeRunResult:
     final_provider: str | None = None
     final_output: str = field(repr=False, default="")
     premium_calls_used: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "verification", tuple(self.verification))
+        object.__setattr__(self, "commands", tuple(self.commands))
 
     def metadata_payload(self) -> dict[str, object]:
         return {
@@ -985,6 +1268,8 @@ def load_assistant_task(path: str | Path) -> AssistantTaskEnvelope:
             "profile",
             "schema_version",
             "task_id",
+            "no_change_expected",
+            "required_verifier_ids",
         },
     )
     if str(raw.get("schema_version", BRIDGE_SCHEMA_VERSION)) != BRIDGE_SCHEMA_VERSION:
@@ -1003,6 +1288,13 @@ def load_assistant_task(path: str | Path) -> AssistantTaskEnvelope:
         objective=_string_value(raw.get("objective", ""), "objective"),
         profile=_string_value(raw.get("profile", "balanced"), "profile"),
         constraints=_string_tuple(raw.get("constraints", []), "constraints"),
+        no_change_expected=_bool_value(
+            raw.get("no_change_expected", False),
+            "no_change_expected",
+        ),
+        required_verifier_ids=_identifier_tuple(
+            raw.get("required_verifier_ids", []), "required_verifier_ids"
+        ),
         allow_remote=allow_remote,
         allow_remote_workspace=_bool_value(
             raw.get("allow_remote_workspace", False),
@@ -1033,6 +1325,8 @@ def build_assistant_task(
     required_tools: Sequence[str] = (),
     risk_class: str = "read_only",
     constraints: Sequence[str] = (),
+    no_change_expected: bool = False,
+    required_verifier_ids: Sequence[str] = (),
     allow_remote: bool | None = None,
     allow_remote_workspace: bool = False,
     max_premium_calls: int | None = None,
@@ -1046,6 +1340,8 @@ def build_assistant_task(
             risk_class=risk_class,
         ),
         constraints=tuple(constraints),
+        no_change_expected=no_change_expected,
+        required_verifier_ids=tuple(required_verifier_ids),
         allow_remote=allow_remote,
         allow_remote_workspace=allow_remote_workspace,
         budget=AssistantTaskBudget(max_premium_calls=max_premium_calls),
@@ -1058,7 +1354,16 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
     _reject_unknown(
         "assistant bridge config",
         raw,
-        {"capsule", "profiles", "providers", "schema_version", "state", "verification"},
+        {
+            "capsule",
+            "profiles",
+            "providers",
+            "runtime",
+            "schema_version",
+            "state",
+            "verification",
+            "workspace",
+        },
     )
     if str(raw.get("schema_version", "")) != BRIDGE_SCHEMA_VERSION:
         raise AssistantBridgeError(
@@ -1092,10 +1397,63 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
     _reject_unknown(
         "capsule",
         capsule_raw,
-        {"max_chars", "max_constraint_chars", "max_diff_chars", "max_objective_chars"},
+        {
+            "max_chars",
+            "max_constraint_chars",
+            "max_diff_chars",
+            "max_objective_chars",
+            "secret_redaction",
+        },
+    )
+    secret_raw = _as_object(
+        capsule_raw.get("secret_redaction", {}), "capsule.secret_redaction"
+    )
+    _reject_unknown(
+        "capsule.secret_redaction",
+        secret_raw,
+        {"require_residual_assurance", "residual_plugins"},
+    )
+    runtime_raw = _as_object(raw.get("runtime", {}), "runtime")
+    _reject_unknown(
+        "runtime",
+        runtime_raw,
+        {
+            "cleanup_grace_seconds",
+            "cleanup_kill_seconds",
+            "require_psutil",
+            "require_tree_isolation",
+            "stderr_limit_bytes",
+            "stdin_limit_bytes",
+            "stdout_limit_bytes",
+            "version_output_limit_bytes",
+            "version_timeout_seconds",
+        },
     )
     state_raw = _as_object(raw.get("state", {}), "state")
-    _reject_unknown("state", state_raw, {"budget_ledger_path"})
+    _reject_unknown(
+        "state",
+        state_raw,
+        {
+            "confirmation_ttl_seconds",
+            "ledger_path",
+            "lock_timeout_seconds",
+            "namespace",
+            "stale_lock_seconds",
+        },
+    )
+    workspace_raw = _as_object(raw.get("workspace", {}), "workspace")
+    _reject_unknown(
+        "workspace",
+        workspace_raw,
+        {
+            "ignored_paths",
+            "max_file_bytes",
+            "max_files",
+            "max_total_bytes",
+            "transaction_lock_ttl_seconds",
+            "transaction_state_dir",
+        },
+    )
     profiles = {
         name: _parse_profile(
             name, _as_object(profiles_raw.get(name), f"profiles.{name}")
@@ -1109,14 +1467,151 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
         verification_raw.get("external_verifiers", [])
     )
     ledger_raw = _string_value(
-        state_raw.get(
-            "budget_ledger_path", "work/runtime/assistant-premium-budget.json"
-        ),
-        "state.budget_ledger_path",
+        state_raw.get("ledger_path", "work/runtime/assistant-bridge-state.json"),
+        "state.ledger_path",
     )
     ledger_path = Path(ledger_raw).expanduser()
     if not ledger_path.is_absolute():
         ledger_path = source.parent.parent / ledger_path
+    transaction_raw = _string_value(
+        workspace_raw.get(
+            "transaction_state_dir", "work/runtime/assistant-transactions"
+        ),
+        "workspace.transaction_state_dir",
+    )
+    transaction_path = Path(transaction_raw).expanduser()
+    if not transaction_path.is_absolute():
+        transaction_path = source.parent.parent / transaction_path
+    ignored_raw = workspace_raw.get("ignored_paths", [])
+    if not isinstance(ignored_raw, list):
+        raise AssistantBridgeError("workspace.ignored_paths must be a list.")
+    ignored_rules: list[IgnoredPathRule] = []
+    for index, item in enumerate(ignored_raw):
+        ignored = _as_object(item, f"workspace.ignored_paths[{index}]")
+        _reject_unknown(
+            f"workspace.ignored_paths[{index}]", ignored, {"direction", "path"}
+        )
+        try:
+            ignored_rules.append(
+                IgnoredPathRule(
+                    path=_string_value(
+                        ignored.get("path", ""),
+                        f"workspace.ignored_paths[{index}].path",
+                    ),
+                    direction=_string_value(
+                        ignored.get("direction", "input_only"),
+                        f"workspace.ignored_paths[{index}].direction",
+                    ),
+                )
+            )
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+    try:
+        workspace_policy = BridgeWorkspacePolicy(
+            scope=WorkspaceScopePolicy(
+                max_files=_int_value(
+                    workspace_raw.get("max_files", 5000), "workspace.max_files"
+                ),
+                max_total_bytes=_int_value(
+                    workspace_raw.get("max_total_bytes", 256 * 1024 * 1024),
+                    "workspace.max_total_bytes",
+                ),
+                max_file_bytes=_int_value(
+                    workspace_raw.get("max_file_bytes", 64 * 1024 * 1024),
+                    "workspace.max_file_bytes",
+                ),
+                ignored_paths=tuple(ignored_rules),
+            ),
+            transaction_state_dir=str(transaction_path.resolve()),
+            transaction_lock_ttl_seconds=_number_value(
+                workspace_raw.get("transaction_lock_ttl_seconds", 120),
+                "workspace.transaction_lock_ttl_seconds",
+            ),
+        )
+    except WorkspaceSecurityError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    state_policy = BridgeStatePolicy(
+        ledger_path=str(ledger_path.resolve()),
+        namespace=_string_value(
+            state_raw.get("namespace", "assistant-bridge-v2"),
+            "state.namespace",
+        ),
+        confirmation_ttl_seconds=_number_value(
+            state_raw.get("confirmation_ttl_seconds", 300),
+            "state.confirmation_ttl_seconds",
+        ),
+        lock_timeout_seconds=_number_value(
+            state_raw.get("lock_timeout_seconds", 5),
+            "state.lock_timeout_seconds",
+        ),
+        stale_lock_seconds=_number_value(
+            state_raw.get("stale_lock_seconds", 120),
+            "state.stale_lock_seconds",
+        ),
+    )
+    runtime_policy = BridgeRuntimePolicy(
+        require_tree_isolation=_bool_value(
+            runtime_raw.get("require_tree_isolation", True),
+            "runtime.require_tree_isolation",
+        ),
+        require_psutil=_bool_value(
+            runtime_raw.get("require_psutil", True), "runtime.require_psutil"
+        ),
+        stdin_limit_bytes=_int_value(
+            runtime_raw.get("stdin_limit_bytes", 8 * 1024 * 1024),
+            "runtime.stdin_limit_bytes",
+        ),
+        stdout_limit_bytes=_int_value(
+            runtime_raw.get("stdout_limit_bytes", _MAX_STREAM_BYTES),
+            "runtime.stdout_limit_bytes",
+        ),
+        stderr_limit_bytes=_int_value(
+            runtime_raw.get("stderr_limit_bytes", _MAX_STREAM_BYTES),
+            "runtime.stderr_limit_bytes",
+        ),
+        cleanup_grace_seconds=_number_value(
+            runtime_raw.get("cleanup_grace_seconds", 0.25),
+            "runtime.cleanup_grace_seconds",
+        ),
+        cleanup_kill_seconds=_number_value(
+            runtime_raw.get("cleanup_kill_seconds", 0.75),
+            "runtime.cleanup_kill_seconds",
+        ),
+        version_timeout_seconds=_number_value(
+            runtime_raw.get("version_timeout_seconds", 3),
+            "runtime.version_timeout_seconds",
+        ),
+        version_output_limit_bytes=_int_value(
+            runtime_raw.get("version_output_limit_bytes", 32 * 1024),
+            "runtime.version_output_limit_bytes",
+        ),
+    )
+    effective_sha256 = _sha256_text(
+        _canonical_json(
+            {
+                "declared": raw,
+                "state": state_policy.effective_descriptor(),
+                "workspace": workspace_policy.effective_descriptor(),
+                "runtime_policy": runtime_policy.payload(),
+                "runtime_capabilities": runtime_capabilities().payload(),
+                "secret_assurance": {
+                    "require_residual_assurance": _bool_value(
+                        secret_raw.get("require_residual_assurance", True),
+                        "capsule.secret_redaction.require_residual_assurance",
+                    ),
+                    "residual_plugins": list(
+                        _string_tuple(
+                            secret_raw.get(
+                                "residual_plugins",
+                                list(SecretRedactionPolicy().residual_plugins),
+                            ),
+                            "capsule.secret_redaction.residual_plugins",
+                        )
+                    ),
+                },
+            }
+        )
+    )
     return AssistantBridgeConfig(
         local=_parse_provider(_as_object(providers.get("local"), "providers.local")),
         premium=_parse_provider(
@@ -1156,9 +1651,24 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
                 capsule_raw.get("max_diff_chars", 2500),
                 "capsule.max_diff_chars",
             ),
+            secret_redaction=SecretRedactionPolicy(
+                require_residual_assurance=_bool_value(
+                    secret_raw.get("require_residual_assurance", True),
+                    "capsule.secret_redaction.require_residual_assurance",
+                ),
+                residual_plugins=_string_tuple(
+                    secret_raw.get(
+                        "residual_plugins",
+                        list(SecretRedactionPolicy().residual_plugins),
+                    ),
+                    "capsule.secret_redaction.residual_plugins",
+                ),
+            ),
         ),
-        budget_ledger_path=str(ledger_path.resolve()),
-        source_sha256=_sha256_text(_canonical_json(raw)),
+        runtime=runtime_policy,
+        state=state_policy,
+        workspace=workspace_policy,
+        source_sha256=effective_sha256,
     )
 
 
@@ -1314,6 +1824,9 @@ def provider_gaps(
         gaps.append(f"authority:{demand.risk_class}")
     if demand.risk_class == "write_local" and provider.sandbox != "workspace-write":
         gaps.append("authority:workspace_write")
+    if provider.mode == "local" and demand.risk_class == "write_local":
+        if provider.workspace_access != "read_write":
+            gaps.append("workspace:read_write")
     needs_web = "web" in demand.required or "web" in demand.tools
     if needs_web and not provider.network_access:
         gaps.append("network:web")
@@ -1527,13 +2040,45 @@ def build_codex_command_plan(
     output_path: str | Path | None = None,
     local_provider_override: str | None = None,
     workspace_access: str | None = None,
+    runtime_policy: BridgeRuntimePolicy | None = None,
 ) -> CommandPlan:
     demand = demand or CapabilityDemand()
+    selected_runtime_policy = runtime_policy or BridgeRuntimePolicy()
     resolved_workspace = str(Path(workspace).expanduser().resolve())
     if not Path(resolved_workspace).is_dir():
         raise AssistantBridgeError("Command workspace must be an existing directory.")
+    planning_environment = _sanitized_environment(provider.environment_allowlist)
+    try:
+        executable_identity = inspect_executable(
+            provider.executable,
+            env=planning_environment,
+            version_args=provider.version_args,
+            version_timeout_seconds=selected_runtime_policy.version_timeout_seconds,
+            version_output_limit_bytes=(
+                selected_runtime_policy.version_output_limit_bytes
+            ),
+            policy=selected_runtime_policy.process_policy(stdin_limit_bytes=0),
+        )
+    except (AssistantBridgeRuntimeError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Provider {provider.id} executable attestation failed."
+        ) from None
+    runtime = runtime_capabilities().payload()
+    if (
+        executable_identity.version is None
+        or executable_identity.version.status != "completed"
+        or executable_identity.version.returncode != 0
+        or executable_identity.version.truncated
+    ):
+        raise AssistantBridgeError(
+            f"Provider {provider.id} version attestation failed."
+        )
+    launcher_artifacts = _launcher_artifact_digests(
+        provider.launcher_args,
+        workspace=resolved_workspace,
+    )
     selected_local = ""
-    argv = [provider.executable, *provider.launcher_args]
+    argv = [executable_identity.resolved_path, *provider.launcher_args]
     argv.append("--strict-config")
     if provider.mode == "local":
         selected_local = local_provider_override or provider.local_provider
@@ -1602,6 +2147,11 @@ def build_codex_command_plan(
         "model": provider.model,
         "local_provider": selected_local,
         "environment_keys": list(provider.environment_allowlist),
+        "environment_sha256": executable_identity.resolution_environment.sha256,
+        "executable": executable_identity.payload(),
+        "runtime": runtime,
+        "runtime_policy": selected_runtime_policy.payload(),
+        "launcher_artifact_sha256": list(launcher_artifacts),
     }
     return CommandPlan(
         provider_id=provider.id,
@@ -1618,6 +2168,11 @@ def build_codex_command_plan(
         model=provider.model,
         local_provider=selected_local,
         environment_allowlist=provider.environment_allowlist,
+        executable_identity=executable_identity,
+        environment_sha256=executable_identity.resolution_environment.sha256,
+        runtime=runtime,
+        runtime_policy=selected_runtime_policy,
+        launcher_artifact_sha256=launcher_artifacts,
     )
 
 
@@ -1638,32 +2193,54 @@ def execute_codex_command(
         raise AssistantBridgeError(
             "Execution output path does not match the command plan."
         )
+    base_env = _sanitized_environment(plan.environment_allowlist)
+    if fingerprint_environment(base_env).sha256 != plan.environment_sha256:
+        raise AssistantBridgeError(
+            "Execution environment no longer matches the confirmed plan."
+        )
+    if (
+        _launcher_artifact_digests(
+            plan.argv[1 : plan.argv.index("--strict-config")],
+            workspace=plan.workspace,
+        )
+        != plan.launcher_artifact_sha256
+    ):
+        raise AssistantBridgeError(
+            "A launcher artifact no longer matches the confirmed plan."
+        )
     env = _sanitized_environment(
         plan.environment_allowlist,
         overrides=environment_overrides or {},
     )
-    outcome = _execute_bounded_process(
-        plan.argv,
-        stdin=prompt.encode("utf-8"),
-        cwd=plan.workspace,
-        env=env,
-        timeout_seconds=timeout_seconds,
-    )
-    if outcome["launch_error"]:
+    try:
+        outcome = execute_process(
+            plan.executable_identity,
+            plan.argv[1:],
+            stdin=prompt.encode("utf-8"),
+            cwd=plan.workspace,
+            env=env,
+            timeout_seconds=timeout_seconds,
+            policy=plan.runtime_policy.process_policy(),
+        )
+    except AssistantBridgeRuntimeError:
         return CommandResult(
             provider_id=plan.provider_id,
             status="blocked",
-            code=str(outcome["code"]),
+            code="runtime_attestation_failed",
             returncode=None,
-            duration_ms=int(outcome["duration_ms"]),
-            stdout_sha256=str(outcome["stdout_sha256"]),
-            stdout_bytes=int(outcome["stdout_bytes"]),
-            stderr_sha256=str(outcome["stderr_sha256"]),
-            stderr_bytes=int(outcome["stderr_bytes"]),
+            duration_ms=0,
+            stdout_sha256=_sha256_bytes(b""),
+            stdout_bytes=0,
+            stderr_sha256=_sha256_bytes(b""),
+            stderr_bytes=0,
             command_sha256=plan.command_sha256,
         )
-    status = "completed" if outcome["returncode"] == 0 else "failed"
-    code = "launcher_completed" if status == "completed" else str(outcome["code"])
+    status = "completed" if outcome.ok else "failed"
+    code = (
+        "launcher_completed"
+        if status == "completed"
+        else f"launcher_{_safe_code(outcome.code)}"
+    )
     output = ""
     if status == "completed":
         try:
@@ -1683,13 +2260,13 @@ def execute_codex_command(
         provider_id=plan.provider_id,
         status=status,
         code=code,
-        returncode=_optional_returncode(outcome["returncode"]),
-        duration_ms=int(outcome["duration_ms"]),
+        returncode=outcome.returncode,
+        duration_ms=outcome.duration_ms,
         output=output,
-        stdout_sha256=str(outcome["stdout_sha256"]),
-        stdout_bytes=int(outcome["stdout_bytes"]),
-        stderr_sha256=str(outcome["stderr_sha256"]),
-        stderr_bytes=int(outcome["stderr_bytes"]),
+        stdout_sha256=outcome.stdout_sha256,
+        stdout_bytes=outcome.stdout_bytes,
+        stderr_sha256=outcome.stderr_sha256,
+        stderr_bytes=outcome.stderr_bytes,
         command_sha256=plan.command_sha256,
     )
 
@@ -2430,6 +3007,7 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
             "sandbox",
             "timeout_seconds",
             "tools",
+            "version_args",
             "workspace_access",
         },
     )
@@ -2474,6 +3052,10 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
         environment_allowlist=_string_tuple(
             raw.get("environment_allowlist", []),
             "environment_allowlist",
+        ),
+        version_args=_string_tuple(
+            raw.get("version_args", ["--version"]),
+            "version_args",
         ),
     )
 
@@ -2522,6 +3104,10 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
             {
                 "argv",
                 "id",
+                "environment_allowlist",
+                "execution_boundary",
+                "network_policy",
+                "purpose",
                 "required_for_capabilities",
                 "required_for_risks",
                 "required_for_tools",
@@ -2537,6 +3123,22 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 timeout_seconds=_number_value(
                     value.get("timeout_seconds", 120),
                     f"command_verifiers[{index}].timeout_seconds",
+                ),
+                purpose=_string_value(
+                    value.get("purpose", "hygiene"),
+                    f"command_verifiers[{index}].purpose",
+                ),
+                execution_boundary=_string_value(
+                    value.get("execution_boundary", "disposable_workspace"),
+                    f"command_verifiers[{index}].execution_boundary",
+                ),
+                network_policy=_string_value(
+                    value.get("network_policy", "not_enforced"),
+                    f"command_verifiers[{index}].network_policy",
+                ),
+                environment_allowlist=_string_tuple(
+                    value.get("environment_allowlist", []),
+                    f"command_verifiers[{index}].environment_allowlist",
                 ),
                 required_for_capabilities=_identifier_tuple(
                     value.get("required_for_capabilities", []),
@@ -2665,7 +3267,16 @@ def _effective_workspace_access(
     allow_remote_workspace: bool,
 ) -> str:
     if provider.mode == "local":
-        return "read_write" if demand.risk_class == "write_local" else "read_only"
+        required = "read_write" if demand.risk_class == "write_local" else "read_only"
+        if required == "read_write" and provider.workspace_access != "read_write":
+            raise AssistantBridgeError(
+                "Local provider workspace ceiling cannot satisfy write_local authority."
+            )
+        if provider.workspace_access not in {"read_only", "read_write"}:
+            raise AssistantBridgeError(
+                "Local provider has an invalid workspace ceiling."
+            )
+        return required
     if demand.risk_class == "write_local" and allow_remote_workspace:
         if provider.workspace_access != "read_write":
             raise AssistantBridgeError(
@@ -3120,6 +3731,45 @@ def _validate_safe_extra_args(values: Sequence[str], *, provider_id: str) -> Non
         raise AssistantBridgeError(
             f"Provider {provider_id} extra_args cannot be used inside the isolated authority boundary."
         )
+
+
+def _launcher_artifact_digests(
+    values: Sequence[str],
+    *,
+    workspace: str | Path,
+) -> tuple[str, ...]:
+    artifacts: list[str] = []
+    base = Path(workspace)
+    for value in values:
+        candidate = Path(value).expanduser()
+        path_shaped = candidate.is_absolute() or len(candidate.parts) > 1
+        if not path_shaped:
+            continue
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            raise AssistantBridgeError(
+                "A path-shaped launcher artifact cannot be attested."
+            ) from None
+        if not resolved.is_file() or resolved.is_symlink():
+            raise AssistantBridgeError(
+                "A launcher artifact must be a regular non-symlink file."
+            )
+        digest, size = _hash_file(resolved)
+        artifacts.append(
+            _sha256_text(
+                _canonical_json(
+                    {
+                        "path_sha256": _sha256_text(str(resolved)),
+                        "sha256": digest,
+                        "size": size,
+                    }
+                )
+            )
+        )
+    return tuple(artifacts)
 
 
 def _normalize_ephemeral_paths(

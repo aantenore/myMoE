@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "task_id": "fixture-safe-refactor",
   "objective": "Refactor the parser and run its focused tests.",
   "profile": "balanced",
@@ -14,6 +14,8 @@
   ],
   "allow_remote": true,
   "allow_remote_workspace": true,
+  "no_change_expected": false,
+  "required_verifier_ids": ["project-test-suite"],
   "budget": {
     "max_premium_calls": 1
   }

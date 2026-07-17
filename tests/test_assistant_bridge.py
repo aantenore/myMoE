@@ -321,7 +321,7 @@ class AssistantBridgeContractTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "1.0",
+                        "schema_version": "2.0",
                         "checks": [
                             {
                                 "id": "test",

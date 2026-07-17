@@ -479,6 +479,19 @@ wheels = [
 ]
 
 [[package]]
+name = "detect-secrets"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/67/382a863fff94eae5a0cf05542179169a1c49a4c8784a9480621e2066ca7d/detect_secrets-1.5.0.tar.gz", hash = "sha256:6bb46dcc553c10df51475641bb30fd69d25645cc12339e46c824c1e0c388898a", size = 97351, upload-time = "2024-05-06T17:46:19.721Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/5e/4f5fe4b89fde1dc3ed0eb51bd4ce4c0bca406246673d370ea2ad0c58d747/detect_secrets-1.5.0-py3-none-any.whl", hash = "sha256:e24e7b9b5a35048c313e983f76c4bd09dad89f045ff059e354f9943bf45aa060", size = 120341, upload-time = "2024-05-06T17:46:16.628Z" },
+]
+
+[[package]]
 name = "dill"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -861,6 +874,10 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+assistant-bridge = [
+    { name = "detect-secrets" },
+    { name = "psutil" },
+]
 gguf = [
     { name = "huggingface-hub" },
     { name = "psutil" },
@@ -889,6 +906,7 @@ ui-test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "detect-secrets", marker = "extra == 'assistant-bridge'", specifier = ">=1.5,<1.6" },
     { name = "huggingface-hub", marker = "extra == 'gguf'" },
     { name = "huggingface-hub", marker = "extra == 'mlx'" },
     { name = "huggingface-hub", marker = "extra == 'mlx-current'" },
@@ -899,13 +917,14 @@ requires-dist = [
     { name = "mlx-metal", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = "==0.31.2" },
     { name = "mlx-vlm", marker = "extra == 'mlx-vlm'" },
     { name = "playwright", marker = "extra == 'ui-test'" },
+    { name = "psutil", marker = "extra == 'assistant-bridge'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'gguf'" },
     { name = "psutil", marker = "extra == 'mlx'" },
     { name = "psutil", marker = "extra == 'mlx-current'" },
     { name = "psutil", marker = "extra == 'mlx-vlm'" },
     { name = "transformers", marker = "extra == 'mlx'", specifier = "==5.12.1" },
 ]
-provides-extras = ["gguf", "mlx", "mlx-current", "mlx-vlm", "ui-test"]
+provides-extras = ["assistant-bridge", "gguf", "mlx", "mlx-current", "mlx-vlm", "ui-test"]
 
 [[package]]
 name = "markdown-it-py"
