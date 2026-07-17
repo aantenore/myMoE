@@ -224,7 +224,12 @@ _DETECT_SECRETS_LOCK = threading.RLock()
 
 @dataclass(frozen=True)
 class SecretRedactionPolicy:
-    """Configures which fields and patterns may cross a remote boundary."""
+    """Configures which fields and patterns may cross a remote boundary.
+
+    ``generated_metadata_fields`` is retained for API compatibility, but its
+    entries are interpreted as exact normalized paths.  A bare name therefore
+    trusts only that root field; an identically named nested input is scanned.
+    """
 
     user_controlled_fields: frozenset[str] = DEFAULT_USER_CONTROLLED_FIELDS
     sensitive_keys: frozenset[str] = DEFAULT_SENSITIVE_KEYS
@@ -339,14 +344,11 @@ def redact_text(
     redacted, pattern_count = _apply_text_patterns(value, active)
     residual_count = 0
     if detector is not None:
-        try:
-            redacted, residual_count = detector.redact(redacted, active.replacement)
-        except ResidualAssuranceUnavailableError:
-            raise
-        except Exception:
-            raise ResidualAssuranceUnavailableError(
-                "Residual secret assurance failed closed."
-            ) from None
+        redacted, residual_count = _redact_with_detector(
+            redacted,
+            active,
+            detector,
+        )
     return SecretRedactionResult(
         value=redacted,
         redaction_count=pattern_count + residual_count,
@@ -367,7 +369,49 @@ def redact_user_controlled_fields(
 ) -> SecretRedactionResult:
     """Return a redacted copy while leaving generated metadata unscanned."""
 
-    active = policy or SecretRedactionPolicy()
+    return _redact_object(
+        payload,
+        policy or SecretRedactionPolicy(),
+        residual_detector=residual_detector,
+        scan_all_strings=False,
+        require_json_compatible=False,
+    )
+
+
+def redact_outbound_object(
+    payload: object,
+    policy: SecretRedactionPolicy | None = None,
+    *,
+    residual_detector: ResidualSecretDetector | None = None,
+) -> SecretRedactionResult:
+    """Redact and finally scan an entire outbound JSON-compatible object.
+
+    Unlike the compatibility wrapper :func:`redact_user_controlled_fields`,
+    every string is pattern-scanned even when its path is not selected.  When
+    residual assurance is enabled, every string value is also passed through
+    the residual detector.  Mapping keys are checked with deterministic secret
+    patterns and fail closed if redaction would be necessary because renaming a
+    key could overwrite another entry.
+    """
+
+    return _redact_object(
+        payload,
+        policy or SecretRedactionPolicy(),
+        residual_detector=residual_detector,
+        scan_all_strings=True,
+        require_json_compatible=True,
+    )
+
+
+def _redact_object(
+    payload: object,
+    policy: SecretRedactionPolicy,
+    *,
+    residual_detector: ResidualSecretDetector | None,
+    scan_all_strings: bool,
+    require_json_compatible: bool,
+) -> SecretRedactionResult:
+    active = policy
     detector = _resolve_residual_detector(active, residual_detector)
     counters = _Counters()
     redacted = _redact_structure(
@@ -376,8 +420,17 @@ def redact_user_controlled_fields(
         detector,
         counters,
         path=(),
-        scan_all_strings=False,
+        scan_all_strings=scan_all_strings,
+        require_json_compatible=require_json_compatible,
     )
+    if detector is not None:
+        redacted = _scan_residual_outbound(
+            redacted,
+            active,
+            detector,
+            counters,
+            path=(),
+        )
     return SecretRedactionResult(
         value=redacted,
         redaction_count=(counters.structured + counters.pattern + counters.residual),
@@ -417,6 +470,7 @@ def _redact_structure(
     *,
     path: tuple[str, ...],
     scan_all_strings: bool,
+    require_json_compatible: bool,
 ) -> object:
     if isinstance(value, Mapping):
         output: dict[str, object] = {}
@@ -425,18 +479,23 @@ def _redact_structure(
                 raise SecretRedactionError(
                     "User-controlled mappings require string field names."
                 )
+            _validate_mapping_key_patterns(raw_key, policy)
             normalized = _normalize_key(raw_key)
             nested_path = (*path, normalized)
-            if _is_generated_field(normalized, policy):
+            if _is_valid_generated_field(nested_path, nested, policy):
                 output[raw_key] = nested
                 counters.skipped_generated += 1
             elif _is_sensitive_key(normalized, policy):
                 output[raw_key] = policy.replacement
                 counters.structured += 1
             else:
-                selected = scan_all_strings or _is_selected_field(
-                    nested_path,
-                    policy.user_controlled_fields,
+                selected = (
+                    scan_all_strings
+                    or _is_selected_field(
+                        nested_path,
+                        policy.user_controlled_fields,
+                    )
+                    or _is_generated_field(nested_path, policy)
                 )
                 output[raw_key] = _redact_structure(
                     nested,
@@ -445,6 +504,7 @@ def _redact_structure(
                     counters,
                     path=nested_path,
                     scan_all_strings=selected,
+                    require_json_compatible=require_json_compatible,
                 )
         return output
     if isinstance(value, list):
@@ -456,6 +516,7 @@ def _redact_structure(
                 counters,
                 path=path,
                 scan_all_strings=scan_all_strings,
+                require_json_compatible=require_json_compatible,
             )
             for nested in value
         ]
@@ -468,6 +529,7 @@ def _redact_structure(
                 counters,
                 path=path,
                 scan_all_strings=scan_all_strings,
+                require_json_compatible=require_json_compatible,
             )
             for nested in value
         )
@@ -490,10 +552,68 @@ def _redact_structure(
         return redacted
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    if scan_all_strings:
+    if scan_all_strings or require_json_compatible:
         raise SecretRedactionError(
-            "User-controlled fields must contain JSON-compatible values."
+            "Outbound content must contain JSON-compatible values."
         )
+    return value
+
+
+def _scan_residual_outbound(
+    value: object,
+    policy: SecretRedactionPolicy,
+    detector: ResidualSecretDetector,
+    counters: _Counters,
+    *,
+    path: tuple[str, ...],
+) -> object:
+    if isinstance(value, Mapping):
+        output: dict[str, object] = {}
+        for raw_key, nested in value.items():
+            if not isinstance(raw_key, str):
+                raise SecretRedactionError(
+                    "Outbound mappings require string field names."
+                )
+            _validate_mapping_key_patterns(raw_key, policy)
+            normalized = _normalize_key(raw_key)
+            nested_path = (*path, normalized)
+            if _is_valid_generated_field(nested_path, nested, policy):
+                output[raw_key] = nested
+            else:
+                output[raw_key] = _scan_residual_outbound(
+                    nested,
+                    policy,
+                    detector,
+                    counters,
+                    path=nested_path,
+                )
+        return output
+    if isinstance(value, list):
+        return [
+            _scan_residual_outbound(
+                nested,
+                policy,
+                detector,
+                counters,
+                path=path,
+            )
+            for nested in value
+        ]
+    if isinstance(value, tuple):
+        return tuple(
+            _scan_residual_outbound(
+                nested,
+                policy,
+                detector,
+                counters,
+                path=path,
+            )
+            for nested in value
+        )
+    if isinstance(value, str):
+        redacted, residual_count = _redact_with_detector(value, policy, detector)
+        counters.residual += residual_count
+        return redacted
     return value
 
 
@@ -523,10 +643,74 @@ def _normalize_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
-def _is_generated_field(key: str, policy: SecretRedactionPolicy) -> bool:
-    return key in policy.generated_metadata_fields or bool(
-        _GENERATED_KEY_MARKER.search(key)
-    )
+def _is_generated_field(
+    path: tuple[str, ...],
+    policy: SecretRedactionPolicy,
+) -> bool:
+    return ".".join(path) in policy.generated_metadata_fields
+
+
+def _is_valid_generated_field(
+    path: tuple[str, ...],
+    value: object,
+    policy: SecretRedactionPolicy,
+) -> bool:
+    if not _is_generated_field(path, policy):
+        return False
+    key = path[-1]
+    expected_length = 40 if key == "sha1" else 128 if key == "sha512" else 64
+
+    def is_digest(candidate: object) -> bool:
+        return (
+            isinstance(candidate, str)
+            and re.fullmatch(
+                rf"[0-9a-f]{{{expected_length}}}",
+                candidate,
+            )
+            is not None
+        )
+
+    if isinstance(value, (list, tuple)):
+        return all(is_digest(item) for item in value)
+    return is_digest(value)
+
+
+def _validate_mapping_key_patterns(
+    key: str,
+    policy: SecretRedactionPolicy,
+) -> None:
+    redacted, count = _apply_text_patterns(key, policy)
+    if redacted != key or count:
+        raise SecretRedactionError(
+            "Secrets in outbound mapping keys cannot be redacted safely."
+        )
+
+
+def _redact_with_detector(
+    value: str,
+    policy: SecretRedactionPolicy,
+    detector: ResidualSecretDetector,
+) -> tuple[str, int]:
+    try:
+        redacted, count = detector.redact(value, policy.replacement)
+    except ResidualAssuranceUnavailableError:
+        raise
+    except Exception:
+        raise ResidualAssuranceUnavailableError(
+            "Residual secret assurance failed closed."
+        ) from None
+    if (
+        not isinstance(redacted, str)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        or (count == 0 and redacted != value)
+        or (count > 0 and redacted == value)
+    ):
+        raise ResidualAssuranceUnavailableError(
+            "Residual secret assurance returned an unverifiable redaction."
+        )
+    return redacted, count
 
 
 def _is_sensitive_key(key: str, policy: SecretRedactionPolicy) -> bool:
@@ -611,20 +795,18 @@ def _redact_residual_lines(
                     "detect-secrets returned an unredactable residual finding."
                 )
             secrets.add(secret)
-        redacted_line = line
-        # Several detectors can report overlapping fragments for the same
-        # credential.  Keep only maximal values so a short fragment such as
-        # ``e`` cannot recursively redact the replacement text itself.
-        maximal = {
-            secret
-            for secret in secrets
-            if not any(secret != other and secret in other for other in secrets)
-        }
-        for secret in sorted(maximal, key=len, reverse=True):
-            replacements = redacted_line.count(secret)
-            if replacements:
-                redacted_line = redacted_line.replace(secret, replacement)
-                count += replacements
+        ordered = sorted(secrets, key=len, reverse=True)
+        for secret in ordered:
+            if secret not in line:
+                raise ResidualAssuranceUnavailableError(
+                    "detect-secrets returned an unredactable residual finding."
+                )
+        if ordered:
+            matcher = re.compile("|".join(re.escape(secret) for secret in ordered))
+            redacted_line, replacements = matcher.subn(lambda _: replacement, line)
+            count += replacements
+        else:
+            redacted_line = line
         output.append(redacted_line)
     return "".join(output), count
 
@@ -673,6 +855,7 @@ __all__ = [
     "SecretRedactionPolicy",
     "SecretRedactionResult",
     "TextSecretPattern",
+    "redact_outbound_object",
     "redact_text",
     "redact_user_controlled_fields",
 ]

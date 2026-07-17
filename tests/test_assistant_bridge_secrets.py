@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import local_moe.assistant_bridge_secrets as bridge_secrets
 from local_moe.assistant_bridge_secrets import (
     DetectSecretsResidualDetector,
     REDACTED_VALUE,
@@ -15,6 +16,7 @@ from local_moe.assistant_bridge_secrets import (
     SecretRedactionError,
     SecretRedactionPolicy,
     TextSecretPattern,
+    redact_outbound_object,
     redact_text,
     redact_user_controlled_fields,
 )
@@ -32,14 +34,21 @@ def structural_policy(**overrides: object) -> SecretRedactionPolicy:
 class _ResidualDetector:
     name = "test-residual"
 
-    def __init__(self, needle: str = "residual-secret") -> None:
-        self.needle = needle
+    def __init__(
+        self,
+        needle: str | tuple[str, ...] = "residual-secret",
+    ) -> None:
+        self.needles = (needle,) if isinstance(needle, str) else needle
         self.values: list[str] = []
 
     def redact(self, value: str, replacement: str) -> tuple[str, int]:
         self.values.append(value)
-        count = value.count(self.needle)
-        return value.replace(self.needle, replacement), count
+        count = 0
+        redacted = value
+        for needle in self.needles:
+            count += redacted.count(needle)
+            redacted = redacted.replace(needle, replacement)
+        return redacted, count
 
 
 class _BrokenResidualDetector:
@@ -48,6 +57,14 @@ class _BrokenResidualDetector:
     def redact(self, value: str, replacement: str) -> tuple[str, int]:
         del value, replacement
         raise RuntimeError("sensitive diagnostic must not escape")
+
+
+class _UnverifiableResidualDetector:
+    name = "unverifiable-residual"
+
+    def redact(self, value: str, replacement: str) -> tuple[str, int]:
+        del replacement
+        return value, 1
 
 
 class AssistantBridgeSecretRedactionTests(unittest.TestCase):
@@ -126,10 +143,15 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
             "objective": "safe objective",
             "task_fingerprint": fingerprint,
             "artifact_sha256": artifact_digest,
-            "nested": {"receipt_digest": fingerprint},
+            "config_sha256": "residual-secret",
+            "nested": {
+                "task_fingerprint": fingerprint,
+                "receipt_digest": "residual-secret",
+                "safe": "visible",
+            },
         }
         original = deepcopy(payload)
-        detector = _ResidualDetector()
+        detector = _ResidualDetector((fingerprint, "residual-secret"))
 
         result = redact_user_controlled_fields(
             payload,
@@ -140,9 +162,65 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
         self.assertEqual(payload, original)
         self.assertEqual(result.value["task_fingerprint"], fingerprint)  # type: ignore[index]
         self.assertEqual(result.value["artifact_sha256"], artifact_digest)  # type: ignore[index]
-        self.assertEqual(result.value["nested"]["receipt_digest"], fingerprint)  # type: ignore[index]
-        self.assertEqual(detector.values, ["safe objective"])
-        self.assertEqual(result.skipped_generated_field_count, 3)
+        self.assertEqual(
+            result.value["nested"]["task_fingerprint"],  # type: ignore[index]
+            REDACTED_VALUE,
+        )
+        self.assertEqual(result.value["config_sha256"], REDACTED_VALUE)  # type: ignore[index]
+        self.assertEqual(
+            result.value["nested"]["receipt_digest"],  # type: ignore[index]
+            REDACTED_VALUE,
+        )
+        self.assertEqual(result.value["nested"]["safe"], "visible")  # type: ignore[index]
+        self.assertEqual(detector.values.count(fingerprint), 1)
+        self.assertNotIn(artifact_digest, detector.values)
+        self.assertEqual(result.skipped_generated_field_count, 2)
+        self.assertEqual(result.residual_redaction_count, 3)
+
+    def test_secret_in_root_or_nested_mapping_key_fails_closed(self) -> None:
+        secret_key = "ghp_" + "A" * 36
+        for payload in (
+            {secret_key: "value"},
+            {"nested": {secret_key: "value"}},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(SecretRedactionError, "mapping keys"):
+                    redact_user_controlled_fields(payload, structural_policy())
+
+    def test_whole_object_api_scans_root_and_unselected_strings(self) -> None:
+        result = redact_outbound_object(
+            [
+                "prefix residual-secret suffix",
+                {"metadata": "API_KEY=whole-object-secret"},
+            ],
+            SecretRedactionPolicy(),
+            residual_detector=_ResidualDetector(),
+        )
+
+        self.assertEqual(result.value[0], "prefix [redacted] suffix")  # type: ignore[index]
+        self.assertEqual(
+            result.value[1]["metadata"],  # type: ignore[index]
+            "API_KEY=[redacted]",
+        )
+        self.assertEqual(result.residual_redaction_count, 1)
+        self.assertEqual(result.pattern_redaction_count, 1)
+
+    def test_invalid_generated_metadata_is_pattern_scanned_without_detector(
+        self,
+    ) -> None:
+        result = redact_user_controlled_fields(
+            {
+                "artifact_sha256": "API_KEY=should-not-cross",
+                "sha1": "not-a-canonical-digest",
+                "sha512": "A" * 128,
+            },
+            structural_policy(),
+        )
+
+        rendered = json.dumps(result.value, sort_keys=True)
+        self.assertNotIn("should-not-cross", rendered)
+        self.assertEqual(result.skipped_generated_field_count, 0)
+        self.assertGreaterEqual(result.pattern_redaction_count, 1)
 
     def test_configurable_field_path_and_custom_pattern(self) -> None:
         custom = TextSecretPattern(
@@ -214,6 +292,41 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
         self.assertNotIn("source-secret", str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
         self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_unverifiable_residual_replacement_fails_closed(self) -> None:
+        with self.assertRaisesRegex(
+            ResidualAssuranceUnavailableError,
+            "unverifiable redaction",
+        ):
+            redact_text(
+                "opaque residual",
+                SecretRedactionPolicy(patterns=()),
+                residual_detector=_UnverifiableResidualDetector(),
+            )
+
+        finding = SimpleNamespace(secret_value="not-present-in-source")
+        with self.assertRaisesRegex(
+            ResidualAssuranceUnavailableError,
+            "unredactable residual finding",
+        ):
+            bridge_secrets._redact_residual_lines(
+                "source text",
+                REDACTED_VALUE,
+                lambda line: (finding,),
+            )
+
+    def test_unselected_outbound_string_receives_final_residual_scan(self) -> None:
+        result = redact_user_controlled_fields(
+            {"trusted_metadata": "prefix residual-secret suffix"},
+            SecretRedactionPolicy(patterns=()),
+            residual_detector=_ResidualDetector(),
+        )
+
+        self.assertEqual(
+            result.value["trusted_metadata"],  # type: ignore[index]
+            "prefix [redacted] suffix",
+        )
+        self.assertEqual(result.residual_redaction_count, 1)
 
     def test_missing_optional_dependency_is_explicit_when_assurance_required(
         self,
