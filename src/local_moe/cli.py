@@ -301,6 +301,11 @@ def main() -> None:
                     )
                 )
                 return
+            try:
+                _validate_assistant_bridge_policy_preflight(app_config)
+            except AssistantBridgeError as exc:
+                _record_assistant_bridge_denied(app_config, task, exc)
+                raise
             authority_receipt = bridge.inspect_route(
                 task,
                 workspace=args.assistant_workspace,
@@ -1709,6 +1714,31 @@ def _validate_assistant_bridge_authority(
     task: AssistantTaskEnvelope,
     route: str,
 ) -> None:
+    execution_policy = _validate_assistant_bridge_policy_preflight(app_config)
+    if execution_policy == "local_only" and route in {
+        "local_then_verify",
+        "premium",
+    }:
+        raise AssistantBridgeError(
+            "Application local_only policy forbids a route that can invoke premium execution."
+        )
+    if task.capability_demand.risk_class == "write_local":
+        policy = str(app_config.permissions.default_write_policy).strip().lower()
+        if policy in {"deny", "denied", "disabled", "forbidden"}:
+            raise AssistantBridgeError("Application policy forbids local writes.")
+    if task.capability_demand.risk_class in {
+        "write_external",
+        "destructive",
+        "privileged",
+    }:
+        raise AssistantBridgeError(
+            "Assistant Bridge cannot grant external, destructive, or privileged authority."
+        )
+
+
+def _validate_assistant_bridge_policy_preflight(app_config: object) -> str:
+    """Reject process-wide bridge policy before any route preparation."""
+
     execution_policy = (
         str(
             getattr(
@@ -1729,25 +1759,7 @@ def _validate_assistant_bridge_authority(
         "hybrid_receipt_confirmation",
     }:
         raise AssistantBridgeError("Application Assistant Bridge policy is invalid.")
-    if execution_policy == "local_only" and route in {
-        "local_then_verify",
-        "premium",
-    }:
-        raise AssistantBridgeError(
-            "Application local_only policy forbids a route that can invoke premium execution."
-        )
-    if task.capability_demand.risk_class == "write_local":
-        policy = str(app_config.permissions.default_write_policy).strip().lower()
-        if policy in {"deny", "denied", "disabled", "forbidden"}:
-            raise AssistantBridgeError("Application policy forbids local writes.")
-    if task.capability_demand.risk_class in {
-        "write_external",
-        "destructive",
-        "privileged",
-    }:
-        raise AssistantBridgeError(
-            "Assistant Bridge cannot grant external, destructive, or privileged authority."
-        )
+    return execution_policy
 
 
 def _cron_state_path(app_config: object) -> str:

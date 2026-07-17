@@ -32,7 +32,7 @@ from .assistant_bridge_runtime import (
     ProcessExecutionPolicy,
     execute_process,
     fingerprint_environment,
-    inspect_executable,
+    resolve_executable,
     runtime_capabilities,
 )
 from .assistant_bridge_secrets import (
@@ -2011,30 +2011,15 @@ def build_codex_command_plan(
         raise AssistantBridgeError("Command workspace must be an existing directory.")
     planning_environment = _sanitized_environment(provider.environment_allowlist)
     try:
-        executable_identity = inspect_executable(
+        executable_identity = resolve_executable(
             provider.executable,
             env=planning_environment,
-            version_args=provider.version_args,
-            version_timeout_seconds=selected_runtime_policy.version_timeout_seconds,
-            version_output_limit_bytes=(
-                selected_runtime_policy.version_output_limit_bytes
-            ),
-            policy=selected_runtime_policy.process_policy(stdin_limit_bytes=0),
         )
     except (AssistantBridgeRuntimeError, OSError, ValueError):
         raise AssistantBridgeError(
             f"Provider {provider.id} executable attestation failed."
         ) from None
     runtime = runtime_capabilities().payload()
-    if (
-        executable_identity.version is None
-        or executable_identity.version.status != "completed"
-        or executable_identity.version.returncode != 0
-        or executable_identity.version.truncated
-    ):
-        raise AssistantBridgeError(
-            f"Provider {provider.id} version attestation failed."
-        )
     launcher_artifacts = _launcher_artifact_digests(
         provider.launcher_args,
         workspace=resolved_workspace,
@@ -3727,25 +3712,14 @@ def _build_verifier_plan(
     )
     environment = _sanitized_environment(spec.environment_allowlist)
     try:
-        executable = inspect_executable(
+        executable = resolve_executable(
             argv[0],
             env=environment,
-            version_args=("--version",),
-            version_timeout_seconds=runtime_policy.version_timeout_seconds,
-            version_output_limit_bytes=runtime_policy.version_output_limit_bytes,
-            policy=runtime_policy.process_policy(stdin_limit_bytes=0),
         )
     except (AssistantBridgeRuntimeError, OSError, ValueError):
         raise AssistantBridgeError(
             f"Verifier {spec.id} executable attestation failed."
         ) from None
-    if (
-        executable.version is None
-        or executable.version.status != "completed"
-        or executable.version.returncode != 0
-        or executable.version.truncated
-    ):
-        raise AssistantBridgeError(f"Verifier {spec.id} version attestation failed.")
     artifacts = _launcher_artifact_digests(argv[1:], workspace=root)
     semantic_argv = [item.replace(root, "<ephemeral-workspace>") for item in argv]
     payload = {

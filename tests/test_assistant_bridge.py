@@ -392,6 +392,19 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
 
 class AssistantBridgeExecutionTests(unittest.TestCase):
+    def test_plan_and_route_inspection_never_execute_bound_binaries(self) -> None:
+        with _fake_bridge(process_proxy=True) as fixture:
+            task = build_assistant_task(
+                "Inspect the confirmed process boundary.",
+                profile="quality",
+            )
+
+            fixture.runner.plan(task, workspace=fixture.root)
+            fixture.runner.inspect_route(task, workspace=fixture.root)
+            process_started = (fixture.root / "process-probe.log").exists()
+
+        self.assertFalse(process_started)
+
     def test_write_local_candidate_is_verified_then_applied_to_source(self) -> None:
         with (
             _fake_bridge() as fixture,
@@ -932,7 +945,7 @@ class AssistantBridgeCliTests(unittest.TestCase):
         self.assertNotIn("result visible to user", json.dumps(runs))
 
     def test_cli_app_policy_can_disable_bridge_execution(self) -> None:
-        with _fake_bridge() as fixture:
+        with _fake_bridge(process_proxy=True) as fixture:
             raw = json.loads(fixture.app_config_path.read_text(encoding="utf-8"))
             raw["permissions"]["assistant_bridge_execution_policy"] = "disabled"
             fixture.app_config_path.write_text(json.dumps(raw), encoding="utf-8")
@@ -944,10 +957,31 @@ class AssistantBridgeCliTests(unittest.TestCase):
                 profile="offline",
             )
             audit = _read_jsonl(fixture.root / "runtime" / "audit.jsonl")
+            process_started = (fixture.root / "process-probe.log").exists()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("policy disables", completed.stderr)
         self.assertEqual([event["status"] for event in audit], ["denied"])
+        self.assertFalse(process_started)
+
+    def test_cli_local_only_denial_never_executes_bound_binaries(self) -> None:
+        with _fake_bridge(process_proxy=True) as fixture:
+            raw = json.loads(fixture.app_config_path.read_text(encoding="utf-8"))
+            raw["permissions"]["assistant_bridge_execution_policy"] = "local_only"
+            fixture.app_config_path.write_text(json.dumps(raw), encoding="utf-8")
+            plan = _run_cli_plan(fixture, "Use the quality tier.", profile="quality")
+
+            completed = _run_cli_execution(
+                fixture,
+                "Use the quality tier.",
+                plan,
+                profile="quality",
+            )
+            process_started = (fixture.root / "process-probe.log").exists()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("local_only", completed.stderr)
+        self.assertFalse(process_started)
 
     def test_cli_records_failed_terminal_audit_when_receipt_is_rejected(self) -> None:
         with _fake_bridge() as fixture:
@@ -1031,6 +1065,7 @@ def _fake_bridge(
     *,
     local_executable: str | None = None,
     local_launcher_args: tuple[str, ...] | None = None,
+    process_proxy: bool = False,
 ):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -1084,10 +1119,26 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
 """,
             encoding="utf-8",
         )
+        process_executable = sys.executable
+        if process_proxy:
+            process_log = root / "process-probe.log"
+            proxy = root / "python_proxy.py"
+            proxy.write_text(
+                f"#!{sys.executable}\n"
+                "from pathlib import Path\n"
+                "import os\n"
+                "import sys\n"
+                f"with Path({str(process_log)!r}).open('a', encoding='utf-8') as handle:\n"
+                "    handle.write('launched\\n')\n"
+                "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+                encoding="utf-8",
+            )
+            proxy.chmod(0o700)
+            process_executable = str(proxy)
         raw = json.loads(
             (ROOT / "configs" / "assistant-bridge.json").read_text(encoding="utf-8")
         )
-        executable = local_executable or sys.executable
+        executable = local_executable or process_executable
         launcher_args = (
             list(local_launcher_args)
             if local_launcher_args is not None
@@ -1095,7 +1146,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         )
         raw["providers"]["local"]["executable"] = executable
         raw["providers"]["local"]["launcher_args"] = launcher_args
-        raw["providers"]["premium"]["executable"] = sys.executable
+        raw["providers"]["premium"]["executable"] = process_executable
         raw["providers"]["premium"]["launcher_args"] = [str(launcher)]
         allowed_env = [
             "FAKE_CODEX_LOG",
@@ -1128,7 +1179,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             {
                 "id": "fixture-task-verifier",
                 "argv": [
-                    sys.executable,
+                    process_executable,
                     "-c",
                     "import os; raise SystemExit(int(os.environ.get('FAKE_VERIFIER_EXIT', '0')))",
                 ],
@@ -1206,7 +1257,7 @@ def _initialize_git(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
     (root / ".gitignore").write_text(
-        "invocations.jsonl\nruntime/\ncapsule.json\n",
+        "invocations.jsonl\nprocess-probe.log\nruntime/\ncapsule.json\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tracked.txt", ".gitignore"], cwd=root, check=True)
