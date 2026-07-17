@@ -12,7 +12,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence
 import unicodedata
 from uuid import uuid4
 
@@ -27,6 +27,56 @@ class _SimulatedTransactionCrash(RuntimeError):
 
 _SAFE_TRANSACTION_ID = re.compile(r"^[a-f0-9]{32,64}$")
 _SAFE_BACKUP_NAME = re.compile(r"^[0-9]{8}\.bin$")
+_SAFE_QUARANTINE_NAME = re.compile(r"^\.mymoe-before-[a-f0-9]{32,64}-[0-9]{8}$")
+_SECURE_OPEN_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+_SECURE_DIRECTORY_FLAGS = _SECURE_OPEN_FLAGS | getattr(os, "O_DIRECTORY", 0)
+
+
+@dataclass(frozen=True)
+class WorkspaceWriteCapability:
+    supported: bool
+    backend: str
+    reason: str = ""
+
+
+def workspace_write_capability() -> WorkspaceWriteCapability:
+    """Report whether fail-closed workspace mutation is available before routing."""
+
+    if os.name == "nt":
+        try:
+            import ctypes
+            import msvcrt  # noqa: F401
+
+            getattr(ctypes, "windll")
+        except (AttributeError, ImportError):
+            return WorkspaceWriteCapability(
+                False,
+                "windows",
+                "required Win32 handle APIs are unavailable",
+            )
+        if not hasattr(os, "link"):
+            return WorkspaceWriteCapability(
+                False,
+                "windows",
+                "atomic no-replace hard links are unavailable",
+            )
+        return WorkspaceWriteCapability(True, "windows-handle-write-through")
+    required_dir_fd = (os.open, os.rename, os.link, os.unlink, os.mkdir)
+    if (
+        os.name != "posix"
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_DIRECTORY")
+        or any(item not in os.supports_dir_fd for item in required_dir_fd)
+        or not hasattr(os, "link")
+    ):
+        return WorkspaceWriteCapability(
+            False,
+            "unsupported",
+            "no-follow dir-fd and atomic no-replace primitives are unavailable",
+        )
+    return WorkspaceWriteCapability(True, "posix-dirfd-hardlink")
 
 
 @dataclass(frozen=True)
@@ -130,9 +180,7 @@ def snapshot_workspace(
     workspace: str | Path,
     policy: WorkspaceScopePolicy,
 ) -> WorkspaceSnapshot:
-    root = Path(workspace).expanduser().resolve()
-    if not root.is_dir():
-        raise WorkspaceSecurityError("Workspace must be an existing directory.")
+    root = _trusted_root(workspace, label="Workspace")
     first = _snapshot_once(root, policy)
     second = _snapshot_once(root, policy)
     if first.fingerprint != second.fingerprint:
@@ -144,10 +192,17 @@ def snapshot_materialized(
     root: str | Path,
     policy: WorkspaceScopePolicy,
 ) -> tuple[WorkspaceFile, ...]:
-    base = Path(root).resolve()
+    base = _trusted_root(root, label="Materialized workspace")
     paths: list[str] = []
     for directory, directories, files in os.walk(base, topdown=True, followlinks=False):
-        directories[:] = sorted(item for item in directories if item != ".git")
+        _assert_directory_entry(Path(directory))
+        safe_directories: list[str] = []
+        for name in sorted(directories):
+            child = Path(directory) / name
+            _assert_directory_entry(child)
+            if name != ".git":
+                safe_directories.append(name)
+        directories[:] = safe_directories
         relative_dir = Path(directory).relative_to(base)
         for name in sorted(files):
             relative = (relative_dir / name).as_posix()
@@ -168,10 +223,10 @@ def materialize_workspace(
         for item in snapshot.files:
             if item.kind == "missing":
                 continue
-            source_path = source / item.path
             target = root / item.path
             target.parent.mkdir(parents=True, exist_ok=True)
-            _copy_attested_file(source_path, target, item)
+            data = _read_attested_file(source, item, policy)
+            _durable_write_new(target, data, item.mode)
         if snapshot_workspace(source, policy).fingerprint != snapshot.fingerprint:
             raise WorkspaceSecurityError(
                 "Workspace changed while the materialized candidate was created."
@@ -218,17 +273,22 @@ def apply_changeset(
     transaction_id: str,
     lock_ttl_seconds: float = 120.0,
     _fault_after_mutation: int | None = None,
+    _test_hook_after_detach: Callable[[Path], None] | None = None,
 ) -> WorkspaceSnapshot:
     _validate_transaction_id(transaction_id)
-    source = Path(source_snapshot.root)
-    state = Path(state_dir).expanduser().resolve()
-    state.mkdir(parents=True, exist_ok=True)
+    source = _trusted_root(source_snapshot.root, label="Source workspace")
+    candidate = _trusted_root(candidate_root, label="Candidate workspace")
+    if changes:
+        _require_secure_apply_capabilities()
+    state = _prepare_state_directory(state_dir)
     lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
     _acquire_transaction_lock(lock, lock_ttl_seconds)
     transaction = state / f"transaction-{transaction_id}"
-    transaction.mkdir(mode=0o700)
-    backup_dir = transaction / "backups"
-    backup_dir.mkdir(mode=0o700)
+    try:
+        backup_dir, staged_dir = _prepare_transaction_directories(state, transaction)
+    except Exception:
+        _release_transaction_lock(lock)
+        raise
     journal = transaction / "journal.json"
     records = [
         {
@@ -237,6 +297,10 @@ def apply_changeset(
             "after": item.after.payload() if item.after else None,
             "backup": None,
             "backup_sha256": None,
+            "staged": None,
+            "staged_sha256": None,
+            "quarantine": None,
+            "created_directories": [],
             "status": "pending",
         }
         for item in changes
@@ -255,29 +319,55 @@ def apply_changeset(
             raise WorkspaceSecurityError(
                 "Workspace changed after confirmation; transaction was not applied."
             )
+        expected_changes = build_changeset(source_snapshot.files, candidate_files)
+        if tuple(changes) != expected_changes:
+            raise WorkspaceSecurityError(
+                "Workspace changes do not match the attested candidate manifest."
+            )
+        for index, directories in enumerate(_plan_created_directories(source, changes)):
+            records[index]["created_directories"] = list(directories)
+        _stage_attested_candidate(
+            candidate,
+            candidate_files,
+            changes,
+            policy,
+            staged_dir,
+            records,
+        )
+        journal_payload["status"] = "prepared"
+        _write_journal(journal, journal_payload)
         journal_payload["status"] = "applying"
         _write_journal(journal, journal_payload)
         for index, change in enumerate(changes):
             target = source / change.path
             _assert_current_entry(target, change.before)
-            if target.exists():
+            if change.before is not None and change.before.kind != "missing":
                 backup = backup_dir / f"{index:08d}.bin"
-                data = target.read_bytes()
-                with backup.open("wb") as handle:
-                    handle.write(data)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+                data = _read_attested_file(source, change.before, policy)
+                _durable_write_new(backup, data, change.before.mode)
+                _fsync_directory(backup_dir)
                 records[index]["backup"] = backup.name
                 records[index]["backup_sha256"] = _sha256_bytes(data)
             records[index]["status"] = "backed_up"
             _write_journal(journal, journal_payload)
+            if change.before is not None and change.before.kind != "missing":
+                records[index]["quarantine"] = (
+                    f".mymoe-before-{transaction_id}-{index:08d}"
+                )
             records[index]["status"] = "mutating"
             _write_journal(journal, journal_payload)
-            if change.after is None:
-                target.unlink()
-            else:
-                candidate = Path(candidate_root) / change.path
-                _atomic_copy(candidate, target, change.after.mode)
+            staged_name = records[index].get("staged")
+            staged = (
+                staged_dir / str(staged_name) if isinstance(staged_name, str) else None
+            )
+            _apply_change_fail_closed(
+                source=source,
+                change=change,
+                staged=staged,
+                quarantine_name=records[index].get("quarantine"),
+                created_directories=records[index].get("created_directories"),
+                test_hook=_test_hook_after_detach,
+            )
             if _fault_after_mutation == index:
                 raise _SimulatedTransactionCrash("simulated crash after mutation")
             records[index]["status"] = "applied"
@@ -290,7 +380,7 @@ def apply_changeset(
             )
         journal_payload["status"] = "committed"
         _write_journal(journal, journal_payload)
-        shutil.rmtree(transaction)
+        _durable_rmtree(transaction, state)
         return result
     except _SimulatedTransactionCrash:
         raise
@@ -319,8 +409,8 @@ def recover_workspace_transaction(
     lock_ttl_seconds: float = 120.0,
 ) -> None:
     _validate_transaction_id(transaction_id)
-    state = Path(state_dir).expanduser().resolve()
-    source = Path(source_root).expanduser().resolve()
+    state = _trusted_root(state_dir, label="Workspace state")
+    source = _trusted_root(source_root, label="Source workspace")
     transaction = state / f"transaction-{transaction_id}"
     journal = transaction / "journal.json"
     if not journal.is_file():
@@ -328,7 +418,8 @@ def recover_workspace_transaction(
     lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
     _acquire_transaction_lock(lock, lock_ttl_seconds)
     try:
-        payload = json.loads(journal.read_text(encoding="utf-8"))
+        raw_journal, _ = _read_regular_path_nofollow(journal, 16 * 1024 * 1024)
+        payload = json.loads(raw_journal.decode("utf-8"))
         _validate_journal(payload, transaction_id)
         if payload.get("source_root_sha256") != _sha256_text(str(source)):
             raise WorkspaceSecurityError(
@@ -337,7 +428,7 @@ def recover_workspace_transaction(
         _rollback_from_journal(source, payload, transaction / "backups")
         payload["status"] = "recovered"
         _write_journal(journal, payload)
-        shutil.rmtree(transaction)
+        _durable_rmtree(transaction, state)
     finally:
         _release_transaction_lock(lock)
 
@@ -364,7 +455,14 @@ def _snapshot_once(root: Path, policy: WorkspaceScopePolicy) -> WorkspaceSnapsho
         for directory, directories, files in os.walk(
             root, topdown=True, followlinks=False
         ):
-            directories[:] = sorted(item for item in directories if item != ".git")
+            _assert_directory_entry(Path(directory))
+            safe_directories: list[str] = []
+            for name in sorted(directories):
+                child = Path(directory) / name
+                _assert_directory_entry(child)
+                if name != ".git":
+                    safe_directories.append(name)
+            directories[:] = safe_directories
             relative_dir = Path(directory).relative_to(root)
             paths.extend((relative_dir / name).as_posix() for name in sorted(files))
         status = b""
@@ -413,9 +511,8 @@ def _manifest_files(
     result: list[WorkspaceFile] = []
     total = 0
     for relative in clean_paths:
-        target = root / relative
         try:
-            metadata = target.lstat()
+            metadata, digest = _inspect_regular_file(root, relative, policy)
         except FileNotFoundError:
             result.append(
                 WorkspaceFile(
@@ -428,13 +525,7 @@ def _manifest_files(
                 )
             )
             continue
-        if stat.S_ISLNK(metadata.st_mode):
-            raise WorkspaceSecurityError("Workspace symbolic links are not supported.")
-        if not stat.S_ISREG(metadata.st_mode):
-            raise WorkspaceSecurityError("Workspace contains a special file.")
         size = int(metadata.st_size)
-        if size > policy.max_file_bytes:
-            raise WorkspaceSecurityError("Workspace per-file byte bound was exceeded.")
         total += size
         if total > policy.max_total_bytes:
             raise WorkspaceSecurityError("Workspace total byte bound was exceeded.")
@@ -442,7 +533,7 @@ def _manifest_files(
             WorkspaceFile(
                 path=relative,
                 kind="file",
-                sha256=_hash_file(target),
+                sha256=digest,
                 size=size,
                 mode=stat.S_IMODE(metadata.st_mode),
                 direction=directions.get(relative, "round_trip"),
@@ -475,45 +566,207 @@ def _initialize_synthetic_repository(root: Path) -> None:
         )
 
 
-def _copy_attested_file(source: Path, target: Path, expected: WorkspaceFile) -> None:
-    if _hash_file(source) != expected.sha256:
-        raise WorkspaceSecurityError("Workspace file changed during materialization.")
-    shutil.copyfile(source, target)
-    target.chmod(expected.mode)
-    if _hash_file(target) != expected.sha256:
-        raise WorkspaceSecurityError("Materialized file digest mismatch.")
-
-
 def _assert_current_entry(path: Path, expected: WorkspaceFile | None) -> None:
     if expected is None or expected.kind == "missing":
-        if path.exists():
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return
+        else:
             raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
-        return
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
-        raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
+    try:
+        data, metadata = _read_regular_path_nofollow(path, expected.size)
+    except (OSError, WorkspaceSecurityError) as exc:
+        raise WorkspaceSecurityError("Workspace path failed compare-and-swap.") from exc
     if (
         int(metadata.st_size) != expected.size
         or stat.S_IMODE(metadata.st_mode) != expected.mode
-        or _hash_file(path) != expected.sha256
+        or _sha256_bytes(data) != expected.sha256
     ):
         raise WorkspaceSecurityError("Workspace path failed compare-and-swap.")
 
 
-def _atomic_copy(source: Path, target: Path, mode: int) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-", dir=target.parent)
+def _stage_attested_candidate(
+    candidate_root: Path,
+    candidate_files: Sequence[WorkspaceFile],
+    changes: Sequence[WorkspaceChange],
+    policy: WorkspaceScopePolicy,
+    staged_dir: Path,
+    records: list[dict[str, object]],
+) -> None:
+    expected = tuple(sorted(candidate_files))
+    first = snapshot_materialized(candidate_root, policy)
+    second = snapshot_materialized(candidate_root, policy)
+    if first != second or second != expected:
+        raise WorkspaceSecurityError(
+            "Candidate workspace changed or does not match its attested manifest."
+        )
+    for index, change in enumerate(changes):
+        if change.after is None:
+            continue
+        data = _read_attested_file(candidate_root, change.after, policy)
+        staged = staged_dir / f"{index:08d}.bin"
+        _durable_write_new(staged, data, change.after.mode)
+        _fsync_directory(staged_dir)
+        records[index]["staged"] = staged.name
+        records[index]["staged_sha256"] = _sha256_bytes(data)
+
+
+def _apply_change_fail_closed(
+    *,
+    source: Path,
+    change: WorkspaceChange,
+    staged: Path | None,
+    quarantine_name: object,
+    created_directories: object,
+    test_hook: Callable[[Path], None] | None,
+) -> None:
+    _create_planned_directories(source, created_directories)
+    target = source / change.path
+    _assert_safe_relative_ancestry(source, change.path)
+    quarantine: Path | None = None
+    if change.before is not None and change.before.kind != "missing":
+        if not isinstance(quarantine_name, str) or not _SAFE_QUARANTINE_NAME.fullmatch(
+            quarantine_name
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace transaction quarantine name is malformed."
+            )
+        quarantine = target.with_name(quarantine_name)
+        try:
+            quarantine.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise WorkspaceSecurityError(
+                "Workspace transaction quarantine path already exists."
+            )
+        _rename_no_replace(target, quarantine)
+        try:
+            _assert_current_entry(quarantine, change.before)
+        except WorkspaceSecurityError:
+            _restore_quarantine_no_replace(quarantine, target)
+            raise WorkspaceSecurityError(
+                "Workspace path changed during compare-and-swap acquisition."
+            ) from None
+    else:
+        _assert_current_entry(target, change.before)
+
+    if test_hook is not None:
+        test_hook(target)
+
+    if change.after is not None:
+        if staged is None:
+            raise WorkspaceSecurityError("Candidate staging artifact is missing.")
+        data = _read_staged_file(staged, change.after)
+        _install_bytes_no_replace(data, target, change.after.mode)
+    else:
+        _assert_current_entry(target, None)
+
+    _assert_current_entry(target, change.after)
+    if quarantine is not None:
+        _assert_current_entry(quarantine, change.before)
+        quarantine.unlink()
+        _fsync_directory(quarantine.parent)
+
+
+def _restore_quarantine_no_replace(quarantine: Path, target: Path) -> None:
+    try:
+        os.link(quarantine, target)
+    except FileExistsError as exc:
+        raise WorkspaceSecurityError(
+            "Concurrent workspace value was preserved; journal recovery is required."
+        ) from exc
+    quarantine.unlink()
+    _fsync_directory(target.parent)
+
+
+def _plan_created_directories(
+    source: Path,
+    changes: Sequence[WorkspaceChange],
+) -> tuple[tuple[str, ...], ...]:
+    claimed: set[str] = set()
+    result: list[tuple[str, ...]] = []
+    for change in changes:
+        planned: list[str] = []
+        if change.after is not None:
+            parts = Path(change.path).parts[:-1]
+            for depth in range(1, len(parts) + 1):
+                relative = Path(*parts[:depth]).as_posix()
+                if relative in claimed:
+                    continue
+                target = source / relative
+                if _entry_exists(target):
+                    _assert_directory_entry(target)
+                    continue
+                claimed.add(relative)
+                planned.append(relative)
+        result.append(tuple(planned))
+    return tuple(result)
+
+
+def _create_planned_directories(source: Path, raw_directories: object) -> None:
+    if not isinstance(raw_directories, list):
+        raise WorkspaceSecurityError(
+            "Workspace transaction directory plan is malformed."
+        )
+    for raw in raw_directories:
+        if not isinstance(raw, str):
+            raise WorkspaceSecurityError(
+                "Workspace transaction directory plan is malformed."
+            )
+        relative = _safe_relative(raw)
+        directory = source / relative
+        parent_relative = Path(relative).parent.as_posix()
+        if parent_relative != ".":
+            _assert_safe_relative_ancestry(source, f"{parent_relative}/entry")
+        else:
+            _assert_directory_entry(source)
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError as exc:
+            raise WorkspaceSecurityError(
+                "Workspace directory changed during no-replace creation."
+            ) from exc
+        _fsync_directory(directory.parent)
+        _assert_directory_entry(directory)
+
+
+def _install_bytes_no_replace(data: bytes, target: Path, mode: int) -> None:
+    descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-install-", dir=target.parent)
     temp = Path(raw_temp)
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(source.read_bytes())
+            handle.write(data)
             handle.flush()
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
-        temp.chmod(mode)
-        os.replace(temp, target)
+        if not hasattr(os, "fchmod"):
+            temp.chmod(mode)
+            _windows_flush_path(temp, directory=False)
+        _fsync_directory(target.parent)
+        try:
+            os.link(temp, target)
+        except FileExistsError as exc:
+            raise WorkspaceSecurityError(
+                "Workspace path changed during no-replace installation."
+            ) from exc
+        _fsync_directory(target.parent)
     finally:
-        if temp.exists():
-            temp.unlink()
+        temp.unlink(missing_ok=True)
+        _fsync_directory(target.parent)
+
+
+def _read_staged_file(path: Path, expected: WorkspaceFile) -> bytes:
+    data, metadata = _read_regular_path_nofollow(path, expected.size)
+    if (
+        int(metadata.st_size) != expected.size
+        or stat.S_IMODE(metadata.st_mode) != expected.mode
+        or _sha256_bytes(data) != expected.sha256
+    ):
+        raise WorkspaceSecurityError("Candidate staging artifact changed unexpectedly.")
+    return data
 
 
 def _rollback_from_journal(
@@ -535,30 +788,106 @@ def _rollback_from_journal(
         change = _change_from_payload(raw)
         target = root / change.path
         if _entry_matches(target, change.before):
+            _remove_matching_quarantine(target, change.before, raw.get("quarantine"))
+            _rollback_created_directories(root, raw.get("created_directories"))
             raw["status"] = "rolled_back"
             continue
-        if not _entry_matches(target, change.after):
+        quarantine = _journal_quarantine(target, raw.get("quarantine"))
+        if quarantine is not None and not _entry_matches(quarantine, change.before):
+            raise WorkspaceSecurityError(
+                "Workspace recovery quarantine does not match the recorded value."
+            )
+        rollback_detached: Path | None = None
+        if _entry_matches(target, change.after):
+            if change.after is not None:
+                rollback_detached = target.with_name(f".mymoe-rollback-{uuid4().hex}")
+                _rename_no_replace(target, rollback_detached)
+                if not _entry_matches(rollback_detached, change.after):
+                    _restore_quarantine_no_replace(rollback_detached, target)
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery lost compare-and-swap ownership."
+                    )
+        elif not (not _entry_exists(target) and quarantine is not None):
             raise WorkspaceSecurityError(
                 "Workspace recovery found a value matching neither before nor after."
             )
         backup_name = raw.get("backup")
         if backup_name is None:
-            target.unlink(missing_ok=True)
+            if change.before is not None:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery backup is missing for an existing value."
+                )
         elif (
             isinstance(backup_name, str)
             and _SAFE_BACKUP_NAME.fullmatch(backup_name)
             and change.before is not None
         ):
             backup = backup_dir / backup_name
-            data = backup.read_bytes()
+            data, backup_metadata = _read_regular_path_nofollow(
+                backup, change.before.size
+            )
             if _sha256_bytes(data) != raw.get("backup_sha256"):
                 raise WorkspaceSecurityError(
                     "Workspace recovery backup digest mismatch."
                 )
-            _atomic_write_bytes(data, target, change.before.mode)
+            if stat.S_IMODE(backup_metadata.st_mode) != change.before.mode:
+                raise WorkspaceSecurityError("Workspace recovery backup mode mismatch.")
+            _install_bytes_no_replace(data, target, change.before.mode)
         else:
             raise WorkspaceSecurityError("Workspace recovery backup is malformed.")
+        _assert_current_entry(target, change.before)
+        for detached in (rollback_detached, quarantine):
+            if detached is not None:
+                detached.unlink(missing_ok=True)
+                _fsync_directory(detached.parent)
+        _rollback_created_directories(root, raw.get("created_directories"))
         raw["status"] = "rolled_back"
+
+
+def _journal_quarantine(target: Path, raw_name: object) -> Path | None:
+    if raw_name is None:
+        return None
+    if not isinstance(raw_name, str) or not _SAFE_QUARANTINE_NAME.fullmatch(raw_name):
+        raise WorkspaceSecurityError("Workspace recovery quarantine is malformed.")
+    quarantine = target.with_name(raw_name)
+    return quarantine if _entry_exists(quarantine) else None
+
+
+def _remove_matching_quarantine(
+    target: Path,
+    before: WorkspaceFile | None,
+    raw_name: object,
+) -> None:
+    quarantine = _journal_quarantine(target, raw_name)
+    if quarantine is None:
+        return
+    if not _entry_matches(quarantine, before):
+        raise WorkspaceSecurityError(
+            "Workspace recovery quarantine does not match the recorded value."
+        )
+    quarantine.unlink()
+    _fsync_directory(quarantine.parent)
+
+
+def _rollback_created_directories(root: Path, raw_directories: object) -> None:
+    if raw_directories is None:
+        return
+    if not isinstance(raw_directories, list) or not all(
+        isinstance(item, str) for item in raw_directories
+    ):
+        raise WorkspaceSecurityError("Workspace recovery directory plan is malformed.")
+    for raw in reversed(raw_directories):
+        directory = root / _safe_relative(raw)
+        if not _entry_exists(directory):
+            continue
+        _assert_directory_entry(directory)
+        try:
+            directory.rmdir()
+        except OSError as exc:
+            raise WorkspaceSecurityError(
+                "Workspace recovery found a non-empty created directory."
+            ) from exc
+        _fsync_directory(directory.parent)
 
 
 def _is_git_workspace(root: Path) -> bool:
@@ -648,7 +977,7 @@ def _file_from_payload(raw: object) -> WorkspaceFile | None:
         return None
     if not isinstance(raw, dict):
         raise WorkspaceSecurityError("Workspace journal file entry is malformed.")
-    return WorkspaceFile(
+    item = WorkspaceFile(
         path=_safe_relative(str(raw.get("path", ""))),
         kind=str(raw.get("kind", "")),
         sha256=str(raw.get("sha256", "")),
@@ -656,16 +985,28 @@ def _file_from_payload(raw: object) -> WorkspaceFile | None:
         mode=int(raw.get("mode", -1)),
         direction=str(raw.get("direction", "round_trip")),
     )
+    if (
+        item.kind not in {"file", "missing"}
+        or re.fullmatch(r"[a-f0-9]{64}", item.sha256) is None
+        or item.size < 0
+        or not 0 <= item.mode <= 0o7777
+        or item.direction not in {"input_only", "round_trip"}
+    ):
+        raise WorkspaceSecurityError("Workspace journal file entry is invalid.")
+    return item
 
 
 def _write_journal(path: Path, payload: dict[str, object]) -> None:
     temp = path.with_suffix(f".{uuid4().hex}.tmp")
     data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    with temp.open("w", encoding="utf-8") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, path)
+    try:
+        with temp.open("x", encoding="utf-8") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_path_durable(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
@@ -673,6 +1014,7 @@ def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
         raise WorkspaceSecurityError("Workspace lock TTL is invalid.")
     try:
         path.mkdir(mode=0o700)
+        _fsync_directory(path.parent)
     except FileExistsError:
         owner = path / "owner.json"
         age = time.time() - path.stat().st_mtime
@@ -686,24 +1028,28 @@ def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
             raise WorkspaceSecurityError("Workspace transaction lock is busy.")
         stale = path.with_name(f"{path.name}.stale-{uuid4().hex}")
         try:
-            os.replace(path, stale)
-            shutil.rmtree(stale)
+            _rename_no_replace(path, stale)
+            _durable_rmtree(stale, path.parent)
             path.mkdir(mode=0o700)
+            _fsync_directory(path.parent)
         except OSError as exc:
             raise WorkspaceSecurityError(
                 "Stale workspace transaction lock could not be recovered."
             ) from exc
     owner = path / "owner.json"
-    owner.write_text(
-        json.dumps({"pid": os.getpid(), "created_at": time.time()}),
-        encoding="utf-8",
+    _durable_write_new(
+        owner,
+        json.dumps({"pid": os.getpid(), "created_at": time.time()}).encode("utf-8"),
+        0o600,
     )
 
 
 def _release_transaction_lock(path: Path) -> None:
     try:
         (path / "owner.json").unlink(missing_ok=True)
+        _fsync_directory(path)
         path.rmdir()
+        _fsync_directory(path.parent)
     except OSError:
         pass
 
@@ -748,30 +1094,429 @@ def _validate_journal(payload: object, transaction_id: str) -> None:
         raise WorkspaceSecurityError("Workspace recovery journal status is invalid.")
 
 
-def _atomic_write_bytes(data: bytes, target: Path, mode: int) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-restore-", dir=target.parent)
-    temp = Path(raw_temp)
+def _trusted_root(value: str | Path, *, label: str) -> Path:
+    root = Path(os.path.abspath(Path(value).expanduser()))
     try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temp.chmod(mode)
-        os.replace(temp, target)
+        metadata = root.lstat()
+    except FileNotFoundError as exc:
+        raise WorkspaceSecurityError(f"{label} must be an existing directory.") from exc
+    if _is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
+        raise WorkspaceSecurityError(
+            f"{label} must be a real directory, not a symbolic or reparse path."
+        )
+    if os.name == "nt":
+        _windows_assert_safe_path(root, directory=True)
+    else:
+        descriptor = os.open(root, _SECURE_DIRECTORY_FLAGS)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode) or _is_link_or_reparse(opened):
+                raise WorkspaceSecurityError(f"{label} directory changed during open.")
+        finally:
+            os.close(descriptor)
+    canonical = root.resolve(strict=True)
+    _assert_directory_entry(canonical)
+    return canonical
+
+
+def _prepare_state_directory(value: str | Path) -> Path:
+    state = Path(os.path.abspath(Path(value).expanduser()))
+    missing: list[Path] = []
+    current = state
+    while not _entry_exists(current):
+        missing.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    _assert_directory_entry(current)
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        _fsync_directory(directory.parent)
+        _assert_directory_entry(directory)
+    return _trusted_root(state, label="Workspace state")
+
+
+def _prepare_transaction_directories(
+    state: Path,
+    transaction: Path,
+) -> tuple[Path, Path]:
+    try:
+        transaction.mkdir(mode=0o700)
+    except FileExistsError as exc:
+        raise WorkspaceSecurityError(
+            "Workspace transaction id has already been used."
+        ) from exc
+    _fsync_directory(state)
+    backup_dir = transaction / "backups"
+    backup_dir.mkdir(mode=0o700)
+    staged_dir = transaction / "staged"
+    staged_dir.mkdir(mode=0o700)
+    _fsync_directory(transaction)
+    return backup_dir, staged_dir
+
+
+def _assert_directory_entry(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise WorkspaceSecurityError(
+            "Workspace directory changed during traversal."
+        ) from exc
+    if _is_link_or_reparse(metadata):
+        raise WorkspaceSecurityError(
+            "Workspace symbolic-link or reparse directories are not supported."
+        )
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise WorkspaceSecurityError("Workspace path ancestor is not a directory.")
+    if os.name == "nt":
+        _windows_assert_safe_path(path, directory=True)
+
+
+def _assert_safe_relative_ancestry(root: Path, relative: str) -> None:
+    current = root
+    _assert_directory_entry(current)
+    for part in Path(_safe_relative(relative)).parts[:-1]:
+        current /= part
+        _assert_directory_entry(current)
+
+
+def _inspect_regular_file(
+    root: Path,
+    relative: str,
+    policy: WorkspaceScopePolicy,
+) -> tuple[os.stat_result, str]:
+    data, metadata = _read_workspace_path_nofollow(
+        root, relative, policy.max_file_bytes
+    )
+    return metadata, _sha256_bytes(data)
+
+
+def _read_attested_file(
+    root: Path,
+    expected: WorkspaceFile,
+    policy: WorkspaceScopePolicy,
+) -> bytes:
+    if expected.kind != "file" or not 0 <= expected.size <= policy.max_file_bytes:
+        raise WorkspaceSecurityError("Attested workspace file is outside safe bounds.")
+    data, metadata = _read_workspace_path_nofollow(
+        root, expected.path, policy.max_file_bytes
+    )
+    if (
+        int(metadata.st_size) != expected.size
+        or stat.S_IMODE(metadata.st_mode) != expected.mode
+        or _sha256_bytes(data) != expected.sha256
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace file changed while its attested bytes were reopened."
+        )
+    return data
+
+
+def _read_workspace_path_nofollow(
+    root: Path,
+    relative: str,
+    max_bytes: int,
+) -> tuple[bytes, os.stat_result]:
+    clean = _safe_relative(relative)
+    if os.name == "nt":
+        _assert_safe_relative_ancestry(root, clean)
+        return _read_regular_path_nofollow(root / clean, max_bytes)
+    if _supports_secure_dirfd_reads():
+        root_fd = os.open(root, _SECURE_DIRECTORY_FLAGS)
+        current_fd = root_fd
+        try:
+            parts = Path(clean).parts
+            for part in parts[:-1]:
+                next_fd = os.open(part, _SECURE_DIRECTORY_FLAGS, dir_fd=current_fd)
+                if current_fd != root_fd:
+                    os.close(current_fd)
+                current_fd = next_fd
+                opened = os.fstat(current_fd)
+                if not stat.S_ISDIR(opened.st_mode) or _is_link_or_reparse(opened):
+                    raise WorkspaceSecurityError(
+                        "Workspace path ancestor is symbolic or not a directory."
+                    )
+            descriptor = os.open(parts[-1], _SECURE_OPEN_FLAGS, dir_fd=current_fd)
+            try:
+                return _read_stable_descriptor(descriptor, max_bytes)
+            finally:
+                os.close(descriptor)
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            raise WorkspaceSecurityError(
+                "Workspace symbolic or inaccessible path failed no-follow open."
+            ) from exc
+        finally:
+            if current_fd != root_fd:
+                os.close(current_fd)
+            os.close(root_fd)
+    _assert_safe_relative_ancestry(root, clean)
+    return _read_regular_path_nofollow(root / clean, max_bytes)
+
+
+def _read_regular_path_nofollow(
+    path: Path,
+    max_bytes: int,
+) -> tuple[bytes, os.stat_result]:
+    if os.name == "nt":
+        descriptor = _windows_open_fd(path, directory=False)
+    else:
+        try:
+            descriptor = os.open(path, _SECURE_OPEN_FLAGS)
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            raise WorkspaceSecurityError(
+                "Workspace symbolic or inaccessible path failed no-follow open."
+            ) from exc
+    try:
+        return _read_stable_descriptor(descriptor, max_bytes)
     finally:
-        temp.unlink(missing_ok=True)
+        os.close(descriptor)
 
 
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
+def _read_stable_descriptor(
+    descriptor: int,
+    max_bytes: int,
+) -> tuple[bytes, os.stat_result]:
+    before = os.fstat(descriptor)
+    if _is_link_or_reparse(before):
+        raise WorkspaceSecurityError("Workspace symbolic links are not supported.")
+    if not stat.S_ISREG(before.st_mode):
+        raise WorkspaceSecurityError("Workspace contains a special file.")
+    if int(before.st_size) > max_bytes:
+        raise WorkspaceSecurityError("Workspace per-file byte bound was exceeded.")
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(descriptor, min(1024 * 1024, max_bytes - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise WorkspaceSecurityError("Workspace per-file byte bound was exceeded.")
+    after = os.fstat(descriptor)
+    stable_fields = (
+        "st_dev",
+        "st_ino",
+        "st_size",
+        "st_mode",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    if any(
+        getattr(before, item, None) != getattr(after, item, None)
+        for item in stable_fields
+    ):
+        raise WorkspaceSecurityError("Workspace file changed while it was read.")
+    data = b"".join(chunks)
+    if len(data) != int(after.st_size):
+        raise WorkspaceSecurityError("Workspace file size changed while it was read.")
+    return data, after
+
+
+def _supports_secure_dirfd_reads() -> bool:
+    return (
+        os.name == "posix"
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and os.open in os.supports_dir_fd
+    )
+
+
+def _is_link_or_reparse(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    attributes = int(getattr(metadata, "st_file_attributes", 0))
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+
+
+def _entry_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _durable_write_new(path: Path, data: bytes, mode: int) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        offset = 0
+        while offset < len(data):
+            offset += os.write(descriptor, data[offset:])
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    if not hasattr(os, "fchmod"):
+        path.chmod(mode)
+        if os.name == "nt":
+            _windows_flush_path(path, directory=False)
+    _fsync_directory(path.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        _windows_flush_path(path, directory=True)
+        return
+    descriptor = os.open(path, _SECURE_DIRECTORY_FLAGS)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _replace_path_durable(source: Path, target: Path) -> None:
+    if os.name == "nt":
+        _windows_move(source, target, replace=True)
+    else:
+        os.replace(source, target)
+        _fsync_directory(target.parent)
+
+
+def _rename_no_replace(source: Path, target: Path) -> None:
+    if os.name == "nt":
+        _windows_move(source, target, replace=False)
+    else:
+        os.rename(source, target)
+        _fsync_directory(target.parent)
+
+
+def _durable_rmtree(path: Path, parent: Path) -> None:
+    shutil.rmtree(path)
+    _fsync_directory(parent)
+
+
+def _require_secure_apply_capabilities() -> None:
+    capability = workspace_write_capability()
+    if not capability.supported:
+        raise WorkspaceSecurityError(
+            f"Workspace write capability is unavailable: {capability.reason}."
+        )
+
+
+def _windows_open_fd(path: Path, *, directory: bool) -> int:
+    import ctypes
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    create_file.restype = ctypes.c_void_p
+    flags = 0x00200000
+    if directory:
+        flags |= 0x02000000
+    handle = create_file(
+        str(path),
+        0x80000000,
+        0x00000001 | 0x00000002 | 0x00000004,
+        None,
+        3,
+        flags,
+        None,
+    )
+    invalid = ctypes.c_void_p(-1).value
+    if handle == invalid:
+        error = ctypes.get_last_error()
+        if error in {2, 3}:
+            raise FileNotFoundError(error, "Workspace path does not exist", str(path))
+        raise WorkspaceSecurityError(f"Win32 no-follow open failed with error {error}.")
+    descriptor: int | None = None
+    try:
+        flags_value = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        descriptor = msvcrt.open_osfhandle(int(handle), flags_value)
+        information = os.fstat(descriptor)
+        if _is_link_or_reparse(information):
+            raise WorkspaceSecurityError(
+                "Workspace symbolic-link or reparse paths are not supported."
+            )
+        return descriptor
+    except Exception:
+        if descriptor is None:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+        else:
+            os.close(descriptor)
+        raise
+
+
+def _windows_assert_safe_path(path: Path, *, directory: bool) -> None:
+    descriptor = _windows_open_fd(path, directory=directory)
+    os.close(descriptor)
+
+
+def _windows_flush_path(path: Path, *, directory: bool) -> None:
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    create_file.restype = ctypes.c_void_p
+    flags = 0x02000000 if directory else 0
+    desired_access = 0x80000000 if directory else 0x40000000
+    handle = create_file(
+        str(path),
+        desired_access,
+        0x00000001 | 0x00000002 | 0x00000004,
+        None,
+        3,
+        flags,
+        None,
+    )
+    invalid = ctypes.c_void_p(-1).value
+    if handle == invalid:
+        raise WorkspaceSecurityError("Win32 durability handle could not be opened.")
+    try:
+        flush = kernel32.FlushFileBuffers
+        flush.argtypes = [ctypes.c_void_p]
+        flush.restype = ctypes.c_int
+        if not flush(ctypes.c_void_p(handle)):
+            error = ctypes.get_last_error()
+            if directory and error in {1, 5, 6, 87}:
+                return
+            raise WorkspaceSecurityError(
+                f"Win32 durability flush failed with error {error}."
+            )
+    finally:
+        close = kernel32.CloseHandle
+        close.argtypes = [ctypes.c_void_p]
+        close.restype = ctypes.c_int
+        close(ctypes.c_void_p(handle))
+
+
+def _windows_move(source: Path, target: Path, *, replace: bool) -> None:
+    import ctypes
+
+    flags = 0x00000008
+    if replace:
+        flags |= 0x00000001
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    move = kernel32.MoveFileExW
+    move.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move.restype = ctypes.c_int
+    if not move(str(source), str(target), flags):
+        error = ctypes.get_last_error()
+        if error in {80, 183}:
+            raise FileExistsError(error, "Workspace target already exists", str(target))
+        raise WorkspaceSecurityError(f"Win32 durable move failed with error {error}.")
 
 
 def _sha256_bytes(value: bytes) -> str:

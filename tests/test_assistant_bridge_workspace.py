@@ -4,12 +4,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from uuid import uuid4
 
+import local_moe.assistant_bridge_workspace as workspace_module
 from local_moe.assistant_bridge_workspace import (
     IgnoredPathRule,
     WorkspaceScopePolicy,
@@ -21,6 +24,7 @@ from local_moe.assistant_bridge_workspace import (
     recover_workspace_transaction,
     snapshot_materialized,
     snapshot_workspace,
+    workspace_write_capability,
 )
 
 
@@ -93,6 +97,96 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkspaceSecurityError, "symbolic"):
                 snapshot_workspace(root, WorkspaceScopePolicy())
 
+    def test_symlink_directory_and_workspace_root_are_rejected(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            real = root / "real"
+            real.mkdir()
+            (real / "file.txt").write_text("data", encoding="utf-8")
+            os.symlink(real, root / "linked-directory", target_is_directory=True)
+            with self.assertRaisesRegex(WorkspaceSecurityError, "symbolic"):
+                snapshot_workspace(root, WorkspaceScopePolicy())
+
+            alias = Path(tmp) / "source-alias"
+            os.symlink(root, alias, target_is_directory=True)
+            with self.assertRaisesRegex(WorkspaceSecurityError, "reparse"):
+                snapshot_workspace(alias, WorkspaceScopePolicy())
+
+    def test_candidate_is_reopened_and_staged_before_source_mutation(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            with materialize_workspace(snapshot, policy) as materialized:
+                candidate_path = materialized.root / "tracked.txt"
+                candidate_path.write_text("candidate\n", encoding="utf-8")
+                candidate = snapshot_materialized(materialized.root, policy)
+                changes = build_changeset(materialized.baseline_files, candidate)
+                outside = Path(tmp) / "outside.txt"
+                outside.write_text("candidate\n", encoding="utf-8")
+                candidate_path.unlink()
+                os.symlink(outside, candidate_path)
+
+                with self.assertRaisesRegex(WorkspaceSecurityError, "symbolic"):
+                    apply_changeset(
+                        source_snapshot=snapshot,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=Path(tmp) / "state",
+                        transaction_id=uuid4().hex,
+                    )
+
+            self.assertEqual((root / "tracked.txt").read_text(), "initial\n")
+            self.assertFalse(list(root.glob(".mymoe-*")))
+
+    def test_candidate_digest_mode_and_bound_drift_precede_source_mutation(
+        self,
+    ) -> None:
+        cases = ("digest", "mode", "bound")
+        for case in cases:
+            if case == "mode" and os.name == "nt":
+                continue
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                _initialize_repo(root)
+                policy = WorkspaceScopePolicy(max_file_bytes=64, max_total_bytes=4096)
+                snapshot = snapshot_workspace(root, policy)
+                with materialize_workspace(snapshot, policy) as materialized:
+                    target = materialized.root / "tracked.txt"
+                    target.write_text("candidate\n", encoding="utf-8")
+                    candidate = snapshot_materialized(materialized.root, policy)
+                    changes = build_changeset(materialized.baseline_files, candidate)
+                    if case == "digest":
+                        target.write_text("tampered!\n", encoding="utf-8")
+                    elif case == "mode":
+                        target.chmod(0o700)
+                    else:
+                        target.write_bytes(b"x" * 65)
+
+                    with self.assertRaises(WorkspaceSecurityError):
+                        apply_changeset(
+                            source_snapshot=snapshot,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=Path(tmp) / "state",
+                            transaction_id=uuid4().hex,
+                        )
+
+                self.assertEqual((root / "tracked.txt").read_text(), "initial\n")
+                self.assertFalse(list(root.glob(".mymoe-*")))
+
     def test_changes_apply_with_cas_and_preserve_original_git_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"
@@ -153,6 +247,112 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                         transaction_id=uuid4().hex,
                     )
             self.assertEqual((root / "tracked.txt").read_text(), "concurrent\n")
+
+    def test_concurrent_name_reuse_is_preserved_and_requires_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(snapshot, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n", encoding="utf-8"
+                )
+                candidate = snapshot_materialized(materialized.root, policy)
+                changes = build_changeset(materialized.baseline_files, candidate)
+
+                def concurrent_writer(target: Path) -> None:
+                    target.write_text("concurrent\n", encoding="utf-8")
+
+                with self.assertRaisesRegex(
+                    WorkspaceSecurityError, "requires journal recovery"
+                ):
+                    apply_changeset(
+                        source_snapshot=snapshot,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _test_hook_after_detach=concurrent_writer,
+                    )
+
+            self.assertEqual((root / "tracked.txt").read_text(), "concurrent\n")
+            journal = state / f"transaction-{transaction_id}" / "journal.json"
+            payload = json.loads(journal.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "recovery_required")
+
+    def test_nested_candidate_directories_are_created_transactionally(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            with materialize_workspace(snapshot, policy) as materialized:
+                nested = materialized.root / "new" / "nested"
+                nested.mkdir(parents=True)
+                (nested / "value.txt").write_text("value\n", encoding="utf-8")
+                candidate = snapshot_materialized(materialized.root, policy)
+                changes = build_changeset(materialized.baseline_files, candidate)
+                apply_changeset(
+                    source_snapshot=snapshot,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=changes,
+                    policy=policy,
+                    state_dir=Path(tmp) / "state",
+                    transaction_id=uuid4().hex,
+                )
+
+            self.assertEqual(
+                (root / "new" / "nested" / "value.txt").read_text(),
+                "value\n",
+            )
+
+    def test_journal_flushes_file_before_replace_and_directory_after(self) -> None:
+        if os.name != "posix":
+            self.skipTest("POSIX fsync ordering probe")
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Path(tmp) / "journal.json"
+            events: list[str] = []
+            real_fsync = os.fsync
+            real_replace = os.replace
+
+            def tracked_fsync(descriptor: int) -> None:
+                metadata = os.fstat(descriptor)
+                events.append(
+                    "fsync-directory"
+                    if stat.S_ISDIR(metadata.st_mode)
+                    else "fsync-file"
+                )
+                real_fsync(descriptor)
+
+            def tracked_replace(source: object, target: object) -> None:
+                events.append("replace")
+                real_replace(source, target)
+
+            with (
+                mock.patch.object(
+                    workspace_module.os, "fsync", side_effect=tracked_fsync
+                ),
+                mock.patch.object(
+                    workspace_module.os, "replace", side_effect=tracked_replace
+                ),
+            ):
+                workspace_module._write_journal(journal, {"status": "prepared"})
+
+            self.assertEqual(events[:3], ["fsync-file", "replace", "fsync-directory"])
+
+    def test_write_capability_is_explicit_for_supported_platforms(self) -> None:
+        capability = workspace_write_capability()
+        if os.name in {"posix", "nt"}:
+            self.assertTrue(capability.supported, capability.reason)
+        self.assertTrue(capability.backend)
 
     def test_mode_only_drift_fails_compare_and_swap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
