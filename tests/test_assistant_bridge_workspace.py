@@ -350,6 +350,147 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             self.assertIn("tracked.txt", {item.path for item in snapshot.files})
             self.assertNotIn("attacker.txt", {item.path for item in snapshot.files})
 
+    def test_git_attestation_never_runs_repository_clean_filters(self) -> None:
+        if os.name == "nt":
+            self.skipTest("executable marker helper uses a POSIX script")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            marker = Path(tmp) / "clean-filter-ran"
+            helper = Path(tmp) / "clean-filter"
+            helper.write_text(
+                f"#!/bin/sh\ncat\n: > '{marker}'\n",
+                encoding="utf-8",
+            )
+            helper.chmod(0o700)
+            (root / ".gitattributes").write_text(
+                "tracked.txt filter=untrusted\n",
+                encoding="utf-8",
+            )
+            _git(root, "config", "filter.untrusted.clean", str(helper))
+            _git(root, "config", "filter.untrusted.required", "true")
+            _git(root, "add", ".gitattributes", "tracked.txt")
+            _git(
+                root,
+                "-c",
+                "user.name=Antonio Antenore",
+                "-c",
+                "user.email=ant_ant95@hotmail.it",
+                "commit",
+                "-q",
+                "-m",
+                "filter fixture",
+            )
+            marker.unlink(missing_ok=True)
+            (root / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+
+            snapshot = snapshot_workspace(root, WorkspaceScopePolicy())
+
+            self.assertFalse(marker.exists())
+            self.assertTrue(snapshot.git_repository)
+
+    def test_ambient_path_cannot_select_the_git_executable(self) -> None:
+        if os.name == "nt":
+            self.skipTest("executable marker helper uses a POSIX script")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            attacker = Path(tmp) / "attacker-bin"
+            attacker.mkdir()
+            marker = Path(tmp) / "ambient-git-ran"
+            fake_git = attacker / "git"
+            fake_git.write_text(
+                f"#!/bin/sh\n: > '{marker}'\nexit 99\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o700)
+
+            with mock.patch.dict(os.environ, {"PATH": str(attacker)}, clear=False):
+                snapshot = snapshot_workspace(root, WorkspaceScopePolicy())
+
+            self.assertFalse(marker.exists())
+            self.assertTrue(snapshot.git_repository)
+
+    def test_detected_repository_fails_closed_when_git_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+
+            with (
+                mock.patch.object(
+                    workspace_module,
+                    "_resolve_trusted_git_identity",
+                    side_effect=WorkspaceSecurityError("fixed unavailable"),
+                ),
+                self.assertRaisesRegex(WorkspaceSecurityError, "fixed unavailable"),
+            ):
+                snapshot_workspace(root, WorkspaceScopePolicy())
+
+    def test_detected_repository_never_downgrades_after_git_probe_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+
+            with (
+                mock.patch.object(
+                    workspace_module,
+                    "_execute_git",
+                    side_effect=WorkspaceSecurityError("fixed probe failure"),
+                ),
+                self.assertRaisesRegex(WorkspaceSecurityError, "fixed probe failure"),
+            ):
+                snapshot_workspace(root, WorkspaceScopePolicy())
+
+    def test_repository_marker_changes_fail_closed_during_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    workspace_module,
+                    "_has_repository_marker",
+                    side_effect=(False, True),
+                ),
+                self.assertRaisesRegex(WorkspaceSecurityError, "marker changed"),
+            ):
+                snapshot_workspace(root, WorkspaceScopePolicy())
+
+    def test_git_process_output_is_bounded_and_fails_closed(self) -> None:
+        if os.name == "nt":
+            self.skipTest("bounded fake executable fixture uses a shebang")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            fake_git = Path(tmp) / "bounded-git"
+            fake_git.write_text(
+                (
+                    f"#!{sys.executable}\n"
+                    "import os, time\n"
+                    f"os.write(1, b'x' * ({workspace_module._GIT_STDOUT_LIMIT_BYTES} + 1))\n"
+                    "time.sleep(5)\n"
+                ),
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o700)
+            identity = workspace_module.resolve_executable(
+                str(fake_git),
+                env={"PATH": str(fake_git.parent)},
+            )
+
+            with self.assertRaisesRegex(WorkspaceSecurityError, "output bound"):
+                workspace_module._run_git(
+                    ("rev-parse", "--is-inside-work-tree"),
+                    root,
+                    capture_bytes=True,
+                    git_identity=identity,
+                )
+
     def test_journal_flushes_file_before_replace_and_directory_after(self) -> None:
         if os.name != "posix":
             self.skipTest("POSIX fsync ordering probe")

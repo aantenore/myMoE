@@ -9,13 +9,21 @@ from pathlib import Path
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
 from typing import Callable, Iterator, Sequence
 import unicodedata
 from uuid import uuid4
+
+from .assistant_bridge_runtime import (
+    AssistantBridgeRuntimeError,
+    ExecutableIdentity,
+    ProcessExecutionPolicy,
+    ProcessExecutionResult,
+    execute_process,
+    resolve_executable,
+)
 
 
 class WorkspaceSecurityError(ValueError):
@@ -36,6 +44,15 @@ _SECURE_OPEN_FLAGS = (
     | getattr(os, "O_NOFOLLOW", 0)
 )
 _SECURE_DIRECTORY_FLAGS = _SECURE_OPEN_FLAGS | getattr(os, "O_DIRECTORY", 0)
+_GIT_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024
+_GIT_STDERR_LIMIT_BYTES = 256 * 1024
+_GIT_TIMEOUT_SECONDS = 30.0
+_GIT_EXECUTION_POLICY = ProcessExecutionPolicy(
+    stdin_limit_bytes=0,
+    stdout_limit_bytes=_GIT_STDOUT_LIMIT_BYTES,
+    stderr_limit_bytes=_GIT_STDERR_LIMIT_BYTES,
+    require_tree_isolation=True,
+)
 
 
 @dataclass(frozen=True)
@@ -203,8 +220,28 @@ def snapshot_workspace(
     policy: WorkspaceScopePolicy,
 ) -> WorkspaceSnapshot:
     root = _trusted_root(workspace, label="Workspace")
-    first = _snapshot_once(root, policy)
-    second = _snapshot_once(root, policy)
+    repository_marker = _has_repository_marker(root)
+    git_identity = _resolve_trusted_git_identity(required=repository_marker)
+    first = _snapshot_once(
+        root,
+        policy,
+        git_identity=git_identity,
+        repository_marker=repository_marker,
+    )
+    if _has_repository_marker(root) != repository_marker:
+        raise WorkspaceSecurityError(
+            "Git repository marker changed while the workspace was being attested."
+        )
+    second = _snapshot_once(
+        root,
+        policy,
+        git_identity=git_identity,
+        repository_marker=repository_marker,
+    )
+    if _has_repository_marker(root) != repository_marker:
+        raise WorkspaceSecurityError(
+            "Git repository marker changed while the workspace was being attested."
+        )
     if first.fingerprint != second.fingerprint:
         raise WorkspaceSecurityError("Workspace changed while it was being attested.")
     return second
@@ -458,22 +495,38 @@ def recover_workspace_transaction(
         _release_transaction_lock(lock)
 
 
-def _snapshot_once(root: Path, policy: WorkspaceScopePolicy) -> WorkspaceSnapshot:
-    git_repository = _is_git_workspace(root)
+def _snapshot_once(
+    root: Path,
+    policy: WorkspaceScopePolicy,
+    *,
+    git_identity: ExecutableIdentity | None,
+    repository_marker: bool,
+) -> WorkspaceSnapshot:
+    git_repository = _is_git_workspace(
+        root,
+        git_identity=git_identity,
+        repository_marker=repository_marker,
+    )
     if git_repository:
         raw_paths = _git(
-            root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
+            root,
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            git_identity=git_identity,
         )
         paths = [os.fsdecode(item) for item in raw_paths.split(b"\0") if item]
-        status = _git(
+        index = _git(root, "ls-files", "--stage", "-z", git_identity=git_identity)
+        head_raw = _git_optional(
             root,
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "HEAD",
+            git_identity=git_identity,
         )
-        index = _git(root, "ls-files", "--stage", "-z")
-        head_raw = _git_optional(root, "rev-parse", "--verify", "HEAD")
         head = head_raw.decode("ascii").strip().lower() if head_raw else "unborn"
     else:
         paths = []
@@ -490,7 +543,6 @@ def _snapshot_once(root: Path, policy: WorkspaceScopePolicy) -> WorkspaceSnapsho
             directories[:] = safe_directories
             relative_dir = Path(directory).relative_to(root)
             paths.extend((relative_dir / name).as_posix() for name in sorted(files))
-        status = b""
         index = b""
         head = ""
     directions = {item.path: item.direction for item in policy.ignored_paths}
@@ -499,13 +551,25 @@ def _snapshot_once(root: Path, policy: WorkspaceScopePolicy) -> WorkspaceSnapsho
             paths.append(rule.path)
     files = _manifest_files(root, paths, policy, directions=directions)
     manifest = _canonical_json([item.payload() for item in files])
+    index_sha256 = _sha256_bytes(index)
+    manifest_sha256 = _sha256_text(manifest)
+    status_sha256 = _sha256_text(
+        _canonical_json(
+            {
+                "derivation": "head-index-manifest/v1",
+                "head_sha": head,
+                "index_sha256": index_sha256,
+                "manifest_sha256": manifest_sha256,
+            }
+        )
+    )
     fields = {
         "root_sha256": _sha256_text(str(root)),
         "git_repository": git_repository,
         "head_sha": head,
-        "index_sha256": _sha256_bytes(index),
-        "status_sha256": _sha256_bytes(status),
-        "manifest_sha256": _sha256_text(manifest),
+        "index_sha256": index_sha256,
+        "status_sha256": status_sha256,
+        "manifest_sha256": manifest_sha256,
     }
     return WorkspaceSnapshot(
         root=str(root),
@@ -568,14 +632,34 @@ def _manifest_files(
 
 
 def _initialize_synthetic_repository(root: Path) -> None:
-    _run_git(("init", "-q", "--template="), root, identity=True)
-    _run_git(("add", "-f", "--all"), root, identity=True)
+    git_identity = _resolve_trusted_git_identity(required=True)
+    if git_identity is None:  # Defensive: required=True must either resolve or raise.
+        raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
+    _run_git(
+        ("init", "-q", "--template="),
+        root,
+        identity=True,
+        git_identity=git_identity,
+    )
+    _run_git(
+        ("add", "-f", "--all"),
+        root,
+        identity=True,
+        git_identity=git_identity,
+    )
     _run_git(
         ("commit", "-q", "--allow-empty", "-m", "materialized baseline"),
         root,
         identity=True,
+        git_identity=git_identity,
     )
-    remotes = _run_git(("remote",), root, identity=True, capture=True).splitlines()
+    remotes = _run_git(
+        ("remote",),
+        root,
+        identity=True,
+        capture=True,
+        git_identity=git_identity,
+    ).splitlines()
     if remotes:
         raise WorkspaceSecurityError(
             "Synthetic repository unexpectedly contains remotes."
@@ -967,25 +1051,158 @@ def _recorded_file_identity(raw: object) -> dict[str, int] | None:
     return {"device_id": device_id, "inode": inode}
 
 
-def _is_git_workspace(root: Path) -> bool:
-    try:
-        output = _run_git(
-            ("rev-parse", "--is-inside-work-tree"), root, capture_bytes=True
+def _has_repository_marker(root: Path) -> bool:
+    for current in (root, *root.parents):
+        marker = current / ".git"
+        try:
+            metadata = marker.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise WorkspaceSecurityError(
+                "Git repository marker could not be inspected safely."
+            ) from exc
+        if _is_link_or_reparse(metadata):
+            raise WorkspaceSecurityError(
+                "Git repository marker cannot be a symbolic or reparse path."
+            )
+        return True
+    return False
+
+
+def _trusted_git_directories() -> tuple[Path, ...]:
+    raw_directories: list[Path] = []
+    if os.name == "posix":
+        raw_directories.extend(
+            (
+                Path("/usr/bin"),
+                Path("/bin"),
+            )
         )
-    except WorkspaceSecurityError:
+    elif os.name == "nt":
+        raw_directories.extend(
+            (
+                Path("C:/Program Files/Git/cmd"),
+                Path("C:/Program Files/Git/bin"),
+            )
+        )
+    result: list[Path] = []
+    seen: set[str] = set()
+    for raw in raw_directories:
+        if not raw.is_absolute():
+            continue
+        try:
+            resolved = raw.resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if key in seen or not resolved.is_dir():
+            continue
+        seen.add(key)
+        result.append(resolved)
+    return tuple(result)
+
+
+def _resolve_trusted_git_identity(
+    *,
+    required: bool,
+    configured_executable: str | Path | None = None,
+) -> ExecutableIdentity | None:
+    candidates: tuple[Path, ...]
+    if configured_executable is not None:
+        configured = Path(configured_executable).expanduser()
+        if not configured.is_absolute():
+            raise WorkspaceSecurityError(
+                "Configured Git executable must be an absolute path."
+            )
+        candidates = (configured,)
+    else:
+        executable_name = "git.exe" if os.name == "nt" else "git"
+        candidates = tuple(
+            directory / executable_name for directory in _trusted_git_directories()
+        )
+    for candidate in candidates:
+        try:
+            if not candidate.is_file() or not os.access(candidate, os.X_OK):
+                continue
+            environment = _sanitized_git_environment(
+                identity=False,
+                executable_path=candidate,
+            )
+            return resolve_executable(str(candidate), env=environment)
+        except (OSError, AssistantBridgeRuntimeError):
+            continue
+    if required:
+        raise WorkspaceSecurityError(
+            "A trusted, content-attested Git executable is unavailable."
+        )
+    return None
+
+
+def _is_git_workspace(
+    root: Path,
+    *,
+    git_identity: ExecutableIdentity | None,
+    repository_marker: bool,
+) -> bool:
+    if git_identity is None:
+        if repository_marker:
+            raise WorkspaceSecurityError(
+                "Git repository attestation is unavailable for a detected repository."
+            )
         return False
-    return output.strip() == b"true"
+    result = _execute_git(
+        ("rev-parse", "--is-inside-work-tree"),
+        root,
+        identity=False,
+        git_identity=git_identity,
+    )
+    if result.returncode != 0:
+        if repository_marker:
+            raise WorkspaceSecurityError(
+                "Detected Git repository could not be attested."
+            )
+        return False
+    output = result.stdout.strip()
+    if output == b"true":
+        return True
+    if output == b"false" and not repository_marker:
+        return False
+    raise WorkspaceSecurityError("Git repository probe returned an invalid result.")
 
 
-def _git(root: Path, *args: str) -> bytes:
-    return _run_git(args, root, capture_bytes=True)
+def _git(
+    root: Path,
+    *args: str,
+    git_identity: ExecutableIdentity | None = None,
+) -> bytes:
+    return _run_git(
+        args,
+        root,
+        capture_bytes=True,
+        git_identity=git_identity,
+    )
 
 
-def _git_optional(root: Path, *args: str) -> bytes | None:
-    try:
-        return _git(root, *args)
-    except WorkspaceSecurityError:
+def _git_optional(
+    root: Path,
+    *args: str,
+    git_identity: ExecutableIdentity | None = None,
+) -> bytes | None:
+    selected = git_identity or _resolve_trusted_git_identity(required=True)
+    if selected is None:
+        raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
+    result = _execute_git(
+        args,
+        root,
+        identity=False,
+        git_identity=selected,
+    )
+    if result.returncode == 0:
+        return result.stdout
+    if result.returncode == 1:
         return None
+    raise WorkspaceSecurityError("Git workspace attestation failed.")
 
 
 def _run_git(
@@ -995,13 +1212,13 @@ def _run_git(
     capture: bool = False,
     capture_bytes: bool = False,
     identity: bool = False,
+    git_identity: ExecutableIdentity | None = None,
 ) -> str | bytes:
-    executable = shutil.which("git", path=os.environ.get("PATH", os.defpath))
-    if executable is None:
-        raise WorkspaceSecurityError("Git executable is unavailable.")
+    selected = git_identity or _resolve_trusted_git_identity(required=True)
+    if selected is None:
+        raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
     null_config = os.devnull
-    command = [
-        executable,
+    command = (
         "-c",
         "core.fsmonitor=false",
         "-c",
@@ -1020,33 +1237,62 @@ def _run_git(
         "protocol.ext.allow=never",
         "-c",
         "protocol.file.allow=never",
-    ]
-    if _entry_exists(cwd / ".git"):
-        command.extend(("-c", f"core.worktree={cwd}"))
-    command.extend(("-C", str(cwd), *argv))
-    env = _sanitized_git_environment(identity=identity)
-    completed = subprocess.run(
-        command,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=(subprocess.PIPE if capture or capture_bytes else subprocess.DEVNULL),
-        stderr=subprocess.PIPE,
-        text=not capture_bytes,
-        timeout=30,
-        check=False,
     )
-    if completed.returncode != 0:
+    if _entry_exists(cwd / ".git"):
+        command = (*command, "-c", f"core.worktree={cwd}")
+    command = (*command, "-C", str(cwd), *argv)
+    result = _execute_git(
+        command,
+        cwd,
+        identity=identity,
+        git_identity=selected,
+    )
+    if result.returncode != 0:
         raise WorkspaceSecurityError("Git workspace attestation failed.")
     if capture_bytes:
-        if not isinstance(completed.stdout, bytes):
-            raise WorkspaceSecurityError("Git returned an invalid byte stream.")
-        return completed.stdout
-    return completed.stdout if capture else ""
+        return result.stdout
+    return result.stdout.decode("utf-8", errors="replace") if capture else ""
 
 
-def _sanitized_git_environment(*, identity: bool) -> dict[str, str]:
+def _execute_git(
+    argv: Sequence[str],
+    cwd: Path,
+    *,
+    identity: bool,
+    git_identity: ExecutableIdentity,
+) -> ProcessExecutionResult:
+    environment = _sanitized_git_environment(
+        identity=identity,
+        executable_path=Path(git_identity.resolved_path),
+    )
+    try:
+        result = execute_process(
+            git_identity,
+            argv,
+            cwd=cwd,
+            env=environment,
+            timeout_seconds=_GIT_TIMEOUT_SECONDS,
+            policy=_GIT_EXECUTION_POLICY,
+        )
+    except (AssistantBridgeRuntimeError, OSError, ValueError) as exc:
+        raise WorkspaceSecurityError("Git workspace attestation failed safely.") from exc
+    if result.code in {"stdout_limit_exceeded", "stderr_limit_exceeded"}:
+        raise WorkspaceSecurityError(
+            "Git workspace attestation exceeded its output bound."
+        )
+    if result.code == "timed_out":
+        raise WorkspaceSecurityError("Git workspace attestation timed out.")
+    if result.code not in {"completed", "nonzero_exit"}:
+        raise WorkspaceSecurityError("Git workspace attestation failed safely.")
+    return result
+
+
+def _sanitized_git_environment(
+    *,
+    identity: bool,
+    executable_path: Path,
+) -> dict[str, str]:
     allowed = {
-        "PATH",
         "SystemRoot",
         "WINDIR",
         "COMSPEC",
@@ -1058,6 +1304,8 @@ def _sanitized_git_environment(*, identity: bool) -> dict[str, str]:
         "LC_ALL",
     }
     env = {key: value for key, value in os.environ.items() if key in allowed}
+    trusted_path = (executable_path.parent, *_trusted_git_directories())
+    env["PATH"] = os.pathsep.join(dict.fromkeys(str(item) for item in trusted_path))
     env.update(
         {
             "GIT_CONFIG_NOSYSTEM": "1",
@@ -1066,6 +1314,10 @@ def _sanitized_git_environment(*, identity: bool) -> dict[str, str]:
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_ATTR_NOSYSTEM": "1",
+            "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_PAGER": "cat",
+            "GIT_PROTOCOL_FROM_USER": "0",
         }
     )
     if identity:
