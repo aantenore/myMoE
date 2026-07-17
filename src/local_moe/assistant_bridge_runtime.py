@@ -613,11 +613,16 @@ class _ProcessTracker:
     def __init__(self, root_pid: int) -> None:
         self.root_pid = root_pid
         self._observed: dict[tuple[int, float], Any] = {}
+        self._observation_failed = False
         self.observe()
 
     @property
     def observed_descendants(self) -> int:
         return max(len(self._observed) - 1, 0)
+
+    @property
+    def observation_verified(self) -> bool:
+        return not self._observation_failed
 
     def observe(self) -> None:
         if _psutil is None:
@@ -625,13 +630,18 @@ class _ProcessTracker:
         seeds: list[Any] = list(self._observed.values())
         try:
             seeds.append(_psutil.Process(self.root_pid))
-        except _psutil.Error:
+        except _psutil.NoSuchProcess:
             pass
+        except _psutil.Error:
+            self._observation_failed = True
         for process in seeds:
             self._remember(process)
             try:
                 children = process.children(recursive=True)
+            except _psutil.NoSuchProcess:
+                continue
             except _psutil.Error:
+                self._observation_failed = True
                 continue
             for child in children:
                 self._remember(child)
@@ -646,7 +656,11 @@ class _ProcessTracker:
                     continue
                 if process.status() == _psutil.STATUS_ZOMBIE:
                     continue
+            except (_psutil.NoSuchProcess, _psutil.ZombieProcess):
+                continue
             except _psutil.Error:
+                self._observation_failed = True
+                live.append(process)
                 continue
             live.append(process)
         return tuple(live)
@@ -654,7 +668,10 @@ class _ProcessTracker:
     def _remember(self, process: Any) -> None:
         try:
             key = (int(process.pid), float(process.create_time()))
+        except _psutil.NoSuchProcess:
+            return
         except _psutil.Error:
+            self._observation_failed = True
             return
         self._observed[key] = process
 
@@ -745,7 +762,11 @@ def _cleanup_process_tree(
     group_verified = (
         not _process_group_alive(process.pid) if os.name == "posix" else None
     )
-    psutil_verified = not tracker.live() if _psutil is not None else None
+    psutil_verified = (
+        tracker.observation_verified and not tracker.live()
+        if _psutil is not None
+        else None
+    )
     pipe_threads_joined = all(not worker.is_alive() for worker in workers)
     verified = bool(
         root_reaped

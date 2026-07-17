@@ -243,6 +243,57 @@ class AssistantBridgeRuntimeProcessTests(unittest.TestCase):
         self.assertFalse(failure.exception.details["verified"])
         self.assertFalse(failure.exception.details["process_group_verified"])
 
+    def test_psutil_observation_error_fails_closed(self) -> None:
+        class FakePsutil:
+            class Error(Exception):
+                pass
+
+            class NoSuchProcess(Error):
+                pass
+
+            class ZombieProcess(Error):
+                pass
+
+            STATUS_ZOMBIE = "zombie"
+
+            class Process:
+                def __init__(self, pid: int) -> None:
+                    self.pid = pid
+
+                def create_time(self) -> float:
+                    return 1.0
+
+                def children(self, *, recursive: bool) -> list[object]:
+                    assert recursive
+                    raise FakePsutil.Error("observation denied")
+
+                def is_running(self) -> bool:
+                    return True
+
+                def status(self) -> str:
+                    raise FakePsutil.Error("liveness denied")
+
+                def terminate(self) -> None:
+                    raise FakePsutil.Error("termination denied")
+
+                def kill(self) -> None:
+                    raise FakePsutil.Error("kill denied")
+
+        with patch.object(bridge_runtime, "_psutil", FakePsutil):
+            with self.assertRaises(ProcessCleanupError) as failure:
+                execute_process(
+                    self.python,
+                    ("-c", "pass"),
+                    timeout_seconds=1.0,
+                    policy=ProcessExecutionPolicy(
+                        cleanup_grace_seconds=0.0,
+                        cleanup_kill_seconds=0.05,
+                    ),
+                )
+
+        self.assertFalse(failure.exception.details["verified"])
+        self.assertFalse(failure.exception.details["psutil_verified"])
+
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         try:
