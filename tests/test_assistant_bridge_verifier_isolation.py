@@ -433,6 +433,64 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertTrue(evidence.passed)
         self.assertEqual(evidence.code, "builtin_passed")
 
+    def test_trusted_git_builtin_rejects_candidate_attribute_bypass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            policy = WorkspaceScopePolicy()
+            source_snapshot = snapshot_workspace(root, policy)
+            with materialize_workspace(source_snapshot, policy) as candidate:
+                (candidate.root / ".gitattributes").write_text(
+                    "tracked.txt -diff whitespace=-trailing-space\n",
+                    encoding="utf-8",
+                )
+                (candidate.root / "tracked.txt").write_text(
+                    "candidate bypass attempt \n",
+                    encoding="utf-8",
+                )
+                final_snapshot = snapshot_workspace(candidate.root, policy)
+                candidate_files = candidate.snapshot()
+                changes = build_changeset(
+                    candidate.baseline_files,
+                    candidate_files,
+                )
+                spec = assistant_bridge.CommandVerifierSpec(
+                    id="trusted-git-attribute-bypass",
+                    kind="trusted_git_diff_check",
+                    argv=(),
+                    timeout_seconds=10,
+                    purpose="hygiene",
+                    execution_boundary="trusted_git_session",
+                    network_policy="denied",
+                    runtime_read_roots=(),
+                )
+                plan = assistant_bridge._build_verifier_plan(
+                    spec,
+                    workspace=candidate.root,
+                    runtime_policy=self.config.runtime,
+                    isolation_policy=self.config.verifier_isolation,
+                )
+                with assistant_bridge._disposable_verifier_workspace(
+                    candidate.root,
+                    source_snapshot=candidate.source_snapshot,
+                    baseline_files=candidate.baseline_files,
+                    expected_snapshot=final_snapshot,
+                    candidate_files=candidate_files,
+                    changes=changes,
+                    policy=policy,
+                ) as disposable:
+                    evidence = assistant_bridge._run_bound_verifier(
+                        plan,
+                        task=assistant_bridge.build_assistant_task(
+                            "Reject candidate Git attribute bypass."
+                        ),
+                        workspace=assistant_bridge.attest_workspace(candidate.root),
+                        verifier_workspace=disposable,
+                    )
+
+        self.assertFalse(evidence.passed)
+        self.assertEqual(evidence.code, "builtin_check_failed")
+
     def test_linux_bubblewrap_plan_drops_capabilities_before_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

@@ -54,6 +54,10 @@ _GIT_EXECUTION_POLICY = ProcessExecutionPolicy(
     stderr_limit_bytes=_GIT_STDERR_LIMIT_BYTES,
     require_tree_isolation=True,
 )
+_TRUSTED_DIFF_ATTRIBUTES = (
+    b"** diff -text -filter -ident -working-tree-encoding "
+    b"whitespace=trailing-space,space-before-tab\n"
+)
 
 
 @dataclass(frozen=True)
@@ -886,6 +890,7 @@ def _initialize_synthetic_repository(root: Path) -> None:
         identity=True,
         git_identity=git_identity,
     )
+    _install_trusted_diff_attributes(root)
     _run_git(
         ("add", "-f", "--all"),
         root,
@@ -909,6 +914,22 @@ def _initialize_synthetic_repository(root: Path) -> None:
         raise WorkspaceSecurityError(
             "Synthetic repository unexpectedly contains remotes."
         )
+
+
+def _install_trusted_diff_attributes(root: Path) -> None:
+    """Pin diff classification above candidate-controlled attributes."""
+
+    git_directory = root / ".git"
+    _assert_directory_entry(git_directory)
+    info_directory = git_directory / "info"
+    try:
+        info_directory.mkdir(mode=0o700)
+    except FileExistsError:
+        _assert_directory_entry(info_directory)
+    else:
+        _fsync_directory(git_directory)
+    attributes = info_directory / "attributes"
+    _durable_write_new(attributes, _TRUSTED_DIFF_ATTRIBUTES, 0o600)
 
 
 def _assert_current_entry(path: Path, expected: WorkspaceFile | None) -> None:

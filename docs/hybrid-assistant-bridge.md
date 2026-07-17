@@ -213,8 +213,12 @@ The Git hygiene verifier is a fixed builtin, not an ambient command. It creates
 a synthetic repository whose `HEAD` is the attested source baseline, applies the
 already-verified candidate changes only to that disposable worktree, marks new
 files intent-to-add, and runs a trusted `git diff --check` with external diff and
-text-conversion hooks disabled. Candidate `.git` metadata is never copied.
-This is a portable baseline integrity check, not proof of business correctness.
+text-conversion hooks disabled. A trusted synthetic `.git/info/attributes`
+policy has higher precedence than candidate `.gitattributes`, so candidate
+files cannot opt out of text classification or the fixed whitespace rules.
+This metadata does not alter the attested source baseline, candidate manifest,
+or candidate attributes, and candidate `.git` metadata is never copied. This is
+a portable baseline integrity check, not proof of business correctness.
 
 Arbitrary command verifiers are treated as untrusted candidate code. They run
 only through an attested OS-owned hard-sandbox backend: fixed
