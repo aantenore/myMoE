@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
+import tempfile
 from typing import Any
 
 from .redaction import public_env_summary, sanitize_diagnostic_value
@@ -241,10 +243,6 @@ def create_plugin_scaffold(
 ) -> Path:
     _validate_id(plugin_id)
     _validate_risk(risk_class)
-    plugin_dir = Path(root) / plugin_id
-    if plugin_dir.exists():
-        raise ExtensionError(f"Plugin already exists: {plugin_id}")
-    plugin_dir.mkdir(parents=True)
     plugin_name = _clean_generated_text(name or plugin_id.replace("-", " ").title())
     plugin_description = _clean_generated_text(description or "Local myMoE plugin scaffold.")
     manifest = {
@@ -258,18 +256,66 @@ def create_plugin_scaffold(
         "cron_jobs": [],
         "permissions": {"risk_class": risk_class},
     }
-    (plugin_dir / "plugin.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    (plugin_dir / "SKILL.md").write_text(
+    skill_text = (
         "---\n"
         f"name: {_frontmatter_scalar(plugin_id)}\n"
         f"description: {_frontmatter_scalar(f'Use this skill when working with the {plugin_name} plugin.')}\n"
         "---\n\n"
         f"# {plugin_name}\n\n"
         f"{plugin_description}\n\n"
-        "Describe plugin behavior, inputs, validation, and gotchas here.\n",
-        encoding="utf-8",
+        "Describe plugin behavior, inputs, validation, and gotchas here.\n"
     )
+    return _publish_plugin_scaffold(
+        root,
+        plugin_id,
+        manifest_text=json.dumps(manifest, indent=2),
+        skill_text=skill_text,
+    )
+
+
+def _publish_plugin_scaffold(
+    root: str | Path,
+    plugin_id: str,
+    *,
+    manifest_text: str,
+    skill_text: str,
+) -> Path:
+    """Build in an unguessable staging directory, then publish with one rename."""
+
+    root_path = Path(root)
+    root_path.mkdir(parents=True, exist_ok=True)
+    root_path = root_path.resolve(strict=True)
+    if not root_path.is_dir():
+        raise ExtensionError(f"Plugin root is not a directory: {root}")
+
+    plugin_dir = root_path / plugin_id
+    if plugin_dir.exists() or plugin_dir.is_symlink():
+        raise ExtensionError(f"Plugin already exists: {plugin_id}")
+
+    staging_dir = Path(tempfile.mkdtemp(prefix=".mymoe-plugin-", dir=root_path))
+    try:
+        (staging_dir / "plugin.json").write_text(manifest_text, encoding="utf-8")
+        (staging_dir / "SKILL.md").write_text(skill_text, encoding="utf-8")
+        os.rename(staging_dir, plugin_dir)
+    except OSError as exc:
+        _remove_staging_directory(staging_dir)
+        if plugin_dir.exists() or plugin_dir.is_symlink():
+            raise ExtensionError(f"Plugin already exists: {plugin_id}") from exc
+        raise ExtensionError(f"Could not publish plugin scaffold: {exc}") from exc
     return plugin_dir
+
+
+def _remove_staging_directory(staging_dir: Path) -> None:
+    if not staging_dir.exists() or staging_dir.is_symlink():
+        return
+    for filename in ("plugin.json", "SKILL.md"):
+        candidate = staging_dir / filename
+        if candidate.is_file() and not candidate.is_symlink():
+            candidate.unlink()
+    try:
+        staging_dir.rmdir()
+    except OSError:
+        return
 
 
 def configure_extension_entry(
@@ -716,7 +762,7 @@ def _clean_generated_text(value: str) -> str:
 
 
 def _validate_id(value: str) -> None:
-    if not VALID_ID.match(value):
+    if not VALID_ID.fullmatch(value):
         raise ExtensionError(f"Invalid extension id: {value}")
 
 

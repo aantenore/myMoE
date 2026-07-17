@@ -118,6 +118,35 @@ class ExtensionTests(unittest.TestCase):
         with self.assertRaises(ExtensionError):
             create_plugin_scaffold("Bad_Plugin", root=Path("/tmp"))
 
+    def test_plugin_scaffold_publish_is_atomic_and_rejects_existing_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            created = create_plugin_scaffold("sample-plugin", root=root)
+
+            with self.assertRaisesRegex(ExtensionError, "already exists"):
+                create_plugin_scaffold("sample-plugin", root=root)
+
+            self.assertTrue((created / "plugin.json").is_file())
+            self.assertTrue((created / "SKILL.md").is_file())
+            self.assertEqual(list(root.glob(".mymoe-plugin-*")), [])
+
+    def test_plugin_scaffold_does_not_follow_existing_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            root = workspace / "plugins"
+            root.mkdir()
+            outside = workspace / "outside"
+            outside.mkdir()
+            try:
+                (root / "sample-plugin").symlink_to(outside, target_is_directory=True)
+            except OSError:
+                return
+
+            with self.assertRaisesRegex(ExtensionError, "already exists"):
+                create_plugin_scaffold("sample-plugin", root=root)
+
+            self.assertEqual(list(outside.iterdir()), [])
+
     def test_rejects_invalid_mcp_env_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "mcp.json"
