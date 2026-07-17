@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -385,9 +386,70 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
 
     def test_write_capability_is_explicit_for_supported_platforms(self) -> None:
         capability = workspace_write_capability()
-        if os.name in {"posix", "nt"}:
-            self.assertTrue(capability.supported, capability.reason)
         self.assertTrue(capability.backend)
+        if capability.supported:
+            self.assertIn(
+                capability.backend,
+                {
+                    "darwin-renamex-excl",
+                    "linux-renameat2-noreplace",
+                    "windows-handle-write-through",
+                },
+            )
+
+    def test_native_no_replace_preserves_a_concurrent_destination(self) -> None:
+        capability = workspace_write_capability()
+        if not capability.supported:
+            self.skipTest(capability.reason)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            source.write_text("transaction", encoding="utf-8")
+            target.write_text("concurrent", encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                workspace_module._rename_no_replace(source, target)
+
+            self.assertEqual(source.read_text(encoding="utf-8"), "transaction")
+            self.assertEqual(target.read_text(encoding="utf-8"), "concurrent")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO fixture")
+    def test_fifo_snapshot_is_rejected_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fifo = root / "blocked.txt"
+            os.mkfifo(fifo, 0o600)
+            source = (
+                "from pathlib import Path\n"
+                "from local_moe.assistant_bridge_workspace import "
+                "WorkspaceScopePolicy, WorkspaceSecurityError, snapshot_workspace\n"
+                f"root = Path({str(root)!r})\n"
+                "try:\n"
+                "    snapshot_workspace(root, WorkspaceScopePolicy())\n"
+                "except WorkspaceSecurityError:\n"
+                "    pass\n"
+                "else:\n"
+                "    raise AssertionError('FIFO workspace entry was accepted')\n"
+            )
+            try:
+                completed = subprocess.run(
+                    [sys.executable, "-c", source],
+                    cwd=Path(__file__).resolve().parents[1],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=3.0,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                self.fail("FIFO snapshot regression process exceeded its timeout")
+            self.assertEqual(
+                completed.returncode,
+                0,
+                msg=f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
 
     def test_mode_only_drift_fails_compare_and_swap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

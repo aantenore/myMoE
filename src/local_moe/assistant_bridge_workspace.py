@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Callable, Iterator, Sequence
@@ -29,7 +30,10 @@ _SAFE_TRANSACTION_ID = re.compile(r"^[a-f0-9]{32,64}$")
 _SAFE_BACKUP_NAME = re.compile(r"^[0-9]{8}\.bin$")
 _SAFE_QUARANTINE_NAME = re.compile(r"^\.mymoe-before-[a-f0-9]{32,64}-[0-9]{8}$")
 _SECURE_OPEN_FLAGS = (
-    os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    os.O_RDONLY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
 )
 _SECURE_DIRECTORY_FLAGS = _SECURE_OPEN_FLAGS | getattr(os, "O_DIRECTORY", 0)
 
@@ -63,20 +67,38 @@ def workspace_write_capability() -> WorkspaceWriteCapability:
                 "atomic no-replace hard links are unavailable",
             )
         return WorkspaceWriteCapability(True, "windows-handle-write-through")
-    required_dir_fd = (os.open, os.rename, os.link, os.unlink, os.mkdir)
+    backend = _posix_no_replace_backend()
+    required_dir_fd = (os.open, os.link, os.unlink, os.mkdir)
     if (
         os.name != "posix"
         or not hasattr(os, "O_NOFOLLOW")
         or not hasattr(os, "O_DIRECTORY")
         or any(item not in os.supports_dir_fd for item in required_dir_fd)
         or not hasattr(os, "link")
+        or backend is None
     ):
         return WorkspaceWriteCapability(
             False,
             "unsupported",
-            "no-follow dir-fd and atomic no-replace primitives are unavailable",
+            "no-follow dir-fd and native atomic no-replace primitives are unavailable",
         )
-    return WorkspaceWriteCapability(True, "posix-dirfd-hardlink")
+    return WorkspaceWriteCapability(True, backend)
+
+
+def _posix_no_replace_backend() -> str | None:
+    if os.name != "posix":
+        return None
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+    except (ImportError, OSError):
+        return None
+    if sys.platform == "darwin" and hasattr(libc, "renamex_np"):
+        return "darwin-renamex-excl"
+    if sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        return "linux-renameat2-noreplace"
+    return None
 
 
 @dataclass(frozen=True)
@@ -1428,9 +1450,43 @@ def _replace_path_durable(source: Path, target: Path) -> None:
 def _rename_no_replace(source: Path, target: Path) -> None:
     if os.name == "nt":
         _windows_move(source, target, replace=False)
-    else:
-        os.rename(source, target)
-        _fsync_directory(target.parent)
+        return
+    backend = _posix_no_replace_backend()
+    if backend is None:
+        raise WorkspaceSecurityError(
+            "Native atomic no-replace rename is unavailable on this platform."
+        )
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    encoded_source = os.fsencode(source)
+    encoded_target = os.fsencode(target)
+    if backend == "darwin-renamex-excl":
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(encoded_source, encoded_target, 0x00000004)
+    elif backend == "linux-renameat2-noreplace":
+        rename = libc.renameat2
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        result = rename(-100, encoded_source, -100, encoded_target, 0x00000001)
+    else:  # pragma: no cover - the backend detector is deliberately closed.
+        raise WorkspaceSecurityError(
+            "Native atomic no-replace rename backend is unsupported."
+        )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), os.fspath(target))
+    _fsync_directory(target.parent)
+    if source.parent != target.parent:
+        _fsync_directory(source.parent)
 
 
 def _durable_rmtree(path: Path, parent: Path) -> None:
