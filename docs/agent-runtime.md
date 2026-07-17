@@ -185,6 +185,15 @@ The app config defaults to:
 - external communication: draft-only,
 - process execution: disabled in the model-facing policy.
 
+The Hybrid Assistant Bridge has a separate
+`assistant_bridge_execution_policy`. The shipped config explicitly selects
+`receipt_confirmation`; omission defaults to `disabled`. The enabled mode
+permits only the dedicated launcher after the operator supplies the exact hash
+of a previously inspected task/config/runtime/workspace and execution-options
+receipt. Setting it to `disabled` blocks Bridge execution. It does not enable
+MCP or arbitrary process tools, so `allow_process_execution=false` remains the
+default for model-facing extensions.
+
 The implementation discovers and reports these surfaces, and the explicit CLI
 agent path applies them as an additional deny layer over its exact per-call
 approval policy. Cron jobs use a local allowlisted runner for supported actions

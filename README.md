@@ -8,6 +8,11 @@ diagnostics, evaluation, and a separate approval-gated agent loop. The current
 release evidence applies to the tested profile and workloads; it is not a claim
 that routing beats every single-model setup.
 
+An optional Hybrid Assistant Bridge can preflight a task with local Codex, apply
+mechanical verification, and invoke premium Codex only when policy, evidence,
+and a bounded budget permit escalation. It is a task-level evidence layer, not
+another model gateway.
+
 ![myMoE chat-first interface](docs/screenshots/dashboard.png)
 
 ## Why It Exists
@@ -19,6 +24,7 @@ Local models have different strengths and hardware costs. Keeping every large sp
 - retry a configured fallback when an expert is unavailable;
 - compare multiple expert answers when a profile requests it;
 - keep chat, memory, operational evidence, and model traffic local by default;
+- stop verified assistant tasks locally or hand off a minimal redacted capsule;
 - replace models, routes, budgets, and extension registries through configuration.
 
 ## How It Works
@@ -86,6 +92,7 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 | Use persistent terminal chat | `.venv/bin/mymoe --interactive` | Uses the same chat, memory, context, and run-log stores as the web app. |
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
 | Run a bounded tool task | `.venv/bin/mymoe --agent-prompt "..." --agent-tool memory.search` | Separate CLI-only agent loop; only explicitly selected strict-schema tools are visible. |
+| Preflight local versus premium Codex | `.venv/bin/mymoe --assistant-task "..." --assistant-capability code` | Dry-run by default; plans local execution, verification, bounded escalation, or a policy block without exposing task text in the receipt. |
 | Inspect readiness | `.venv/bin/mymoe --doctor` | Read-only setup, health, hardware, storage, process, extension, and cron checks. |
 
 ## Default Profile
@@ -106,6 +113,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/app.json`](configs/app.json) | Active profile, allowed profile/evaluation directories, local work directory, backend preferences, language policy, extension paths, and permissions. |
 | [`configs/moe.*.json`](configs/) | Experts, endpoints, models, generation parameters, routing strategy, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](configs/context-policy.json) | Context limit, reserved output, compaction threshold, recent-turn limit, and memory limit. |
+| [`configs/assistant-bridge.json`](configs/assistant-bridge.json) | Replaceable Codex launch adapters and explicit models, capability inventories, local-first profiles, durable premium budgets, bound verifiers, and capsule limits. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
@@ -127,6 +135,8 @@ response or tool metadata cannot create a new executable implementation.
 - `chats.json` and `memory.jsonl` contain user content. `runs.jsonl` and `audit.jsonl` contain operational metadata, not prompt or answer bodies.
 - The portable local-data backup contains private chats and memory and requires confirmation. The support bundle is a different, metadata-focused diagnostic artifact, but it still includes configured Git/model URLs and must be reviewed before sharing; credentials should never be embedded in URLs.
 - Model process commands come from the active profile. The web process stops only model processes that it started itself.
+- Assistant Bridge planning is read-only. Execution requires the exact confirmation hash from the inspected task/config/runtime/workspace, command, evidence, and capsule-options receipt; a boolean confirmation is insufficient. It passes task data over stdin, uses argv without a shell, stores metadata-only audit/run events, and returns the answer separately to the user.
+- Local Bridge runs use an isolated Codex home, ignore ambient Codex configuration and rules, sanitize the environment, omit web search, and request network-disabled tool sandboxing. Remote workspace access is separate from remote-model consent and must be opted into explicitly for write tasks.
 
 See [Agent Runtime](docs/agent-runtime.md) for the exact permission model and [Context and Memory](docs/context-architecture.md) for storage details.
 
@@ -141,6 +151,7 @@ Start with the [documentation hub](docs/README.md).
 - [Context and Memory](docs/context-architecture.md) — prompt budgets, persistence, compaction, and observability.
 - [UI and CLI](docs/ui.md) — user workflows, HTTP endpoints, and screenshots.
 - [Agent Runtime](docs/agent-runtime.md) — tools, approvals, MCP, cron, plugins, and diagnostics.
+- [Hybrid Assistant Bridge](docs/hybrid-assistant-bridge.md) — local verification, premium escalation capsules, profiles, and CLI usage.
 - [Evaluation](docs/evaluation.md) — evaluation contracts and release evidence.
 
 ## Verification
@@ -157,7 +168,13 @@ Current measured results and their limits are documented in [Tested Performance]
 
 ## Product Boundary
 
-myMoE is a local workstation application and evaluation harness. It is not a trained sparse transformer, a hosted multi-tenant service, or an unrestricted autonomous agent platform. Automatic specialist cold-loading and automatic durable compaction are not implemented; both remain explicit operator decisions.
+myMoE is primarily a local workstation application and evaluation harness. The
+Hybrid Assistant Bridge may start a separately configured premium Codex process
+only when its profile, explicit privacy choice, capability evidence, and budget
+allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant
+service, or an unrestricted autonomous agent platform. Automatic specialist
+cold-loading and automatic durable compaction are not implemented; both remain
+explicit operator decisions.
 
 ## License
 

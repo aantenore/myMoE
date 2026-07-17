@@ -12,6 +12,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | Understand routing decisions | [Routing](router.md) |
 | Understand chat context, memory, and persistence | [Context and Memory Architecture](context-architecture.md) |
 | Run a tool-calling task safely | [Agent Runtime](agent-runtime.md) |
+| Use local Codex first and escalate only after verification | [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) |
 | Check readiness or troubleshoot model startup | [Installation: Doctor](installation.md#doctor) and [Agent Runtime: Local Model Requirement](agent-runtime.md#local-model-requirement) |
 | Validate a change | [CI](ci.md) and [Evaluation](evaluation.md) |
 
@@ -22,6 +23,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Routing](router.md) — exact score composition, semantic examples, distilled artifact, top-k, aggregation, and fallbacks.
 - [Context and Memory Architecture](context-architecture.md) — context budgets, session summaries, memory retrieval, compaction, and run telemetry.
 - [Agent Runtime](agent-runtime.md) — strict tools, risk policy, approvals, MCP, plugins, cron, and diagnostic surfaces.
+- [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) — task-level local/premium policy, verification receipts, minimal escalation capsules, and CLI launch boundary.
 
 ## Run and Operate
 
