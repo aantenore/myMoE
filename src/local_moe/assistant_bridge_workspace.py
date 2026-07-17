@@ -323,6 +323,7 @@ def apply_changeset(
             "staged_sha256": None,
             "quarantine": None,
             "created_directories": [],
+            "installed_identity": None,
             "status": "pending",
         }
         for item in changes
@@ -382,7 +383,7 @@ def apply_changeset(
             staged = (
                 staged_dir / str(staged_name) if isinstance(staged_name, str) else None
             )
-            _apply_change_fail_closed(
+            installed_identity = _apply_change_fail_closed(
                 source=source,
                 change=change,
                 staged=staged,
@@ -390,6 +391,8 @@ def apply_changeset(
                 created_directories=records[index].get("created_directories"),
                 test_hook=_test_hook_after_detach,
             )
+            records[index]["installed_identity"] = installed_identity
+            _write_journal(journal, journal_payload)
             if _fault_after_mutation == index:
                 raise _SimulatedTransactionCrash("simulated crash after mutation")
             records[index]["status"] = "applied"
@@ -633,7 +636,7 @@ def _apply_change_fail_closed(
     quarantine_name: object,
     created_directories: object,
     test_hook: Callable[[Path], None] | None,
-) -> None:
+) -> dict[str, int] | None:
     _create_planned_directories(source, created_directories)
     target = source / change.path
     _assert_safe_relative_ancestry(source, change.path)
@@ -668,19 +671,30 @@ def _apply_change_fail_closed(
     if test_hook is not None:
         test_hook(target)
 
+    installed_identity: dict[str, int] | None = None
     if change.after is not None:
         if staged is None:
             raise WorkspaceSecurityError("Candidate staging artifact is missing.")
         data = _read_staged_file(staged, change.after)
-        _install_bytes_no_replace(data, target, change.after.mode)
+        installed_identity = _install_bytes_no_replace(
+            data,
+            target,
+            change.after.mode,
+        )
     else:
         _assert_current_entry(target, None)
 
     _assert_current_entry(target, change.after)
+    if installed_identity is not None:
+        if _regular_file_identity(target) != installed_identity:
+            raise WorkspaceSecurityError(
+                "Workspace installation ownership changed before commit."
+            )
     if quarantine is not None:
         _assert_current_entry(quarantine, change.before)
         quarantine.unlink()
         _fsync_directory(quarantine.parent)
+    return installed_identity
 
 
 def _restore_quarantine_no_replace(quarantine: Path, target: Path) -> None:
@@ -745,7 +759,11 @@ def _create_planned_directories(source: Path, raw_directories: object) -> None:
         _assert_directory_entry(directory)
 
 
-def _install_bytes_no_replace(data: bytes, target: Path, mode: int) -> None:
+def _install_bytes_no_replace(
+    data: bytes,
+    target: Path,
+    mode: int,
+) -> dict[str, int]:
     descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-install-", dir=target.parent)
     temp = Path(raw_temp)
     try:
@@ -758,6 +776,7 @@ def _install_bytes_no_replace(data: bytes, target: Path, mode: int) -> None:
         if not hasattr(os, "fchmod"):
             temp.chmod(mode)
             _windows_flush_path(temp, directory=False)
+        installed_identity = _regular_file_identity(temp)
         _fsync_directory(target.parent)
         try:
             os.link(temp, target)
@@ -765,7 +784,12 @@ def _install_bytes_no_replace(data: bytes, target: Path, mode: int) -> None:
             raise WorkspaceSecurityError(
                 "Workspace path changed during no-replace installation."
             ) from exc
+        if _regular_file_identity(target) != installed_identity:
+            raise WorkspaceSecurityError(
+                "Workspace no-replace installation lost object ownership."
+            )
         _fsync_directory(target.parent)
+        return installed_identity
     finally:
         temp.unlink(missing_ok=True)
         _fsync_directory(target.parent)
@@ -813,6 +837,16 @@ def _rollback_from_journal(
         rollback_detached: Path | None = None
         if _entry_matches(target, change.after):
             if change.after is not None:
+                installed_identity = _recorded_file_identity(
+                    raw.get("installed_identity")
+                )
+                if (
+                    installed_identity is None
+                    or _regular_file_identity(target) != installed_identity
+                ):
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery cannot prove ownership of the installed value."
+                    )
                 rollback_detached = target.with_name(f".mymoe-rollback-{uuid4().hex}")
                 _rename_no_replace(target, rollback_detached)
                 if not _entry_matches(rollback_detached, change.after):
@@ -889,18 +923,48 @@ def _rollback_created_directories(root: Path, raw_directories: object) -> None:
         isinstance(item, str) for item in raw_directories
     ):
         raise WorkspaceSecurityError("Workspace recovery directory plan is malformed.")
-    for raw in reversed(raw_directories):
-        directory = root / _safe_relative(raw)
-        if not _entry_exists(directory):
-            continue
-        _assert_directory_entry(directory)
-        try:
-            directory.rmdir()
-        except OSError as exc:
-            raise WorkspaceSecurityError(
-                "Workspace recovery found a non-empty created directory."
-            ) from exc
-        _fsync_directory(directory.parent)
+    # A path-only journal cannot prove that an empty directory is still the
+    # directory created by this transaction. Preserve it rather than deleting
+    # a same-name concurrent directory. Empty directories are outside the file
+    # manifest and can be cleaned explicitly after operator inspection.
+    for raw in raw_directories:
+        _safe_relative(raw)
+
+
+def _regular_file_identity(path: Path) -> dict[str, int]:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise WorkspaceSecurityError(
+            "Workspace file identity could not be inspected."
+        ) from exc
+    if _is_link_or_reparse(metadata) or not stat.S_ISREG(metadata.st_mode):
+        raise WorkspaceSecurityError(
+            "Workspace file identity requires a regular non-link file."
+        )
+    return {
+        "device_id": int(metadata.st_dev),
+        "inode": int(metadata.st_ino),
+    }
+
+
+def _recorded_file_identity(raw: object) -> dict[str, int] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"device_id", "inode"}:
+        raise WorkspaceSecurityError(
+            "Workspace recovery installed identity is malformed."
+        )
+    device_id = raw.get("device_id")
+    inode = raw.get("inode")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (device_id, inode)
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace recovery installed identity is malformed."
+        )
+    return {"device_id": device_id, "inode": inode}
 
 
 def _is_git_workspace(root: Path) -> bool:

@@ -563,6 +563,10 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                 len(after_data),
                 0o644,
             )
+            installed_identity = {
+                "device_id": int(target.stat().st_dev),
+                "inode": int(target.stat().st_ino),
+            }
             (transaction / "journal.json").write_text(
                 json.dumps(
                     {
@@ -582,6 +586,7 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                                 "backup_sha256": hashlib.sha256(
                                     before_data
                                 ).hexdigest(),
+                                "installed_identity": installed_identity,
                                 "status": "applied",
                             }
                         ],
@@ -598,6 +603,130 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
 
             self.assertEqual(target.read_bytes(), before_data)
             self.assertFalse(transaction.exists())
+
+    def test_same_value_concurrent_file_is_never_claimed_by_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            before_data = b"before\n"
+            after_data = b"after\n"
+            target.write_bytes(after_data)
+            transaction_id = uuid4().hex
+            transaction = Path(tmp) / "state" / f"transaction-{transaction_id}"
+            backups = transaction / "backups"
+            backups.mkdir(parents=True)
+            (backups / "00000000.bin").write_bytes(before_data)
+            owner = transaction / "owned-install.bin"
+            owner.write_bytes(after_data)
+            before = WorkspaceFile(
+                "tracked.txt",
+                "file",
+                hashlib.sha256(before_data).hexdigest(),
+                len(before_data),
+                0o644,
+            )
+            after = WorkspaceFile(
+                "tracked.txt",
+                "file",
+                hashlib.sha256(after_data).hexdigest(),
+                len(after_data),
+                0o644,
+            )
+            journal = transaction / "journal.json"
+            journal.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "transaction_id": transaction_id,
+                        "source_root_sha256": hashlib.sha256(
+                            str(root.resolve()).encode()
+                        ).hexdigest(),
+                        "source_fingerprint": "0" * 64,
+                        "status": "applying",
+                        "changes": [
+                            {
+                                "path": "tracked.txt",
+                                "before": before.payload(),
+                                "after": after.payload(),
+                                "backup": "00000000.bin",
+                                "backup_sha256": hashlib.sha256(
+                                    before_data
+                                ).hexdigest(),
+                                "installed_identity": {
+                                    "device_id": int(owner.stat().st_dev),
+                                    "inode": int(owner.stat().st_ino),
+                                },
+                                "created_directories": [],
+                                "status": "applied",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(WorkspaceSecurityError, "prove ownership"):
+                recover_workspace_transaction(
+                    state_dir=Path(tmp) / "state",
+                    transaction_id=transaction_id,
+                    source_root=root,
+                )
+
+            self.assertEqual(target.read_bytes(), after_data)
+            self.assertTrue(journal.exists())
+
+    def test_concurrent_empty_directory_is_preserved_during_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            concurrent = root / "new"
+            concurrent.mkdir()
+            transaction_id = uuid4().hex
+            transaction = Path(tmp) / "state" / f"transaction-{transaction_id}"
+            (transaction / "backups").mkdir(parents=True)
+            after_data = b"candidate\n"
+            after = WorkspaceFile(
+                "new/value.txt",
+                "file",
+                hashlib.sha256(after_data).hexdigest(),
+                len(after_data),
+                0o644,
+            )
+            (transaction / "journal.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "transaction_id": transaction_id,
+                        "source_root_sha256": hashlib.sha256(
+                            str(root.resolve()).encode()
+                        ).hexdigest(),
+                        "source_fingerprint": "0" * 64,
+                        "status": "applying",
+                        "changes": [
+                            {
+                                "path": "new/value.txt",
+                                "before": None,
+                                "after": after.payload(),
+                                "backup": None,
+                                "backup_sha256": None,
+                                "installed_identity": None,
+                                "created_directories": ["new"],
+                                "status": "mutating",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            recover_workspace_transaction(
+                state_dir=Path(tmp) / "state",
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+
+            self.assertTrue(concurrent.is_dir())
 
     def test_fault_after_replace_or_unlink_is_recoverable_from_mutating_state(
         self,
