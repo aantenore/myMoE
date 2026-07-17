@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import shutil
@@ -16,6 +16,7 @@ import tempfile
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
+from . import assistant_bridge_workspace as _workspace_security
 from .deterministic_evaluator import (
     QualityBenchmarkError,
     evaluate_check,
@@ -49,6 +50,13 @@ from .assistant_bridge_secrets import (
     redact_text,
     redact_user_controlled_fields,
 )
+from .assistant_bridge_verifier_isolation import (
+    VerifierIsolationError,
+    VerifierIsolationPlan,
+    VerifierIsolationPolicy,
+    build_verifier_isolation_plan,
+    verifier_isolation_capability,
+)
 from .assistant_bridge_workspace import (
     IgnoredPathRule,
     MaterializedWorkspace,
@@ -62,6 +70,7 @@ from .assistant_bridge_workspace import (
     build_changeset,
     materialize_workspace,
     snapshot_workspace,
+    trusted_git_executable,
     trusted_git_session,
     workspace_write_capability,
 )
@@ -86,6 +95,16 @@ _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_GIT_BYTES = 16 * 1024 * 1024
 _MAX_STREAM_BYTES = 2 * 1024 * 1024
 _MAX_FINAL_BYTES = 1024 * 1024
+_PYTHON_WORKSPACE_BOOTSTRAP = (
+    "import runpy,sys;"
+    "n=int(sys.argv[1]);"
+    "roots=sys.argv[2:2+n];"
+    "module=sys.argv[2+n];"
+    "args=sys.argv[3+n:];"
+    "sys.path[:0]=roots;"
+    "sys.argv=[module,*args];"
+    "runpy.run_module(module,run_name='__main__',alter_sys=True)"
+)
 _BASE_ENV_KEYS = {
     "COMSPEC",
     "HOME",
@@ -490,11 +509,16 @@ class CommandVerifierSpec:
     id: str
     argv: tuple[str, ...] = field(repr=False)
     timeout_seconds: float
+    kind: str = "command"
     purpose: str = "hygiene"
-    execution_boundary: str = "disposable_workspace"
-    network_policy: str = "not_enforced"
+    execution_boundary: str = "hard_sandbox"
+    network_policy: str = "denied"
     launcher_entrypoint: str = field(default="", repr=False)
     launcher_companions: tuple[str, ...] = field(default=(), repr=False)
+    runtime_read_roots: tuple[str, ...] = field(
+        default=("{python_runtime}",), repr=False
+    )
+    workspace_python_paths: tuple[str, ...] = field(default=(), repr=False)
     environment_allowlist: tuple[str, ...] = ()
     required_for_capabilities: tuple[str, ...] = ()
     required_for_tools: tuple[str, ...] = ()
@@ -504,6 +528,8 @@ class CommandVerifierSpec:
         for name in (
             "argv",
             "launcher_companions",
+            "runtime_read_roots",
+            "workspace_python_paths",
             "environment_allowlist",
             "required_for_capabilities",
             "required_for_tools",
@@ -512,9 +538,19 @@ class CommandVerifierSpec:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if _SAFE_ID.fullmatch(self.id) is None:
             raise AssistantBridgeError("Command verifier id must be a safe identifier.")
-        if not self.argv or any(not item or "\x00" in item for item in self.argv):
+        if self.kind not in {"command", "trusted_git_diff_check"}:
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} has an unsupported kind."
+            )
+        if self.kind == "command" and (
+            not self.argv or any(not item or "\x00" in item for item in self.argv)
+        ):
             raise AssistantBridgeError(
                 f"Command verifier {self.id} requires safe argv values."
+            )
+        if self.kind == "trusted_git_diff_check" and self.argv:
+            raise AssistantBridgeError(
+                f"Trusted Git verifier {self.id} does not accept configurable argv."
             )
         if "\x00" in self.launcher_entrypoint or any(
             not item or "\x00" in item for item in self.launcher_companions
@@ -534,11 +570,16 @@ class CommandVerifierSpec:
             raise AssistantBridgeError(
                 f"Command verifier {self.id} purpose must be hygiene or task."
             )
-        if self.execution_boundary != "disposable_workspace":
+        expected_boundary = (
+            "trusted_git_session"
+            if self.kind == "trusted_git_diff_check"
+            else "hard_sandbox"
+        )
+        if self.execution_boundary != expected_boundary:
             raise AssistantBridgeError(
-                f"Command verifier {self.id} requires a disposable workspace boundary."
+                f"Command verifier {self.id} requires the {expected_boundary} boundary."
             )
-        if self.network_policy != "not_enforced":
+        if self.network_policy != "denied":
             raise AssistantBridgeError(
                 f"Command verifier {self.id} has unsupported network policy."
             )
@@ -551,8 +592,68 @@ class CommandVerifierSpec:
                 validate_environment_name(name)
             except (TypeError, ValueError):
                 raise AssistantBridgeError(
-                    f"Command verifier {self.id} environment allowlist contains a denied injection variable."
+                    f"Command verifier {self.id} environment allowlist contains "
+                    "a denied injection variable."
                 ) from None
+        if self.kind == "trusted_git_diff_check" and any(
+            (
+                self.launcher_entrypoint,
+                self.launcher_companions,
+                self.runtime_read_roots,
+                self.workspace_python_paths,
+                self.environment_allowlist,
+            )
+        ):
+            raise AssistantBridgeError(
+                f"Trusted Git verifier {self.id} cannot extend its fixed execution contract."
+            )
+        if self.kind == "trusted_git_diff_check" and self.purpose != "hygiene":
+            raise AssistantBridgeError(
+                f"Trusted Git verifier {self.id} must be a hygiene verifier."
+            )
+        for root in self.runtime_read_roots:
+            if not root or "\x00" in root:
+                raise AssistantBridgeError(
+                    f"Command verifier {self.id} runtime read roots are invalid."
+                )
+        if len(set(self.workspace_python_paths)) != len(
+            self.workspace_python_paths
+        ):
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} workspace Python paths contain duplicates."
+            )
+        for relative in self.workspace_python_paths:
+            path = PurePosixPath(relative)
+            if (
+                not relative
+                or "\x00" in relative
+                or "\\" in relative
+                or ":" in relative
+                or bool(path.drive)
+                or path.is_absolute()
+                or ".." in path.parts
+                or path.as_posix() != relative
+            ):
+                raise AssistantBridgeError(
+                    f"Command verifier {self.id} workspace Python paths must be "
+                    "safe relative paths."
+                )
+        if self.workspace_python_paths and (
+            self.kind != "command"
+            or len(self.argv) < 3
+            or self.argv[0] != "{python}"
+            or self.argv[1] != "-m"
+            or re.fullmatch(
+                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", self.argv[2]
+            )
+            is None
+            or bool(self.launcher_entrypoint)
+            or bool(self.launcher_companions)
+        ):
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} workspace Python paths require the "
+                "fixed Python module adapter."
+            )
         _validate_identifiers("verifier capability", self.required_for_capabilities)
         _validate_identifiers("verifier tool", self.required_for_tools)
         unknown_risks = sorted(set(self.required_for_risks).difference(RISK_LEVELS))
@@ -587,6 +688,7 @@ class CommandVerifierSpec:
     def payload(self) -> dict[str, object]:
         return {
             "id": self.id,
+            "kind": self.kind,
             "argv_sha256": _sha256_text(_canonical_json(list(self.argv))),
             "timeout_seconds": self.timeout_seconds,
             "purpose": self.purpose,
@@ -601,6 +703,14 @@ class CommandVerifierSpec:
                 _canonical_json(list(self.launcher_companions))
             ),
             "launcher_companion_count": len(self.launcher_companions),
+            "runtime_read_roots_sha256": _sha256_text(
+                _canonical_json(list(self.runtime_read_roots))
+            ),
+            "runtime_read_root_count": len(self.runtime_read_roots),
+            "workspace_python_paths_sha256": _sha256_text(
+                _canonical_json(list(self.workspace_python_paths))
+            ),
+            "workspace_python_path_count": len(self.workspace_python_paths),
             "environment_keys": list(self.environment_allowlist),
             "required_for_capabilities": list(self.required_for_capabilities),
             "required_for_tools": list(self.required_for_tools),
@@ -704,7 +814,14 @@ class VerificationEvidence:
                 raise AssistantBridgeError(
                     f"Verification evidence {name} must contain safe identifier characters."
                 )
-        if self.kind not in {"command", "external", "output", "process", "policy"}:
+        if self.kind not in {
+            "builtin",
+            "command",
+            "external",
+            "output",
+            "process",
+            "policy",
+        }:
             raise AssistantBridgeError("Verification evidence kind is unsupported.")
         if not isinstance(self.passed, bool):
             raise AssistantBridgeError("Verification evidence passed must be boolean.")
@@ -882,6 +999,7 @@ class AssistantBridgeConfig:
     independent_capabilities: tuple[str, ...]
     independent_tools: tuple[str, ...]
     independent_risks: tuple[str, ...]
+    verifier_isolation: VerifierIsolationPolicy
     capsule: CapsulePolicy
     runtime: BridgeRuntimePolicy
     state: BridgeStatePolicy
@@ -1064,29 +1182,55 @@ class BoundVerifierPlan:
     argv: tuple[str, ...] = field(repr=False)
     executable_identity: ExecutableIdentity = field(repr=False)
     environment_sha256: str
-    launcher_chain: LauncherChainIdentity = field(repr=False)
+    environment: Mapping[str, str] = field(repr=False)
+    launcher_chain: LauncherChainIdentity | None = field(repr=False)
     launcher_authority_sha256: str
     launcher_artifact_sha256: tuple[str, ...]
+    isolation: VerifierIsolationPlan | None = field(repr=False)
+    sandbox_launcher_chain: LauncherChainIdentity | None = field(repr=False)
+    sandbox_launcher_authority_sha256: str
+    sandbox_launcher_artifact_sha256: tuple[str, ...]
     plan_sha256: str
     runtime_policy: BridgeRuntimePolicy = field(repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
         object.__setattr__(
             self, "launcher_artifact_sha256", tuple(self.launcher_artifact_sha256)
+        )
+        object.__setattr__(
+            self,
+            "sandbox_launcher_artifact_sha256",
+            tuple(self.sandbox_launcher_artifact_sha256),
         )
 
     def payload(self) -> dict[str, object]:
         return {
             "id": self.spec.id,
+            "kind": self.spec.kind,
             "purpose": self.spec.purpose,
             "spec_sha256": self.spec.spec_sha256,
             "plan_sha256": self.plan_sha256,
             "executable": _public_executable_payload(self.executable_identity),
             "environment_sha256": self.environment_sha256,
-            "launcher_chain": self.launcher_chain.payload(),
+            "launcher_chain": (
+                None if self.launcher_chain is None else self.launcher_chain.payload()
+            ),
             "launcher_authority_sha256": self.launcher_authority_sha256,
             "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
+            "isolation": None if self.isolation is None else self.isolation.payload(),
+            "sandbox_launcher_chain": (
+                None
+                if self.sandbox_launcher_chain is None
+                else self.sandbox_launcher_chain.payload()
+            ),
+            "sandbox_launcher_authority_sha256": (
+                self.sandbox_launcher_authority_sha256 or None
+            ),
+            "sandbox_launcher_artifact_sha256": list(
+                self.sandbox_launcher_artifact_sha256
+            ),
             "execution_boundary": self.spec.execution_boundary,
             "network_policy": self.spec.network_policy,
             "runtime_policy": self.runtime_policy.payload(),
@@ -1429,9 +1573,36 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "command_verifiers",
             "external_verifiers",
             "independent_required_for",
+            "isolation",
             "output_checks",
         },
     )
+    isolation_raw = _as_object(
+        verification_raw.get("isolation", {}),
+        "verification.isolation",
+    )
+    _reject_unknown(
+        "verification.isolation",
+        isolation_raw,
+        {"linux_backend", "macos_backend", "required"},
+    )
+    try:
+        verifier_isolation = VerifierIsolationPolicy(
+            required=_bool_value(
+                isolation_raw.get("required", True),
+                "verification.isolation.required",
+            ),
+            macos_backend=_string_value(
+                isolation_raw.get("macos_backend", "/usr/bin/sandbox-exec"),
+                "verification.isolation.macos_backend",
+            ),
+            linux_backend=_string_value(
+                isolation_raw.get("linux_backend", "/usr/bin/bwrap"),
+                "verification.isolation.linux_backend",
+            ),
+        )
+    except VerifierIsolationError as exc:
+        raise AssistantBridgeError(str(exc)) from None
     independent_raw = _as_object(
         verification_raw.get("independent_required_for", {}),
         "verification.independent_required_for",
@@ -1662,6 +1833,10 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
                 "workspace": workspace_policy.effective_descriptor(),
                 "runtime_policy": runtime_policy.payload(),
                 "runtime_capabilities": runtime_capabilities().payload(),
+                "verifier_isolation_policy": verifier_isolation.payload(),
+                "verifier_isolation_capability": verifier_isolation_capability(
+                    verifier_isolation
+                ).payload(),
                 "secret_assurance": {
                     "require_residual_assurance": _bool_value(
                         secret_raw.get("require_residual_assurance", True),
@@ -1703,6 +1878,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             independent_raw.get("risks", []),
             "verification independent risks",
         ),
+        verifier_isolation=verifier_isolation,
         capsule=CapsulePolicy(
             max_chars=_int_value(
                 capsule_raw.get("max_chars", 8000), "capsule.max_chars"
@@ -2971,6 +3147,29 @@ class AssistantBridgeRunner:
                 route="blocked",
                 rationale_code="workspace_write_capability_unavailable",
             )
+        selected_verifiers = self._selected_verifiers(task)
+        verifier_plans = tuple(
+            _build_verifier_plan(
+                spec,
+                workspace=workspace,
+                runtime_policy=self.config.runtime,
+                isolation_policy=self.config.verifier_isolation,
+            )
+            for spec in selected_verifiers
+        )
+        if any(
+            plan.spec.kind == "command"
+            and (
+                plan.isolation is None
+                or not plan.isolation.capability.supported
+            )
+            for plan in verifier_plans
+        ):
+            receipt = _receipt_with_route(
+                receipt,
+                route="blocked",
+                rationale_code="verifier_isolation_unavailable",
+            )
         premium_auth: PremiumAuthAttestation | None = None
         if receipt.route in {"local_then_verify", "premium"}:
             try:
@@ -3055,15 +3254,6 @@ class AssistantBridgeRunner:
                     runtime_policy=self.config.runtime,
                 )
             )
-        selected_verifiers = self._selected_verifiers(task)
-        verifier_plans = tuple(
-            _build_verifier_plan(
-                spec,
-                workspace=workspace,
-                runtime_policy=self.config.runtime,
-            )
-            for spec in selected_verifiers
-        )
         execution_binding = _execution_binding(
             external_evidence=bound_external,
             include_diff=include_diff,
@@ -3538,7 +3728,11 @@ class AssistantBridgeRunner:
         attestation = _receipt_workspace_attestation(final_snapshot)
         with _disposable_verifier_workspace(
             candidate.root,
+            source_snapshot=candidate.source_snapshot,
+            baseline_files=candidate.baseline_files,
             expected_snapshot=final_snapshot,
+            candidate_files=candidate_files,
+            changes=changes,
             policy=self.config.workspace.scope,
         ) as verifier_workspace:
             evidence = verify_command_result(
@@ -4085,6 +4279,7 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
             {
                 "argv",
                 "id",
+                "kind",
                 "environment_allowlist",
                 "execution_boundary",
                 "launcher_companions",
@@ -4094,6 +4289,8 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 "required_for_capabilities",
                 "required_for_risks",
                 "required_for_tools",
+                "runtime_read_roots",
+                "workspace_python_paths",
                 "timeout_seconds",
             },
         )
@@ -4107,16 +4304,20 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                     value.get("timeout_seconds", 120),
                     f"command_verifiers[{index}].timeout_seconds",
                 ),
+                kind=_string_value(
+                    value.get("kind", "command"),
+                    f"command_verifiers[{index}].kind",
+                ),
                 purpose=_string_value(
                     value.get("purpose", "hygiene"),
                     f"command_verifiers[{index}].purpose",
                 ),
                 execution_boundary=_string_value(
-                    value.get("execution_boundary", "disposable_workspace"),
+                    value.get("execution_boundary", "hard_sandbox"),
                     f"command_verifiers[{index}].execution_boundary",
                 ),
                 network_policy=_string_value(
-                    value.get("network_policy", "not_enforced"),
+                    value.get("network_policy", "denied"),
                     f"command_verifiers[{index}].network_policy",
                 ),
                 launcher_entrypoint=_string_value(
@@ -4126,6 +4327,14 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 launcher_companions=_string_tuple(
                     value.get("launcher_companions", []),
                     f"command_verifiers[{index}].launcher_companions",
+                ),
+                runtime_read_roots=_string_tuple(
+                    value.get("runtime_read_roots", ["{python_runtime}"]),
+                    f"command_verifiers[{index}].runtime_read_roots",
+                ),
+                workspace_python_paths=_string_tuple(
+                    value.get("workspace_python_paths", []),
+                    f"command_verifiers[{index}].workspace_python_paths",
                 ),
                 environment_allowlist=_string_tuple(
                     value.get("environment_allowlist", []),
@@ -4326,9 +4535,44 @@ def _build_verifier_plan(
     *,
     workspace: str | Path,
     runtime_policy: BridgeRuntimePolicy,
+    isolation_policy: VerifierIsolationPolicy = VerifierIsolationPolicy(),
     execution_environment: Mapping[str, str] | None = None,
 ) -> BoundVerifierPlan:
     root = str(Path(workspace).expanduser().resolve())
+
+    if spec.kind == "trusted_git_diff_check":
+        try:
+            executable = trusted_git_executable()
+        except (WorkspaceSecurityError, OSError, ValueError):
+            raise AssistantBridgeError(
+                f"Verifier {spec.id} trusted Git attestation failed."
+            ) from None
+        environment_sha256 = _sha256_text("trusted-git-environment/v1")
+        payload = {
+            "spec_sha256": spec.spec_sha256,
+            "kind": spec.kind,
+            "operation": "trusted-git-diff-check/v2",
+            "executable": executable.binding_payload(),
+            "environment_sha256": environment_sha256,
+            "runtime_capabilities": runtime_capabilities().payload(),
+            "runtime_policy": runtime_policy.payload(),
+        }
+        return BoundVerifierPlan(
+            spec=spec,
+            argv=(),
+            executable_identity=executable,
+            environment_sha256=environment_sha256,
+            environment={},
+            launcher_chain=None,
+            launcher_authority_sha256="",
+            launcher_artifact_sha256=(),
+            isolation=None,
+            sandbox_launcher_chain=None,
+            sandbox_launcher_authority_sha256="",
+            sandbox_launcher_artifact_sha256=(),
+            plan_sha256=_sha256_text(_canonical_json(payload)),
+            runtime_policy=runtime_policy,
+        )
 
     def expand(value: str) -> str:
         return (
@@ -4344,6 +4588,7 @@ def _build_verifier_plan(
         return expand(value)
 
     argv = tuple(expand(item) for item in spec.argv)
+    temp_namespace = _sha256_text(spec.id)[:24]
     launcher_entrypoint = (
         expand_launcher(spec.launcher_entrypoint)
         if spec.launcher_entrypoint
@@ -4352,21 +4597,60 @@ def _build_verifier_plan(
     launcher_companions = tuple(
         expand_launcher(item) for item in spec.launcher_companions
     )
-    environment = (
-        _sanitized_environment(spec.environment_allowlist)
+    provisional_environment = (
+        _sanitized_verifier_environment(
+            spec.environment_allowlist,
+            workspace=root,
+            executable_hint=argv[0],
+            temp_namespace=temp_namespace,
+        )
         if execution_environment is None
         else dict(execution_environment)
     )
-    environment_sha256 = fingerprint_environment(environment).sha256
     try:
         executable = resolve_executable(
             argv[0],
-            env=environment,
+            env=provisional_environment,
         )
     except (AssistantBridgeRuntimeError, OSError, ValueError):
         raise AssistantBridgeError(
             f"Verifier {spec.id} executable attestation failed."
         ) from None
+    if spec.workspace_python_paths:
+        workspace_python_paths = _resolved_workspace_python_paths(
+            Path(root), spec.workspace_python_paths
+        )
+        argv = (
+            executable.launch_path,
+            "-I",
+            "-c",
+            _PYTHON_WORKSPACE_BOOTSTRAP,
+            str(len(workspace_python_paths)),
+            *workspace_python_paths,
+            argv[2],
+            *argv[3:],
+        )
+    else:
+        argv = (executable.launch_path, *argv[1:])
+    environment = (
+        _sanitized_verifier_environment(
+            spec.environment_allowlist,
+            workspace=root,
+            executable_hint=executable.launch_path,
+            temp_namespace=temp_namespace,
+        )
+        if execution_environment is None
+        else dict(execution_environment)
+    )
+    ephemeral_environment_keys = ("HOME", "TEMP", "TMP", "TMPDIR")
+    environment_sha256 = _sha256_text(
+        _canonical_json(
+            _authority_environment(
+                environment,
+                ephemeral_keys=ephemeral_environment_keys,
+            )
+        )
+    )
     try:
         launcher_chain = _build_bridge_launcher_chain(
             executable,
@@ -4387,21 +4671,105 @@ def _build_verifier_plan(
         output_path="",
         environment=environment,
         ephemeral_workspace=True,
-        ephemeral_environment_keys=(),
+        ephemeral_environment_keys=ephemeral_environment_keys,
     )
     artifacts = _launcher_artifact_authority_digests(
         launcher_chain,
         workspace=root,
         ephemeral_workspace=True,
     )
-    semantic_argv = [item.replace(root, "<ephemeral-workspace>") for item in argv]
+    read_artifacts = _verifier_launcher_read_artifacts(executable, launcher_chain)
+    capability = verifier_isolation_capability(isolation_policy)
+    try:
+        isolation = build_verifier_isolation_plan(
+            isolation_policy,
+            capability,
+            workspace=root,
+            command_argv=argv,
+            runtime_read_roots=spec.runtime_read_roots,
+            temp_namespace=temp_namespace,
+            attested_read_artifacts=read_artifacts,
+        )
+    except (VerifierIsolationError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Verifier {spec.id} isolation plan could not be attested."
+        ) from None
+    sandbox_launcher_chain: LauncherChainIdentity | None = None
+    sandbox_launcher_authority_sha256 = ""
+    sandbox_artifacts: tuple[str, ...] = ()
+    if isolation.capability.supported:
+        sandbox_executable = isolation.capability.executable
+        if sandbox_executable is None:
+            raise AssistantBridgeError(
+                f"Verifier {spec.id} isolation capability is incomplete."
+            )
+        try:
+            sandbox_companions = tuple(
+                (
+                    str(Path(item).relative_to(root))
+                    if item != executable.launch_path
+                    and _path_is_within(item, Path(root))
+                    else item
+                )
+                for item in read_artifacts
+            )
+            sandbox_launcher_chain = resolve_launcher_chain(
+                sandbox_executable,
+                ("bound-verifier-isolation",),
+                companions=sandbox_companions,
+                cwd=root,
+                env=environment,
+                strict=True,
+            )
+            sandbox_launcher_chain = replace(
+                sandbox_launcher_chain,
+                argv=isolation.argv,
+            )
+        except (
+            AssistantBridgeError,
+            AssistantBridgeRuntimeError,
+            OSError,
+            ValueError,
+        ):
+            raise AssistantBridgeError(
+                f"Verifier {spec.id} sandbox launcher-chain attestation failed."
+            ) from None
+        sandbox_launcher_authority_sha256 = _sandbox_launcher_authority_sha256(
+            sandbox_launcher_chain,
+            isolation=isolation,
+            executable=sandbox_executable,
+            workspace=root,
+            output_path="",
+            environment=environment,
+            ephemeral_workspace=True,
+            ephemeral_environment_keys=ephemeral_environment_keys,
+        )
+        sandbox_artifacts = _launcher_artifact_authority_digests(
+            sandbox_launcher_chain,
+            workspace=root,
+            ephemeral_workspace=True,
+        )
+    semantic_argv = [
+        "<attested-verifier-executable>",
+        *(item.replace(root, "<ephemeral-workspace>") for item in argv[1:]),
+    ]
     payload = {
         "spec_sha256": spec.spec_sha256,
+        "kind": spec.kind,
         "argv": semantic_argv,
-        "executable": executable.binding_payload(),
+        "executable": _semantic_executable_payload(
+            executable,
+            authority_environment=_authority_environment(
+                environment,
+                ephemeral_keys=ephemeral_environment_keys,
+            ),
+        ),
         "environment_sha256": environment_sha256,
         "launcher_authority_sha256": launcher_authority_sha256,
         "launcher_artifact_sha256": list(artifacts),
+        "isolation_binding_sha256": isolation.binding_sha256,
+        "sandbox_launcher_authority_sha256": sandbox_launcher_authority_sha256,
+        "sandbox_launcher_artifact_sha256": list(sandbox_artifacts),
         "runtime_capabilities": runtime_capabilities().payload(),
         "runtime_policy": runtime_policy.payload(),
     }
@@ -4410,12 +4778,50 @@ def _build_verifier_plan(
         argv=argv,
         executable_identity=executable,
         environment_sha256=environment_sha256,
+        environment=environment,
         launcher_chain=launcher_chain,
         launcher_authority_sha256=launcher_authority_sha256,
         launcher_artifact_sha256=artifacts,
+        isolation=isolation,
+        sandbox_launcher_chain=sandbox_launcher_chain,
+        sandbox_launcher_authority_sha256=sandbox_launcher_authority_sha256,
+        sandbox_launcher_artifact_sha256=sandbox_artifacts,
         plan_sha256=_sha256_text(_canonical_json(payload)),
         runtime_policy=runtime_policy,
     )
+
+
+def _verifier_launcher_read_artifacts(
+    executable: ExecutableIdentity,
+    chain: LauncherChainIdentity,
+) -> tuple[str, ...]:
+    paths = [executable.launch_path]
+    for identity in (chain.entrypoint, *chain.companions):
+        if identity is not None:
+            paths.append(identity.resolved_path)
+    for identity in (chain.interpreter, chain.env_launcher):
+        if identity is not None:
+            paths.append(identity.resolved_path)
+    result: list[str] = []
+    seen_targets: set[str] = set()
+    for item in paths:
+        target = os.path.normcase(str(Path(item).resolve(strict=True)))
+        if target not in seen_targets:
+            seen_targets.add(target)
+            result.append(item)
+    return tuple(result)
+
+
+def _sandbox_launcher_authority_sha256(
+    chain: LauncherChainIdentity,
+    *,
+    isolation: VerifierIsolationPlan,
+    **kwargs: Any,
+) -> str:
+    payload = _launcher_chain_authority_payload(chain, **kwargs)
+    payload["argv"] = ["<bound-verifier-isolation>", isolation.argv_sha256]
+    payload["isolation_binding_sha256"] = isolation.binding_sha256
+    return _sha256_text(_canonical_json(payload))
 
 
 def _run_bound_verifier(
@@ -4425,43 +4831,212 @@ def _run_bound_verifier(
     workspace: WorkspaceAttestation,
     verifier_workspace: str | Path,
 ) -> VerificationEvidence:
-    environment = _sanitized_environment(plan.spec.environment_allowlist)
+    if plan.spec.kind == "trusted_git_diff_check":
+        return _run_trusted_git_verifier(
+            plan,
+            task=task,
+            workspace=workspace,
+            verifier_workspace=verifier_workspace,
+        )
+    if plan.isolation is None:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} has no bound isolation plan."
+        )
     current = _build_verifier_plan(
         plan.spec,
         workspace=verifier_workspace,
         runtime_policy=plan.runtime_policy,
-        execution_environment=environment,
+        isolation_policy=plan.isolation.policy,
     )
     if current.plan_sha256 != plan.plan_sha256:
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} no longer matches the confirmed plan."
         )
-    environment_sha256 = fingerprint_environment(environment).sha256
-    if environment_sha256 != plan.environment_sha256:
+    if current.environment_sha256 != plan.environment_sha256:
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} environment no longer matches the confirmed plan."
         )
+    environment = dict(current.environment)
+    if current.isolation is None or not current.isolation.capability.supported:
+        return _verifier_evidence(
+            plan,
+            task=task,
+            workspace=workspace,
+            passed=False,
+            code="hard_sandbox_unavailable",
+            observed=0,
+            result_payload={
+                "plan_sha256": plan.plan_sha256,
+                "isolation": (
+                    None
+                    if current.isolation is None
+                    else current.isolation.capability.binding_payload()
+                ),
+            },
+        )
+    sandbox_executable = current.isolation.capability.executable
+    sandbox_launcher_chain = current.sandbox_launcher_chain
+    if sandbox_executable is None or sandbox_launcher_chain is None:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} sandbox execution binding is incomplete."
+        )
+    internal_temp = Path(current.isolation.internal_temp)
     binding_payload = {
         "plan_sha256": plan.plan_sha256,
-        "environment_sha256": environment_sha256,
+        "environment_sha256": current.environment_sha256,
         "executable_fingerprint": plan.executable_identity.fingerprint,
         "launcher_authority_sha256": current.launcher_authority_sha256,
-        "launcher_chain_fingerprint": current.launcher_chain.fingerprint,
+        "launcher_chain_fingerprint": (
+            None
+            if current.launcher_chain is None
+            else current.launcher_chain.fingerprint
+        ),
         "launcher_artifact_sha256": list(plan.launcher_artifact_sha256),
+        "isolation_binding_sha256": current.isolation.binding_sha256,
+        "sandbox_executable_fingerprint": sandbox_executable.fingerprint,
+        "sandbox_launcher_authority_sha256": (
+            current.sandbox_launcher_authority_sha256
+        ),
+        "sandbox_launcher_chain_fingerprint": sandbox_launcher_chain.fingerprint,
+        "sandbox_launcher_artifact_sha256": list(
+            current.sandbox_launcher_artifact_sha256
+        ),
+    }
+    with _verifier_internal_temp(internal_temp, verifier_id=plan.spec.id):
+        try:
+            outcome = execute_process(
+                sandbox_executable,
+                current.isolation.argv,
+                stdin=b"",
+                cwd=verifier_workspace,
+                env=environment,
+                timeout_seconds=plan.spec.timeout_seconds,
+                policy=plan.runtime_policy.process_policy(stdin_limit_bytes=0),
+                launcher_chain=sandbox_launcher_chain,
+            )
+            passed = outcome.ok
+            code = (
+                "command_passed"
+                if passed
+                else f"command_{_safe_code(outcome.code)}"
+            )
+            result_payload = {
+                **binding_payload,
+                "returncode": outcome.returncode,
+                "stdout_sha256": outcome.stdout_sha256,
+                "stdout_bytes": outcome.stdout_bytes,
+                "stderr_sha256": outcome.stderr_sha256,
+                "stderr_bytes": outcome.stderr_bytes,
+                "cleanup": outcome.cleanup.payload(),
+            }
+            observed = outcome.stdout_bytes + outcome.stderr_bytes
+        except ProcessCleanupError:
+            raise
+        except AssistantBridgeRuntimeError:
+            passed = False
+            code = "runtime_attestation_failed"
+            result_payload = {**binding_payload, "code": code}
+            observed = 0
+    return _verifier_evidence(
+        plan,
+        task=task,
+        workspace=workspace,
+        passed=passed,
+        code=code,
+        observed=observed,
+        result_payload=result_payload,
+    )
+
+
+@contextmanager
+def _verifier_internal_temp(
+    path: Path,
+    *,
+    verifier_id: str,
+) -> Iterator[None]:
+    try:
+        path.mkdir(mode=0o700)
+        created = path.lstat()
+    except OSError:
+        raise AssistantBridgeError(
+            f"Verifier {verifier_id} internal temporary root is unavailable."
+        ) from None
+    if not stat.S_ISDIR(created.st_mode) or stat.S_ISLNK(created.st_mode):
+        raise AssistantBridgeError(
+            f"Verifier {verifier_id} internal temporary root is unsafe."
+        )
+    try:
+        yield
+    except BaseException as original:
+        try:
+            _cleanup_verifier_internal_temp(path, created, verifier_id)
+        except AssistantBridgeError as cleanup_error:
+            raise original from cleanup_error
+        raise
+    else:
+        _cleanup_verifier_internal_temp(path, created, verifier_id)
+
+
+def _cleanup_verifier_internal_temp(
+    path: Path,
+    created: os.stat_result,
+    verifier_id: str,
+) -> None:
+    try:
+        current = path.lstat()
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or stat.S_ISLNK(current.st_mode)
+            or current.st_dev != created.st_dev
+            or current.st_ino != created.st_ino
+        ):
+            raise OSError("verifier temporary root identity changed")
+        shutil.rmtree(path)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise OSError("verifier temporary root still exists")
+    except OSError:
+        raise AssistantBridgeError(
+            f"Verifier {verifier_id} internal temporary cleanup could not be verified."
+        ) from None
+
+
+def _run_trusted_git_verifier(
+    plan: BoundVerifierPlan,
+    *,
+    task: AssistantTaskEnvelope,
+    workspace: WorkspaceAttestation,
+    verifier_workspace: str | Path,
+) -> VerificationEvidence:
+    current = _build_verifier_plan(
+        plan.spec,
+        workspace=verifier_workspace,
+        runtime_policy=plan.runtime_policy,
+        isolation_policy=VerifierIsolationPolicy(),
+    )
+    if current.plan_sha256 != plan.plan_sha256:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} no longer matches the confirmed plan."
+        )
+    binding_payload = {
+        "plan_sha256": plan.plan_sha256,
+        "operation": "trusted-git-diff-check/v2",
+        "executable_fingerprint": current.executable_identity.fingerprint,
     }
     try:
-        outcome = execute_process(
-            current.executable_identity,
-            current.argv[1:],
-            stdin=b"",
-            cwd=verifier_workspace,
-            env=environment,
-            timeout_seconds=plan.spec.timeout_seconds,
-            policy=plan.runtime_policy.process_policy(stdin_limit_bytes=0),
-            launcher_chain=current.launcher_chain,
+        session = trusted_git_session(verifier_workspace)
+        if session.executable.fingerprint != current.executable_identity.fingerprint:
+            raise WorkspaceSecurityError(
+                "Trusted Git executable changed after confirmation."
+            )
+        outcome = session.diff_check(
+            max_output_bytes=plan.runtime_policy.stdout_limit_bytes
         )
         passed = outcome.ok
-        code = "command_passed" if passed else f"command_{_safe_code(outcome.code)}"
+        code = "builtin_passed" if passed else "builtin_check_failed"
         result_payload = {
             **binding_payload,
             "returncode": outcome.returncode,
@@ -4474,27 +5049,126 @@ def _run_bound_verifier(
         observed = outcome.stdout_bytes + outcome.stderr_bytes
     except ProcessCleanupError:
         raise
-    except AssistantBridgeRuntimeError:
+    except (AssistantBridgeRuntimeError, WorkspaceSecurityError):
         passed = False
         code = "runtime_attestation_failed"
         result_payload = {**binding_payload, "code": code}
         observed = 0
-    artifact = _sha256_text(
-        _canonical_json(result_payload)
+    return _verifier_evidence(
+        plan,
+        task=task,
+        workspace=workspace,
+        passed=passed,
+        code=code,
+        observed=observed,
+        result_payload=result_payload,
     )
+
+
+def _verifier_evidence(
+    plan: BoundVerifierPlan,
+    *,
+    task: AssistantTaskEnvelope,
+    workspace: WorkspaceAttestation,
+    passed: bool,
+    code: str,
+    observed: int,
+    result_payload: Mapping[str, object],
+) -> VerificationEvidence:
+    kind = "builtin" if plan.spec.kind == "trusted_git_diff_check" else "command"
+    scheme = "builtin" if kind == "builtin" else "command"
+    artifact = _sha256_text(_canonical_json(result_payload))
     return VerificationEvidence(
         id=plan.spec.id,
-        verifier=f"command-{plan.spec.purpose}",
-        kind="command",
+        verifier=f"{scheme}-{plan.spec.purpose}",
+        kind=kind,
         passed=passed,
         code=code,
         artifact_sha256=artifact,
         observed_chars=observed,
-        evidence_ref=f"command://{plan.spec.id}",
+        evidence_ref=f"{scheme}://{plan.spec.id}",
         task_fingerprint=task.task_fingerprint,
         workspace_fingerprint=workspace.fingerprint,
         verifier_spec_sha256=plan.spec.spec_sha256,
     )
+
+
+def _sanitized_verifier_environment(
+    allowlist: Sequence[str],
+    *,
+    workspace: str | Path,
+    executable_hint: str,
+    temp_namespace: str,
+) -> dict[str, str]:
+    """Build a minimal verifier environment without inheriting host secrets."""
+
+    explicit: dict[str, str] = {}
+    for key in allowlist:
+        try:
+            validate_environment_name(key)
+        except (TypeError, ValueError):
+            raise AssistantBridgeError(
+                "Verifier environment allowlist contains a denied injection variable."
+            ) from None
+        if re.search(
+            r"(?:AUTH|CREDENTIAL|KEY|PASS(?:WORD)?|SECRET|SESSION|TOKEN)",
+            key,
+            flags=re.IGNORECASE,
+        ):
+            raise AssistantBridgeError(
+                "Verifier environment allowlist cannot include secret-bearing names."
+            )
+        value = os.environ.get(key)
+        if value is not None:
+            explicit[key] = value
+    root = Path(workspace).expanduser().resolve()
+    internal_temp = root / f".mymoe-verifier-tmp-{temp_namespace}"
+    path_entries: list[str] = []
+    hinted = Path(executable_hint).expanduser()
+    if hinted.is_absolute():
+        path_entries.append(str(hinted.resolve(strict=False).parent))
+    path_entries.extend(os.defpath.split(os.pathsep))
+    env = {
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if key in {"COMSPEC", "PATHEXT", "SYSTEMROOT", "WINDIR"}
+        },
+        **explicit,
+        "HOME": str(internal_temp),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.pathsep.join(dict.fromkeys(path_entries)),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "TEMP": str(internal_temp),
+        "TMP": str(internal_temp),
+        "TMPDIR": str(internal_temp),
+    }
+    return env
+
+
+def _resolved_workspace_python_paths(
+    workspace: Path,
+    relative_paths: Sequence[str],
+) -> tuple[str, ...]:
+    resolved: list[str] = []
+    for relative in relative_paths:
+        candidate = workspace / relative
+        try:
+            canonical = candidate.resolve(strict=True)
+            canonical.relative_to(workspace)
+        except (OSError, ValueError):
+            raise AssistantBridgeError(
+                "A configured verifier workspace Python path is unavailable or "
+                "escapes the workspace."
+            ) from None
+        if canonical != candidate or not canonical.is_dir():
+            raise AssistantBridgeError(
+                "A configured verifier workspace Python path must be a real "
+                "directory inside the workspace."
+            )
+        resolved.append(str(canonical))
+    return tuple(resolved)
 
 
 def _sanitized_environment(
@@ -4859,27 +5533,67 @@ def _premium_workspace(
 def _disposable_verifier_workspace(
     source: str | Path,
     *,
+    source_snapshot: WorkspaceSnapshot,
+    baseline_files: Sequence[WorkspaceFile],
     expected_snapshot: WorkspaceSnapshot,
+    candidate_files: Sequence[WorkspaceFile],
+    changes: Sequence[WorkspaceChange],
     policy: WorkspaceScopePolicy,
 ) -> Iterator[Path]:
     source_root = Path(source).resolve()
+    expected_baseline = tuple(baseline_files)
+    expected_candidate = tuple(candidate_files)
+    expected_changes = tuple(changes)
+    if build_changeset(expected_baseline, expected_candidate) != expected_changes:
+        raise WorkspaceSecurityError(
+            "Verifier changes do not match the attested candidate manifest."
+        )
     if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
         raise WorkspaceSecurityError(
             "Candidate changed before verifier workspace materialization."
         )
-    with tempfile.TemporaryDirectory(prefix="mymoe-verifier-") as tmp:
-        target = Path(tmp) / "workspace"
-        shutil.copytree(source_root, target, symlinks=False)
+    if snapshot_materialized(source_root, policy) != expected_candidate:
+        raise WorkspaceSecurityError(
+            "Candidate manifest changed before verifier workspace materialization."
+        )
+    with materialize_workspace(source_snapshot, policy) as materialized:
+        if materialized.baseline_files != expected_baseline:
+            raise WorkspaceSecurityError(
+                "Verifier baseline does not match the attested source manifest."
+            )
+        verifier_baseline = snapshot_workspace(materialized.root, policy)
+        if verifier_baseline.files != expected_baseline:
+            raise WorkspaceSecurityError(
+                "Synthetic verifier HEAD does not match the attested baseline."
+            )
+        with tempfile.TemporaryDirectory(prefix="mymoe-verifier-state-") as state:
+            _workspace_security.apply_changeset(
+                source_snapshot=verifier_baseline,
+                candidate_root=source_root,
+                candidate_files=expected_candidate,
+                changes=expected_changes,
+                policy=policy,
+                state_dir=state,
+                transaction_id=secrets.token_hex(16),
+            )
         if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
             raise WorkspaceSecurityError(
                 "Candidate changed while verifier workspace was materialized."
             )
-        copied = snapshot_workspace(target, policy)
-        if copied.manifest_sha256 != expected_snapshot.manifest_sha256:
+        copied = snapshot_materialized(materialized.root, policy)
+        if copied != expected_candidate:
             raise WorkspaceSecurityError(
                 "Verifier workspace does not match the final candidate manifest."
             )
-        yield target
+        verifier_final = snapshot_workspace(materialized.root, policy)
+        if (
+            verifier_final.head_sha != verifier_baseline.head_sha
+            or verifier_final.index_sha256 != verifier_baseline.index_sha256
+        ):
+            raise WorkspaceSecurityError(
+                "Verifier materialization unexpectedly changed synthetic HEAD or index."
+            )
+        yield materialized.root
 
 
 def _premium_preview_plan(

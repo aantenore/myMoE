@@ -209,11 +209,32 @@ bind the current task and workspace fingerprints. The fixture files demonstrate
 the schema; their example workspace fingerprint is intentionally not valid for
 an arbitrary live checkout.
 
-`git diff --check` is a portable baseline integrity check, not proof of business
-correctness. Projects should replace or extend `command_verifiers` with their
-native tests, linters, schema validators, or evaluation gates. Natural-language
-output checks validate the response contract; they do not prove that every
-factual statement is true.
+The Git hygiene verifier is a fixed builtin, not an ambient command. It creates
+a synthetic repository whose `HEAD` is the attested source baseline, applies the
+already-verified candidate changes only to that disposable worktree, marks new
+files intent-to-add, and runs a trusted `git diff --check` with external diff and
+text-conversion hooks disabled. Candidate `.git` metadata is never copied.
+This is a portable baseline integrity check, not proof of business correctness.
+
+Arbitrary command verifiers are treated as untrusted candidate code. They run
+only through an attested OS-owned hard-sandbox backend: fixed
+`/usr/bin/sandbox-exec` with a deny-default Seatbelt profile on macOS, or fixed
+`/usr/bin/bwrap` with namespaces, no network namespace, dropped capabilities,
+read-only runtime/system binds, a tmpfs `/tmp`, and a writable disposable
+workspace on Linux. If the backend is missing, altered, or unsupported, the
+route is blocked before a provider, verifier, premium authorization, or budget
+reservation can launch; there is no direct-host fallback. Windows currently has
+no command-verifier backend and therefore fails closed for routes that select
+one. The trusted Git builtin remains a separate fixed boundary.
+
+Python project verifiers can declare safe relative `workspace_python_paths`.
+The bridge translates only an explicit `{python} -m <module>` contract into a
+fixed isolated `runpy` adapter: candidate paths precede editable-install paths,
+while third-party dependencies remain in an attested read-only Python runtime.
+Host `PYTHONPATH` is never accepted. Projects should replace or extend
+`command_verifiers` with their native tests, linters, schema validators, or
+evaluation gates. Natural-language output checks validate the response
+contract; they do not prove that every factual statement is true.
 
 ## Isolation boundary
 
@@ -224,6 +245,18 @@ and secret-bearing environment state, uses an empty temporary `CODEX_HOME`,
 ignores ambient config/rules, omits `--search`, and requests network-disabled
 tool sandboxing. Host firewall or container isolation is still appropriate when
 the launcher itself is outside your trust boundary.
+
+Verifier containment protects the host from the verifier process; it is not a
+multi-tenant boundary against a concurrent actor with the same host account.
+The selected sandbox executable, kernel containment implementation, trusted Git,
+declared read-only runtime roots, and their installed dependencies remain in the
+trusted computing base. Runtime roots and launcher identities are re-attested
+when the confirmed plan is rebuilt, but same-user mutation races and kernel or
+sandbox vulnerabilities are outside this bridge's guarantee. Linux operation
+also depends on the host permitting bubblewrap namespaces; CI installs and runs
+the real backend. macOS and Linux live probes verify that network access and
+reads/writes outside declared roots are denied. Per-verifier temporary homes are
+identity-checked, removed after every run, and cleanup failures fail closed.
 
 ## Acceptance evidence
 

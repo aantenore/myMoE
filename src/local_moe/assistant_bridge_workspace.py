@@ -19,6 +19,7 @@ from uuid import uuid4
 from .assistant_bridge_runtime import (
     AssistantBridgeRuntimeError,
     ExecutableIdentity,
+    ProcessCleanupError,
     ProcessExecutionPolicy,
     ProcessExecutionResult,
     execute_process,
@@ -93,6 +94,47 @@ class TrustedGitSession:
         return self._query(
             ("ls-files", "--others", "--exclude-standard", "-z"),
             max_output_bytes=max_output_bytes,
+        )
+
+    def diff_check(self, *, max_output_bytes: int) -> ProcessExecutionResult:
+        """Expose untracked files, then run the fixed whitespace-error check."""
+
+        if (
+            isinstance(max_output_bytes, bool)
+            or not 1 <= max_output_bytes <= 32 * 1024 * 1024
+        ):
+            raise WorkspaceSecurityError("Git output bound is outside safe limits.")
+        intent_command = _trusted_git_command(
+            ("add", "--intent-to-add", "-f", "--all", "--", "."),
+            self.root,
+        )
+        intent = _execute_git(
+            intent_command,
+            self.root,
+            identity=False,
+            git_identity=self.executable,
+            stdout_limit_bytes=max_output_bytes,
+        )
+        if not intent.ok:
+            return intent
+        check_command = _trusted_git_command(
+            (
+                "diff",
+                "--check",
+                "--no-ext-diff",
+                "--no-textconv",
+                "HEAD",
+                "--",
+                ".",
+            ),
+            self.root,
+        )
+        return _execute_git(
+            check_command,
+            self.root,
+            identity=False,
+            git_identity=self.executable,
+            stdout_limit_bytes=max_output_bytes,
         )
 
     def _query(self, args: Sequence[str], *, max_output_bytes: int) -> bytes:
@@ -183,6 +225,15 @@ def trusted_git_session(workspace: str | Path) -> TrustedGitSession:
     ):
         raise WorkspaceSecurityError("Git workspace could not be attested.")
     return TrustedGitSession(root=root, executable=identity)
+
+
+def trusted_git_executable() -> ExecutableIdentity:
+    """Attest the fixed Git executable without trusting a candidate repository."""
+
+    identity = _resolve_trusted_git_identity(required=True)
+    if identity is None:  # Defensive: required=True must resolve or raise.
+        raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
+    return identity
 
 
 def _posix_no_replace_backend() -> str | None:
@@ -1419,8 +1470,24 @@ def _run_git(
     selected = git_identity or _resolve_trusted_git_identity(required=True)
     if selected is None:
         raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
+    command = _trusted_git_command(argv, cwd)
+    result = _execute_git(
+        command,
+        cwd,
+        identity=identity,
+        git_identity=selected,
+        stdout_limit_bytes=stdout_limit_bytes,
+    )
+    if result.returncode != 0:
+        raise WorkspaceSecurityError("Git workspace attestation failed.")
+    if capture_bytes:
+        return result.stdout
+    return result.stdout.decode("utf-8", errors="replace") if capture else ""
+
+
+def _trusted_git_command(argv: Sequence[str], cwd: Path) -> tuple[str, ...]:
     null_config = os.devnull
-    command = (
+    command: tuple[str, ...] = (
         "-c",
         "core.fsmonitor=false",
         "-c",
@@ -1442,19 +1509,7 @@ def _run_git(
     )
     if _entry_exists(cwd / ".git"):
         command = (*command, "-c", f"core.worktree={cwd}")
-    command = (*command, "-C", str(cwd), *argv)
-    result = _execute_git(
-        command,
-        cwd,
-        identity=identity,
-        git_identity=selected,
-        stdout_limit_bytes=stdout_limit_bytes,
-    )
-    if result.returncode != 0:
-        raise WorkspaceSecurityError("Git workspace attestation failed.")
-    if capture_bytes:
-        return result.stdout
-    return result.stdout.decode("utf-8", errors="replace") if capture else ""
+    return (*command, "-C", str(cwd), *tuple(argv))
 
 
 def _execute_git(
@@ -1488,6 +1543,8 @@ def _execute_git(
             timeout_seconds=_GIT_TIMEOUT_SECONDS,
             policy=execution_policy,
         )
+    except ProcessCleanupError:
+        raise
     except (AssistantBridgeRuntimeError, OSError, ValueError) as exc:
         raise WorkspaceSecurityError("Git workspace attestation failed safely.") from exc
     if result.code in {"stdout_limit_exceeded", "stderr_limit_exceeded"}:

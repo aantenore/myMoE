@@ -101,6 +101,11 @@
     }
   },
   "verification": {
+    "isolation": {
+      "required": true,
+      "macos_backend": "/usr/bin/sandbox-exec",
+      "linux_backend": "/usr/bin/bwrap"
+    },
     "output_checks": [
       {
         "id": "assistant-output-nonempty",
@@ -124,13 +129,15 @@
     "command_verifiers": [
       {
         "id": "git-diff-contract",
-        "argv": ["git", "diff", "--check", "HEAD", "--", "."],
+        "kind": "trusted_git_diff_check",
+        "argv": [],
         "launcher_entrypoint": "",
         "launcher_companions": [],
+        "runtime_read_roots": [],
         "timeout_seconds": 60,
         "purpose": "hygiene",
-        "execution_boundary": "disposable_workspace",
-        "network_policy": "not_enforced",
+        "execution_boundary": "trusted_git_session",
+        "network_policy": "denied",
         "environment_allowlist": [],
         "required_for_capabilities": ["code", "tests"],
         "required_for_tools": ["filesystem", "shell"],
@@ -138,13 +145,16 @@
       },
       {
         "id": "project-test-suite",
+        "kind": "command",
         "argv": ["{python}", "-m", "unittest", "discover", "-s", "tests", "-v"],
         "launcher_entrypoint": "",
         "launcher_companions": [],
+        "runtime_read_roots": ["{python_runtime}"],
+        "workspace_python_paths": ["src", "."],
         "timeout_seconds": 900,
         "purpose": "task",
-        "execution_boundary": "disposable_workspace",
-        "network_policy": "not_enforced",
+        "execution_boundary": "hard_sandbox",
+        "network_policy": "denied",
         "environment_allowlist": [],
         "required_for_capabilities": [],
         "required_for_tools": [],
