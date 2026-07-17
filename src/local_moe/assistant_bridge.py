@@ -25,12 +25,17 @@ from .deterministic_evaluator import (
 from .assistant_bridge_ledger import (
     BridgeLedgerError,
     BridgeStateLedger,
+    PremiumBudgetLease,
     budget_key,
 )
 from .assistant_bridge_runtime import (
     AssistantBridgeRuntimeError,
     ExecutableIdentity,
+    ProcessCleanupError,
     ProcessExecutionPolicy,
+    ProcessLaunchLifecycleError,
+    ProcessLaunchNotAuthorizedError,
+    ProcessLaunchPermit,
     execute_process,
     fingerprint_environment,
     resolve_executable,
@@ -2129,7 +2134,7 @@ def execute_codex_command(
     output_path: str | Path,
     timeout_seconds: float,
     environment_overrides: Mapping[str, str] | None = None,
-    launch_authorizer: Callable[[], bool] | None = None,
+    reserve_launch: Callable[[], ProcessLaunchPermit | None] | None = None,
 ) -> CommandResult:
     if _sha256_text(prompt) != plan.stdin_sha256 or len(prompt) != plan.stdin_chars:
         raise AssistantBridgeError(
@@ -2163,8 +2168,6 @@ def execute_codex_command(
         _preflight_process_runtime(plan, base_env)
     except (AssistantBridgeRuntimeError, OSError, ValueError):
         return _blocked_command_result(plan, "runtime_attestation_failed")
-    if launch_authorizer is not None and not launch_authorizer():
-        return _blocked_command_result(plan, "launch_not_authorized")
     try:
         outcome = execute_process(
             plan.executable_identity,
@@ -2174,7 +2177,14 @@ def execute_codex_command(
             env=env,
             timeout_seconds=timeout_seconds,
             policy=plan.runtime_policy.process_policy(),
+            reserve_launch=reserve_launch,
         )
+    except ProcessLaunchNotAuthorizedError:
+        return _blocked_command_result(plan, "launch_not_authorized")
+    except ProcessLaunchLifecycleError:
+        return _blocked_command_result(plan, "launch_lifecycle_failed")
+    except ProcessCleanupError:
+        raise
     except AssistantBridgeRuntimeError:
         return _blocked_command_result(plan, "runtime_attestation_failed")
     status = "completed" if outcome.ok else "failed"
@@ -3169,7 +3179,7 @@ class AssistantBridgeRunner:
             workspace_fingerprint=capsule_workspace_fingerprint,
         )
         self._write_capsule(capsule, capsule_out)
-        premium_result, premium_reserved = self._execute_premium_command(
+        premium_result, premium_accounted = self._execute_premium_command(
             task,
             prepared,
             candidate,
@@ -3219,7 +3229,7 @@ class AssistantBridgeRunner:
             capsule=capsule,
             final_provider=self.config.premium.id,
             final_output=premium_result.output,
-            premium_calls_used=int(premium_reserved),
+            premium_calls_used=int(premium_accounted),
         )
 
     def _execute_premium_command(
@@ -3277,18 +3287,33 @@ class AssistantBridgeRunner:
                 copy_auth=True,
                 expected_auth=prepared.premium_auth,
             ) as codex_home:
-                premium_reserved = False
+                premium_accounted = False
                 authorization_requested = False
 
-                def reserve_premium_launch() -> bool:
-                    nonlocal authorization_requested, premium_reserved
+                def reserve_premium_launch() -> ProcessLaunchPermit | None:
+                    nonlocal authorization_requested, premium_accounted
                     if authorization_requested:
                         raise AssistantBridgeError(
                             "Premium launch authorization was requested more than once."
                         )
                     authorization_requested = True
-                    premium_reserved = self._consume_budget(task, prepared)
-                    return premium_reserved
+                    lease = self._reserve_budget(task, prepared)
+                    if lease is None:
+                        return None
+                    premium_accounted = True
+
+                    def commit() -> None:
+                        self._commit_budget(lease)
+
+                    def release_after_popen_failure() -> None:
+                        nonlocal premium_accounted
+                        self._release_budget_after_popen_failure(lease)
+                        premium_accounted = False
+
+                    return ProcessLaunchPermit(
+                        commit_after_popen=commit,
+                        release_after_popen_failure=release_after_popen_failure,
+                    )
 
                 result = execute_codex_command(
                     plan,
@@ -3299,14 +3324,14 @@ class AssistantBridgeRunner:
                         "CODEX_HOME": str(codex_home),
                         "HOME": str(codex_home),
                     },
-                    launch_authorizer=reserve_premium_launch,
+                    reserve_launch=reserve_premium_launch,
                 )
                 if result.code == "launch_not_authorized":
                     result = replace(
                         result,
                         code="durable_premium_budget_exhausted",
                     )
-                return result, premium_reserved
+                return result, premium_accounted
 
     def _verify_candidate(
         self,
@@ -3452,11 +3477,11 @@ class AssistantBridgeRunner:
             lock_ttl_seconds=self.config.workspace.transaction_lock_ttl_seconds,
         )
 
-    def _consume_budget(
+    def _reserve_budget(
         self,
         task: AssistantTaskEnvelope,
         prepared: _PreparedExecution,
-    ) -> bool:
+    ) -> PremiumBudgetLease | None:
         try:
             key = budget_key(
                 namespace=self.config.state.namespace,
@@ -3464,9 +3489,26 @@ class AssistantBridgeRunner:
                 config_sha256=prepared.receipt.config_sha256,
                 workspace_fingerprint=prepared.source_snapshot.fingerprint,
             )
-            return self.state_ledger.consume_budget(
-                key, prepared.receipt.premium_call_budget
+            return self.state_ledger.reserve_budget(
+                key,
+                prepared.receipt.premium_call_budget,
+                ttl_seconds=self.config.state.budget_lease_ttl_seconds,
             )
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+
+    def _commit_budget(self, lease: PremiumBudgetLease) -> None:
+        try:
+            self.state_ledger.commit_budget(lease)
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+
+    def _release_budget_after_popen_failure(
+        self,
+        lease: PremiumBudgetLease,
+    ) -> None:
+        try:
+            self.state_ledger.release_budget_after_popen_failure(lease)
         except BridgeLedgerError as exc:
             raise AssistantBridgeError(str(exc)) from None
 

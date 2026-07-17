@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import local_moe.assistant_bridge as assistant_bridge_module
+import local_moe.assistant_bridge_runtime as assistant_bridge_runtime
 from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
@@ -925,24 +926,24 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         with _fake_bridge() as fixture, _fake_environment(fixture):
             with patch.object(
                 fixture.runner,
-                "_consume_budget",
-                wraps=fixture.runner._consume_budget,
-            ) as consume:
+                "_reserve_budget",
+                wraps=fixture.runner._reserve_budget,
+            ) as reserve:
                 premium = fixture.run(
                     build_assistant_task("Use premium.", profile="quality")
                 )
-            premium_reservations = consume.call_count
+            premium_reservations = reserve.call_count
 
         with _fake_bridge() as fixture, _fake_environment(fixture):
             with patch.object(
                 fixture.runner,
-                "_consume_budget",
-                wraps=fixture.runner._consume_budget,
-            ) as consume:
+                "_reserve_budget",
+                wraps=fixture.runner._reserve_budget,
+            ) as reserve:
                 local = fixture.run(
                     build_assistant_task("Stay local.", profile="offline")
                 )
-            local_reservations = consume.call_count
+            local_reservations = reserve.call_count
 
         self.assertEqual(premium.status, "completed")
         self.assertEqual(premium_reservations, 1)
@@ -1045,6 +1046,84 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(blocked.premium_calls_used, 0)
         self.assertEqual(recovered.status, "completed")
         self.assertEqual([item["mode"] for item in invocations], ["premium"])
+
+    def test_premium_popen_failure_releases_budget_for_a_retry(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            real_popen = assistant_bridge_runtime.subprocess.Popen
+
+            def fail_premium_popen(argv, *args, **kwargs):
+                if isinstance(argv, (list, tuple)) and "--strict-config" in argv:
+                    raise OSError("fixed launch failure")
+                return real_popen(argv, *args, **kwargs)
+
+            with patch.object(
+                assistant_bridge_runtime.subprocess,
+                "Popen",
+                side_effect=fail_premium_popen,
+            ):
+                blocked = fixture.run(task)
+
+            recovered = fixture.run(task)
+
+        self.assertEqual(blocked.code, "premium_runtime_unavailable")
+        self.assertEqual(blocked.premium_calls_used, 0)
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual(recovered.premium_calls_used, 1)
+
+    def test_premium_commit_failure_is_accounted_and_never_released(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            with (
+                patch.object(
+                    fixture.runner.state_ledger,
+                    "commit_budget",
+                    side_effect=assistant_bridge_module.BridgeLedgerError(
+                        "sensitive ledger failure"
+                    ),
+                ),
+                patch.object(
+                    fixture.runner.state_ledger,
+                    "release_budget_after_popen_failure",
+                    wraps=fixture.runner.state_ledger.release_budget_after_popen_failure,
+                ) as release,
+            ):
+                blocked = fixture.run(task)
+
+        self.assertEqual(blocked.code, "premium_runtime_unavailable")
+        self.assertEqual(blocked.premium_calls_used, 1)
+        self.assertEqual(release.call_count, 0)
+        self.assertNotIn("sensitive ledger failure", json.dumps(blocked.user_payload()))
+
+    def test_premium_release_failure_keeps_pending_budget_accounted(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            real_popen = assistant_bridge_runtime.subprocess.Popen
+
+            def fail_premium_popen(argv, *args, **kwargs):
+                if isinstance(argv, (list, tuple)) and "--strict-config" in argv:
+                    raise OSError("fixed launch failure")
+                return real_popen(argv, *args, **kwargs)
+
+            with (
+                patch.object(
+                    assistant_bridge_runtime.subprocess,
+                    "Popen",
+                    side_effect=fail_premium_popen,
+                ),
+                patch.object(
+                    fixture.runner.state_ledger,
+                    "release_budget_after_popen_failure",
+                    side_effect=assistant_bridge_module.BridgeLedgerError(
+                        "sensitive release failure"
+                    ),
+                ),
+            ):
+                blocked = fixture.run(task)
+
+        self.assertEqual(blocked.code, "premium_runtime_unavailable")
+        self.assertEqual(blocked.premium_calls_used, 1)
+        self.assertNotIn("sensitive release failure", json.dumps(blocked.user_payload()))
 
     def test_verified_local_result_is_returned_to_the_user_without_premium(
         self,

@@ -1100,6 +1100,11 @@ def execute_process(
         # From the assignment above onward the process is owned by this outer
         # try/finally.  Tracker, state, and worker construction may all fail;
         # none may bypass the tracker-independent emergency reaper.
+        tracker = _ProcessTracker(process.pid)
+        if selected_policy.require_psutil and not tracker.observation_verified:
+            raise ProcessObservationError(
+                "Required psutil observation failed during process ownership setup"
+            )
         if permit is not None:
             try:
                 permit.commit_after_popen()
@@ -1107,11 +1112,6 @@ def execute_process(
                 raise ProcessLaunchLifecycleError(
                     "Process launch reservation commit failed"
                 ) from None
-        tracker = _ProcessTracker(process.pid)
-        if selected_policy.require_psutil and not tracker.observation_verified:
-            raise ProcessObservationError(
-                "Required psutil observation failed during process ownership setup"
-            )
         try:
             _verify_executable_identity(executable)
             if launcher_chain is not None:
