@@ -355,6 +355,25 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertTrue(evidence.passed)
         self.assertEqual(evidence.code, "command_passed")
 
+    def test_provider_and_verifier_deny_environment_injection_variables(
+        self,
+    ) -> None:
+        for name in (
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
+            "GIT_CONFIG_COUNT",
+            "NODE_OPTIONS",
+            "PYTHONPATH",
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(AssistantBridgeError, "denied injection"):
+                    replace(self.config.local, environment_allowlist=(name,))
+                with self.assertRaisesRegex(AssistantBridgeError, "denied injection"):
+                    replace(
+                        self.config.command_verifiers[0],
+                        environment_allowlist=(name,),
+                    )
+
     def test_capsule_redacts_multiform_secrets_and_repr_is_safe(self) -> None:
         task = build_assistant_task(
             'Fix {"api_key":"json-secret"} password: two secret words',

@@ -35,6 +35,7 @@ from .assistant_bridge_runtime import (
     fingerprint_environment,
     resolve_executable,
     runtime_capabilities,
+    validate_environment_name,
 )
 from .assistant_bridge_secrets import (
     ResidualAssuranceUnavailableError,
@@ -355,6 +356,12 @@ class ProviderSpec:
                 raise AssistantBridgeError(
                     f"Provider {self.id} environment allowlist contains an invalid name."
                 )
+            try:
+                validate_environment_name(name)
+            except (TypeError, ValueError):
+                raise AssistantBridgeError(
+                    f"Provider {self.id} environment allowlist contains a denied injection variable."
+                ) from None
 
     def metadata_payload(self) -> dict[str, object]:
         return {
@@ -505,6 +512,12 @@ class CommandVerifierSpec:
                 raise AssistantBridgeError(
                     f"Command verifier {self.id} environment allowlist is invalid."
                 )
+            try:
+                validate_environment_name(name)
+            except (TypeError, ValueError):
+                raise AssistantBridgeError(
+                    f"Command verifier {self.id} environment allowlist contains a denied injection variable."
+                ) from None
         _validate_identifiers("verifier capability", self.required_for_capabilities)
         _validate_identifiers("verifier tool", self.required_for_tools)
         unknown_risks = sorted(set(self.required_for_risks).difference(RISK_LEVELS))
@@ -4194,6 +4207,13 @@ def _sanitized_environment(
     *,
     overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    for key in allowlist:
+        try:
+            validate_environment_name(key)
+        except (TypeError, ValueError):
+            raise AssistantBridgeError(
+                "Execution environment allowlist contains a denied injection variable."
+            ) from None
     allowed = _BASE_ENV_KEYS | set(allowlist)
     env = {key: value for key, value in os.environ.items() if key in allowed}
     if "PATH" not in env:
