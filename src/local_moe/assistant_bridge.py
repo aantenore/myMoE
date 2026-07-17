@@ -11,7 +11,6 @@ import re
 import secrets
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 from types import MappingProxyType
@@ -64,6 +63,7 @@ from .assistant_bridge_workspace import (
     materialize_workspace,
     snapshot_materialized,
     snapshot_workspace,
+    trusted_git_session,
     workspace_write_capability,
 )
 
@@ -1956,8 +1956,22 @@ def collect_git_evidence(
     policy: CapsulePolicy,
     *,
     include_excerpt: bool,
+    expected_snapshot: WorkspaceSnapshot | None = None,
+    workspace_policy: WorkspaceScopePolicy | None = None,
 ) -> DiffEvidence:
-    attestation = attest_workspace(workspace)
+    scope = workspace_policy or WorkspaceScopePolicy()
+    try:
+        before = snapshot_workspace(workspace, scope)
+    except WorkspaceSecurityError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    if (
+        expected_snapshot is not None
+        and before.fingerprint != expected_snapshot.fingerprint
+    ):
+        raise AssistantBridgeError(
+            "Workspace changed before Git evidence collection."
+        )
+    attestation = _receipt_workspace_attestation(before)
     if not attestation.git_repository:
         return DiffEvidence(
             sha256=attestation.manifest_sha256,
@@ -1969,23 +1983,21 @@ def collect_git_evidence(
             untracked_manifest_sha256="",
         )
     root = Path(attestation.root)
-    staged = _git_output(
-        root,
-        ("diff", "--cached", "--binary", "--no-ext-diff", "--", "."),
-        required=True,
-    )
-    unstaged = _git_output(
-        root,
-        ("diff", "--binary", "--no-ext-diff", "--", "."),
-        required=True,
-    )
-    untracked = _git_output(
-        root,
-        ("ls-files", "--others", "--exclude-standard", "-z"),
-        required=True,
-    )
-    assert staged is not None and unstaged is not None and untracked is not None
-    manifest = _untracked_manifest(root, untracked)
+    try:
+        git = trusted_git_session(root)
+        staged = git.staged_diff(max_output_bytes=_MAX_GIT_BYTES)
+        unstaged = git.unstaged_diff(max_output_bytes=_MAX_GIT_BYTES)
+        untracked = git.untracked_paths(
+            max_output_bytes=_MAX_GIT_BYTES,
+        )
+        manifest = _untracked_manifest(untracked, before)
+        after = snapshot_workspace(root, scope)
+    except WorkspaceSecurityError as exc:
+        raise AssistantBridgeError("Could not produce complete Git evidence.") from exc
+    if after.fingerprint != before.fingerprint:
+        raise AssistantBridgeError(
+            "Workspace changed during Git evidence collection."
+        )
     combined = (
         b"STAGED\0" + staged + b"UNSTAGED\0" + unstaged + b"UNTRACKED\0" + manifest
     )
@@ -2962,6 +2974,7 @@ class AssistantBridgeRunner:
                         preview_candidate.root,
                         self.config.capsule,
                         include_excerpt=include_diff,
+                        workspace_policy=self.config.workspace.scope,
                     )
             except WorkspaceSecurityError as exc:
                 raise AssistantBridgeError(str(exc)) from None
@@ -3287,6 +3300,8 @@ class AssistantBridgeRunner:
             candidate.root,
             self.config.capsule,
             include_excerpt=include_diff,
+            expected_snapshot=current_snapshot,
+            workspace_policy=self.config.workspace.scope,
         )
         capsule = build_escalation_capsule(
             task,
@@ -4632,93 +4647,30 @@ def _premium_preview_plan(
     )
 
 
-def _git_output(
-    root: Path,
-    args: Sequence[str],
-    *,
-    required: bool,
-) -> bytes | None:
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(root), *args],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        if required:
-            raise AssistantBridgeError(
-                "Could not produce complete Git evidence."
-            ) from exc
-        return None
-    if completed.returncode != 0:
-        if required:
-            raise AssistantBridgeError("Could not produce complete Git evidence.")
-        return None
-    if len(completed.stdout) > _MAX_GIT_BYTES:
-        raise AssistantBridgeError("Git evidence exceeds its complete-capture limit.")
-    return completed.stdout
-
-
-def _untracked_manifest(root: Path, raw_paths: bytes) -> bytes:
+def _untracked_manifest(
+    raw_paths: bytes,
+    snapshot: WorkspaceSnapshot,
+) -> bytes:
+    files = {item.path: item for item in snapshot.files}
     records: list[dict[str, object]] = []
     for raw in sorted(item for item in raw_paths.split(b"\0") if item):
-        relative = os.fsdecode(raw)
+        relative = os.fsdecode(raw).replace(os.sep, "/")
         if Path(relative).is_absolute() or ".." in Path(relative).parts:
             raise AssistantBridgeError("Git reported an unsafe untracked path.")
-        target = root / relative
-        try:
-            metadata = target.lstat()
-        except OSError as exc:
-            raise AssistantBridgeError("Could not attest an untracked path.") from exc
-        if target.is_symlink():
-            try:
-                content = os.readlink(target).encode("utf-8", errors="surrogateescape")
-            except OSError as exc:
-                raise AssistantBridgeError(
-                    "Could not attest an untracked symbolic link."
-                ) from exc
-            kind = "symlink"
-            digest = _sha256_bytes(content)
-            size = len(content)
-        elif target.is_file():
-            kind = "file"
-            digest, size = _hash_file(target)
-        else:
-            kind = "other"
-            digest = _sha256_text(kind)
-            size = int(metadata.st_size)
+        item = files.get(relative)
+        if item is None or item.kind != "file":
+            raise AssistantBridgeError(
+                "Git untracked evidence is absent from the attested workspace."
+            )
         records.append(
             {
-                "path": relative.replace(os.sep, "/"),
-                "kind": kind,
-                "size": size,
-                "sha256": digest,
+                "path": relative,
+                "kind": item.kind,
+                "size": item.size,
+                "sha256": item.sha256,
             }
         )
     return _canonical_json(records).encode("utf-8")
-
-
-def _hash_file(path: Path) -> tuple[str, int]:
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with path.open("rb") as handle:
-            while True:
-                chunk = handle.read(1024 * 1024)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > 256 * 1024 * 1024:
-                    raise AssistantBridgeError(
-                        "An untracked artifact exceeds the complete-attestation limit."
-                    )
-                digest.update(chunk)
-    except OSError as exc:
-        raise AssistantBridgeError("Could not hash an untracked artifact.") from exc
-    return digest.hexdigest(), size
 
 
 def _validate_safe_extra_args(values: Sequence[str], *, provider_id: str) -> None:

@@ -56,6 +56,61 @@ _GIT_EXECUTION_POLICY = ProcessExecutionPolicy(
 
 
 @dataclass(frozen=True)
+class TrustedGitSession:
+    """One bounded Git executable identity reused for read-only workspace queries."""
+
+    root: Path = field(repr=False)
+    executable: ExecutableIdentity = field(repr=False)
+
+    def staged_diff(self, *, max_output_bytes: int) -> bytes:
+        return self._query(
+            (
+                "diff",
+                "--cached",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                ".",
+            ),
+            max_output_bytes=max_output_bytes,
+        )
+
+    def unstaged_diff(self, *, max_output_bytes: int) -> bytes:
+        return self._query(
+            (
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                ".",
+            ),
+            max_output_bytes=max_output_bytes,
+        )
+
+    def untracked_paths(self, *, max_output_bytes: int) -> bytes:
+        return self._query(
+            ("ls-files", "--others", "--exclude-standard", "-z"),
+            max_output_bytes=max_output_bytes,
+        )
+
+    def _query(self, args: Sequence[str], *, max_output_bytes: int) -> bytes:
+        if (
+            isinstance(max_output_bytes, bool)
+            or not 1 <= max_output_bytes <= 32 * 1024 * 1024
+        ):
+            raise WorkspaceSecurityError("Git output bound is outside safe limits.")
+        return _run_git(
+            args,
+            self.root,
+            capture_bytes=True,
+            git_identity=self.executable,
+            stdout_limit_bytes=max_output_bytes,
+        )
+
+
+@dataclass(frozen=True)
 class WorkspaceWriteCapability:
     supported: bool
     backend: str
@@ -109,6 +164,25 @@ def workspace_write_capability() -> WorkspaceWriteCapability:
             "no-follow dir-fd and native atomic no-replace primitives are unavailable",
         )
     return WorkspaceWriteCapability(True, backend)
+
+
+def trusted_git_session(workspace: str | Path) -> TrustedGitSession:
+    """Attest the OS-owned Git executable and bind it to one live worktree."""
+
+    root = _trusted_root(workspace, label="Git workspace")
+    repository_marker = _has_repository_marker(root)
+    if not repository_marker:
+        raise WorkspaceSecurityError("Git workspace marker is unavailable.")
+    identity = _resolve_trusted_git_identity(required=True)
+    if identity is None:  # Defensive: required=True must resolve or raise.
+        raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
+    if not _is_git_workspace(
+        root,
+        git_identity=identity,
+        repository_marker=repository_marker,
+    ):
+        raise WorkspaceSecurityError("Git workspace could not be attested.")
+    return TrustedGitSession(root=root, executable=identity)
 
 
 def _posix_no_replace_backend() -> str | None:
@@ -1222,6 +1296,7 @@ def _run_git(
     capture_bytes: bool = False,
     identity: bool = False,
     git_identity: ExecutableIdentity | None = None,
+    stdout_limit_bytes: int = _GIT_STDOUT_LIMIT_BYTES,
 ) -> str | bytes:
     selected = git_identity or _resolve_trusted_git_identity(required=True)
     if selected is None:
@@ -1255,6 +1330,7 @@ def _run_git(
         cwd,
         identity=identity,
         git_identity=selected,
+        stdout_limit_bytes=stdout_limit_bytes,
     )
     if result.returncode != 0:
         raise WorkspaceSecurityError("Git workspace attestation failed.")
@@ -1269,19 +1345,30 @@ def _execute_git(
     *,
     identity: bool,
     git_identity: ExecutableIdentity,
+    stdout_limit_bytes: int = _GIT_STDOUT_LIMIT_BYTES,
 ) -> ProcessExecutionResult:
     environment = _sanitized_git_environment(
         identity=identity,
         executable_path=Path(git_identity.resolved_path),
     )
     try:
+        execution_policy = (
+            _GIT_EXECUTION_POLICY
+            if stdout_limit_bytes == _GIT_STDOUT_LIMIT_BYTES
+            else ProcessExecutionPolicy(
+                stdin_limit_bytes=0,
+                stdout_limit_bytes=stdout_limit_bytes,
+                stderr_limit_bytes=_GIT_STDERR_LIMIT_BYTES,
+                require_tree_isolation=True,
+            )
+        )
         result = execute_process(
             git_identity,
             argv,
             cwd=cwd,
             env=environment,
             timeout_seconds=_GIT_TIMEOUT_SECONDS,
-            policy=_GIT_EXECUTION_POLICY,
+            policy=execution_policy,
         )
     except (AssistantBridgeRuntimeError, OSError, ValueError) as exc:
         raise WorkspaceSecurityError("Git workspace attestation failed safely.") from exc

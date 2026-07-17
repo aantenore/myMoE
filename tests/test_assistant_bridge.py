@@ -903,6 +903,119 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertNotEqual(first.manifest_sha256, second.manifest_sha256)
         self.assertNotEqual(first.fingerprint, second.fingerprint)
 
+    def test_git_evidence_ignores_ambient_and_repository_execution_hooks(
+        self,
+    ) -> None:
+        if os.name == "nt":
+            self.skipTest("executable marker fixture uses POSIX scripts")
+        with _git_workspace() as workspace, tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper_marker = root / "helper-ran"
+            helper = root / "hostile-helper"
+            helper.write_text(
+                f"#!/bin/sh\n: > '{helper_marker}'\ncat\n",
+                encoding="utf-8",
+            )
+            helper.chmod(0o700)
+            (workspace / ".gitattributes").write_text(
+                "tracked.txt diff=hostile\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "config", "core.fsmonitor", str(helper)],
+                cwd=workspace,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "diff.hostile.textconv", str(helper)],
+                cwd=workspace,
+                check=True,
+            )
+            (workspace / "tracked.txt").write_text("changed\n", encoding="utf-8")
+
+            ambient_marker = root / "ambient-git-ran"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                f"#!/bin/sh\n: > '{ambient_marker}'\nexit 99\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o700)
+            poisoned = {
+                "PATH": str(fake_bin),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                "GIT_CONFIG_VALUE_0": str(helper),
+            }
+            with patch.dict(os.environ, poisoned, clear=False):
+                evidence = assistant_bridge_module.collect_git_evidence(
+                    workspace,
+                    self.config.capsule,
+                    include_excerpt=True,
+                )
+            self.assertTrue(evidence.sha256)
+            self.assertFalse(helper_marker.exists())
+            self.assertFalse(ambient_marker.exists())
+
+    def test_git_evidence_fails_closed_when_workspace_changes_mid_collection(
+        self,
+    ) -> None:
+        with _git_workspace() as workspace:
+            expected = snapshot_workspace(workspace, WorkspaceScopePolicy())
+            real_factory = assistant_bridge_module.trusted_git_session
+
+            def drifting_factory(root: Path):
+                session = real_factory(root)
+                calls = 0
+
+                class DriftingSession:
+                    def run(self, method, *, max_output_bytes):
+                        nonlocal calls
+                        result = method(max_output_bytes=max_output_bytes)
+                        calls += 1
+                        if calls == 2:
+                            (workspace / "tracked.txt").write_text(
+                                "concurrent\n",
+                                encoding="utf-8",
+                            )
+                        return result
+
+                    def staged_diff(self, *, max_output_bytes):
+                        return self.run(
+                            session.staged_diff,
+                            max_output_bytes=max_output_bytes,
+                        )
+
+                    def unstaged_diff(self, *, max_output_bytes):
+                        return self.run(
+                            session.unstaged_diff,
+                            max_output_bytes=max_output_bytes,
+                        )
+
+                    def untracked_paths(self, *, max_output_bytes):
+                        return self.run(
+                            session.untracked_paths,
+                            max_output_bytes=max_output_bytes,
+                        )
+
+                return DriftingSession()
+
+            with (
+                patch.object(
+                    assistant_bridge_module,
+                    "trusted_git_session",
+                    side_effect=drifting_factory,
+                ),
+                self.assertRaisesRegex(AssistantBridgeError, "changed during"),
+            ):
+                assistant_bridge_module.collect_git_evidence(
+                    workspace,
+                    self.config.capsule,
+                    include_excerpt=False,
+                    expected_snapshot=expected,
+                )
+
 
 class AssistantBridgeExecutionTests(unittest.TestCase):
     def test_plan_and_route_inspection_never_execute_bound_binaries(self) -> None:
