@@ -31,6 +31,7 @@ class CiRunnerTests(unittest.TestCase):
             [step.name for step in steps],
             [
                 "compile",
+                "assistant bridge dependency contract",
                 "unit tests",
                 "smoke eval",
                 "extended smoke eval",
@@ -46,6 +47,21 @@ class CiRunnerTests(unittest.TestCase):
             self.assertNotIn("&&", step.command)
             self.assertNotIn("|", step.command)
             self.assertNotIn("PYTHONPATH=src", step.command)
+
+        bridge_dependencies = next(
+            step
+            for step in steps
+            if step.name == "assistant bridge dependency contract"
+        )
+        self.assertEqual(
+            bridge_dependencies.command,
+            ["python", "scripts/check_assistant_bridge_dependencies.py"],
+        )
+        unit_tests = next(step for step in steps if step.name == "unit tests")
+        self.assertEqual(
+            unit_tests.command,
+            ["python", "-m", "unittest", "discover", "-s", "tests", "-v"],
+        )
 
         holdout = next(step for step in steps if step.name == "live routing holdout")
         self.assertIn(
@@ -70,6 +86,12 @@ class CiRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(active, template)
+        self.assertIn(
+            "uv run --locked --extra assistant-bridge python scripts/run_ci_checks.py",
+            active,
+        )
+        self.assertIn('python-version: ["3.10", "3.12"]', active)
+        self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", active)
 
     def test_build_env_prepends_src_with_platform_separator(self) -> None:
         runner = _load_runner()

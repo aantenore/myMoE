@@ -37,4 +37,4 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Run locked quality gate
-        run: uv run --locked python scripts/run_ci_checks.py
+        run: uv run --locked --extra assistant-bridge python scripts/run_ci_checks.py

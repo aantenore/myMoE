@@ -42,6 +42,10 @@ class CheckStep:
 def build_check_plan(python: str) -> list[CheckStep]:
     return [
         CheckStep("compile", [python, "-m", "compileall", "src", "tests", "experiments", "scripts"]),
+        CheckStep(
+            "assistant bridge dependency contract",
+            [python, "scripts/check_assistant_bridge_dependencies.py"],
+        ),
         CheckStep("unit tests", [python, "-m", "unittest", "discover", "-s", "tests", "-v"]),
         CheckStep(
             "smoke eval",
