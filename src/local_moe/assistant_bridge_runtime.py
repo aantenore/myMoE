@@ -2,31 +2,42 @@
 
 The module is intentionally independent from :mod:`local_moe.assistant_bridge` so
 the bridge can adopt it behind its existing public API in a later, reviewable
-change.  Its containment contract is explicit:
+change.  Its observed-cleanup contract is explicit:
 
 * POSIX launches receive a fresh session/process group.  Every process that
   remains in that group is terminated and its absence is verified.
 * When ``psutil`` is installed, descendants observed recursively are tracked and
   cleaned even if they later leave the original process group.  Discovery is
   best effort because a process can detach and exit between observations.
-* Windows strict execution requires ``psutil``.  Without it, execution is
-  rejected before launch unless a caller explicitly opts out of tree isolation.
+* Windows observed-tree execution requires ``psutil``.  Without it, execution
+  is rejected before launch unless a caller explicitly opts out of tree cleanup.
 
 Cleanup verification includes the root process, the POSIX process group,
 psutil-observed descendants, and all stdin/stdout/stderr worker threads.  A
 verification failure raises :class:`ProcessCleanupError`; partial cleanup is
-never reported as a successful execution.
+never reported as a successful execution.  These controls are not an OS
+containment primitive: an unobserved process that deliberately detaches can
+escape.  Callers needing hard containment must add a job object, cgroup, or
+equivalent supervisor outside this module.
+
+Executable and working-directory identities are checked immediately before and
+after process creation.  This is fail-closed change detection, not a race-free
+launch primitive: a same-user concurrent replacement could begin executing
+briefly before the post-launch mismatch is detected and the observed tree is
+cleaned.  Native descriptor-based execution or an external OS supervisor is
+required to remove that residual window without changing launcher semantics.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import shlex
 import shutil
 import signal
 import stat
@@ -45,6 +56,71 @@ except ImportError:  # pragma: no cover - availability depends on selected extra
 _HASH_CHUNK_BYTES = 1024 * 1024
 _PIPE_CHUNK_BYTES = 64 * 1024
 _MAX_IO_BYTES = 256 * 1024 * 1024
+_CAPABILITIES_SCHEMA_VERSION = "assistant-bridge-runtime-capabilities/v1"
+_LAUNCHER_CHAIN_SCHEMA_VERSION = "assistant-bridge-launcher-chain/v1"
+_SCRIPT_SUFFIXES = frozenset(
+    {
+        ".bat",
+        ".cmd",
+        ".js",
+        ".mjs",
+        ".pl",
+        ".ps1",
+        ".py",
+        ".rb",
+        ".sh",
+    }
+)
+_DANGEROUS_ENVIRONMENT_KEYS = frozenset(
+    {
+        "BASH_ENV",
+        "CLASSPATH",
+        "DOTNET_STARTUP_HOOKS",
+        "ENV",
+        "GCONV_PATH",
+        "GIT_ASKPASS",
+        "GIT_EXEC_PATH",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_TEMPLATE_DIR",
+        "IFS",
+        "JAVA_TOOL_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "NODE_REPL_EXTERNAL_MODULE",
+        "NPM_CONFIG_NODE_OPTIONS",
+        "PERL5LIB",
+        "PERL5OPT",
+        "PERLLIB",
+        "PROMPT_COMMAND",
+        "PYTHONBREAKPOINT",
+        "PYTHONCASEOK",
+        "PYTHONHOME",
+        "PYTHONINSPECT",
+        "PYTHONPATH",
+        "PYTHONPLATLIBDIR",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+        "PYTHONWARNINGS",
+        "RUBYLIB",
+        "RUBYOPT",
+        "SHELLOPTS",
+        "SSLKEYLOGFILE",
+        "SSH_ASKPASS",
+        "SUDO_ASKPASS",
+        "ZDOTDIR",
+        "_JAVA_OPTIONS",
+    }
+)
+_DANGEROUS_ENVIRONMENT_PREFIXES = (
+    "BASH_FUNC_",
+    "COMPLUS_",
+    "CORECLR_",
+    "DYLD_",
+    "GIT_CONFIG_",
+    "LD_",
+)
 
 
 class AssistantBridgeRuntimeError(RuntimeError):
@@ -59,8 +135,24 @@ class ExecutableChangedError(AssistantBridgeRuntimeError):
     """The executable no longer matches its previously resolved identity."""
 
 
+class WorkingDirectoryChangedError(AssistantBridgeRuntimeError):
+    """The execution directory no longer matches its attested identity."""
+
+
+class LauncherChainError(AssistantBridgeRuntimeError):
+    """A declared launcher chain cannot be resolved or safely represented."""
+
+
+class LauncherChainChangedError(AssistantBridgeRuntimeError):
+    """A declared launcher artifact no longer matches its identity."""
+
+
 class ProcessTreeUnavailableError(AssistantBridgeRuntimeError):
     """The requested process-tree containment contract is unavailable."""
+
+
+class ProcessObservationError(AssistantBridgeRuntimeError):
+    """Required process-tree observation was lost after launch."""
 
 
 class ProcessLaunchError(AssistantBridgeRuntimeError):
@@ -73,6 +165,30 @@ class ProcessCleanupError(AssistantBridgeRuntimeError):
     def __init__(self, message: str, *, details: Mapping[str, object]) -> None:
         super().__init__(message)
         self.details = MappingProxyType(dict(details))
+
+
+@dataclass(frozen=True)
+class _FileAttestation:
+    sha256: str
+    size_bytes: int
+    mtime_ns: int
+    device_id: int
+    inode: int
+    mode: int
+    owner_uid: int | None
+    owner_gid: int | None
+
+    def binding_tuple(self) -> tuple[object, ...]:
+        return (
+            self.sha256,
+            self.size_bytes,
+            self.mtime_ns,
+            self.device_id,
+            self.inode,
+            self.mode,
+            self.owner_uid,
+            self.owner_gid,
+        )
 
 
 @dataclass(frozen=True)
@@ -93,7 +209,7 @@ class EnvironmentFingerprint:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RuntimeCapabilities:
     """Current host support and the exact descendant-observation boundary."""
 
@@ -102,13 +218,67 @@ class RuntimeCapabilities:
     psutil_available: bool
     strict_tree_supported: bool
     detached_descendant_contract: str
+    schema_version: str = _CAPABILITIES_SCHEMA_VERSION
+
+    def __init__(
+        self,
+        platform: str,
+        posix_process_groups: bool,
+        psutil_available: bool,
+        strict_tree_supported: bool | None = None,
+        detached_descendant_contract: str = "",
+        *,
+        observed_tree_cleanup_supported: bool | None = None,
+        schema_version: str = _CAPABILITIES_SCHEMA_VERSION,
+    ) -> None:
+        """Accept both the legacy strict field and the observed-tree alias."""
+
+        if strict_tree_supported is None and observed_tree_cleanup_supported is None:
+            raise TypeError(
+                "strict_tree_supported or observed_tree_cleanup_supported is required"
+            )
+        if (
+            strict_tree_supported is not None
+            and observed_tree_cleanup_supported is not None
+            and strict_tree_supported != observed_tree_cleanup_supported
+        ):
+            raise ValueError("Runtime capability aliases cannot disagree")
+        selected = (
+            observed_tree_cleanup_supported
+            if strict_tree_supported is None
+            else strict_tree_supported
+        )
+        if not all(
+            isinstance(value, bool)
+            for value in (posix_process_groups, psutil_available, selected)
+        ):
+            raise TypeError("Runtime capability flags must be boolean")
+        object.__setattr__(self, "platform", platform)
+        object.__setattr__(self, "posix_process_groups", posix_process_groups)
+        object.__setattr__(self, "psutil_available", psutil_available)
+        object.__setattr__(self, "strict_tree_supported", selected)
+        object.__setattr__(
+            self, "detached_descendant_contract", detached_descendant_contract
+        )
+        object.__setattr__(self, "schema_version", schema_version)
+
+    @property
+    def observed_tree_cleanup_supported(self) -> bool:
+        """Observed-tree name for the legacy strict capability field."""
+
+        return self.strict_tree_supported
 
     def payload(self) -> dict[str, object]:
         return {
+            "schema_version": self.schema_version,
             "platform": self.platform,
             "posix_process_groups": self.posix_process_groups,
             "psutil_available": self.psutil_available,
+            "observed_tree_cleanup_supported": self.observed_tree_cleanup_supported,
             "strict_tree_supported": self.strict_tree_supported,
+            "hard_containment_supported": False,
+            "race_free_launch_binding": False,
+            "launch_change_detection": "pre_and_post_process_creation",
             "detached_descendant_contract": self.detached_descendant_contract,
         }
 
@@ -117,15 +287,17 @@ class RuntimeCapabilities:
 class ExecutableVersionMetadata:
     """Bounded result of an explicit executable version probe."""
 
-    args: tuple[str, ...]
+    args: tuple[str, ...] = field(repr=False)
     status: str
     returncode: int | None
-    text: str
+    text: str = field(repr=False)
     output_sha256: str
     output_bytes: int
     truncated: bool
 
-    def payload(self) -> dict[str, object]:
+    def binding_payload(self) -> dict[str, object]:
+        """Return the complete private value used for execution bindings."""
+
         return {
             "args": list(self.args),
             "status": self.status,
@@ -136,38 +308,235 @@ class ExecutableVersionMetadata:
             "truncated": self.truncated,
         }
 
+    def payload(self) -> dict[str, object]:
+        """Return metadata safe to expose without argv or version output text."""
+
+        return {
+            "args_sha256": hashlib.sha256(
+                json.dumps(
+                    list(self.args),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "status": self.status,
+            "returncode": self.returncode,
+            "output_sha256": self.output_sha256,
+            "output_bytes": self.output_bytes,
+            "truncated": self.truncated,
+        }
+
 
 @dataclass(frozen=True)
 class ExecutableIdentity:
     """Absolute, content-addressed executable selected from a specific PATH."""
 
-    requested: str
-    resolved_path: str
+    requested: str = field(repr=False)
+    launch_path: str = field(repr=False)
+    resolved_path: str = field(repr=False)
     sha256: str
     size_bytes: int
-    mtime_ns: int
+    mtime_ns: int = field(repr=False)
+    device_id: int = field(repr=False)
+    inode: int = field(repr=False)
+    mode: int = field(repr=False)
+    owner_uid: int | None = field(repr=False)
+    owner_gid: int | None = field(repr=False)
+    launch_path_binding_sha256: str = field(repr=False)
     resolution_environment: EnvironmentFingerprint
-    version: ExecutableVersionMetadata | None = None
+    version: ExecutableVersionMetadata | None = field(default=None, repr=False)
 
     @property
     def fingerprint(self) -> str:
         payload = json.dumps(
-            self.payload(),
+            self.binding_payload(),
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
-    def payload(self) -> dict[str, object]:
+    def binding_payload(self) -> dict[str, object]:
+        """Return the complete private identity used for execution bindings."""
+
         return {
             "requested": self.requested,
+            "launch_path": self.launch_path,
             "resolved_path": self.resolved_path,
             "sha256": self.sha256,
             "size_bytes": self.size_bytes,
             "mtime_ns": self.mtime_ns,
+            "device_id": self.device_id,
+            "inode": self.inode,
+            "mode": self.mode,
+            "owner_uid": self.owner_uid,
+            "owner_gid": self.owner_gid,
+            "launch_path_binding_sha256": self.launch_path_binding_sha256,
+            "resolution_environment": self.resolution_environment.payload(),
+            "version": (
+                None if self.version is None else self.version.binding_payload()
+            ),
+        }
+
+    def payload(self) -> dict[str, object]:
+        """Return a public identity containing digests instead of local details."""
+
+        metadata_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "device_id": self.device_id,
+                    "inode": self.inode,
+                    "mode": self.mode,
+                    "mtime_ns": self.mtime_ns,
+                    "owner_gid": self.owner_gid,
+                    "owner_uid": self.owner_uid,
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        return {
+            "requested_sha256": hashlib.sha256(
+                self.requested.encode("utf-8")
+            ).hexdigest(),
+            "launch_path_sha256": hashlib.sha256(
+                self.launch_path.encode("utf-8")
+            ).hexdigest(),
+            "resolved_path_sha256": hashlib.sha256(
+                self.resolved_path.encode("utf-8")
+            ).hexdigest(),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "metadata_sha256": metadata_sha256,
             "resolution_environment": self.resolution_environment.payload(),
             "version": None if self.version is None else self.version.payload(),
+        }
+
+
+@dataclass(frozen=True)
+class LauncherArtifactIdentity:
+    """One explicitly declared, in-place launcher file or companion."""
+
+    role: str
+    requested_path: str = field(repr=False)
+    launch_path: str = field(repr=False)
+    resolved_path: str = field(repr=False)
+    sha256: str
+    size_bytes: int
+    mtime_ns: int = field(repr=False)
+    device_id: int = field(repr=False)
+    inode: int = field(repr=False)
+    mode: int = field(repr=False)
+    owner_uid: int | None = field(repr=False)
+    owner_gid: int | None = field(repr=False)
+    launch_path_binding_sha256: str = field(repr=False)
+
+    def binding_payload(self) -> dict[str, object]:
+        return {
+            "role": self.role,
+            "requested_path": self.requested_path,
+            "launch_path": self.launch_path,
+            "resolved_path": self.resolved_path,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "mtime_ns": self.mtime_ns,
+            "device_id": self.device_id,
+            "inode": self.inode,
+            "mode": self.mode,
+            "owner_uid": self.owner_uid,
+            "owner_gid": self.owner_gid,
+            "launch_path_binding_sha256": self.launch_path_binding_sha256,
+        }
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "role": self.role,
+            "path_sha256": hashlib.sha256(self.launch_path.encode("utf-8")).hexdigest(),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "identity_sha256": hashlib.sha256(
+                json.dumps(
+                    self.binding_payload(),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+
+
+@dataclass(frozen=True)
+class LauncherChainIdentity:
+    """Provider-neutral binding for an interpreter, entrypoint, and companions."""
+
+    executable_fingerprint: str
+    argv: tuple[str, ...] = field(repr=False)
+    cwd: str = field(repr=False)
+    environment: EnvironmentFingerprint
+    entrypoint: LauncherArtifactIdentity | None = field(default=None, repr=False)
+    interpreter: ExecutableIdentity | None = field(default=None, repr=False)
+    env_launcher: ExecutableIdentity | None = field(default=None, repr=False)
+    companions: tuple[LauncherArtifactIdentity, ...] = field(default=(), repr=False)
+    shebang: tuple[str, ...] = field(default=(), repr=False)
+    strict: bool = True
+    schema_version: str = _LAUNCHER_CHAIN_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(self, "companions", tuple(self.companions))
+        object.__setattr__(self, "shebang", tuple(self.shebang))
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                self.binding_payload(),
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def binding_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "executable_fingerprint": self.executable_fingerprint,
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "environment": self.environment.payload(),
+            "entrypoint": (
+                None if self.entrypoint is None else self.entrypoint.binding_payload()
+            ),
+            "interpreter": (
+                None if self.interpreter is None else self.interpreter.binding_payload()
+            ),
+            "env_launcher": (
+                None
+                if self.env_launcher is None
+                else self.env_launcher.binding_payload()
+            ),
+            "companions": [item.binding_payload() for item in self.companions],
+            "shebang": list(self.shebang),
+            "strict": self.strict,
+        }
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "fingerprint": self.fingerprint,
+            "environment": self.environment.payload(),
+            "entrypoint": None
+            if self.entrypoint is None
+            else self.entrypoint.payload(),
+            "interpreter": (
+                None if self.interpreter is None else self.interpreter.payload()
+            ),
+            "env_launcher": (
+                None if self.env_launcher is None else self.env_launcher.payload()
+            ),
+            "companions": [item.payload() for item in self.companions],
+            "strict": self.strict,
         }
 
 
@@ -184,8 +553,16 @@ class ProcessExecutionPolicy:
     poll_interval_seconds: float = 0.01
     require_tree_isolation: bool = True
     require_psutil: bool = False
+    require_launcher_chain: bool = False
 
     def __post_init__(self) -> None:
+        for name in (
+            "require_tree_isolation",
+            "require_psutil",
+            "require_launcher_chain",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be boolean")
         for name in (
             "stdin_limit_bytes",
             "stdout_limit_bytes",
@@ -207,7 +584,7 @@ class ProcessExecutionPolicy:
 
 @dataclass(frozen=True)
 class CleanupReport:
-    """Evidence that the launched tree and all owned pipe workers are gone."""
+    """Evidence that the observed tree and all owned pipe workers are gone."""
 
     attempted: bool
     verified: bool
@@ -217,17 +594,23 @@ class CleanupReport:
     psutil_verified: bool | None
     root_reaped: bool
     pipe_threads_joined: bool
+    observation_verified: bool | None = None
+    fallback_used: bool = False
 
     def payload(self) -> dict[str, object]:
         return {
             "attempted": self.attempted,
             "verified": self.verified,
+            "verification_scope": "observed_process_tree",
+            "hard_containment": False,
             "methods": list(self.methods),
             "observed_descendants": self.observed_descendants,
             "process_group_verified": self.process_group_verified,
             "psutil_verified": self.psutil_verified,
+            "observation_verified": self.observation_verified,
             "root_reaped": self.root_reaped,
             "pipe_threads_joined": self.pipe_threads_joined,
+            "fallback_used": self.fallback_used,
         }
 
 
@@ -238,8 +621,8 @@ class ProcessExecutionResult:
     code: str
     returncode: int | None
     timed_out: bool
-    stdout: bytes
-    stderr: bytes
+    stdout: bytes = field(repr=False)
+    stderr: bytes = field(repr=False)
     stdout_bytes: int
     stderr_bytes: int
     stdout_sha256: str
@@ -249,7 +632,7 @@ class ProcessExecutionResult:
     stdin_bytes_written: int
     execution_duration_ms: int
     duration_ms: int
-    executable: ExecutableIdentity
+    executable: ExecutableIdentity = field(repr=False)
     environment: EnvironmentFingerprint
     cleanup: CleanupReport
 
@@ -296,7 +679,7 @@ def runtime_capabilities() -> RuntimeCapabilities:
         platform=platform.system() or os.name,
         posix_process_groups=posix_groups,
         psutil_available=psutil_available,
-        strict_tree_supported=posix_groups or psutil_available,
+        observed_tree_cleanup_supported=posix_groups or psutil_available,
         detached_descendant_contract=detached_contract,
     )
 
@@ -346,20 +729,31 @@ def resolve_executable(
     if selected is None:
         raise ExecutableResolutionError(f"Executable is unavailable: {requested}")
     try:
-        resolved = Path(selected).expanduser().resolve(strict=True)
+        launch_path = Path(os.path.abspath(os.fspath(Path(selected).expanduser())))
+        resolved = launch_path.resolve(strict=True)
     except OSError as exc:
         raise ExecutableResolutionError(
             f"Executable could not be resolved: {requested}"
         ) from exc
     if not resolved.is_absolute():
         raise ExecutableResolutionError("Resolved executable path is not absolute")
-    sha256, size_bytes, mtime_ns = _attest_executable_file(resolved)
+    attestation = _attest_executable_file(resolved)
     return ExecutableIdentity(
         requested=requested,
+        launch_path=str(launch_path),
         resolved_path=str(resolved),
-        sha256=sha256,
-        size_bytes=size_bytes,
-        mtime_ns=mtime_ns,
+        sha256=attestation.sha256,
+        size_bytes=attestation.size_bytes,
+        mtime_ns=attestation.mtime_ns,
+        device_id=attestation.device_id,
+        inode=attestation.inode,
+        mode=attestation.mode,
+        owner_uid=attestation.owner_uid,
+        owner_gid=attestation.owner_gid,
+        launch_path_binding_sha256=_launch_path_binding(
+            launch_path,
+            expected_resolved=resolved,
+        ),
         resolution_environment=fingerprint_environment(launch_env),
     )
 
@@ -410,6 +804,139 @@ def inspect_executable(
     return replace(identity, version=version)
 
 
+def resolve_launcher_chain(
+    executable: ExecutableIdentity,
+    args: Sequence[str] = (),
+    *,
+    entrypoint: str | os.PathLike[str] | None = None,
+    companions: Sequence[str | os.PathLike[str]] = (),
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    strict: bool = True,
+) -> LauncherChainIdentity:
+    """Resolve an explicit, provider-neutral launcher chain in place.
+
+    The returned identity never stages or rewrites the executable, entrypoint,
+    or companions.  Direct shebang scripts therefore retain their original
+    ``$0``/``dirname`` behavior, while interpreter-driven scripts retain the
+    exact argv token supplied by the caller.  In strict mode, path arguments
+    that look like undeclared scripts and direct scripts whose interpreter
+    cannot be resolved are rejected before launch.
+    """
+
+    if not isinstance(strict, bool):
+        raise TypeError("strict must be boolean")
+    argv = _validate_args(args)
+    launch_env = _normalize_environment(os.environ if env is None else env)
+    root = Path.cwd().resolve() if cwd is None else _validate_cwd(cwd)
+    environment = fingerprint_environment(launch_env)
+    executable_path = Path(executable.resolved_path)
+    direct_shebang = _read_shebang(executable_path)
+    declared_entrypoint: LauncherArtifactIdentity | None = None
+    interpreter: ExecutableIdentity | None = None
+    env_launcher: ExecutableIdentity | None = None
+    shebang: tuple[str, ...] = ()
+
+    if direct_shebang:
+        declared_entrypoint = _attest_launcher_artifact(
+            executable.launch_path,
+            cwd=root,
+            role="entrypoint",
+        )
+        if entrypoint is not None:
+            explicit = _attest_launcher_artifact(
+                entrypoint,
+                cwd=root,
+                role="entrypoint",
+            )
+            if explicit.resolved_path != declared_entrypoint.resolved_path:
+                raise LauncherChainError(
+                    "Declared entrypoint does not match the direct script executable"
+                )
+        shebang, env_launcher, interpreter = _resolve_shebang_chain(
+            direct_shebang,
+            env=launch_env,
+            strict=strict,
+        )
+    elif entrypoint is not None:
+        declared_entrypoint = _attest_launcher_artifact(
+            entrypoint,
+            cwd=root,
+            role="entrypoint",
+        )
+        if not _argv_declares_artifact(argv, declared_entrypoint, cwd=root):
+            raise LauncherChainError(
+                "Declared launcher entrypoint is not present in process arguments"
+            )
+        interpreter = executable
+    elif strict:
+        undeclared = _undeclared_script_argument(argv, cwd=root)
+        if undeclared is not None:
+            raise LauncherChainError(
+                "Script launcher arguments must declare an attested entrypoint"
+            )
+        if executable_path.suffix.lower() in {".bat", ".cmd"}:
+            raise LauncherChainError(
+                "Direct command scripts require an explicit native interpreter"
+            )
+
+    companion_identities = tuple(
+        _attest_launcher_artifact(value, cwd=root, role="companion")
+        for value in companions
+    )
+    resolved_paths = [item.resolved_path for item in companion_identities]
+    if len(resolved_paths) != len(set(resolved_paths)):
+        raise LauncherChainError("Launcher companions contain duplicate files")
+    if declared_entrypoint is not None and declared_entrypoint.resolved_path in set(
+        resolved_paths
+    ):
+        raise LauncherChainError("Launcher entrypoint cannot also be a companion")
+
+    return LauncherChainIdentity(
+        executable_fingerprint=executable.fingerprint,
+        argv=argv,
+        cwd=str(root),
+        environment=environment,
+        entrypoint=declared_entrypoint,
+        interpreter=interpreter,
+        env_launcher=env_launcher,
+        companions=companion_identities,
+        shebang=shebang,
+        strict=strict,
+    )
+
+
+def verify_launcher_chain(
+    chain: LauncherChainIdentity,
+    executable: ExecutableIdentity,
+    args: Sequence[str] = (),
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Verify a declared chain without changing any launch path or argv token."""
+
+    argv = _validate_args(args)
+    launch_env = _normalize_environment(os.environ if env is None else env)
+    root = Path.cwd().resolve() if cwd is None else _validate_cwd(cwd)
+    if executable.fingerprint != chain.executable_fingerprint:
+        raise LauncherChainChangedError(
+            "Launcher chain is bound to a different executable identity"
+        )
+    if argv != chain.argv or str(root) != chain.cwd:
+        raise LauncherChainChangedError("Launcher argv or working directory changed")
+    if fingerprint_environment(launch_env).sha256 != chain.environment.sha256:
+        raise LauncherChainChangedError("Launcher environment changed")
+    if chain.entrypoint is not None:
+        _verify_launcher_artifact(chain.entrypoint)
+    for companion in chain.companions:
+        _verify_launcher_artifact(companion)
+    if chain.env_launcher is not None:
+        _verify_executable_identity(chain.env_launcher)
+    if chain.interpreter is not None:
+        _verify_executable_identity(chain.interpreter)
+
+
 def execute_process(
     executable: ExecutableIdentity,
     args: Sequence[str] = (),
@@ -419,6 +946,7 @@ def execute_process(
     env: Mapping[str, str] | None = None,
     timeout_seconds: float,
     policy: ProcessExecutionPolicy | None = None,
+    launcher_chain: LauncherChainIdentity | None = None,
 ) -> ProcessExecutionResult:
     """Execute an attested binary under one end-to-end monotonic deadline.
 
@@ -440,10 +968,10 @@ def execute_process(
         )
     if (
         selected_policy.require_tree_isolation
-        and not capabilities.strict_tree_supported
+        and not capabilities.observed_tree_cleanup_supported
     ):
         raise ProcessTreeUnavailableError(
-            "Strict process-tree cleanup is unavailable on this host without psutil"
+            "Observed process-tree cleanup is unavailable on this host without psutil"
         )
     argv_tail = _validate_args(args)
     if not isinstance(stdin, bytes):
@@ -452,10 +980,31 @@ def execute_process(
         raise ValueError("stdin exceeds the configured input bound")
     launch_env = _normalize_environment(os.environ if env is None else env)
     environment = fingerprint_environment(launch_env)
-    launch_cwd = None if cwd is None else str(_validate_cwd(cwd))
+    launch_cwd = None if cwd is None else _validate_cwd(cwd)
+    cwd_identity = None if launch_cwd is None else _attest_working_directory(launch_cwd)
     started = time.monotonic()
     deadline = started + timeout_seconds
     _verify_executable_identity(executable)
+    if launcher_chain is not None:
+        if selected_policy.require_launcher_chain and not launcher_chain.strict:
+            raise LauncherChainError(
+                "Execution policy requires a strict launcher-chain attestation"
+            )
+        verify_launcher_chain(
+            launcher_chain,
+            executable,
+            argv_tail,
+            cwd=launch_cwd,
+            env=launch_env,
+        )
+    elif selected_policy.require_launcher_chain and _command_has_script_chain(
+        executable,
+        argv_tail,
+        cwd=launch_cwd,
+    ):
+        raise LauncherChainError(
+            "Execution policy requires an explicitly attested launcher chain"
+        )
     if time.monotonic() >= deadline:
         raise ProcessLaunchError(
             "Execution deadline elapsed during executable attestation"
@@ -465,7 +1014,7 @@ def execute_process(
         "stdin": subprocess.PIPE,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
-        "cwd": launch_cwd,
+        "cwd": None if launch_cwd is None else str(launch_cwd),
         "env": launch_env,
         "shell": False,
         "bufsize": 0,
@@ -476,54 +1025,109 @@ def execute_process(
         popen_kwargs["creationflags"] = getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
-    try:
-        process = subprocess.Popen(
-            [executable.resolved_path, *argv_tail],
-            **popen_kwargs,
-        )
-    except OSError as exc:
-        raise ProcessLaunchError(
-            f"Could not launch attested executable: {executable.resolved_path}"
-        ) from exc
-
-    tracker = _ProcessTracker(process.pid)
-    wake = threading.Event()
-    stdout_state = _BoundedStream(selected_policy.stdout_limit_bytes)
-    stderr_state = _BoundedStream(selected_policy.stderr_limit_bytes)
-    stdin_state = _StdinState()
-    workers = (
-        threading.Thread(
-            target=_read_pipe,
-            name=f"bridge-stdout-{process.pid}",
-            args=(process.stdout, stdout_state, wake),
-            daemon=True,
-        ),
-        threading.Thread(
-            target=_read_pipe,
-            name=f"bridge-stderr-{process.pid}",
-            args=(process.stderr, stderr_state, wake),
-            daemon=True,
-        ),
-        threading.Thread(
-            target=_write_stdin,
-            name=f"bridge-stdin-{process.pid}",
-            args=(process.stdin, stdin, stdin_state, wake),
-            daemon=True,
-        ),
-    )
+    process: subprocess.Popen[bytes] | None = None
+    tracker: _ProcessTracker | None = None
+    workers: tuple[threading.Thread, ...] = ()
+    stdout_state: _BoundedStream | None = None
+    stderr_state: _BoundedStream | None = None
+    stdin_state: _StdinState | None = None
     root_exited_at: float | None = None
     terminal = "completed"
+    cleanup: CleanupReport | None = None
+    pending_error: BaseException | None = None
+    execution_ended = started
     try:
+        try:
+            if launch_cwd is not None and cwd_identity is not None:
+                _verify_working_directory(launch_cwd, cwd_identity)
+            process = subprocess.Popen(
+                [executable.launch_path, *argv_tail],
+                **popen_kwargs,
+            )
+        except WorkingDirectoryChangedError:
+            raise
+        except OSError:
+            raise ProcessLaunchError(
+                "Could not launch the attested executable"
+            ) from None
+
+        # From the assignment above onward the process is owned by this outer
+        # try/finally.  Tracker, state, and worker construction may all fail;
+        # none may bypass the tracker-independent emergency reaper.
+        tracker = _ProcessTracker(process.pid)
+        if selected_policy.require_psutil and not tracker.observation_verified:
+            raise ProcessObservationError(
+                "Required psutil observation failed during process ownership setup"
+            )
+        try:
+            _verify_executable_identity(executable)
+            if launcher_chain is not None:
+                verify_launcher_chain(
+                    launcher_chain,
+                    executable,
+                    argv_tail,
+                    cwd=launch_cwd,
+                    env=launch_env,
+                )
+            if launch_cwd is not None and cwd_identity is not None:
+                _verify_working_directory(launch_cwd, cwd_identity)
+        except (
+            ExecutableChangedError,
+            LauncherChainChangedError,
+            WorkingDirectoryChangedError,
+        ) as exc:
+            subject = (
+                "working directory"
+                if isinstance(exc, WorkingDirectoryChangedError)
+                else "launcher chain"
+                if isinstance(exc, LauncherChainChangedError)
+                else "executable identity"
+            )
+            raise ProcessLaunchError(
+                f"Execution {subject} changed during process creation"
+            ) from exc
+
+        wake = threading.Event()
+        stdout_state = _BoundedStream(selected_policy.stdout_limit_bytes)
+        stderr_state = _BoundedStream(selected_policy.stderr_limit_bytes)
+        stdin_state = _StdinState(len(stdin))
+        workers = (
+            threading.Thread(
+                target=_read_pipe,
+                name=f"bridge-stdout-{process.pid}",
+                args=(process.stdout, stdout_state, wake),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_read_pipe,
+                name=f"bridge-stderr-{process.pid}",
+                args=(process.stderr, stderr_state, wake),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_write_stdin,
+                name=f"bridge-stdin-{process.pid}",
+                args=(process.stdin, stdin, stdin_state, wake),
+                daemon=True,
+            ),
+        )
         for worker in workers:
             worker.start()
         while True:
             tracker.observe()
+            if selected_policy.require_psutil and not tracker.observation_verified:
+                raise ProcessObservationError(
+                    "Required psutil process-tree observation was lost"
+                )
             now = time.monotonic()
             if stdout_state.overflowed:
                 terminal = "stdout_limit_exceeded"
                 break
             if stderr_state.overflowed:
                 terminal = "stderr_limit_exceeded"
+                break
+            if stdout_state.failed or stderr_state.failed or stdin_state.failed:
+                terminal = "io_failed"
                 break
             if now >= deadline:
                 terminal = "timed_out"
@@ -544,14 +1148,68 @@ def execute_process(
             )
             wake.wait(wait_seconds)
             wake.clear()
+    except BaseException as exc:
+        pending_error = exc
     finally:
         execution_ended = time.monotonic()
-        cleanup = _cleanup_process_tree(
-            process,
-            tracker=tracker,
-            workers=workers,
-            policy=selected_policy,
-        )
+        if process is not None:
+            try:
+                if pending_error is not None:
+                    cleanup = _emergency_cleanup_process(
+                        process,
+                        tracker=tracker,
+                        workers=workers,
+                        policy=selected_policy,
+                    )
+                    if not cleanup.verified:
+                        raise ProcessCleanupError(
+                            "Emergency process cleanup could not be verified",
+                            details=cleanup.payload(),
+                        ) from pending_error
+                else:
+                    cleanup = _cleanup_owned_process(
+                        process,
+                        tracker=tracker,
+                        workers=workers,
+                        policy=selected_policy,
+                    )
+            except BaseException as exc:
+                if pending_error is not None:
+                    try:
+                        exc.add_note(
+                            f"Execution error before cleanup: {type(pending_error).__name__}"
+                        )
+                    except AttributeError:  # Python 3.10 has no BaseException.add_note.
+                        pass
+                pending_error = exc
+
+    if pending_error is not None:
+        if isinstance(pending_error, (KeyboardInterrupt, SystemExit)):
+            raise pending_error
+        if isinstance(pending_error, AssistantBridgeRuntimeError):
+            raise pending_error
+        raise ProcessCleanupError(
+            "Process execution failed after ownership was acquired",
+            details=(
+                cleanup.payload()
+                if cleanup is not None
+                else _unverified_cleanup_payload(process, tracker, workers)
+            ),
+        ) from pending_error
+
+    assert process is not None
+    assert cleanup is not None
+    assert stdout_state is not None
+    assert stderr_state is not None
+    assert stdin_state is not None
+    if terminal in {"completed", "nonzero_exit"} and (
+        stdout_state.failed
+        or stderr_state.failed
+        or not stdout_state.reached_eof
+        or not stderr_state.reached_eof
+        or not stdin_state.complete
+    ):
+        terminal = "io_failed"
 
     stdout = stdout_state.snapshot()
     stderr = stderr_state.snapshot()
@@ -582,6 +1240,8 @@ class _BoundedStream:
         self.limit = limit
         self.count = 0
         self.overflowed = False
+        self.failed = False
+        self.reached_eof = False
         self._retained = bytearray()
         self._digest = hashlib.sha256()
 
@@ -597,14 +1257,30 @@ class _BoundedStream:
     def snapshot(self) -> bytes:
         return bytes(self._retained)
 
+    def fail(self) -> None:
+        self.failed = True
+
+    def finish(self) -> None:
+        self.reached_eof = True
+
     @property
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
 
 
 class _StdinState:
-    def __init__(self) -> None:
+    def __init__(self, expected: int) -> None:
         self.count = 0
+        self.expected = expected
+        self.failed = False
+        self.flushed = expected == 0
+
+    @property
+    def complete(self) -> bool:
+        return not self.failed and self.count == self.expected and self.flushed
+
+    def fail(self) -> None:
+        self.failed = True
 
 
 class _ProcessTracker:
@@ -623,6 +1299,10 @@ class _ProcessTracker:
     @property
     def observation_verified(self) -> bool:
         return not self._observation_failed
+
+    @property
+    def observed_handles(self) -> tuple[Any, ...]:
+        return tuple(self._observed.values())
 
     def observe(self) -> None:
         if _psutil is None:
@@ -674,6 +1354,168 @@ class _ProcessTracker:
             self._observation_failed = True
             return
         self._observed[key] = process
+
+
+def _cleanup_owned_process(
+    process: subprocess.Popen[bytes],
+    *,
+    tracker: _ProcessTracker | None,
+    workers: Sequence[threading.Thread],
+    policy: ProcessExecutionPolicy,
+) -> CleanupReport:
+    """Run primary cleanup, then a tracker-independent emergency fallback."""
+
+    primary_error: BaseException | None = None
+    if tracker is not None:
+        try:
+            return _cleanup_process_tree(
+                process,
+                tracker=tracker,
+                workers=workers,
+                policy=policy,
+            )
+        except BaseException as exc:
+            primary_error = exc
+    else:
+        primary_error = RuntimeError("Process tracker was not initialized")
+
+    report = _emergency_cleanup_process(
+        process,
+        tracker=tracker,
+        workers=workers,
+        policy=policy,
+    )
+    details = report.payload()
+    details["primary_cleanup_failed"] = True
+    raise ProcessCleanupError(
+        "Primary process cleanup failed; emergency reaping was applied",
+        details=details,
+    ) from primary_error
+
+
+def _emergency_cleanup_process(
+    process: subprocess.Popen[bytes],
+    *,
+    tracker: _ProcessTracker | None,
+    workers: Sequence[threading.Thread],
+    policy: ProcessExecutionPolicy,
+) -> CleanupReport:
+    methods: list[str] = []
+    if os.name == "posix":
+        try:
+            _signal_process_group(process.pid, signal.SIGKILL)
+            methods.append("emergency-posix-process-group-kill")
+        except BaseException:
+            pass
+    if tracker is not None and _psutil is not None:
+        for tracked in tracker.observed_handles:
+            try:
+                tracked.kill()
+                methods.append("emergency-psutil-kill")
+            except BaseException:
+                pass
+    try:
+        if process.poll() is None:
+            process.kill()
+            methods.append("emergency-root-kill")
+    except BaseException:
+        pass
+    for stream in (process.stdin, process.stdout, process.stderr):
+        try:
+            _close_pipe(stream)
+        except BaseException:
+            pass
+    try:
+        process.wait(timeout=policy.cleanup_kill_seconds)
+    except BaseException:
+        pass
+    for worker in workers:
+        try:
+            if worker.ident is not None:
+                worker.join(timeout=policy.poll_interval_seconds * 2)
+        except BaseException:
+            pass
+
+    try:
+        root_reaped = process.poll() is not None
+    except BaseException:
+        root_reaped = False
+    if os.name == "posix":
+        try:
+            group_verified: bool | None = not _process_group_alive(process.pid)
+        except BaseException:
+            group_verified = False
+    else:
+        group_verified = None
+    observation_verified = (
+        None if tracker is None or _psutil is None else tracker.observation_verified
+    )
+    psutil_verified: bool | None
+    if tracker is None or _psutil is None:
+        psutil_verified = None
+    else:
+        try:
+            tracked_live = tracker.live()
+            observation_verified = tracker.observation_verified
+            psutil_verified = bool(observation_verified and not tracked_live)
+        except BaseException:
+            observation_verified = False
+            psutil_verified = False
+    pipe_threads_joined = True
+    for worker in workers:
+        try:
+            pipe_threads_joined = pipe_threads_joined and not worker.is_alive()
+        except BaseException:
+            pipe_threads_joined = False
+    verified = bool(
+        root_reaped
+        and group_verified is not False
+        and pipe_threads_joined
+        and psutil_verified is not False
+        and (
+            os.name == "posix"
+            or not policy.require_tree_isolation
+            or psutil_verified is True
+        )
+        and (not policy.require_psutil or psutil_verified is True)
+    )
+    return CleanupReport(
+        attempted=True,
+        verified=verified,
+        methods=tuple(dict.fromkeys(methods)),
+        observed_descendants=(0 if tracker is None else tracker.observed_descendants),
+        process_group_verified=group_verified,
+        psutil_verified=psutil_verified,
+        root_reaped=root_reaped,
+        pipe_threads_joined=pipe_threads_joined,
+        observation_verified=observation_verified,
+        fallback_used=True,
+    )
+
+
+def _unverified_cleanup_payload(
+    process: subprocess.Popen[bytes] | None,
+    tracker: _ProcessTracker | None,
+    workers: Sequence[threading.Thread],
+) -> dict[str, object]:
+    return {
+        "attempted": process is not None,
+        "verified": False,
+        "verification_scope": "observed_process_tree",
+        "hard_containment": False,
+        "methods": [],
+        "observed_descendants": (
+            0 if tracker is None else tracker.observed_descendants
+        ),
+        "process_group_verified": None,
+        "psutil_verified": None,
+        "observation_verified": (
+            None if tracker is None else tracker.observation_verified
+        ),
+        "root_reaped": False,
+        "pipe_threads_joined": False,
+        "fallback_used": True,
+    }
 
 
 def _cleanup_process_tree(
@@ -762,8 +1604,10 @@ def _cleanup_process_tree(
     group_verified = (
         not _process_group_alive(process.pid) if os.name == "posix" else None
     )
+    final_tracked_alive = tracker.live() if _psutil is not None else ()
+    observation_verified = tracker.observation_verified if _psutil is not None else None
     psutil_verified = (
-        tracker.observation_verified and not tracker.live()
+        bool(observation_verified and not final_tracked_alive)
         if _psutil is not None
         else None
     )
@@ -783,6 +1627,8 @@ def _cleanup_process_tree(
         psutil_verified=psutil_verified,
         root_reaped=root_reaped,
         pipe_threads_joined=pipe_threads_joined,
+        observation_verified=observation_verified,
+        fallback_used=False,
     )
     if not verified:
         raise ProcessCleanupError(
@@ -827,8 +1673,10 @@ def _read_pipe(
             try:
                 chunk = stream.read(_PIPE_CHUNK_BYTES)
             except (OSError, ValueError):
+                state.fail()
                 return
             if not chunk:
+                state.finish()
                 return
             state.update(chunk)
             wake.set()
@@ -844,6 +1692,10 @@ def _write_stdin(
 ) -> None:
     try:
         if stream is None:
+            if state.expected:
+                state.fail()
+            return
+        if not content:
             return
         view = memoryview(content)
         while state.count < len(view):
@@ -852,16 +1704,20 @@ def _write_stdin(
                     view[state.count : state.count + _PIPE_CHUNK_BYTES]
                 )
             except (BrokenPipeError, OSError, ValueError):
+                state.fail()
                 return
             if written is None:
                 written = 0
             if written <= 0:
+                state.fail()
                 return
             state.count += written
         try:
             stream.flush()
         except (BrokenPipeError, OSError, ValueError):
+            state.fail()
             return
+        state.flushed = True
     finally:
         _close_pipe(stream)
         wake.set()
@@ -874,6 +1730,7 @@ def _normalize_environment(env: Mapping[str, str]) -> dict[str, str]:
             raise TypeError("Environment keys and values must be strings")
         if not key or "=" in key or "\x00" in key or "\x00" in value:
             raise ValueError("Environment contains an invalid key or value")
+        validate_environment_name(key)
         normalized_key = key.upper() if os.name == "nt" else key
         if normalized_key in normalized and normalized[normalized_key] != value:
             raise ValueError(
@@ -881,6 +1738,20 @@ def _normalize_environment(env: Mapping[str, str]) -> dict[str, str]:
             )
         normalized[normalized_key] = value
     return normalized
+
+
+def validate_environment_name(name: str) -> None:
+    """Reject environment variables that can inject code or runtime loaders."""
+
+    if not isinstance(name, str):
+        raise TypeError("Environment variable name must be a string")
+    normalized = name.upper()
+    if normalized in _DANGEROUS_ENVIRONMENT_KEYS or any(
+        normalized.startswith(prefix) for prefix in _DANGEROUS_ENVIRONMENT_PREFIXES
+    ):
+        raise ValueError(
+            "Environment variable is denied by the process injection policy"
+        )
 
 
 def _validate_args(args: Sequence[str]) -> tuple[str, ...]:
@@ -906,7 +1777,283 @@ def _validate_cwd(cwd: str | os.PathLike[str]) -> Path:
     return resolved
 
 
-def _attest_executable_file(path: Path) -> tuple[str, int, int]:
+def _attest_working_directory(path: Path) -> tuple[int, int]:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise WorkingDirectoryChangedError(
+            "Execution working directory is unavailable"
+        ) from exc
+    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink():
+        raise WorkingDirectoryChangedError(
+            "Execution working directory is not a stable directory"
+        )
+    return int(metadata.st_dev), int(metadata.st_ino)
+
+
+def _verify_working_directory(path: Path, identity: tuple[int, int]) -> None:
+    try:
+        current = _attest_working_directory(path)
+    except WorkingDirectoryChangedError:
+        raise
+    if current != identity:
+        raise WorkingDirectoryChangedError(
+            "Execution working directory changed after attestation"
+        )
+
+
+def _read_shebang(path: Path) -> tuple[str, ...]:
+    try:
+        with path.open("rb") as handle:
+            first_line = handle.readline(4097)
+    except OSError as exc:
+        raise LauncherChainError("Launcher shebang cannot be read") from exc
+    if not first_line.startswith(b"#!"):
+        return ()
+    if len(first_line) > 4096 or not first_line.endswith((b"\n", b"\r")):
+        raise LauncherChainError("Launcher shebang is not safely bounded")
+    try:
+        declaration = first_line[2:].decode("utf-8").strip()
+        words = tuple(shlex.split(declaration, posix=True))
+    except (UnicodeDecodeError, ValueError):
+        raise LauncherChainError("Launcher shebang cannot be parsed safely") from None
+    if not words or any("\x00" in word for word in words):
+        raise LauncherChainError("Launcher shebang is empty or malformed")
+    return words
+
+
+def _resolve_shebang_chain(
+    shebang: Sequence[str],
+    *,
+    env: Mapping[str, str],
+    strict: bool,
+) -> tuple[tuple[str, ...], ExecutableIdentity | None, ExecutableIdentity | None]:
+    words = tuple(shebang)
+    if not words:
+        return (), None, None
+    requested = Path(words[0]).expanduser()
+    if not requested.is_absolute():
+        if strict:
+            raise LauncherChainError(
+                "Direct shebang interpreters must use an absolute path"
+            )
+        return words, None, None
+    try:
+        launcher = resolve_executable(str(requested), env=env)
+    except ExecutableResolutionError as exc:
+        raise LauncherChainError("Shebang interpreter cannot be resolved") from exc
+    if Path(launcher.resolved_path).name.lower() != "env":
+        if strict and _read_shebang(Path(launcher.resolved_path)):
+            raise LauncherChainError(
+                "Nested script interpreters are not declarable in strict mode"
+            )
+        return words, None, launcher
+
+    tail = list(words[1:])
+    if tail[:1] == ["-S"]:
+        tail = tail[1:]
+    elif tail and tail[0].startswith("-"):
+        if strict:
+            raise LauncherChainError(
+                "env shebang options require the declarable -S form"
+            )
+        return words, launcher, None
+    interpreter_env = dict(env)
+    while tail and "=" in tail[0] and not tail[0].startswith("="):
+        name, _, value = tail.pop(0).partition("=")
+        if not name or "\x00" in value:
+            raise LauncherChainError("env shebang assignment is malformed")
+        try:
+            validate_environment_name(name)
+        except (TypeError, ValueError) as exc:
+            raise LauncherChainError(
+                "env shebang assignment violates environment policy"
+            ) from exc
+        interpreter_env[name.upper() if os.name == "nt" else name] = value
+    if not tail:
+        if strict:
+            raise LauncherChainError("env shebang does not declare an interpreter")
+        return words, launcher, None
+    try:
+        interpreter = resolve_executable(tail[0], env=interpreter_env)
+    except ExecutableResolutionError as exc:
+        raise LauncherChainError("env shebang interpreter cannot be resolved") from exc
+    if strict and _read_shebang(Path(interpreter.resolved_path)):
+        raise LauncherChainError(
+            "Nested script interpreters are not declarable in strict mode"
+        )
+    return words, launcher, interpreter
+
+
+def _normalized_declared_path(
+    value: str | os.PathLike[str],
+    *,
+    cwd: Path,
+) -> Path:
+    raw = os.fspath(value)
+    if not raw or "\x00" in raw:
+        raise LauncherChainError("Launcher artifact path is empty or malformed")
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    return Path(os.path.abspath(os.fspath(candidate)))
+
+
+def _attest_launcher_artifact(
+    value: str | os.PathLike[str],
+    *,
+    cwd: Path,
+    role: str,
+) -> LauncherArtifactIdentity:
+    if role not in {"entrypoint", "companion"}:
+        raise LauncherChainError("Launcher artifact role is unsupported")
+    launch_path = _normalized_declared_path(value, cwd=cwd)
+    try:
+        resolved = launch_path.resolve(strict=True)
+        attestation = _attest_executable_file(resolved)
+        launch_binding = _launch_path_binding(
+            launch_path,
+            expected_resolved=resolved,
+        )
+    except (ExecutableResolutionError, OSError) as exc:
+        raise LauncherChainError("Launcher artifact cannot be attested") from exc
+    return LauncherArtifactIdentity(
+        role=role,
+        requested_path=os.fspath(value),
+        launch_path=str(launch_path),
+        resolved_path=str(resolved),
+        sha256=attestation.sha256,
+        size_bytes=attestation.size_bytes,
+        mtime_ns=attestation.mtime_ns,
+        device_id=attestation.device_id,
+        inode=attestation.inode,
+        mode=attestation.mode,
+        owner_uid=attestation.owner_uid,
+        owner_gid=attestation.owner_gid,
+        launch_path_binding_sha256=launch_binding,
+    )
+
+
+def _verify_launcher_artifact(identity: LauncherArtifactIdentity) -> None:
+    try:
+        attestation = _attest_executable_file(Path(identity.resolved_path))
+        launch_binding = _launch_path_binding(
+            Path(identity.launch_path),
+            expected_resolved=Path(identity.resolved_path),
+        )
+    except ExecutableResolutionError as exc:
+        raise LauncherChainChangedError(
+            "Launcher artifact can no longer be verified"
+        ) from exc
+    if (
+        attestation.binding_tuple()
+        != (
+            identity.sha256,
+            identity.size_bytes,
+            identity.mtime_ns,
+            identity.device_id,
+            identity.inode,
+            identity.mode,
+            identity.owner_uid,
+            identity.owner_gid,
+        )
+        or launch_binding != identity.launch_path_binding_sha256
+    ):
+        raise LauncherChainChangedError("Launcher artifact changed after attestation")
+
+
+def _argv_declares_artifact(
+    argv: Sequence[str],
+    identity: LauncherArtifactIdentity,
+    *,
+    cwd: Path,
+) -> bool:
+    for argument in argv:
+        if argument.startswith("-"):
+            continue
+        try:
+            candidate = _normalized_declared_path(argument, cwd=cwd)
+        except LauncherChainError:
+            continue
+        if str(candidate) == identity.launch_path:
+            return True
+    return False
+
+
+def _undeclared_script_argument(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+) -> str | None:
+    for argument in argv:
+        if argument.startswith("-"):
+            continue
+        try:
+            normalized = _normalized_declared_path(argument, cwd=cwd)
+        except LauncherChainError:
+            if Path(argument).suffix.lower() in _SCRIPT_SUFFIXES:
+                return argument
+            continue
+        if not normalized.is_file():
+            continue
+        if normalized.suffix.lower() in _SCRIPT_SUFFIXES or bool(
+            _read_shebang(normalized)
+        ):
+            return argument
+    return None
+
+
+def _command_has_script_chain(
+    executable: ExecutableIdentity,
+    argv: Sequence[str],
+    *,
+    cwd: Path | None,
+) -> bool:
+    if _read_shebang(Path(executable.resolved_path)):
+        return True
+    if Path(executable.launch_path).suffix.lower() in {".bat", ".cmd"}:
+        return True
+    root = Path.cwd().resolve() if cwd is None else cwd
+    return _undeclared_script_argument(argv, cwd=root) is not None
+
+
+def _launch_path_binding(
+    path: Path,
+    *,
+    expected_resolved: Path | None = None,
+) -> str:
+    """Bind the caller-visible launch path without resolving away symlinks."""
+
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+        link_target = os.readlink(path) if stat.S_ISLNK(metadata.st_mode) else None
+    except OSError as exc:
+        raise ExecutableResolutionError(
+            "Executable launch path cannot be attested"
+        ) from exc
+    if expected_resolved is not None and resolved != expected_resolved:
+        raise ExecutableResolutionError(
+            "Executable launch path resolves to an unexpected target"
+        )
+    payload = {
+        "device_id": int(metadata.st_dev),
+        "inode": int(metadata.st_ino),
+        "link_target": link_target,
+        "mode": int(metadata.st_mode),
+        "resolved_path": str(resolved),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _attest_executable_file(path: Path) -> _FileAttestation:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     try:
         descriptor = os.open(path, flags)
@@ -927,13 +2074,42 @@ def _attest_executable_file(path: Path) -> tuple[str, int, int]:
         raise ExecutableResolutionError(f"Could not attest executable: {path}") from exc
     finally:
         os.close(descriptor)
-    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+        getattr(before, "st_uid", None),
+        getattr(before, "st_gid", None),
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_size,
+        after.st_mtime_ns,
+        getattr(after, "st_uid", None),
+        getattr(after, "st_gid", None),
+    )
     if before_identity != after_identity:
         raise ExecutableResolutionError(
             "Executable changed while it was being attested"
         )
-    return digest.hexdigest(), int(after.st_size), int(after.st_mtime_ns)
+    return _FileAttestation(
+        sha256=digest.hexdigest(),
+        size_bytes=int(after.st_size),
+        mtime_ns=int(after.st_mtime_ns),
+        device_id=int(after.st_dev),
+        inode=int(after.st_ino),
+        mode=int(after.st_mode),
+        owner_uid=(
+            None if not hasattr(after, "st_uid") else int(getattr(after, "st_uid"))
+        ),
+        owner_gid=(
+            None if not hasattr(after, "st_gid") else int(getattr(after, "st_gid"))
+        ),
+    )
 
 
 def _verify_executable_identity(identity: ExecutableIdentity) -> None:
@@ -941,15 +2117,28 @@ def _verify_executable_identity(identity: ExecutableIdentity) -> None:
     if not path.is_absolute():
         raise ExecutableChangedError("Executable identity path is not absolute")
     try:
-        sha256, size_bytes, mtime_ns = _attest_executable_file(path)
+        attestation = _attest_executable_file(path)
+        launch_path_binding = _launch_path_binding(
+            Path(identity.launch_path),
+            expected_resolved=path,
+        )
     except ExecutableResolutionError as exc:
         raise ExecutableChangedError(
             "Executable identity can no longer be verified"
         ) from exc
     if (
-        sha256 != identity.sha256
-        or size_bytes != identity.size_bytes
-        or mtime_ns != identity.mtime_ns
+        attestation.binding_tuple()
+        != (
+            identity.sha256,
+            identity.size_bytes,
+            identity.mtime_ns,
+            identity.device_id,
+            identity.inode,
+            identity.mode,
+            identity.owner_uid,
+            identity.owner_gid,
+        )
+        or launch_path_binding != identity.launch_path_binding_sha256
     ):
         raise ExecutableChangedError("Executable changed after identity resolution")
 
@@ -1006,15 +2195,24 @@ __all__ = [
     "ExecutableIdentity",
     "ExecutableResolutionError",
     "ExecutableVersionMetadata",
+    "LauncherArtifactIdentity",
+    "LauncherChainChangedError",
+    "LauncherChainError",
+    "LauncherChainIdentity",
     "ProcessCleanupError",
     "ProcessExecutionPolicy",
     "ProcessExecutionResult",
     "ProcessLaunchError",
+    "ProcessObservationError",
     "ProcessTreeUnavailableError",
     "RuntimeCapabilities",
+    "WorkingDirectoryChangedError",
     "execute_process",
     "fingerprint_environment",
     "inspect_executable",
     "resolve_executable",
+    "resolve_launcher_chain",
     "runtime_capabilities",
+    "validate_environment_name",
+    "verify_launcher_chain",
 ]
