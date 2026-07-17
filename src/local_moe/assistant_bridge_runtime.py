@@ -45,7 +45,7 @@ import subprocess
 import threading
 import time
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 try:  # Optional by design; capability reporting below makes absence observable.
     import psutil as _psutil
@@ -159,6 +159,14 @@ class ProcessLaunchError(AssistantBridgeRuntimeError):
     """The attested executable could not be launched."""
 
 
+class ProcessLaunchNotAuthorizedError(AssistantBridgeRuntimeError):
+    """A launch reservation was denied before process creation."""
+
+
+class ProcessLaunchLifecycleError(AssistantBridgeRuntimeError):
+    """Launch reservation state could not be transitioned safely."""
+
+
 class ProcessCleanupError(AssistantBridgeRuntimeError):
     """Process or pipe cleanup could not be verified before returning."""
 
@@ -190,6 +198,19 @@ class _FileAttestation:
             self.owner_gid,
         )
 
+
+@dataclass(frozen=True)
+class ProcessLaunchPermit:
+    """Provider-neutral callbacks for one reserved process launch."""
+
+    commit_after_popen: Callable[[], None] = field(repr=False)
+    release_after_popen_failure: Callable[[], None] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not callable(self.commit_after_popen) or not callable(
+            self.release_after_popen_failure
+        ):
+            raise TypeError("Process launch permit callbacks must be callable")
 
 @dataclass(frozen=True)
 class EnvironmentFingerprint:
@@ -947,6 +968,7 @@ def execute_process(
     timeout_seconds: float,
     policy: ProcessExecutionPolicy | None = None,
     launcher_chain: LauncherChainIdentity | None = None,
+    reserve_launch: Callable[[], ProcessLaunchPermit | None] | None = None,
 ) -> ProcessExecutionResult:
     """Execute an attested binary under one end-to-end monotonic deadline.
 
@@ -1037,23 +1059,54 @@ def execute_process(
     pending_error: BaseException | None = None
     execution_ended = started
     try:
+        permit: ProcessLaunchPermit | None = None
         try:
             if launch_cwd is not None and cwd_identity is not None:
                 _verify_working_directory(launch_cwd, cwd_identity)
-            process = subprocess.Popen(
-                [executable.launch_path, *argv_tail],
-                **popen_kwargs,
-            )
+            if reserve_launch is not None:
+                try:
+                    permit = reserve_launch()
+                except Exception:
+                    raise ProcessLaunchLifecycleError(
+                        "Process launch reservation failed"
+                    ) from None
+                if permit is None:
+                    raise ProcessLaunchNotAuthorizedError(
+                        "Process launch was not authorized"
+                    )
+                if not isinstance(permit, ProcessLaunchPermit):
+                    raise ProcessLaunchLifecycleError(
+                        "Process launch reservation returned an invalid permit"
+                    )
+            try:
+                process = subprocess.Popen(
+                    [executable.launch_path, *argv_tail],
+                    **popen_kwargs,
+                )
+            except OSError:
+                if permit is not None:
+                    try:
+                        permit.release_after_popen_failure()
+                    except Exception:
+                        raise ProcessLaunchLifecycleError(
+                            "Process launch reservation release failed"
+                        ) from None
+                raise ProcessLaunchError(
+                    "Could not launch the attested executable"
+                ) from None
         except WorkingDirectoryChangedError:
             raise
-        except OSError:
-            raise ProcessLaunchError(
-                "Could not launch the attested executable"
-            ) from None
 
         # From the assignment above onward the process is owned by this outer
         # try/finally.  Tracker, state, and worker construction may all fail;
         # none may bypass the tracker-independent emergency reaper.
+        if permit is not None:
+            try:
+                permit.commit_after_popen()
+            except Exception:
+                raise ProcessLaunchLifecycleError(
+                    "Process launch reservation commit failed"
+                ) from None
         tracker = _ProcessTracker(process.pid)
         if selected_policy.require_psutil and not tracker.observation_verified:
             raise ProcessObservationError(
@@ -2203,6 +2256,9 @@ __all__ = [
     "ProcessExecutionPolicy",
     "ProcessExecutionResult",
     "ProcessLaunchError",
+    "ProcessLaunchLifecycleError",
+    "ProcessLaunchNotAuthorizedError",
+    "ProcessLaunchPermit",
     "ProcessObservationError",
     "ProcessTreeUnavailableError",
     "RuntimeCapabilities",

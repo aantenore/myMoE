@@ -15,9 +15,12 @@ from local_moe.assistant_bridge_runtime import (
     ExecutableChangedError,
     LauncherChainChangedError,
     LauncherChainError,
-    ProcessLaunchError,
     ProcessCleanupError,
     ProcessExecutionPolicy,
+    ProcessLaunchError,
+    ProcessLaunchLifecycleError,
+    ProcessLaunchNotAuthorizedError,
+    ProcessLaunchPermit,
     ProcessTreeUnavailableError,
     RuntimeCapabilities,
     execute_process,
@@ -800,6 +803,134 @@ class AssistantBridgeRuntimeProcessTests(unittest.TestCase):
             result.cleanup.payload()["verification_scope"],
             "observed_process_tree",
         )
+
+    def test_launch_permit_reserves_then_commits_around_popen(self) -> None:
+        events: list[str] = []
+        real_popen = bridge_runtime.subprocess.Popen
+
+        def reserve() -> ProcessLaunchPermit:
+            events.append("reserve")
+            return ProcessLaunchPermit(
+                commit_after_popen=lambda: events.append("commit"),
+                release_after_popen_failure=lambda: events.append("release"),
+            )
+
+        def launch(*args: object, **kwargs: object) -> object:
+            events.append("popen")
+            return real_popen(*args, **kwargs)
+
+        with patch.object(
+            bridge_runtime.subprocess,
+            "Popen",
+            side_effect=launch,
+        ):
+            result = execute_process(
+                self.python,
+                ("-c", "pass"),
+                timeout_seconds=1.0,
+                reserve_launch=reserve,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(events, ["reserve", "popen", "commit"])
+
+    def test_denied_launch_permit_never_calls_popen(self) -> None:
+        with patch.object(bridge_runtime.subprocess, "Popen") as popen:
+            with self.assertRaises(ProcessLaunchNotAuthorizedError):
+                execute_process(
+                    self.python,
+                    ("-c", "pass"),
+                    timeout_seconds=1.0,
+                    reserve_launch=lambda: None,
+                )
+
+        popen.assert_not_called()
+
+    def test_popen_failure_releases_without_committing_permit(self) -> None:
+        events: list[str] = []
+        permit = ProcessLaunchPermit(
+            commit_after_popen=lambda: events.append("commit"),
+            release_after_popen_failure=lambda: events.append("release"),
+        )
+
+        with patch.object(
+            bridge_runtime.subprocess,
+            "Popen",
+            side_effect=OSError("fixed diagnostic"),
+        ):
+            with self.assertRaises(ProcessLaunchError):
+                execute_process(
+                    self.python,
+                    ("-c", "pass"),
+                    timeout_seconds=1.0,
+                    reserve_launch=lambda: permit,
+                )
+
+        self.assertEqual(events, ["release"])
+
+    def test_commit_failure_never_releases_and_reaps_the_process(self) -> None:
+        events: list[str] = []
+        spawned: list[object] = []
+        real_popen = bridge_runtime.subprocess.Popen
+
+        def launch(*args: object, **kwargs: object) -> object:
+            process = real_popen(*args, **kwargs)
+            spawned.append(process)
+            return process
+
+        def fail_commit() -> None:
+            events.append("commit")
+            raise RuntimeError("sensitive commit failure")
+
+        permit = ProcessLaunchPermit(
+            commit_after_popen=fail_commit,
+            release_after_popen_failure=lambda: events.append("release"),
+        )
+        with patch.object(
+            bridge_runtime.subprocess,
+            "Popen",
+            side_effect=launch,
+        ):
+            with self.assertRaisesRegex(
+                ProcessLaunchLifecycleError,
+                "commit failed",
+            ) as raised:
+                execute_process(
+                    self.python,
+                    ("-c", "import time; time.sleep(30)"),
+                    timeout_seconds=2.0,
+                    reserve_launch=lambda: permit,
+                )
+
+        self.assertEqual(events, ["commit"])
+        self.assertNotIn("sensitive commit failure", str(raised.exception))
+        self.assertEqual(len(spawned), 1)
+        self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
+
+    def test_release_failure_keeps_a_sanitized_pending_reservation(self) -> None:
+        permit = ProcessLaunchPermit(
+            commit_after_popen=lambda: None,
+            release_after_popen_failure=lambda: (_ for _ in ()).throw(
+                RuntimeError("sensitive lease token")
+            ),
+        )
+        with patch.object(
+            bridge_runtime.subprocess,
+            "Popen",
+            side_effect=OSError("fixed diagnostic"),
+        ):
+            with self.assertRaisesRegex(
+                ProcessLaunchLifecycleError,
+                "release failed",
+            ) as raised:
+                execute_process(
+                    self.python,
+                    ("-c", "pass"),
+                    timeout_seconds=1.0,
+                    reserve_launch=lambda: permit,
+                )
+
+        self.assertNotIn("sensitive lease token", str(raised.exception))
 
     def test_partial_pipe_read_failure_is_never_completed(self) -> None:
         def fail_reader(
