@@ -229,7 +229,9 @@ workspace on Linux. If the backend is missing, altered, or unsupported, the
 route is blocked before a provider, verifier, premium authorization, or budget
 reservation can launch; there is no direct-host fallback. Windows currently has
 no command-verifier backend and therefore fails closed for routes that select
-one. The trusted Git builtin remains a separate fixed boundary.
+one. An unsupported plan reports no active workspace, runtime, system-root, or
+temporary-storage guarantees; policy intent is not presented as a capability.
+The trusted Git builtin remains a separate fixed boundary.
 
 Python project verifiers can declare safe relative `workspace_python_paths`.
 The bridge translates only an explicit `{python} -m <module>` contract into a

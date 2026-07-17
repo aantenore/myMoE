@@ -161,6 +161,11 @@ class VerifierIsolationPlan:
         object.__setattr__(self, "argv", tuple(self.argv))
 
     def payload(self) -> dict[str, object]:
+        active = bool(
+            self.capability.supported
+            and self.capability.executable is not None
+            and self.argv
+        )
         return {
             "schema_version": _SCHEMA,
             "policy": self.policy.payload(),
@@ -169,13 +174,19 @@ class VerifierIsolationPlan:
             "profile_sha256": self.profile_sha256 or None,
             "sandbox_argv_sha256": self.argv_sha256 or None,
             "binding_sha256": self.binding_sha256,
-            "workspace": "read_write_disposable",
-            "runtime_roots_access": "read_only",
-            "system_roots_access": "read_only_minimal",
+            "workspace": "read_write_disposable" if active else None,
+            "runtime_roots_access": "read_only" if active else None,
+            "system_roots_access": "read_only_minimal" if active else None,
             "temporary_storage": (
-                "workspace_internal" if self.capability.backend == "sandbox-exec" else "tmpfs"
+                (
+                    "workspace_internal"
+                    if self.capability.backend == "sandbox-exec"
+                    else "tmpfs"
+                )
+                if active
+                else None
             ),
-            "network": "denied" if self.capability.supported else "unavailable",
+            "network": "denied" if active else "unavailable",
         }
 
 

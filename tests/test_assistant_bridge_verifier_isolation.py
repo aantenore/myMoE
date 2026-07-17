@@ -196,6 +196,32 @@ class VerifierIsolationTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertFalse((fixture.root / "process-probe.log").exists())
 
+    def test_unsupported_plan_payload_claims_no_active_isolation(self) -> None:
+        capability = VerifierIsolationCapability(
+            supported=False,
+            backend="bwrap",
+            reason="test backend unavailable",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = build_verifier_isolation_plan(
+                self.config.verifier_isolation,
+                capability,
+                workspace=tmp,
+                command_argv=("/usr/bin/true",),
+                runtime_read_roots=(),
+                temp_namespace="a" * 24,
+            )
+            payload = plan.payload()
+
+        self.assertFalse(payload["capability"]["supported"])
+        self.assertIsNone(payload["profile_sha256"])
+        self.assertIsNone(payload["sandbox_argv_sha256"])
+        self.assertIsNone(payload["workspace"])
+        self.assertIsNone(payload["runtime_roots_access"])
+        self.assertIsNone(payload["system_roots_access"])
+        self.assertIsNone(payload["temporary_storage"])
+        self.assertEqual(payload["network"], "unavailable")
+
     def test_candidate_git_config_is_never_copied_or_executed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp)
