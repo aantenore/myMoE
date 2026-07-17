@@ -4069,6 +4069,7 @@ def _build_verifier_plan(
     *,
     workspace: str | Path,
     runtime_policy: BridgeRuntimePolicy,
+    execution_environment: Mapping[str, str] | None = None,
 ) -> BoundVerifierPlan:
     root = str(Path(workspace).expanduser().resolve())
     argv = tuple(
@@ -4077,7 +4078,12 @@ def _build_verifier_plan(
         else item.replace("{workspace}", root)
         for item in spec.argv
     )
-    environment = _sanitized_environment(spec.environment_allowlist)
+    environment = (
+        _sanitized_environment(spec.environment_allowlist)
+        if execution_environment is None
+        else dict(execution_environment)
+    )
+    environment_sha256 = fingerprint_environment(environment).sha256
     try:
         executable = resolve_executable(
             argv[0],
@@ -4093,7 +4099,7 @@ def _build_verifier_plan(
         "spec_sha256": spec.spec_sha256,
         "argv": semantic_argv,
         "executable": executable.payload(),
-        "environment_sha256": fingerprint_environment(environment).sha256,
+        "environment_sha256": environment_sha256,
         "launcher_artifact_sha256": list(artifacts),
         "runtime_capabilities": runtime_capabilities().payload(),
         "runtime_policy": runtime_policy.payload(),
@@ -4102,7 +4108,7 @@ def _build_verifier_plan(
         spec=spec,
         argv=argv,
         executable_identity=executable,
-        environment_sha256=fingerprint_environment(environment).sha256,
+        environment_sha256=environment_sha256,
         launcher_artifact_sha256=artifacts,
         plan_sha256=_sha256_text(_canonical_json(payload)),
         runtime_policy=runtime_policy,
@@ -4116,16 +4122,28 @@ def _run_bound_verifier(
     workspace: WorkspaceAttestation,
     verifier_workspace: str | Path,
 ) -> VerificationEvidence:
+    environment = _sanitized_environment(plan.spec.environment_allowlist)
     current = _build_verifier_plan(
         plan.spec,
         workspace=verifier_workspace,
         runtime_policy=plan.runtime_policy,
+        execution_environment=environment,
     )
     if current.plan_sha256 != plan.plan_sha256:
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} no longer matches the confirmed plan."
         )
-    environment = _sanitized_environment(plan.spec.environment_allowlist)
+    environment_sha256 = fingerprint_environment(environment).sha256
+    if environment_sha256 != plan.environment_sha256:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} environment no longer matches the confirmed plan."
+        )
+    binding_payload = {
+        "plan_sha256": plan.plan_sha256,
+        "environment_sha256": environment_sha256,
+        "executable_fingerprint": plan.executable_identity.fingerprint,
+        "launcher_artifact_sha256": list(plan.launcher_artifact_sha256),
+    }
     try:
         outcome = execute_process(
             plan.executable_identity,
@@ -4139,6 +4157,7 @@ def _run_bound_verifier(
         passed = outcome.ok
         code = "command_passed" if passed else f"command_{_safe_code(outcome.code)}"
         result_payload = {
+            **binding_payload,
             "returncode": outcome.returncode,
             "stdout_sha256": outcome.stdout_sha256,
             "stdout_bytes": outcome.stdout_bytes,
@@ -4150,7 +4169,7 @@ def _run_bound_verifier(
     except AssistantBridgeRuntimeError:
         passed = False
         code = "runtime_attestation_failed"
-        result_payload = {"code": code}
+        result_payload = {**binding_payload, "code": code}
         observed = 0
     artifact = _sha256_text(
         _canonical_json(result_payload)

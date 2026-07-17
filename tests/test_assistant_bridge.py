@@ -310,6 +310,51 @@ class AssistantBridgeContractTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             receipt.task["profile"] = "quality"  # type: ignore[index]
 
+    def test_verifier_executes_the_exact_environment_bound_to_its_plan(self) -> None:
+        spec = assistant_bridge_module.CommandVerifierSpec(
+            id="environment-binding",
+            argv=(
+                sys.executable,
+                "-c",
+                (
+                    "import os,sys; "
+                    "sys.exit(os.environ.get('BRIDGE_TEST_MARKER') != 'first')"
+                ),
+            ),
+            timeout_seconds=10,
+            environment_allowlist=("BRIDGE_TEST_MARKER",),
+        )
+        task = build_assistant_task("Verify a bounded environment.")
+        workspace = attest_workspace(ROOT)
+        real_build = assistant_bridge_module._build_verifier_plan
+
+        with patch.dict(os.environ, {"BRIDGE_TEST_MARKER": "first"}):
+            plan = real_build(
+                spec,
+                workspace=ROOT,
+                runtime_policy=self.config.runtime,
+            )
+
+            def drift_after_binding(*args, **kwargs):
+                current = real_build(*args, **kwargs)
+                os.environ["BRIDGE_TEST_MARKER"] = "second"
+                return current
+
+            with patch.object(
+                assistant_bridge_module,
+                "_build_verifier_plan",
+                side_effect=drift_after_binding,
+            ):
+                evidence = assistant_bridge_module._run_bound_verifier(
+                    plan,
+                    task=task,
+                    workspace=workspace,
+                    verifier_workspace=ROOT,
+                )
+
+        self.assertTrue(evidence.passed)
+        self.assertEqual(evidence.code, "command_passed")
+
     def test_capsule_redacts_multiform_secrets_and_repr_is_safe(self) -> None:
         task = build_assistant_task(
             'Fix {"api_key":"json-secret"} password: two secret words',
