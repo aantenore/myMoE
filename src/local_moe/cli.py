@@ -2,18 +2,35 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import hashlib
 import json
 from pathlib import Path
 import re
 import sys
 
+from .audit import AuditLogStore
 from .agent_loop import AgentLoopBudget, AgentRunResult, build_local_agent_loop
 from .agent_provider import validate_local_agent_endpoints
 from .agent_tools import AgentPermissionPolicy, ApprovalDecision, ApprovalRequest
 from .app_config import load_app_config
+from .assistant_bridge import (
+    AssistantBridgeError,
+    AssistantBridgeRunner,
+    AssistantTaskEnvelope,
+    BridgeRunResult,
+    build_assistant_task,
+    load_assistant_bridge_config,
+    load_assistant_task,
+    load_verification_evidence,
+)
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_runtime import generate_chat_turn
-from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
+from .chat_store import (
+    ChatSession,
+    FileChatStore,
+    chat_session_payload,
+    chat_summary_payload,
+)
 from .compaction import LocalCompactionProvider
 from .config import load_config
 from .config_profiles import recommend_config_profile
@@ -22,13 +39,27 @@ from .context_policy import load_context_policy
 from .doctor import build_doctor_report, render_doctor_report_markdown
 from .environment import build_environment_report, render_environment_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
-from .extensions import create_plugin_scaffold, load_extension_registry, registry_payload
+from .extensions import (
+    create_plugin_scaffold,
+    load_extension_registry,
+    registry_payload,
+)
 from .memory import FileMemoryStore
-from .model_servers import ModelServerManager, model_server_action_payload, wait_for_managed_processes
+from .model_servers import (
+    ModelServerManager,
+    model_server_action_payload,
+    wait_for_managed_processes,
+)
 from .orchestrator import LocalMoE
-from .performance_report import build_performance_report, render_performance_report_markdown
+from .performance_report import (
+    build_performance_report,
+    render_performance_report_markdown,
+)
 from .providers import ProviderError
-from .profile_activation import activate_config_profile, activate_recommended_config_profile
+from .profile_activation import (
+    activate_config_profile,
+    activate_recommended_config_profile,
+)
 from .run_log import RunLogStore, run_log_payload, run_log_prune_payload
 from .runtime_optimizer import (
     build_runtime_optimizer_report,
@@ -48,6 +79,52 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local MoE orchestrator")
     parser.add_argument("--config")
     parser.add_argument("--app-config", default="configs/app.json")
+    assistant_task_group = parser.add_mutually_exclusive_group()
+    assistant_task_group.add_argument(
+        "--assistant-task",
+        help="Plan or run one local-first assistant task.",
+    )
+    assistant_task_group.add_argument(
+        "--assistant-task-file",
+        help="Load an AssistantTaskEnvelope JSON document.",
+    )
+    parser.add_argument(
+        "--assistant-bridge-config",
+        default="configs/assistant-bridge.json",
+    )
+    parser.add_argument(
+        "--assistant-profile",
+        choices=["economy", "balanced", "quality", "privacy", "offline"],
+    )
+    parser.add_argument("--assistant-capability", action="append")
+    parser.add_argument("--assistant-required-tool", action="append")
+    parser.add_argument(
+        "--assistant-risk",
+        choices=[
+            "read_only",
+            "compute_only",
+            "write_local",
+            "write_external",
+            "destructive",
+            "privileged",
+        ],
+    )
+    parser.add_argument("--assistant-constraint", action="append")
+    remote_group = parser.add_mutually_exclusive_group()
+    remote_group.add_argument("--assistant-allow-remote", action="store_true")
+    remote_group.add_argument("--assistant-deny-remote", action="store_true")
+    parser.add_argument("--assistant-allow-remote-workspace", action="store_true")
+    parser.add_argument("--assistant-max-premium-calls", type=int)
+    parser.add_argument("--assistant-workspace", default=".")
+    parser.add_argument("--assistant-local-provider", choices=["ollama", "lmstudio"])
+    parser.add_argument("--assistant-verification")
+    parser.add_argument("--assistant-include-diff", action="store_true")
+    parser.add_argument("--assistant-capsule-out")
+    parser.add_argument("--assistant-bridge-execute", action="store_true")
+    parser.add_argument(
+        "--assistant-confirm-receipt",
+        help="Exact confirmation_id emitted by a prior plan for the unchanged task and workspace.",
+    )
     prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument("--prompt")
     prompt_group.add_argument(
@@ -115,14 +192,20 @@ def main() -> None:
     parser.add_argument("--runs-keep", type=int, default=1000)
     parser.add_argument("--runs-confirm", action="store_true")
     parser.add_argument("--performance-report", action="store_true")
-    parser.add_argument("--performance-report-format", choices=["json", "markdown"], default="json")
+    parser.add_argument(
+        "--performance-report-format", choices=["json", "markdown"], default="json"
+    )
     parser.add_argument("--performance-report-out")
     parser.add_argument("--runtime-optimizer", action="store_true")
-    parser.add_argument("--runtime-optimizer-format", choices=["json", "markdown"], default="json")
+    parser.add_argument(
+        "--runtime-optimizer-format", choices=["json", "markdown"], default="json"
+    )
     parser.add_argument("--runtime-optimizer-out")
     parser.add_argument("--runtime-optimizer-runs-limit", type=int, default=100)
     parser.add_argument("--security-audit", action="store_true")
-    parser.add_argument("--security-audit-format", choices=["json", "markdown"], default="json")
+    parser.add_argument(
+        "--security-audit-format", choices=["json", "markdown"], default="json"
+    )
     parser.add_argument("--security-audit-out")
     parser.add_argument("--support-bundle", action="store_true")
     parser.add_argument("--support-bundle-out")
@@ -135,7 +218,9 @@ def main() -> None:
     parser.add_argument("--prepare-runtime", action="store_true")
     prepare_profile_group = parser.add_mutually_exclusive_group()
     prepare_profile_group.add_argument("--prepare-profile")
-    prepare_profile_group.add_argument("--prepare-recommended-profile", action="store_true")
+    prepare_profile_group.add_argument(
+        "--prepare-recommended-profile", action="store_true"
+    )
     parser.add_argument("--prepare-execute", action="store_true")
     parser.add_argument("--prepare-download-models", action="store_true")
     parser.add_argument("--prepare-confirm", action="store_true")
@@ -164,9 +249,94 @@ def main() -> None:
     parser.add_argument("--smoke-generate", action="store_true")
     parser.add_argument("--smoke-prompt", default=DEFAULT_SMOKE_PROMPT)
     args = parser.parse_args()
+    _validate_assistant_bridge_cli_mode(parser, args)
     _validate_agent_cli_mode(parser, args)
 
     app_config = load_app_config(args.app_config)
+
+    if args.assistant_task is not None or args.assistant_task_file is not None:
+        assistant_execution_started = False
+        try:
+            task = (
+                load_assistant_task(args.assistant_task_file)
+                if args.assistant_task_file is not None
+                else build_assistant_task(
+                    args.assistant_task,
+                    profile=args.assistant_profile or "balanced",
+                    required_capabilities=args.assistant_capability or (),
+                    required_tools=args.assistant_required_tool or (),
+                    risk_class=args.assistant_risk or "read_only",
+                    constraints=args.assistant_constraint or (),
+                    allow_remote=(
+                        True
+                        if args.assistant_allow_remote
+                        else False
+                        if args.assistant_deny_remote
+                        else None
+                    ),
+                    allow_remote_workspace=args.assistant_allow_remote_workspace,
+                    max_premium_calls=args.assistant_max_premium_calls,
+                )
+            )
+            bridge = AssistantBridgeRunner(
+                load_assistant_bridge_config(args.assistant_bridge_config)
+            )
+            external_evidence = (
+                load_verification_evidence(args.assistant_verification)
+                if args.assistant_verification
+                else ()
+            )
+            if not args.assistant_bridge_execute:
+                print(
+                    json.dumps(
+                        bridge.plan(
+                            task,
+                            workspace=args.assistant_workspace,
+                            local_provider_override=args.assistant_local_provider,
+                            external_evidence=external_evidence,
+                            include_diff=args.assistant_include_diff,
+                            capsule_out=args.assistant_capsule_out,
+                        ),
+                        indent=2,
+                    )
+                )
+                return
+            _validate_assistant_bridge_authority(app_config, task)
+            _record_assistant_bridge_started(
+                app_config,
+                task,
+                args.assistant_confirm_receipt or "",
+            )
+            assistant_execution_started = True
+            result = bridge.run(
+                task,
+                workspace=args.assistant_workspace,
+                confirmation=args.assistant_confirm_receipt or "",
+                local_provider_override=args.assistant_local_provider,
+                external_evidence=external_evidence,
+                include_diff=args.assistant_include_diff,
+                capsule_out=args.assistant_capsule_out,
+            )
+            _record_assistant_bridge_control_plane(app_config, task, result)
+        except (AssistantBridgeError, OSError) as exc:
+            if assistant_execution_started:
+                try:
+                    _record_assistant_bridge_failed(app_config, task, exc)
+                except OSError:
+                    pass
+            print(
+                json.dumps(
+                    {"error": "assistant_bridge_error", "message": str(exc)},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        print(json.dumps(result.user_payload(), indent=2))
+        if result.status != "completed":
+            raise SystemExit(2)
+        return
+
     config_path = args.config or app_config.default_moe_config
     config = load_config(config_path)
 
@@ -220,7 +390,11 @@ def main() -> None:
             app_config=app_config,
             app_config_path=args.app_config,
         )
-        rendered = render_doctor_report_markdown(report) if args.doctor_format == "markdown" else json.dumps(report, indent=2)
+        rendered = (
+            render_doctor_report_markdown(report)
+            if args.doctor_format == "markdown"
+            else json.dumps(report, indent=2)
+        )
         if args.doctor_out:
             out = Path(args.doctor_out)
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -237,7 +411,11 @@ def main() -> None:
             app_config=app_config,
             app_config_path=args.app_config,
         )
-        rendered = render_environment_report_markdown(payload) if args.about_format == "markdown" else json.dumps(payload, indent=2)
+        rendered = (
+            render_environment_report_markdown(payload)
+            if args.about_format == "markdown"
+            else json.dumps(payload, indent=2)
+        )
         if args.about_out:
             out = Path(args.about_out)
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -261,7 +439,11 @@ def main() -> None:
                     )
                 )
                 raise SystemExit(2)
-            print(json.dumps(run_log_prune_payload(store.prune(keep=args.runs_keep)), indent=2))
+            print(
+                json.dumps(
+                    run_log_prune_payload(store.prune(keep=args.runs_keep)), indent=2
+                )
+            )
             return
         report = store.read_report(limit=args.runs_limit)
         print(
@@ -356,7 +538,9 @@ def main() -> None:
     if args.list_chats:
         chat_store = _chat_store(app_config)
         if args.chat_query:
-            summaries = chat_store.search_sessions(args.chat_query, limit=args.chats_limit)
+            summaries = chat_store.search_sessions(
+                args.chat_query, limit=args.chats_limit
+            )
         else:
             summaries = chat_store.list_sessions(limit=args.chats_limit)
         print(
@@ -374,18 +558,41 @@ def main() -> None:
         try:
             print(_chat_store(app_config).export_markdown(args.export_chat), end="")
         except KeyError as exc:
-            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"error": "not_found", "message": "Chat session not found."},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise SystemExit(2) from exc
         return
 
     if args.rename_chat:
         if not args.chat_title:
-            print(json.dumps({"error": "bad_request", "message": "--chat-title is required with --rename-chat."}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {
+                        "error": "bad_request",
+                        "message": "--chat-title is required with --rename-chat.",
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         try:
-            session = _chat_store(app_config).rename_session(args.rename_chat, args.chat_title)
+            session = _chat_store(app_config).rename_session(
+                args.rename_chat, args.chat_title
+            )
         except KeyError as exc:
-            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"error": "not_found", "message": "Chat session not found."},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise SystemExit(2) from exc
         print(json.dumps(chat_session_payload(session), indent=2))
         return
@@ -406,20 +613,31 @@ def main() -> None:
         chat_store = _chat_store(app_config)
         session = chat_store.get_session(args.compact_chat)
         if session is None:
-            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"error": "not_found", "message": "Chat session not found."},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         turns = _conversation_turns(session)
         if not turns:
             print(
                 json.dumps(
-                    {"error": "bad_request", "message": "Chat session has no turns to compact."},
+                    {
+                        "error": "bad_request",
+                        "message": "Chat session has no turns to compact.",
+                    },
                     indent=2,
                 ),
                 file=sys.stderr,
             )
             raise SystemExit(2)
         try:
-            compacted = LocalCompactionProvider(config, expert_id=args.compact_expert).compact(
+            compacted = LocalCompactionProvider(
+                config, expert_id=args.compact_expert
+            ).compact(
                 turns=turns,
                 existing_summary=session.summary,
             )
@@ -435,7 +653,10 @@ def main() -> None:
                 },
             )
         except (KeyError, ProviderError, ValueError) as exc:
-            print(json.dumps({"error": "compact_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            print(
+                json.dumps({"error": "compact_error", "message": str(exc)}, indent=2),
+                file=sys.stderr,
+            )
             raise SystemExit(2) from exc
         print(
             json.dumps(
@@ -471,7 +692,13 @@ def main() -> None:
             raise SystemExit(2)
         deleted = _chat_store(app_config).delete_session(args.delete_chat)
         if not deleted:
-            print(json.dumps({"error": "not_found", "message": "Chat session not found."}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"error": "not_found", "message": "Chat session not found."},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         print(json.dumps({"deleted": True, "session_id": args.delete_chat}, indent=2))
         return
@@ -536,7 +763,15 @@ def main() -> None:
             )["recommendation"]
             profile_path = str(recommended.get("profile_path") or "")
             if not profile_path:
-                print(json.dumps({"error": "profile_error", "message": "No recommended runtime profile is available."}, indent=2))
+                print(
+                    json.dumps(
+                        {
+                            "error": "profile_error",
+                            "message": "No recommended runtime profile is available.",
+                        },
+                        indent=2,
+                    )
+                )
                 raise SystemExit(2)
         else:
             profile_path = args.prepare_profile
@@ -550,7 +785,11 @@ def main() -> None:
         payload = setup_run_payload(result)
         payload["profile_path"] = profile_path
         print(json.dumps(payload, indent=2))
-        if not result.ok and result.status not in {"planned", "needs_setup", "confirmation_required"}:
+        if not result.ok and result.status not in {
+            "planned",
+            "needs_setup",
+            "confirmation_required",
+        }:
             raise SystemExit(2)
         return
 
@@ -565,12 +804,25 @@ def main() -> None:
             only_first=args.startup_only_first,
         )
         print(json.dumps(payload, indent=2))
-        if payload["status"] in {"confirmation_required", "error", "manual_required", "needs_setup", "needs_attention"}:
+        if payload["status"] in {
+            "confirmation_required",
+            "error",
+            "manual_required",
+            "needs_setup",
+            "needs_attention",
+        }:
             raise SystemExit(2)
         return
 
     if args.bootstrap:
-        print(json.dumps(runtime_plan_payload(build_runtime_plan(config, app_config.runtime.preferred_backends)), indent=2))
+        print(
+            json.dumps(
+                runtime_plan_payload(
+                    build_runtime_plan(config, app_config.runtime.preferred_backends)
+                ),
+                indent=2,
+            )
+        )
         return
 
     if args.prepare_runtime:
@@ -593,7 +845,9 @@ def main() -> None:
             work_dir=app_config.runtime.work_dir,
         )
         if args.start_models:
-            action = manager.start(confirm=args.models_confirm, only_first=args.models_only_first)
+            action = manager.start(
+                confirm=args.models_confirm, only_first=args.models_only_first
+            )
             print(json.dumps(model_server_action_payload(action), indent=2))
             if not action.ok:
                 raise SystemExit(2)
@@ -657,7 +911,9 @@ def main() -> None:
         return
 
     if args.create_plugin:
-        path = create_plugin_scaffold(args.create_plugin, root=app_config.extensions.plugins_dir)
+        path = create_plugin_scaffold(
+            args.create_plugin, root=app_config.extensions.plugins_dir
+        )
         print(json.dumps({"created": str(path)}, indent=2))
         return
 
@@ -672,7 +928,10 @@ def main() -> None:
                 active_config_path=config_path,
             ).run(args.run_tool, tool_input)
         except (json.JSONDecodeError, ToolExecutionError) as exc:
-            print(json.dumps({"error": "tool_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            print(
+                json.dumps({"error": "tool_error", "message": str(exc)}, indent=2),
+                file=sys.stderr,
+            )
             raise SystemExit(2) from exc
         print(json.dumps(tool_result_payload(result), indent=2))
         return
@@ -709,7 +968,10 @@ def main() -> None:
                 chat_title=args.chat_title,
             )
         except (KeyError, ProviderError) as exc:
-            print(json.dumps({"error": "chat_error", "message": str(exc)}, indent=2), file=sys.stderr)
+            print(
+                json.dumps({"error": "chat_error", "message": str(exc)}, indent=2),
+                file=sys.stderr,
+            )
             raise SystemExit(2) from exc
         _print_chat_payload(payload, json_output=args.json_output)
         return
@@ -737,7 +999,10 @@ def _interactive(
         new_chat=new_chat,
         title=chat_title,
     )
-    print("myMoE interactive shell. Type /help for commands or /exit to quit.", file=sys.stderr)
+    print(
+        "myMoE interactive shell. Type /help for commands or /exit to quit.",
+        file=sys.stderr,
+    )
     print(f"Active chat session: {session_id}", file=sys.stderr)
     while True:
         try:
@@ -749,7 +1014,10 @@ def _interactive(
         if prompt.strip() in {"/exit", "/quit"}:
             return
         if prompt.strip() == "/help":
-            print("Commands: /sessions, /session <id>, /new [title], /summary, /exit", file=sys.stderr)
+            print(
+                "Commands: /sessions, /session <id>, /new [title], /summary, /exit",
+                file=sys.stderr,
+            )
             continue
         if prompt.strip() == "/sessions":
             _print_chat_summaries(chat_store)
@@ -987,9 +1255,10 @@ def _agent_permission_policy(app_config: object) -> AgentPermissionPolicy:
     permissions = getattr(app_config, "permissions", None)
     if not bool(getattr(permissions, "allow_process_execution", False)):
         denied.add("process_execution")
-    if str(
-        getattr(permissions, "external_communication_policy", "draft_only")
-    ) != "approval_required":
+    if (
+        str(getattr(permissions, "external_communication_policy", "draft_only"))
+        != "approval_required"
+    ):
         denied.update(("communication", "write_external"))
     if (
         str(getattr(permissions, "default_write_policy", "approval_required"))
@@ -1042,6 +1311,97 @@ def _agent_approval_handler(
     return decide
 
 
+def _validate_assistant_bridge_cli_mode(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    has_task = args.assistant_task is not None or args.assistant_task_file is not None
+    construction_options = (
+        "assistant_profile",
+        "assistant_capability",
+        "assistant_required_tool",
+        "assistant_risk",
+        "assistant_constraint",
+        "assistant_max_premium_calls",
+    )
+    bridge_options_active = (
+        any(getattr(args, name) is not None for name in construction_options)
+        or any(
+            bool(getattr(args, name))
+            for name in (
+                "assistant_allow_remote",
+                "assistant_allow_remote_workspace",
+                "assistant_deny_remote",
+                "assistant_verification",
+                "assistant_include_diff",
+                "assistant_capsule_out",
+                "assistant_bridge_execute",
+                "assistant_confirm_receipt",
+                "assistant_local_provider",
+            )
+        )
+        or any(
+            getattr(args, name) != parser.get_default(name)
+            for name in (
+                "assistant_bridge_config",
+                "assistant_workspace",
+            )
+        )
+    )
+    if not has_task and bridge_options_active:
+        parser.error(
+            "--assistant-* options require --assistant-task or --assistant-task-file"
+        )
+    if not has_task:
+        return
+
+    if args.assistant_task_file is not None and (
+        any(getattr(args, name) is not None for name in construction_options)
+        or args.assistant_allow_remote
+        or args.assistant_allow_remote_workspace
+        or args.assistant_deny_remote
+    ):
+        parser.error(
+            "Assistant task construction options cannot override --assistant-task-file"
+        )
+    if args.assistant_bridge_execute and not args.assistant_confirm_receipt:
+        parser.error("--assistant-bridge-execute requires --assistant-confirm-receipt")
+    if args.assistant_confirm_receipt and not args.assistant_bridge_execute:
+        parser.error("--assistant-confirm-receipt requires --assistant-bridge-execute")
+    assistant_options = {
+        "app_config",
+        "assistant_allow_remote",
+        "assistant_allow_remote_workspace",
+        "assistant_bridge_config",
+        "assistant_bridge_execute",
+        "assistant_capability",
+        "assistant_capsule_out",
+        "assistant_confirm_receipt",
+        "assistant_constraint",
+        "assistant_deny_remote",
+        "assistant_include_diff",
+        "assistant_local_provider",
+        "assistant_max_premium_calls",
+        "assistant_profile",
+        "assistant_required_tool",
+        "assistant_risk",
+        "assistant_task",
+        "assistant_task_file",
+        "assistant_verification",
+        "assistant_workspace",
+        "json_output",
+    }
+    active_conflicts = []
+    for name, value in vars(args).items():
+        if name in assistant_options:
+            continue
+        if value != parser.get_default(name):
+            active_conflicts.append(name)
+    if active_conflicts:
+        rendered = ", ".join(f"--{name.replace('_', '-')}" for name in active_conflicts)
+        parser.error(f"Assistant bridge mode cannot be combined with {rendered}")
+
+
 def _validate_agent_cli_mode(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -1083,10 +1443,14 @@ def _validate_agent_cli_mode(
             file=sys.stderr,
         )
 
-    if args.agent_correlation_id is not None and re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}",
-        args.agent_correlation_id,
-    ) is None:
+    if (
+        args.agent_correlation_id is not None
+        and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}",
+            args.agent_correlation_id,
+        )
+        is None
+    ):
         parser.error(
             "--agent-correlation-id must contain 1-96 safe identifier characters"
         )
@@ -1175,7 +1539,9 @@ def _response_metadata(response: object) -> dict[str, object]:
         "selected": [item.__dict__ for item in response.route.selected],
         "fallback_order": list(response.route.fallback_order),
         "errors": list(response.errors),
-        "disagreement": asdict(response.disagreement) if response.disagreement else None,
+        "disagreement": asdict(response.disagreement)
+        if response.disagreement
+        else None,
     }
 
 
@@ -1183,9 +1549,13 @@ def _chat_metadata(payload: dict[str, object]) -> dict[str, object]:
     return {
         "session_id": payload.get("session_id", ""),
         "correlation_id": payload.get("correlation_id", ""),
-        "selected": payload.get("route", {}).get("selected", []) if isinstance(payload.get("route"), dict) else [],
+        "selected": payload.get("route", {}).get("selected", [])
+        if isinstance(payload.get("route"), dict)
+        else [],
         "fallback_order": (
-            payload.get("route", {}).get("fallback_order", []) if isinstance(payload.get("route"), dict) else []
+            payload.get("route", {}).get("fallback_order", [])
+            if isinstance(payload.get("route"), dict)
+            else []
         ),
         "errors": payload.get("errors", []),
         "disagreement": payload.get("disagreement"),
@@ -1203,12 +1573,145 @@ def _registry(app_config: object) -> object:
     )
 
 
+def _record_assistant_bridge_control_plane(
+    app_config: object,
+    task: AssistantTaskEnvelope,
+    result: BridgeRunResult,
+) -> None:
+    AuditLogStore(_audit_log_path(app_config)).record(
+        "assistant_bridge.execute",
+        result.status,
+        risk_class=task.capability_demand.risk_class,
+        subject=task.task_id,
+        metadata={
+            "task_fingerprint": task.task_fingerprint,
+            "receipt_id": result.receipt.receipt_id,
+            "route": result.receipt.route,
+            "code": result.code,
+            "final_provider": result.final_provider,
+            "premium_calls_used": result.premium_calls_used,
+            "verification_count": len(result.verification),
+            "process_execution_policy": (
+                app_config.permissions.assistant_bridge_execution_policy
+            ),
+        },
+    )
+    RunLogStore(_run_log_path(app_config)).record_generation(
+        mode="assistant_bridge",
+        prompt=task.objective,
+        response_payload={
+            "correlation_id": task.task_id,
+            "route": {
+                "selected": [
+                    {
+                        "expert_id": result.final_provider or "none",
+                    }
+                ],
+                "fallback_order": [],
+            },
+            "results": [
+                {
+                    "model": result.final_provider or "none",
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                }
+            ],
+            "errors": [] if result.status == "completed" else [result.code],
+        },
+        context_payload={
+            "token_estimate": None,
+            "budget_tokens": None,
+            "compaction_needed": False,
+            "dropped_turns": 0,
+            "sections": {},
+            "memory_ids": [],
+        },
+    )
+
+
+def _record_assistant_bridge_started(
+    app_config: object,
+    task: AssistantTaskEnvelope,
+    confirmation: str,
+) -> None:
+    AuditLogStore(_audit_log_path(app_config)).record(
+        "assistant_bridge.execute",
+        "started",
+        risk_class=task.capability_demand.risk_class,
+        subject=task.task_id,
+        metadata={
+            "task_fingerprint": task.task_fingerprint,
+            "confirmation_sha256": hashlib.sha256(
+                confirmation.encode("utf-8")
+            ).hexdigest(),
+            "content_logged": False,
+        },
+    )
+
+
+def _record_assistant_bridge_failed(
+    app_config: object,
+    task: AssistantTaskEnvelope,
+    error: Exception,
+) -> None:
+    message_sha256 = hashlib.sha256(str(error).encode("utf-8")).hexdigest()
+    AuditLogStore(_audit_log_path(app_config)).record(
+        "assistant_bridge.execute",
+        "failed",
+        risk_class=task.capability_demand.risk_class,
+        subject=task.task_id,
+        metadata={
+            "task_fingerprint": task.task_fingerprint,
+            "error_type": type(error).__name__,
+            "error_message_sha256": message_sha256,
+            "content_logged": False,
+        },
+    )
+
+
+def _validate_assistant_bridge_authority(
+    app_config: object,
+    task: AssistantTaskEnvelope,
+) -> None:
+    execution_policy = (
+        str(
+            getattr(
+                app_config.permissions,
+                "assistant_bridge_execution_policy",
+                "disabled",
+            )
+        )
+        .strip()
+        .lower()
+    )
+    if execution_policy != "receipt_confirmation":
+        raise AssistantBridgeError(
+            "Application policy disables Assistant Bridge process execution."
+        )
+    if task.capability_demand.risk_class == "write_local":
+        policy = str(app_config.permissions.default_write_policy).strip().lower()
+        if policy in {"deny", "denied", "disabled", "forbidden"}:
+            raise AssistantBridgeError("Application policy forbids local writes.")
+    if task.capability_demand.risk_class in {
+        "write_external",
+        "destructive",
+        "privileged",
+    }:
+        raise AssistantBridgeError(
+            "Assistant Bridge cannot grant external, destructive, or privileged authority."
+        )
+
+
 def _cron_state_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/cron-state.json"
 
 
 def _run_log_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/runs.jsonl"
+
+
+def _audit_log_path(app_config: object) -> str:
+    return f"{app_config.runtime.work_dir.rstrip('/')}/audit.jsonl"
 
 
 def _chat_store(app_config: object) -> FileChatStore:

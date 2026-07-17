@@ -6,6 +6,7 @@ __all__ = [
     "agent_tool_schemas",
     "agent_tools",
     "agent_types",
+    "assistant_bridge",
     "config",
     "router",
     "providers",

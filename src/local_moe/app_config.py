@@ -41,6 +41,7 @@ class ExtensionPaths:
 class PermissionPolicy:
     default_write_policy: str
     allow_process_execution: bool
+    assistant_bridge_execution_policy: str
     connector_install_policy: str
     external_communication_policy: str
 
@@ -67,16 +68,30 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
     runtime_raw = raw.get("runtime", {})
     extensions_raw = raw.get("extensions", {})
     permissions_raw = raw.get("permissions", {})
+    assistant_bridge_execution_policy = str(
+        permissions_raw.get(
+            "assistant_bridge_execution_policy",
+            "disabled",
+        )
+    )
+    if assistant_bridge_execution_policy not in {"disabled", "receipt_confirmation"}:
+        raise ValueError(
+            "permissions.assistant_bridge_execution_policy must be disabled or receipt_confirmation."
+        )
     return AppConfig(
         name=str(raw.get("name", "myMoE")),
         mode=str(raw.get("mode", "local_model_required")),
-        default_moe_config=str(raw.get("default_moe_config", "configs/moe.live.general-mlx.example.json")),
+        default_moe_config=str(
+            raw.get("default_moe_config", "configs/moe.live.general-mlx.example.json")
+        ),
         language=LanguagePolicy(
             mode=str(language_raw.get("mode", "auto")),
             respond_in_user_language=bool(
                 language_raw.get("respond_in_user_language", True)
             ),
-            supported=tuple(str(item) for item in language_raw.get("supported", ["auto", "en"])),
+            supported=tuple(
+                str(item) for item in language_raw.get("supported", ["auto", "en"])
+            ),
         ),
         runtime=RuntimePolicy(
             auto_configure=bool(runtime_raw.get("auto_configure", True)),
@@ -84,10 +99,16 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
                 str(key): str(value)
                 for key, value in runtime_raw.get("preferred_backends", {}).items()
             },
-            model_cache_dir=str(runtime_raw.get("model_cache_dir", "~/.cache/huggingface")),
+            model_cache_dir=str(
+                runtime_raw.get("model_cache_dir", "~/.cache/huggingface")
+            ),
             work_dir=str(runtime_raw.get("work_dir", "work/runtime")),
-            context_policy_config=str(runtime_raw.get("context_policy_config", "configs/context-policy.json")),
-            context_policy_profile=str(runtime_raw.get("context_policy_profile", "default")),
+            context_policy_config=str(
+                runtime_raw.get("context_policy_config", "configs/context-policy.json")
+            ),
+            context_policy_profile=str(
+                runtime_raw.get("context_policy_profile", "default")
+            ),
             profile_dir=str(runtime_raw.get("profile_dir", "configs")),
             evaluation_dir=str(runtime_raw.get("evaluation_dir", "experiments")),
             cron_auto_run=bool(runtime_raw.get("cron_auto_run", False)),
@@ -102,10 +123,19 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             cron_config=str(extensions_raw.get("cron_config", "configs/cron.json")),
         ),
         permissions=PermissionPolicy(
-            default_write_policy=str(permissions_raw.get("default_write_policy", "approval_required")),
-            allow_process_execution=bool(permissions_raw.get("allow_process_execution", False)),
-            connector_install_policy=str(permissions_raw.get("connector_install_policy", "approval_required")),
-            external_communication_policy=str(permissions_raw.get("external_communication_policy", "draft_only")),
+            default_write_policy=str(
+                permissions_raw.get("default_write_policy", "approval_required")
+            ),
+            allow_process_execution=bool(
+                permissions_raw.get("allow_process_execution", False)
+            ),
+            assistant_bridge_execution_policy=assistant_bridge_execution_policy,
+            connector_install_policy=str(
+                permissions_raw.get("connector_install_policy", "approval_required")
+            ),
+            external_communication_policy=str(
+                permissions_raw.get("external_communication_policy", "draft_only")
+            ),
         ),
     )
 

@@ -35,6 +35,7 @@
   "permissions": {
     "default_write_policy": "approval_required",
     "allow_process_execution": false,
+    "assistant_bridge_execution_policy": "receipt_confirmation",
     "connector_install_policy": "approval_required",
     "external_communication_policy": "draft_only"
   }

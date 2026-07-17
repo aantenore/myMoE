@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "checks": [
+    {
+      "id": "focused-tests",
+      "verifier": "test-runner",
+      "kind": "external",
+      "passed": false,
+      "code": "tests-failed",
+      "artifact_sha256": "606f259dd1bfd296308c93725720431d4db3f77f6b48a8257eee765338fecfb2",
+      "observed_chars": 12,
+      "evidence_ref": "artifact://focused-tests",
+      "task_fingerprint": "ad0d47c7c319c66a5fa8029658ae32464f3cba32388574f9bd5dc00d9a29b028",
+      "workspace_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "verifier_spec_sha256": "bbd7d15a562a8eb4ffc6b52cf6f89855589c5047e89d5d22c23645e912ff1e30"
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "schema_version": "1.0",
+  "providers": {
+    "local": {
+      "id": "codex-oss-local",
+      "mode": "local",
+      "adapter": "codex_cli",
+      "executable": "codex",
+      "execution_scope": "device_only",
+      "local_provider": "ollama",
+      "codex_profile": "",
+      "model": "qwen3:4b",
+      "capabilities": [
+        "analysis",
+        "code",
+        "filesystem",
+        "shell",
+        "tests"
+      ],
+      "tools": [
+        "filesystem",
+        "shell"
+      ],
+      "max_risk": "write_local",
+      "sandbox": "workspace-write",
+      "workspace_access": "read_write",
+      "network_access": false,
+      "timeout_seconds": 900,
+      "launcher_args": [],
+      "environment_allowlist": [],
+      "extra_args": []
+    },
+    "premium": {
+      "id": "codex-premium",
+      "mode": "premium",
+      "adapter": "codex_cli",
+      "executable": "codex",
+      "execution_scope": "remote",
+      "codex_profile": "",
+      "model": "gpt-5.6-sol",
+      "capabilities": [
+        "analysis",
+        "code",
+        "complex_reasoning",
+        "filesystem",
+        "large_context",
+        "multimodal",
+        "shell",
+        "tests",
+        "web"
+      ],
+      "tools": [
+        "filesystem",
+        "shell",
+        "web"
+      ],
+      "max_risk": "write_local",
+      "sandbox": "workspace-write",
+      "workspace_access": "read_write",
+      "network_access": true,
+      "timeout_seconds": 900,
+      "launcher_args": [],
+      "environment_allowlist": [],
+      "extra_args": []
+    }
+  },
+  "profiles": {
+    "economy": {
+      "initial_route": "local",
+      "remote_allowed": true,
+      "explicit_remote_opt_in": false,
+      "max_premium_calls": 1
+    },
+    "balanced": {
+      "initial_route": "local_then_verify",
+      "remote_allowed": true,
+      "explicit_remote_opt_in": false,
+      "max_premium_calls": 1
+    },
+    "quality": {
+      "initial_route": "premium",
+      "remote_allowed": true,
+      "explicit_remote_opt_in": false,
+      "max_premium_calls": 1
+    },
+    "privacy": {
+      "initial_route": "local_then_verify",
+      "remote_allowed": false,
+      "explicit_remote_opt_in": true,
+      "max_premium_calls": 1
+    },
+    "offline": {
+      "initial_route": "local",
+      "remote_allowed": false,
+      "explicit_remote_opt_in": false,
+      "max_premium_calls": 0
+    }
+  },
+  "verification": {
+    "output_checks": [
+      {
+        "id": "assistant-output-nonempty",
+        "type": "nonempty",
+        "description": "The assistant produced a final result."
+      },
+      {
+        "id": "assistant-output-honest",
+        "type": "excludes",
+        "description": "Known failure language cannot be mistaken for completion.",
+        "values": [
+          "I could not complete",
+          "I couldn't complete",
+          "unable to complete",
+          "failed to complete",
+          "tests are failing",
+          "verification failed"
+        ]
+      }
+    ],
+    "command_verifiers": [
+      {
+        "id": "git-diff-contract",
+        "argv": ["git", "diff", "--check", "HEAD", "--", "."],
+        "timeout_seconds": 60,
+        "required_for_capabilities": ["code", "tests"],
+        "required_for_tools": ["filesystem", "shell"],
+        "required_for_risks": ["write_local"]
+      }
+    ],
+    "external_verifiers": [
+      {
+        "id": "focused-tests",
+        "verifier": "test-runner",
+        "spec_sha256": "bbd7d15a562a8eb4ffc6b52cf6f89855589c5047e89d5d22c23645e912ff1e30"
+      }
+    ],
+    "independent_required_for": {
+      "capabilities": ["code", "tests"],
+      "tools": ["filesystem", "shell"],
+      "risks": ["write_local"]
+    }
+  },
+  "capsule": {
+    "max_chars": 8000,
+    "max_objective_chars": 3000,
+    "max_constraint_chars": 1000,
+    "max_diff_chars": 2500
+  },
+  "state": {
+    "budget_ledger_path": "work/runtime/assistant-premium-budget.json"
+  }
+}

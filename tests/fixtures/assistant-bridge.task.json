@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "task_id": "fixture-safe-refactor",
+  "objective": "Refactor the parser and run its focused tests.",
+  "profile": "balanced",
+  "capability_demand": {
+    "required": ["code", "tests"],
+    "tools": ["filesystem", "shell"],
+    "risk_class": "write_local"
+  },
+  "constraints": [
+    "Keep the public API backward compatible.",
+    "Do not skip the focused tests."
+  ],
+  "allow_remote": true,
+  "allow_remote_workspace": true,
+  "budget": {
+    "max_premium_calls": 1
+  }
+}
