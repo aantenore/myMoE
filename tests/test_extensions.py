@@ -142,7 +142,7 @@ class ExtensionTests(unittest.TestCase):
             except OSError:
                 return
 
-            with self.assertRaisesRegex(ExtensionError, "already exists"):
+            with self.assertRaisesRegex(ExtensionError, "escapes the configured root|already exists"):
                 create_plugin_scaffold("sample-plugin", root=root)
 
             self.assertEqual(list(outside.iterdir()), [])

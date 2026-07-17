@@ -1792,7 +1792,8 @@ def _send_download(
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Content-Disposition", _download_disposition(filename))
+    safe_filename = filename.replace("\r", "_").replace("\n", "_")
+    handler.send_header("Content-Disposition", _download_disposition(safe_filename))
     handler.end_headers()
     handler.wfile.write(body)
 

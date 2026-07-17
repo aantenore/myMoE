@@ -282,13 +282,18 @@ def _publish_plugin_scaffold(
 ) -> Path:
     """Build in an unguessable staging directory, then publish with one rename."""
 
-    root_path = Path(root)
-    root_path.mkdir(parents=True, exist_ok=True)
-    root_path = root_path.resolve(strict=True)
+    configured_root = Path(root)
+    configured_root.mkdir(parents=True, exist_ok=True)
+    root_path_text = os.path.realpath(os.fspath(configured_root))
+    root_path = Path(root_path_text)
     if not root_path.is_dir():
         raise ExtensionError(f"Plugin root is not a directory: {root}")
 
-    plugin_dir = root_path / plugin_id
+    plugin_path_text = os.path.realpath(os.path.join(root_path_text, plugin_id))
+    root_prefix = root_path_text.rstrip(os.sep) + os.sep
+    if not plugin_path_text.startswith(root_prefix):
+        raise ExtensionError(f"Plugin path escapes the configured root: {plugin_id}")
+    plugin_dir = Path(plugin_path_text)
     if plugin_dir.exists() or plugin_dir.is_symlink():
         raise ExtensionError(f"Plugin already exists: {plugin_id}")
 
