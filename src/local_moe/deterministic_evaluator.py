@@ -19,6 +19,17 @@ SUPPORTED_CHECKS = {
     "min_words",
     "nonempty",
 }
+_COMMON_CHECK_KEYS = {"description", "id", "type"}
+_CHECK_KEYS = {
+    "contains_all": _COMMON_CHECK_KEYS | {"values"},
+    "contains_all_groups": _COMMON_CHECK_KEYS | {"groups"},
+    "contains_any": _COMMON_CHECK_KEYS | {"values"},
+    "excludes": _COMMON_CHECK_KEYS | {"values"},
+    "matches_regex": _COMMON_CHECK_KEYS | {"pattern"},
+    "max_words": _COMMON_CHECK_KEYS | {"value"},
+    "min_words": _COMMON_CHECK_KEYS | {"value"},
+    "nonempty": _COMMON_CHECK_KEYS,
+}
 _WORD_RE = re.compile(r"\w+", flags=re.UNICODE)
 
 
@@ -34,6 +45,17 @@ class BenchmarkCase:
     complexity: str
     task_checks: tuple[dict[str, Any], ...]
     quality_rubric: tuple[dict[str, Any], ...]
+
+
+def validate_checks(
+    raw_checks: object,
+    *,
+    context: str,
+    weighted: bool = False,
+) -> tuple[dict[str, Any], ...]:
+    """Validate deterministic checks for reuse by runtime policy surfaces."""
+
+    return _validate_checks(raw_checks, context, weighted=weighted)
 
 
 def load_benchmark_cases(path: str | Path) -> list[BenchmarkCase]:
@@ -55,8 +77,16 @@ def load_benchmark_cases(path: str | Path) -> list[BenchmarkCase]:
         if case_id in seen:
             raise QualityBenchmarkError(f"Duplicate benchmark case id: {case_id}.")
         seen.add(case_id)
-        task_checks = _validate_checks(raw.get("task_checks", []), case_id, weighted=False)
-        quality_rubric = _validate_checks(raw.get("quality_rubric", []), case_id, weighted=True)
+        task_checks = validate_checks(
+            raw.get("task_checks", []),
+            context=case_id,
+            weighted=False,
+        )
+        quality_rubric = validate_checks(
+            raw.get("quality_rubric", []),
+            context=case_id,
+            weighted=True,
+        )
         if not task_checks:
             raise QualityBenchmarkError(f"Benchmark case {case_id} requires task_checks.")
         if not quality_rubric:
@@ -186,6 +216,14 @@ def _validate_checks(
             raise QualityBenchmarkError(
                 f"Case {case_id} check {check_id} has unsupported type {check_type!r}."
             )
+        allowed = set(_CHECK_KEYS[check_type])
+        if weighted:
+            allowed.add("weight")
+        unknown = sorted(str(key) for key in check if key not in allowed)
+        if unknown:
+            raise QualityBenchmarkError(
+                f"Case {case_id} check {check_id} has unknown keys: {', '.join(unknown)}."
+            )
         ids.add(check_id)
         _validate_check_shape(check, case_id)
         if weighted:
@@ -202,17 +240,21 @@ def _validate_checks(
 def _validate_check_shape(check: dict[str, Any], case_id: str) -> None:
     check_type = str(check["type"])
     if check_type in {"min_words", "max_words"}:
-        try:
-            value = int(check["value"])
-        except (KeyError, TypeError, ValueError) as exc:
+        raw_value = check.get("value")
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
             raise QualityBenchmarkError(
                 f"Case {case_id} check {check['id']} requires an integer value."
-            ) from exc
+            )
+        value = raw_value
         if value < 0:
             raise QualityBenchmarkError(f"Case {case_id} check {check['id']} value must be >= 0.")
     elif check_type in {"contains_any", "contains_all", "excludes"}:
         values = check.get("values")
-        if not isinstance(values, list) or not values or not all(str(item) for item in values):
+        if (
+            not isinstance(values, list)
+            or not values
+            or not all(isinstance(item, str) and item for item in values)
+        ):
             raise QualityBenchmarkError(
                 f"Case {case_id} check {check['id']} requires non-empty values."
             )
@@ -221,16 +263,26 @@ def _validate_check_shape(check: dict[str, Any], case_id: str) -> None:
         valid = (
             isinstance(groups, list)
             and bool(groups)
-            and all(isinstance(group, list) and group for group in groups)
+            and all(
+                isinstance(group, list)
+                and bool(group)
+                and all(isinstance(item, str) and item for item in group)
+                for group in groups
+            )
         )
         if not valid:
             raise QualityBenchmarkError(
                 f"Case {case_id} check {check['id']} requires non-empty groups."
             )
     elif check_type == "matches_regex":
+        pattern = check.get("pattern")
+        if not isinstance(pattern, str) or not pattern or len(pattern) > 4096:
+            raise QualityBenchmarkError(
+                f"Case {case_id} check {check['id']} requires a non-empty pattern up to 4096 characters."
+            )
         try:
-            re.compile(str(check["pattern"]))
-        except (KeyError, re.error) as exc:
+            re.compile(pattern)
+        except re.error as exc:
             raise QualityBenchmarkError(
                 f"Case {case_id} check {check['id']} requires a valid pattern."
             ) from exc

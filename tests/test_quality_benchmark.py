@@ -84,6 +84,39 @@ class QualityBenchmarkTests(unittest.TestCase):
             with self.assertRaisesRegex(QualityBenchmarkError, "Duplicate"):
                 load_benchmark_cases(path)
 
+    def test_rejects_vacuous_and_misshaped_deterministic_checks(self) -> None:
+        invalid_checks = (
+            {"id": "empty", "type": "contains_all", "values": []},
+            {"id": "empty", "type": "contains_all_groups", "groups": []},
+            {"id": "typed", "type": "min_words", "value": True},
+            {"id": "unknown", "type": "nonempty", "unexpected": "value"},
+        )
+
+        for check in invalid_checks:
+            with self.subTest(check=check), TemporaryDirectory() as tmp:
+                path = Path(tmp) / "cases.jsonl"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "id": "invalid",
+                            "prompt": "Prompt",
+                            "task_checks": [check],
+                            "quality_rubric": [
+                                {
+                                    "id": "quality",
+                                    "type": "nonempty",
+                                    "weight": 1.0,
+                                }
+                            ],
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                with self.assertRaises(QualityBenchmarkError):
+                    load_benchmark_cases(path)
+
     def test_builds_isolated_single_and_moe_variants(self) -> None:
         source = load_config("tests/fixtures/moe.synthetic.json")
 
