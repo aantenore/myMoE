@@ -302,6 +302,49 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), before_data)
             self.assertFalse(transaction.exists())
 
+    def test_fault_after_replace_or_unlink_is_recoverable_from_mutating_state(
+        self,
+    ) -> None:
+        for delete in (False, True):
+            with self.subTest(delete=delete), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                _initialize_repo(root)
+                policy = WorkspaceScopePolicy()
+                snapshot = snapshot_workspace(root, policy)
+                transaction_id = uuid4().hex
+                state = Path(tmp) / "state"
+                with materialize_workspace(snapshot, policy) as materialized:
+                    candidate_path = materialized.root / "tracked.txt"
+                    if delete:
+                        candidate_path.unlink()
+                    else:
+                        candidate_path.write_text("candidate\n", encoding="utf-8")
+                    candidate = snapshot_materialized(materialized.root, policy)
+                    changes = build_changeset(materialized.baseline_files, candidate)
+                    with self.assertRaises(RuntimeError):
+                        apply_changeset(
+                            source_snapshot=snapshot,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=state,
+                            transaction_id=transaction_id,
+                            _fault_after_mutation=0,
+                        )
+
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                )
+
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "initial\n",
+                )
+
 
 def _initialize_repo(root: Path) -> None:
     _git(root, "init", "-q")

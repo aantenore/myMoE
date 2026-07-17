@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -18,6 +19,14 @@ from uuid import uuid4
 
 class WorkspaceSecurityError(ValueError):
     """Raised when a workspace cannot be snapshotted or changed safely."""
+
+
+class _SimulatedTransactionCrash(RuntimeError):
+    pass
+
+
+_SAFE_TRANSACTION_ID = re.compile(r"^[a-f0-9]{32,64}$")
+_SAFE_BACKUP_NAME = re.compile(r"^[0-9]{8}\.bin$")
 
 
 @dataclass(frozen=True)
@@ -208,7 +217,9 @@ def apply_changeset(
     state_dir: str | Path,
     transaction_id: str,
     lock_ttl_seconds: float = 120.0,
+    _fault_after_mutation: int | None = None,
 ) -> WorkspaceSnapshot:
+    _validate_transaction_id(transaction_id)
     source = Path(source_snapshot.root)
     state = Path(state_dir).expanduser().resolve()
     state.mkdir(parents=True, exist_ok=True)
@@ -252,16 +263,23 @@ def apply_changeset(
             if target.exists():
                 backup = backup_dir / f"{index:08d}.bin"
                 data = target.read_bytes()
-                backup.write_bytes(data)
+                with backup.open("wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
                 records[index]["backup"] = backup.name
                 records[index]["backup_sha256"] = _sha256_bytes(data)
             records[index]["status"] = "backed_up"
+            _write_journal(journal, journal_payload)
+            records[index]["status"] = "mutating"
             _write_journal(journal, journal_payload)
             if change.after is None:
                 target.unlink()
             else:
                 candidate = Path(candidate_root) / change.path
                 _atomic_copy(candidate, target, change.after.mode)
+            if _fault_after_mutation == index:
+                raise _SimulatedTransactionCrash("simulated crash after mutation")
             records[index]["status"] = "applied"
             _write_journal(journal, journal_payload)
         result = snapshot_workspace(source, policy)
@@ -274,6 +292,8 @@ def apply_changeset(
         _write_journal(journal, journal_payload)
         shutil.rmtree(transaction)
         return result
+    except _SimulatedTransactionCrash:
+        raise
     except Exception as original:
         try:
             _rollback_from_journal(source, journal_payload, backup_dir)
@@ -298,6 +318,7 @@ def recover_workspace_transaction(
     source_root: str | Path,
     lock_ttl_seconds: float = 120.0,
 ) -> None:
+    _validate_transaction_id(transaction_id)
     state = Path(state_dir).expanduser().resolve()
     source = Path(source_root).expanduser().resolve()
     transaction = state / f"transaction-{transaction_id}"
@@ -308,6 +329,7 @@ def recover_workspace_transaction(
     _acquire_transaction_lock(lock, lock_ttl_seconds)
     try:
         payload = json.loads(journal.read_text(encoding="utf-8"))
+        _validate_journal(payload, transaction_id)
         if payload.get("source_root_sha256") != _sha256_text(str(source)):
             raise WorkspaceSecurityError(
                 "Workspace recovery journal targets another root."
@@ -503,24 +525,37 @@ def _rollback_from_journal(
     if not isinstance(raw_changes, list):
         raise WorkspaceSecurityError("Workspace recovery journal is malformed.")
     for raw in reversed(raw_changes):
-        if not isinstance(raw, dict) or raw.get("status") != "applied":
+        if not isinstance(raw, dict):
+            raise WorkspaceSecurityError("Workspace recovery record is malformed.")
+        status_value = raw.get("status")
+        if status_value in {"pending", "rolled_back"}:
             continue
+        if status_value not in {"backed_up", "mutating", "applied"}:
+            raise WorkspaceSecurityError("Workspace recovery status is invalid.")
         change = _change_from_payload(raw)
         target = root / change.path
-        _assert_current_entry(target, change.after)
+        if _entry_matches(target, change.before):
+            raw["status"] = "rolled_back"
+            continue
+        if not _entry_matches(target, change.after):
+            raise WorkspaceSecurityError(
+                "Workspace recovery found a value matching neither before nor after."
+            )
         backup_name = raw.get("backup")
         if backup_name is None:
             target.unlink(missing_ok=True)
-        elif isinstance(backup_name, str) and change.before is not None:
+        elif (
+            isinstance(backup_name, str)
+            and _SAFE_BACKUP_NAME.fullmatch(backup_name)
+            and change.before is not None
+        ):
             backup = backup_dir / backup_name
             data = backup.read_bytes()
             if _sha256_bytes(data) != raw.get("backup_sha256"):
                 raise WorkspaceSecurityError(
                     "Workspace recovery backup digest mismatch."
                 )
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            target.chmod(change.before.mode)
+            _atomic_write_bytes(data, target, change.before.mode)
         else:
             raise WorkspaceSecurityError("Workspace recovery backup is malformed.")
         raw["status"] = "rolled_back"
@@ -683,6 +718,49 @@ def _pid_is_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _entry_matches(path: Path, expected: WorkspaceFile | None) -> bool:
+    try:
+        _assert_current_entry(path, expected)
+    except (OSError, WorkspaceSecurityError):
+        return False
+    return True
+
+
+def _validate_transaction_id(value: str) -> None:
+    if _SAFE_TRANSACTION_ID.fullmatch(value) is None:
+        raise WorkspaceSecurityError("Workspace transaction_id is invalid.")
+
+
+def _validate_journal(payload: object, transaction_id: str) -> None:
+    if not isinstance(payload, dict):
+        raise WorkspaceSecurityError("Workspace recovery journal must be an object.")
+    if payload.get("schema_version") != "1.0":
+        raise WorkspaceSecurityError("Workspace recovery schema is unsupported.")
+    if payload.get("transaction_id") != transaction_id:
+        raise WorkspaceSecurityError("Workspace recovery transaction id mismatch.")
+    if payload.get("status") not in {
+        "prepared",
+        "applying",
+        "recovery_required",
+    }:
+        raise WorkspaceSecurityError("Workspace recovery journal status is invalid.")
+
+
+def _atomic_write_bytes(data: bytes, target: Path, mode: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-restore-", dir=target.parent)
+    temp = Path(raw_temp)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp.chmod(mode)
+        os.replace(temp, target)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _hash_file(path: Path) -> str:
