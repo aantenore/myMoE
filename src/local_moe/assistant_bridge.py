@@ -2053,7 +2053,7 @@ def build_codex_command_plan(
         "local_provider": selected_local,
         "environment_keys": list(provider.environment_allowlist),
         "environment_sha256": executable_identity.resolution_environment.sha256,
-        "executable": executable_identity.payload(),
+        "executable": executable_identity.binding_payload(),
         "runtime": runtime,
         "runtime_policy": selected_runtime_policy.payload(),
         "launcher_artifact_sha256": list(launcher_artifacts),
@@ -4111,7 +4111,7 @@ def _build_verifier_plan(
     payload = {
         "spec_sha256": spec.spec_sha256,
         "argv": semantic_argv,
-        "executable": executable.payload(),
+        "executable": executable.binding_payload(),
         "environment_sha256": environment_sha256,
         "launcher_artifact_sha256": list(artifacts),
         "runtime_capabilities": runtime_capabilities().payload(),
@@ -4546,27 +4546,7 @@ def _launcher_artifact_digests(
 
 
 def _public_executable_payload(identity: ExecutableIdentity) -> dict[str, object]:
-    version = identity.version
-    return {
-        "requested_sha256": _sha256_text(identity.requested),
-        "resolved_path_sha256": _sha256_text(identity.resolved_path),
-        "binary_sha256": identity.sha256,
-        "size_bytes": identity.size_bytes,
-        "mtime_ns": identity.mtime_ns,
-        "resolution_environment": identity.resolution_environment.payload(),
-        "version": (
-            None
-            if version is None
-            else {
-                "args_sha256": _sha256_text(_canonical_json(list(version.args))),
-                "status": version.status,
-                "returncode": version.returncode,
-                "output_sha256": version.output_sha256,
-                "output_bytes": version.output_bytes,
-                "truncated": version.truncated,
-            }
-        ),
-    }
+    return dict(identity.payload())
 
 
 def _normalize_ephemeral_paths(

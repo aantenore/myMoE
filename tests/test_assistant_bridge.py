@@ -254,6 +254,44 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertNotIn(secret, rendered)
         self.assertIn(plan.executable_identity.sha256, rendered)
 
+    def test_command_plan_binds_private_executable_identity(self) -> None:
+        environment = assistant_bridge_module._sanitized_environment(
+            self.config.local.environment_allowlist
+        )
+        identity = assistant_bridge_module.resolve_executable(
+            self.config.local.executable,
+            env=environment,
+        )
+        alternate = replace(identity, requested="alternate-request-name")
+
+        with patch.object(
+            assistant_bridge_module.ExecutableIdentity,
+            "payload",
+            return_value={"public": "constant"},
+        ):
+            with patch.object(
+                assistant_bridge_module,
+                "resolve_executable",
+                return_value=identity,
+            ):
+                first = build_codex_command_plan(
+                    self.config.local,
+                    prompt="bounded",
+                    workspace=ROOT,
+                )
+            with patch.object(
+                assistant_bridge_module,
+                "resolve_executable",
+                return_value=alternate,
+            ):
+                second = build_codex_command_plan(
+                    self.config.local,
+                    prompt="bounded",
+                    workspace=ROOT,
+                )
+
+        self.assertNotEqual(first.command_sha256, second.command_sha256)
+
     def test_provider_config_rejects_pre_confirmation_version_probes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw = json.loads(
