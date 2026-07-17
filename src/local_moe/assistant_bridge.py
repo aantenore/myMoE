@@ -55,6 +55,7 @@ from .assistant_bridge_workspace import (
     MaterializedWorkspace,
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
+    WorkspaceWriteCapability,
     WorkspaceChange,
     WorkspaceFile,
     WorkspaceSnapshot,
@@ -63,6 +64,7 @@ from .assistant_bridge_workspace import (
     materialize_workspace,
     snapshot_materialized,
     snapshot_workspace,
+    workspace_write_capability,
 )
 
 
@@ -2792,6 +2794,7 @@ def build_escalation_capsule(
 class _PreparedExecution:
     receipt: RouteDecisionReceipt
     source_snapshot: WorkspaceSnapshot = field(repr=False)
+    workspace_write_capability: WorkspaceWriteCapability
     prior_evidence: tuple[VerificationEvidence, ...] = field(repr=False)
     commands: tuple[CommandPlan, ...] = field(repr=False)
     verifier_plans: tuple[BoundVerifierPlan, ...] = field(repr=False)
@@ -2848,6 +2851,9 @@ class AssistantBridgeRunner:
                 "workspace": str(
                     prepared.receipt.local_runtime["workspace_access"]
                 ),
+                "workspace_write_capability": (
+                    prepared.workspace_write_capability.payload()
+                ),
                 "remote_workspace": str(
                     prepared.receipt.premium_runtime["workspace_access"]
                 ),
@@ -2899,6 +2905,16 @@ class AssistantBridgeRunner:
             local_provider_override=local_provider_override,
             workspace_snapshot=source_snapshot,
         )
+        write_capability = workspace_write_capability()
+        if (
+            task.capability_demand.risk_class == "write_local"
+            and not write_capability.supported
+        ):
+            receipt = _receipt_with_route(
+                receipt,
+                route="blocked",
+                rationale_code="workspace_write_capability_unavailable",
+            )
         premium_auth: PremiumAuthAttestation | None = None
         if receipt.route in {"local_then_verify", "premium"}:
             try:
@@ -3000,10 +3016,12 @@ class AssistantBridgeRunner:
             source_snapshot=source_snapshot,
             config=self.config,
             premium_auth=premium_auth,
+            workspace_write_capability=write_capability,
         )
         return _PreparedExecution(
             receipt=receipt,
             source_snapshot=source_snapshot,
+            workspace_write_capability=write_capability,
             prior_evidence=bound_external,
             commands=tuple(commands),
             verifier_plans=verifier_plans,
@@ -5026,6 +5044,7 @@ def _execution_binding(
     source_snapshot: WorkspaceSnapshot,
     config: AssistantBridgeConfig,
     premium_auth: PremiumAuthAttestation | None,
+    workspace_write_capability: WorkspaceWriteCapability,
 ) -> dict[str, object]:
     evidence_payload = [item.payload() for item in external_evidence]
     capsule_target = (
@@ -5047,6 +5066,7 @@ def _execution_binding(
         "source_snapshot_fingerprint": source_snapshot.fingerprint,
         "state": config.state.effective_descriptor(),
         "workspace_policy": config.workspace.effective_descriptor(),
+        "workspace_write_capability": workspace_write_capability.payload(),
         "runtime_policy": config.runtime.payload(),
         "runtime_capabilities": runtime_capabilities().payload(),
         "premium_auth": (

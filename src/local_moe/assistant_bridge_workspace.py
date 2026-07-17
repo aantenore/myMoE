@@ -61,6 +61,15 @@ class WorkspaceWriteCapability:
     backend: str
     reason: str = ""
 
+    def payload(self) -> dict[str, object]:
+        """Return the stable, content-free descriptor bound to execution authority."""
+
+        return {
+            "supported": self.supported,
+            "backend": self.backend,
+            "reason": self.reason or None,
+        }
+
 
 def workspace_write_capability() -> WorkspaceWriteCapability:
     """Report whether fail-closed workspace mutation is available before routing."""

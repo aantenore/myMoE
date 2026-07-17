@@ -31,6 +31,7 @@ from local_moe.assistant_bridge import (
 from local_moe.app_config import load_app_config
 from local_moe.assistant_bridge_workspace import (
     WorkspaceScopePolicy,
+    WorkspaceWriteCapability,
     snapshot_workspace,
 )
 
@@ -916,6 +917,107 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             process_started = (fixture.root / "process-probe.log").exists()
 
         self.assertFalse(process_started)
+
+    def test_write_capability_preflight_blocks_before_any_bound_process(self) -> None:
+        unavailable = WorkspaceWriteCapability(
+            supported=False,
+            backend="unsupported",
+            reason="native atomic no-replace primitive unavailable",
+        )
+        with (
+            _fake_bridge(process_proxy=True) as fixture,
+            _fake_environment(fixture),
+            patch.object(
+                assistant_bridge_module,
+                "workspace_write_capability",
+                return_value=unavailable,
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            result = fixture.runner.run(
+                task,
+                workspace=fixture.root,
+                confirmation=str(plan["confirmation_id"]),
+            )
+            invocations = _read_jsonl(fixture.log)
+            process_started = (fixture.root / "process-probe.log").exists()
+
+        receipt = plan["route_receipt"]
+        self.assertEqual(receipt["route"], "blocked")
+        self.assertIn(
+            "workspace_write_capability_unavailable",
+            receipt["rationale_codes"],
+        )
+        self.assertEqual(
+            plan["authority"]["workspace_write_capability"],
+            unavailable.payload(),
+        )
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
+        self.assertEqual(invocations, [])
+        self.assertFalse(process_started)
+
+    def test_unsupported_write_capability_does_not_block_read_only_route(self) -> None:
+        unavailable = WorkspaceWriteCapability(
+            supported=False,
+            backend="unsupported",
+            reason="native atomic no-replace primitive unavailable",
+        )
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(fixture),
+            patch.object(
+                assistant_bridge_module,
+                "workspace_write_capability",
+                return_value=unavailable,
+            ),
+        ):
+            task = build_assistant_task("Inspect only.", profile="offline")
+            result = fixture.run(task)
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual([item["mode"] for item in invocations], ["local"])
+
+    def test_write_capability_descriptor_is_bound_to_confirmation(self) -> None:
+        planned = WorkspaceWriteCapability(True, "test-backend-a")
+        changed = WorkspaceWriteCapability(True, "test-backend-b")
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(fixture),
+            patch.object(
+                assistant_bridge_module,
+                "workspace_write_capability",
+                side_effect=(planned, changed),
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+            )
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            with self.assertRaisesRegex(AssistantBridgeError, "confirmation"):
+                fixture.runner.run(
+                    task,
+                    workspace=fixture.root,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(
+            plan["authority"]["workspace_write_capability"],
+            planned.payload(),
+        )
+        self.assertEqual(invocations, [])
 
     def test_write_local_candidate_is_verified_then_applied_to_source(self) -> None:
         with (
