@@ -12,6 +12,7 @@ import secrets
 import shutil
 import stat
 import sys
+import sysconfig
 import tempfile
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping, Sequence
@@ -55,6 +56,7 @@ from .assistant_bridge_verifier_isolation import (
     VerifierIsolationPlan,
     VerifierIsolationPolicy,
     build_verifier_isolation_plan,
+    expand_runtime_read_roots,
     verifier_isolation_capability,
 )
 from .assistant_bridge_workspace import (
@@ -95,16 +97,94 @@ _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_GIT_BYTES = 16 * 1024 * 1024
 _MAX_STREAM_BYTES = 2 * 1024 * 1024
 _MAX_FINAL_BYTES = 1024 * 1024
-_PYTHON_WORKSPACE_BOOTSTRAP = (
-    "import runpy,sys;"
-    "n=int(sys.argv[1]);"
-    "roots=sys.argv[2:2+n];"
-    "module=sys.argv[2+n];"
-    "args=sys.argv[3+n:];"
-    "sys.path[:0]=roots;"
-    "sys.argv=[module,*args];"
-    "runpy.run_module(module,run_name='__main__',alter_sys=True)"
+_PYTHON_UNITTEST_BOOTSTRAP = r"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+def _read_file(path):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError("runner entry is not a regular file")
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise RuntimeError("runner entry changed during attestation")
+    return [
+        path.name,
+        int(after.st_size),
+        stat.S_IMODE(after.st_mode),
+        digest.hexdigest(),
+    ]
+
+
+def _manifest(root):
+    records = []
+    total = 0
+    count = 0
+    for directory, directories, files in os.walk(root, topdown=True, followlinks=False):
+        current = Path(directory)
+        directories.sort()
+        files.sort()
+        for name in directories:
+            metadata = current.joinpath(name).lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                raise RuntimeError("runner tree contains an unsafe directory")
+        for name in files:
+            path = current.joinpath(name)
+            record = _read_file(path)
+            record[0] = path.relative_to(root).as_posix()
+            records.append(record)
+            count += 1
+            total += record[1]
+            if count > 4096 or total > 64 * 1024 * 1024:
+                raise RuntimeError("runner tree exceeds its attestation bound")
+    return hashlib.sha256(
+        json.dumps(records, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+runner_root = Path(sys.argv[1]).resolve(strict=True)
+expected_manifest = sys.argv[2]
+if _manifest(runner_root) != expected_manifest:
+    raise SystemExit(86)
+import unittest
+if Path(unittest.__file__).resolve(strict=True) != runner_root.joinpath("__init__.py"):
+    raise SystemExit(87)
+path_count = int(sys.argv[3])
+candidate_roots = sys.argv[4:4 + path_count]
+runner_args = sys.argv[4 + path_count:]
+sys.path[:0] = candidate_roots
+sys.argv = ["unittest", *runner_args]
+program = unittest.main(module=None, exit=False)
+result = getattr(program, "result", None)
+raise SystemExit(0 if result is not None and result.wasSuccessful() else 1)
+""".strip()
+_PYTHON_RUNNER_BOOTSTRAP_ENV = "MYMOE_TYPED_RUNNER_BOOTSTRAP"
+_PYTHON_RUNNER_LAUNCH = (
+    "exec(__import__('os').environ['MYMOE_TYPED_RUNNER_BOOTSTRAP'])"
 )
+_PYTHON_RUNNER_MAX_FILES = 4096
+_PYTHON_RUNNER_MAX_BYTES = 64 * 1024 * 1024
 _BASE_ENV_KEYS = {
     "COMSPEC",
     "HOME",
@@ -505,6 +585,52 @@ class CapsulePolicy:
 
 
 @dataclass(frozen=True)
+class PythonRunnerIdentity:
+    name: str
+    module_root: str = field(repr=False)
+    module_root_sha256: str
+    manifest_sha256: str
+    file_count: int
+    total_bytes: int
+    device_id: int = field(repr=False)
+    inode: int = field(repr=False)
+    mode: int = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if self.name != "unittest":
+            raise AssistantBridgeError("Typed Python runner identity is unsupported.")
+        _require_sha256(self.module_root_sha256, "runner module_root_sha256")
+        _require_sha256(self.manifest_sha256, "runner manifest_sha256")
+        if self.file_count < 1 or self.total_bytes < 1:
+            raise AssistantBridgeError("Typed Python runner manifest is empty.")
+
+    def binding_payload(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "module_root": self.module_root,
+            "module_root_sha256": self.module_root_sha256,
+            "manifest_sha256": self.manifest_sha256,
+            "file_count": self.file_count,
+            "total_bytes": self.total_bytes,
+            "device_id": self.device_id,
+            "inode": self.inode,
+            "mode": self.mode,
+        }
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "module_root_sha256": self.module_root_sha256,
+            "manifest_sha256": self.manifest_sha256,
+            "file_count": self.file_count,
+            "total_bytes": self.total_bytes,
+            "identity_sha256": _sha256_text(
+                _canonical_json(self.binding_payload())
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class CommandVerifierSpec:
     id: str
     argv: tuple[str, ...] = field(repr=False)
@@ -518,6 +644,7 @@ class CommandVerifierSpec:
     runtime_read_roots: tuple[str, ...] = field(
         default=("{python_runtime}",), repr=False
     )
+    python_runner: str = ""
     workspace_python_paths: tuple[str, ...] = field(default=(), repr=False)
     environment_allowlist: tuple[str, ...] = ()
     required_for_capabilities: tuple[str, ...] = ()
@@ -600,6 +727,7 @@ class CommandVerifierSpec:
                 self.launcher_entrypoint,
                 self.launcher_companions,
                 self.runtime_read_roots,
+                self.python_runner,
                 self.workspace_python_paths,
                 self.environment_allowlist,
             )
@@ -638,21 +766,24 @@ class CommandVerifierSpec:
                     f"Command verifier {self.id} workspace Python paths must be "
                     "safe relative paths."
                 )
-        if self.workspace_python_paths and (
+        if self.python_runner not in {"", "unittest"}:
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} has an unsupported typed Python runner."
+            )
+        if self.workspace_python_paths and not self.python_runner:
+            raise AssistantBridgeError(
+                f"Command verifier {self.id} workspace Python paths require a "
+                "typed Python runner."
+            )
+        if self.python_runner and (
             self.kind != "command"
             or len(self.argv) < 3
-            or self.argv[0] != "{python}"
-            or self.argv[1] != "-m"
-            or re.fullmatch(
-                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", self.argv[2]
-            )
-            is None
+            or self.argv[:3] != ("{python}", "-m", self.python_runner)
             or bool(self.launcher_entrypoint)
             or bool(self.launcher_companions)
         ):
             raise AssistantBridgeError(
-                f"Command verifier {self.id} workspace Python paths require the "
-                "fixed Python module adapter."
+                f"Command verifier {self.id} typed Python runner contract is invalid."
             )
         _validate_identifiers("verifier capability", self.required_for_capabilities)
         _validate_identifiers("verifier tool", self.required_for_tools)
@@ -707,6 +838,7 @@ class CommandVerifierSpec:
                 _canonical_json(list(self.runtime_read_roots))
             ),
             "runtime_read_root_count": len(self.runtime_read_roots),
+            "python_runner": self.python_runner or None,
             "workspace_python_paths_sha256": _sha256_text(
                 _canonical_json(list(self.workspace_python_paths))
             ),
@@ -1186,6 +1318,7 @@ class BoundVerifierPlan:
     launcher_chain: LauncherChainIdentity | None = field(repr=False)
     launcher_authority_sha256: str
     launcher_artifact_sha256: tuple[str, ...]
+    python_runner_identity: PythonRunnerIdentity | None = field(repr=False)
     isolation: VerifierIsolationPlan | None = field(repr=False)
     sandbox_launcher_chain: LauncherChainIdentity | None = field(repr=False)
     sandbox_launcher_authority_sha256: str
@@ -1219,6 +1352,11 @@ class BoundVerifierPlan:
             ),
             "launcher_authority_sha256": self.launcher_authority_sha256,
             "launcher_artifact_sha256": list(self.launcher_artifact_sha256),
+            "python_runner": (
+                None
+                if self.python_runner_identity is None
+                else self.python_runner_identity.payload()
+            ),
             "isolation": None if self.isolation is None else self.isolation.payload(),
             "sandbox_launcher_chain": (
                 None
@@ -4290,6 +4428,7 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 "required_for_risks",
                 "required_for_tools",
                 "runtime_read_roots",
+                "python_runner",
                 "workspace_python_paths",
                 "timeout_seconds",
             },
@@ -4331,6 +4470,10 @@ def _parse_command_verifiers(raw: object) -> tuple[CommandVerifierSpec, ...]:
                 runtime_read_roots=_string_tuple(
                     value.get("runtime_read_roots", ["{python_runtime}"]),
                     f"command_verifiers[{index}].runtime_read_roots",
+                ),
+                python_runner=_string_value(
+                    value.get("python_runner", ""),
+                    f"command_verifiers[{index}].python_runner",
                 ),
                 workspace_python_paths=_string_tuple(
                     value.get("workspace_python_paths", []),
@@ -4566,6 +4709,7 @@ def _build_verifier_plan(
             launcher_chain=None,
             launcher_authority_sha256="",
             launcher_artifact_sha256=(),
+            python_runner_identity=None,
             isolation=None,
             sandbox_launcher_chain=None,
             sandbox_launcher_authority_sha256="",
@@ -4616,7 +4760,13 @@ def _build_verifier_plan(
         raise AssistantBridgeError(
             f"Verifier {spec.id} executable attestation failed."
         ) from None
-    if spec.workspace_python_paths:
+    python_runner_identity: PythonRunnerIdentity | None = None
+    if spec.python_runner:
+        python_runner_identity = _attest_python_runner(
+            spec.python_runner,
+            executable=executable,
+            runtime_read_roots=spec.runtime_read_roots,
+        )
         workspace_python_paths = _resolved_workspace_python_paths(
             Path(root), spec.workspace_python_paths
         )
@@ -4624,10 +4774,11 @@ def _build_verifier_plan(
             executable.launch_path,
             "-I",
             "-c",
-            _PYTHON_WORKSPACE_BOOTSTRAP,
+            _PYTHON_RUNNER_LAUNCH,
+            python_runner_identity.module_root,
+            python_runner_identity.manifest_sha256,
             str(len(workspace_python_paths)),
             *workspace_python_paths,
-            argv[2],
             *argv[3:],
         )
     else:
@@ -4642,6 +4793,8 @@ def _build_verifier_plan(
         if execution_environment is None
         else dict(execution_environment)
     )
+    if python_runner_identity is not None:
+        environment[_PYTHON_RUNNER_BOOTSTRAP_ENV] = _PYTHON_UNITTEST_BOOTSTRAP
     ephemeral_environment_keys = ("HOME", "TEMP", "TMP", "TMPDIR")
     environment_sha256 = _sha256_text(
         _canonical_json(
@@ -4767,6 +4920,11 @@ def _build_verifier_plan(
         "environment_sha256": environment_sha256,
         "launcher_authority_sha256": launcher_authority_sha256,
         "launcher_artifact_sha256": list(artifacts),
+        "python_runner": (
+            None
+            if python_runner_identity is None
+            else python_runner_identity.binding_payload()
+        ),
         "isolation_binding_sha256": isolation.binding_sha256,
         "sandbox_launcher_authority_sha256": sandbox_launcher_authority_sha256,
         "sandbox_launcher_artifact_sha256": list(sandbox_artifacts),
@@ -4782,6 +4940,7 @@ def _build_verifier_plan(
         launcher_chain=launcher_chain,
         launcher_authority_sha256=launcher_authority_sha256,
         launcher_artifact_sha256=artifacts,
+        python_runner_identity=python_runner_identity,
         isolation=isolation,
         sandbox_launcher_chain=sandbox_launcher_chain,
         sandbox_launcher_authority_sha256=sandbox_launcher_authority_sha256,
@@ -4892,6 +5051,11 @@ def _run_bound_verifier(
             else current.launcher_chain.fingerprint
         ),
         "launcher_artifact_sha256": list(plan.launcher_artifact_sha256),
+        "python_runner": (
+            None
+            if current.python_runner_identity is None
+            else current.python_runner_identity.binding_payload()
+        ),
         "isolation_binding_sha256": current.isolation.binding_sha256,
         "sandbox_executable_fingerprint": sandbox_executable.fingerprint,
         "sandbox_launcher_authority_sha256": (
@@ -5169,6 +5333,139 @@ def _resolved_workspace_python_paths(
             )
         resolved.append(str(canonical))
     return tuple(resolved)
+
+
+def _attest_python_runner(
+    name: str,
+    *,
+    executable: ExecutableIdentity,
+    runtime_read_roots: Sequence[str],
+) -> PythonRunnerIdentity:
+    if name != "unittest":
+        raise AssistantBridgeError("Unsupported typed Python runner.")
+    if Path(executable.launch_path).resolve(strict=True) != Path(
+        sys.executable
+    ).resolve(strict=True):
+        raise AssistantBridgeError(
+            "Typed Python runner must use the current attested Python runtime."
+        )
+    standard_library = sysconfig.get_path("stdlib")
+    if not standard_library:
+        raise AssistantBridgeError("Python standard-library root is unavailable.")
+    module_root = (Path(standard_library) / name).resolve(strict=True)
+    try:
+        metadata = module_root.lstat()
+    except OSError:
+        raise AssistantBridgeError("Typed Python runner is unavailable.") from None
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise AssistantBridgeError("Typed Python runner root is unsafe.")
+    runtime_roots = expand_runtime_read_roots(runtime_read_roots)
+    if not any(
+        root.is_dir() and _path_is_within(str(module_root), root)
+        for root in runtime_roots
+    ):
+        raise AssistantBridgeError(
+            "Typed Python runner is outside the declared runtime roots."
+        )
+    manifest_sha256, file_count, total_bytes = _python_runner_manifest(
+        module_root
+    )
+    origin = module_root / "__init__.py"
+    if not origin.is_file() or origin.is_symlink():
+        raise AssistantBridgeError("Typed Python runner origin is unsafe.")
+    return PythonRunnerIdentity(
+        name=name,
+        module_root=str(module_root),
+        module_root_sha256=_sha256_text(str(module_root)),
+        manifest_sha256=manifest_sha256,
+        file_count=file_count,
+        total_bytes=total_bytes,
+        device_id=int(metadata.st_dev),
+        inode=int(metadata.st_ino),
+        mode=stat.S_IMODE(metadata.st_mode),
+    )
+
+
+def _python_runner_manifest(root: Path) -> tuple[str, int, int]:
+    records: list[list[object]] = []
+    total = 0
+    count = 0
+    try:
+        for directory, directories, files in os.walk(
+            root, topdown=True, followlinks=False
+        ):
+            current = Path(directory)
+            directories.sort()
+            files.sort()
+            for name in directories:
+                metadata = (current / name).lstat()
+                if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(
+                    metadata.st_mode
+                ):
+                    raise AssistantBridgeError(
+                        "Typed Python runner contains an unsafe directory."
+                    )
+            for name in files:
+                path = current / name
+                size, mode, digest = _attest_python_runner_file(path)
+                records.append(
+                    [path.relative_to(root).as_posix(), size, mode, digest]
+                )
+                count += 1
+                total += size
+                if (
+                    count > _PYTHON_RUNNER_MAX_FILES
+                    or total > _PYTHON_RUNNER_MAX_BYTES
+                ):
+                    raise AssistantBridgeError(
+                        "Typed Python runner exceeds its attestation bound."
+                    )
+    except OSError:
+        raise AssistantBridgeError(
+            "Typed Python runner could not be attested."
+        ) from None
+    return _sha256_text(
+        json.dumps(records, ensure_ascii=True, separators=(",", ":"))
+    ), count, total
+
+
+def _attest_python_runner_file(path: Path) -> tuple[int, int, str]:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise AssistantBridgeError(
+                    "Typed Python runner entry is not a regular file."
+                )
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        raise AssistantBridgeError(
+            "Typed Python runner entry could not be attested."
+        ) from None
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise AssistantBridgeError(
+            "Typed Python runner changed during attestation."
+        )
+    return int(after.st_size), stat.S_IMODE(after.st_mode), digest.hexdigest()
 
 
 def _sanitized_environment(

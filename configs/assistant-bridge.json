@@ -150,6 +150,7 @@
         "launcher_entrypoint": "",
         "launcher_companions": [],
         "runtime_read_roots": ["{python_runtime}"],
+        "python_runner": "unittest",
         "workspace_python_paths": ["src", "."],
         "timeout_seconds": 900,
         "purpose": "task",

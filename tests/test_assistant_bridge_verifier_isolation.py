@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -718,65 +717,178 @@ class VerifierIsolationTests(unittest.TestCase):
             caught.exception.__cause__, assistant_bridge.AssistantBridgeError
         )
 
-    def test_venv_inside_source_imports_candidate_code_in_disposable(self) -> None:
+    def test_typed_unittest_runner_cannot_be_shadowed_by_candidate(self) -> None:
         capability = verifier_isolation_capability(
             self.config.verifier_isolation
         )
         if not capability.supported:
             self.skipTest(capability.reason)
-        prefix = Path(sys.prefix).resolve(strict=True)
-        if not prefix.is_relative_to(ROOT.resolve(strict=True)):
-            self.skipTest("test runner venv is not inside the source workspace")
-        policy = WorkspaceScopePolicy()
-        spec = assistant_bridge.CommandVerifierSpec(
-            id="candidate-import-probe",
-            argv=(
-                "{python}",
-                "-m",
-                "tests.fixtures.assistant_bridge_candidate_import_probe",
-                "{workspace}",
-            ),
-            timeout_seconds=20,
-            workspace_python_paths=("src", "."),
-        )
-        source_snapshot = snapshot_workspace(ROOT, policy)
-        source_plan = assistant_bridge._build_verifier_plan(
-            spec,
-            workspace=ROOT,
-            runtime_policy=self.config.runtime,
-            isolation_policy=self.config.verifier_isolation,
-        )
-        with materialize_workspace(source_snapshot, policy) as candidate:
-            expected = snapshot_workspace(candidate.root, policy)
-            candidate_files = candidate.snapshot()
-            changes = build_changeset(candidate.baseline_files, candidate_files)
-            with assistant_bridge._disposable_verifier_workspace(
-                candidate.root,
-                source_snapshot=candidate.source_snapshot,
-                baseline_files=candidate.baseline_files,
-                expected_snapshot=expected,
-                candidate_files=candidate_files,
-                changes=changes,
-                policy=policy,
-            ) as disposable:
-                copied_plan = assistant_bridge._build_verifier_plan(
-                    spec,
-                    workspace=disposable,
-                    runtime_policy=self.config.runtime,
-                    isolation_policy=self.config.verifier_isolation,
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            (root / "src" / "app_under_test.py").write_text(
+                "VALUE = 1\n",
+                encoding="utf-8",
+            )
+            (root / "tests" / "test_guard.py").write_text(
+                "import unittest\n"
+                "from app_under_test import VALUE\n"
+                "class GuardTest(unittest.TestCase):\n"
+                "    def test_failure_cannot_be_hidden(self):\n"
+                "        self.assertEqual(VALUE, 2)\n",
+                encoding="utf-8",
+            )
+            policy = WorkspaceScopePolicy()
+            spec = assistant_bridge.CommandVerifierSpec(
+                id="typed-unittest-shadow-probe",
+                argv=(
+                    "{python}",
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    "tests",
+                    "-v",
+                ),
+                timeout_seconds=20,
+                python_runner="unittest",
+                workspace_python_paths=("src", "."),
+            )
+            source_snapshot = snapshot_workspace(root, policy)
+            source_plan = assistant_bridge._build_verifier_plan(
+                spec,
+                workspace=root,
+                runtime_policy=self.config.runtime,
+                isolation_policy=self.config.verifier_isolation,
+            )
+            with materialize_workspace(source_snapshot, policy) as candidate:
+                fake_runner = (
+                    "from pathlib import Path\n"
+                    "Path('candidate-runner-marker').write_text('executed')\n"
+                    "raise SystemExit(0)\n"
                 )
-                evidence = assistant_bridge._run_bound_verifier(
-                    source_plan,
+                (candidate.root / "src" / "unittest.py").write_text(
+                    fake_runner,
+                    encoding="utf-8",
+                )
+                (candidate.root / "unittest.py").write_text(
+                    fake_runner,
+                    encoding="utf-8",
+                )
+                expected = snapshot_workspace(candidate.root, policy)
+                candidate_files = candidate.snapshot()
+                changes = build_changeset(
+                    candidate.baseline_files,
+                    candidate_files,
+                )
+                with assistant_bridge._disposable_verifier_workspace(
+                    candidate.root,
+                    source_snapshot=candidate.source_snapshot,
+                    baseline_files=candidate.baseline_files,
+                    expected_snapshot=expected,
+                    candidate_files=candidate_files,
+                    changes=changes,
+                    policy=policy,
+                ) as disposable:
+                    copied_plan = assistant_bridge._build_verifier_plan(
+                        spec,
+                        workspace=disposable,
+                        runtime_policy=self.config.runtime,
+                        isolation_policy=self.config.verifier_isolation,
+                    )
+                    evidence = assistant_bridge._run_bound_verifier(
+                        source_plan,
+                        task=assistant_bridge.build_assistant_task(
+                            "Run a typed unittest verifier."
+                        ),
+                        workspace=assistant_bridge.attest_workspace(candidate.root),
+                        verifier_workspace=disposable,
+                    )
+                    marker_exists = (
+                        disposable / "candidate-runner-marker"
+                    ).exists()
+
+        self.assertIsNotNone(source_plan.python_runner_identity)
+        assert source_plan.python_runner_identity is not None
+        self.assertEqual(source_plan.python_runner_identity.name, "unittest")
+        self.assertEqual(
+            source_plan.python_runner_identity.manifest_sha256,
+            copied_plan.python_runner_identity.manifest_sha256,
+        )
+        self.assertEqual(source_plan.plan_sha256, copied_plan.plan_sha256)
+        self.assertEqual(
+            source_plan.payload()["python_runner"]["manifest_sha256"],
+            source_plan.python_runner_identity.manifest_sha256,
+        )
+        self.assertFalse(marker_exists)
+        self.assertFalse(evidence.passed)
+        self.assertNotEqual(evidence.code, "command_passed")
+
+    def test_typed_unittest_runner_manifest_drift_blocks_prelaunch(self) -> None:
+        capability = verifier_isolation_capability(
+            self.config.verifier_isolation
+        )
+        if not capability.supported:
+            self.skipTest(capability.reason)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            (root / "src").mkdir()
+            spec = assistant_bridge.CommandVerifierSpec(
+                id="typed-unittest-drift-probe",
+                argv=("{python}", "-m", "unittest", "discover"),
+                timeout_seconds=20,
+                python_runner="unittest",
+                workspace_python_paths=("src", "."),
+            )
+            plan = assistant_bridge._build_verifier_plan(
+                spec,
+                workspace=root,
+                runtime_policy=self.config.runtime,
+                isolation_policy=self.config.verifier_isolation,
+            )
+            assert plan.python_runner_identity is not None
+            drifted_manifest = (
+                "0" * 64,
+                plan.python_runner_identity.file_count,
+                plan.python_runner_identity.total_bytes,
+            )
+            with (
+                patch.object(
+                    assistant_bridge,
+                    "_python_runner_manifest",
+                    return_value=drifted_manifest,
+                ),
+                patch.object(assistant_bridge, "execute_process") as execute,
+                self.assertRaisesRegex(
+                    assistant_bridge.AssistantBridgeError,
+                    "no longer matches",
+                ),
+            ):
+                assistant_bridge._run_bound_verifier(
+                    plan,
                     task=assistant_bridge.build_assistant_task(
-                        "Probe candidate-first imports."
+                        "Reject typed runner drift."
                     ),
-                    workspace=assistant_bridge.attest_workspace(candidate.root),
-                    verifier_workspace=disposable,
+                    workspace=assistant_bridge.attest_workspace(root),
+                    verifier_workspace=root,
                 )
 
-        self.assertEqual(source_plan.plan_sha256, copied_plan.plan_sha256)
-        self.assertTrue(evidence.passed)
-        self.assertEqual(evidence.code, "command_passed")
+        execute.assert_not_called()
+
+    def test_workspace_python_paths_reject_untyped_module_runner(self) -> None:
+        with self.assertRaisesRegex(
+            assistant_bridge.AssistantBridgeError,
+            "typed Python runner",
+        ):
+            assistant_bridge.CommandVerifierSpec(
+                id="untyped-module-probe",
+                argv=("{python}", "-m", "candidate_runner"),
+                timeout_seconds=20,
+                workspace_python_paths=("src",),
+            )
 
     def _run_command(
         self,

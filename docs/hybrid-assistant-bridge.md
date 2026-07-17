@@ -233,14 +233,20 @@ one. An unsupported plan reports no active workspace, runtime, system-root, or
 temporary-storage guarantees; policy intent is not presented as a capability.
 The trusted Git builtin remains a separate fixed boundary.
 
-Python project verifiers can declare safe relative `workspace_python_paths`.
-The bridge translates only an explicit `{python} -m <module>` contract into a
-fixed isolated `runpy` adapter: candidate paths precede editable-install paths,
-while third-party dependencies remain in an attested read-only Python runtime.
-Host `PYTHONPATH` is never accepted. Projects should replace or extend
-`command_verifiers` with their native tests, linters, schema validators, or
-evaluation gates. Natural-language output checks validate the response
-contract; they do not prove that every factual statement is true.
+Python project verifiers can declare the typed `python_runner: unittest`
+contract plus safe relative `workspace_python_paths`. The bridge resolves the
+standard-library runner strictly inside declared runtime roots, binds a bounded
+content manifest into the confirmed verifier plan, re-attests it before launch,
+and imports it under isolated Python before candidate paths are introduced.
+Candidate `unittest.py` files therefore cannot replace the runner. The project
+paths still let the already-loaded runner import candidate application and test
+code, while third-party dependencies remain in an attested read-only Python
+runtime. Host `PYTHONPATH` and arbitrary candidate-first module runners are
+never accepted. This protects runner identity; candidate tests remain candidate
+content and are not equivalent to trusted external evidence. Projects should
+replace or extend `command_verifiers` with their native tests, linters, schema
+validators, or evaluation gates. Natural-language output checks validate the
+response contract; they do not prove that every factual statement is true.
 
 ## Isolation boundary
 
