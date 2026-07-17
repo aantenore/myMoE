@@ -40,6 +40,7 @@ from .assistant_bridge_secrets import (
     ResidualAssuranceUnavailableError,
     SecretRedactionPolicy,
     redact_text,
+    redact_user_controlled_fields,
 )
 from .assistant_bridge_workspace import (
     IgnoredPathRule,
@@ -255,7 +256,6 @@ class ProviderSpec:
     launcher_args: tuple[str, ...] = ()
     extra_args: tuple[str, ...] = ()
     environment_allowlist: tuple[str, ...] = ()
-    version_args: tuple[str, ...] = ("--version",)
 
     def __post_init__(self) -> None:
         for name in (
@@ -264,7 +264,6 @@ class ProviderSpec:
             "launcher_args",
             "extra_args",
             "environment_allowlist",
-            "version_args",
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if _SAFE_ID.fullmatch(self.id) is None:
@@ -341,7 +340,6 @@ class ProviderSpec:
         for label, values in (
             ("launcher_args", self.launcher_args),
             ("extra_args", self.extra_args),
-            ("version_args", self.version_args),
         ):
             if any(not item or "\x00" in item for item in values):
                 raise AssistantBridgeError(
@@ -377,9 +375,7 @@ class ProviderSpec:
             "launcher_arg_count": len(self.launcher_args),
             "extra_arg_count": len(self.extra_args),
             "environment_keys": list(self.environment_allowlist),
-            "version_args_sha256": _sha256_text(
-                _canonical_json(list(self.version_args))
-            ),
+            "planning_probe": "none",
         }
 
 
@@ -578,12 +574,12 @@ class WorkspaceAttestation:
     fingerprint: str
     git_repository: bool
     head_sha: str
+    index_sha256: str
     status_sha256: str
-    staged_diff_sha256: str
-    unstaged_diff_sha256: str
-    untracked_manifest_sha256: str
-    tracked_change_count: int
-    untracked_count: int
+    manifest_sha256: str
+    file_count: int
+    total_bytes: int
+    scope: str = "tracked_untracked_nonignored_plus_declared_ignored"
 
     def payload(self) -> dict[str, object]:
         return {
@@ -591,12 +587,12 @@ class WorkspaceAttestation:
             "fingerprint": self.fingerprint,
             "git_repository": self.git_repository,
             "head_sha": self.head_sha or None,
+            "index_sha256": self.index_sha256,
             "status_sha256": self.status_sha256,
-            "staged_diff_sha256": self.staged_diff_sha256,
-            "unstaged_diff_sha256": self.unstaged_diff_sha256,
-            "untracked_manifest_sha256": self.untracked_manifest_sha256,
-            "tracked_change_count": self.tracked_change_count,
-            "untracked_count": self.untracked_count,
+            "manifest_sha256": self.manifest_sha256,
+            "file_count": self.file_count,
+            "total_bytes": self.total_bytes,
+            "scope": self.scope,
         }
 
 
@@ -696,8 +692,6 @@ class BridgeRuntimePolicy:
     stderr_limit_bytes: int = _MAX_STREAM_BYTES
     cleanup_grace_seconds: float = 0.25
     cleanup_kill_seconds: float = 0.75
-    version_timeout_seconds: float = 3.0
-    version_output_limit_bytes: int = 32 * 1024
 
     def __post_init__(self) -> None:
         if self.require_tree_isolation is not True or self.require_psutil is not True:
@@ -708,14 +702,6 @@ class BridgeRuntimePolicy:
             self.process_policy()
         except ValueError as exc:
             raise AssistantBridgeError(str(exc)) from None
-        if not 0.1 <= self.version_timeout_seconds <= 30:
-            raise AssistantBridgeError(
-                "runtime.version_timeout_seconds is outside safe bounds."
-            )
-        if not 1024 <= self.version_output_limit_bytes <= 1024 * 1024:
-            raise AssistantBridgeError(
-                "runtime.version_output_limit_bytes is outside safe bounds."
-            )
 
     def process_policy(self, *, stdin_limit_bytes: int | None = None) -> ProcessExecutionPolicy:
         return ProcessExecutionPolicy(
@@ -741,8 +727,6 @@ class BridgeRuntimePolicy:
             "stderr_limit_bytes": self.stderr_limit_bytes,
             "cleanup_grace_seconds": self.cleanup_grace_seconds,
             "cleanup_kill_seconds": self.cleanup_kill_seconds,
-            "version_timeout_seconds": self.version_timeout_seconds,
-            "version_output_limit_bytes": self.version_output_limit_bytes,
         }
 
 
@@ -1084,55 +1068,34 @@ class EscalationCapsule:
     task_fingerprint: str
     objective: str = field(repr=False)
     objective_sha256: str
-    capability_demand: CapabilityDemand
+    capability_demand: CapabilityDemand = field(repr=False)
     constraints: tuple[str, ...] = field(repr=False)
     route_receipt_id: str
     workspace_fingerprint: str
-    verification: tuple[VerificationEvidence, ...]
-    failure_codes: tuple[str, ...]
+    verification: tuple[VerificationEvidence, ...] = field(repr=False)
+    failure_codes: tuple[str, ...] = field(repr=False)
     diff: DiffEvidence = field(repr=False)
     redaction_count: int
     residual_assured: bool
     residual_detector: str
     truncated: bool
+    public_payload: Mapping[str, object] = field(repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("constraints", "verification", "failure_codes"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
+        object.__setattr__(self, "public_payload", _deep_freeze(self.public_payload))
 
     def payload(self) -> dict[str, object]:
-        return {
-            "schema_version": BRIDGE_SCHEMA_VERSION,
-            "contract": "EscalationCapsule",
-            "capsule_id": self.capsule_id,
-            "task_id": self.task_id,
-            "task_fingerprint": self.task_fingerprint,
-            "objective": self.objective,
-            "objective_sha256": self.objective_sha256,
-            "capability_demand": self.capability_demand.payload(),
-            "constraints": list(self.constraints),
-            "route_receipt_id": self.route_receipt_id,
-            "workspace_fingerprint": self.workspace_fingerprint,
-            "verification": [item.payload() for item in self.verification],
-            "failure_codes": list(self.failure_codes),
-            "diff": self.diff.payload(),
-            "redaction": {
-                "count": self.redaction_count,
-                "residual_assured": self.residual_assured,
-                "residual_detector": self.residual_detector,
-                "truncated": self.truncated,
-            },
-            "excluded": [
-                "conversation_history",
-                "hidden_reasoning",
-                "local_execution_transcript",
-                "command_output",
-                "credentials",
-            ],
-        }
+        payload = _deep_thaw(self.public_payload)
+        if not isinstance(payload, dict):
+            raise AssistantBridgeError("Escalation capsule public payload is invalid.")
+        return payload
 
     def metadata_payload(self) -> dict[str, object]:
-        serialized = _canonical_json(self.payload())
+        public = self.payload()
+        serialized = _canonical_json(public)
+        failure_codes = public.get("failure_codes", [])
         return {
             "capsule_id": self.capsule_id,
             "sha256": _sha256_text(serialized),
@@ -1140,7 +1103,9 @@ class EscalationCapsule:
             "objective_sha256": self.objective_sha256,
             "constraint_count": len(self.constraints),
             "verification_count": len(self.verification),
-            "failure_codes": list(self.failure_codes),
+            "failure_codes": list(failure_codes)
+            if isinstance(failure_codes, list)
+            else [],
             "diff_sha256": self.diff.sha256 or None,
             "redaction_count": self.redaction_count,
             "residual_assured": self.residual_assured,
@@ -1155,6 +1120,7 @@ class BridgeRunResult:
     status: str
     code: str
     receipt: RouteDecisionReceipt
+    prior_verification: tuple[VerificationEvidence, ...] = ()
     verification: tuple[VerificationEvidence, ...] = ()
     commands: tuple[CommandResult, ...] = ()
     capsule: EscalationCapsule | None = None
@@ -1163,6 +1129,11 @@ class BridgeRunResult:
     premium_calls_used: int = 0
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "prior_verification",
+            tuple(self.prior_verification),
+        )
         object.__setattr__(self, "verification", tuple(self.verification))
         object.__setattr__(self, "commands", tuple(self.commands))
 
@@ -1173,7 +1144,12 @@ class BridgeRunResult:
             "status": self.status,
             "code": self.code,
             "route_receipt": self.receipt.payload(),
-            "verification": [item.payload() for item in self.verification],
+            "verification": {
+                "prior": [
+                    item.payload() for item in self.prior_verification
+                ],
+                "final": [item.payload() for item in self.verification],
+            },
             "commands": [item.metadata_payload() for item in self.commands],
             "capsule": self.capsule.metadata_payload() if self.capsule else None,
             "final_provider": self.final_provider,
@@ -1366,8 +1342,6 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "stderr_limit_bytes",
             "stdin_limit_bytes",
             "stdout_limit_bytes",
-            "version_output_limit_bytes",
-            "version_timeout_seconds",
         },
     )
     state_raw = _as_object(raw.get("state", {}), "state")
@@ -1518,14 +1492,6 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             runtime_raw.get("cleanup_kill_seconds", 0.75),
             "runtime.cleanup_kill_seconds",
         ),
-        version_timeout_seconds=_number_value(
-            runtime_raw.get("version_timeout_seconds", 3),
-            "runtime.version_timeout_seconds",
-        ),
-        version_output_limit_bytes=_int_value(
-            runtime_raw.get("version_output_limit_bytes", 32 * 1024),
-            "runtime.version_output_limit_bytes",
-        ),
     )
     effective_sha256 = _sha256_text(
         _canonical_json(
@@ -1614,17 +1580,26 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
 
 
 def _receipt_workspace_attestation(snapshot: WorkspaceSnapshot) -> WorkspaceAttestation:
+    state = {
+        "git_repository": snapshot.git_repository,
+        "head_sha": snapshot.head_sha,
+        "index_sha256": snapshot.index_sha256,
+        "status_sha256": snapshot.status_sha256,
+        "manifest_sha256": snapshot.manifest_sha256,
+        "file_count": len(snapshot.files),
+        "total_bytes": snapshot.total_bytes,
+        "scope": "tracked_untracked_nonignored_plus_declared_ignored",
+    }
     return WorkspaceAttestation(
         root=snapshot.root,
-        fingerprint=snapshot.manifest_sha256,
+        fingerprint=_sha256_text(_canonical_json(state)),
         git_repository=snapshot.git_repository,
         head_sha=snapshot.head_sha,
+        index_sha256=snapshot.index_sha256,
         status_sha256=snapshot.status_sha256,
-        staged_diff_sha256=snapshot.index_sha256,
-        unstaged_diff_sha256=snapshot.manifest_sha256,
-        untracked_manifest_sha256=snapshot.manifest_sha256,
-        tracked_change_count=(len(snapshot.files) if snapshot.git_repository else 0),
-        untracked_count=(0 if snapshot.git_repository else len(snapshot.files)),
+        manifest_sha256=snapshot.manifest_sha256,
+        file_count=len(snapshot.files),
+        total_bytes=snapshot.total_bytes,
     )
 
 
@@ -1852,79 +1827,11 @@ def attest_workspace(workspace: str | Path) -> WorkspaceAttestation:
     root = Path(workspace).expanduser().resolve()
     if not root.is_dir():
         raise AssistantBridgeError("Assistant workspace must be an existing directory.")
-    head = _git_output(root, ("rev-parse", "--verify", "HEAD"), required=False)
-    if head is None:
-        base = {
-            "root_sha256": _sha256_text(str(root)),
-            "git_repository": False,
-        }
-        empty = _sha256_bytes(b"")
-        return WorkspaceAttestation(
-            root=str(root),
-            fingerprint=_sha256_text(_canonical_json(base)),
-            git_repository=False,
-            head_sha="",
-            status_sha256=empty,
-            staged_diff_sha256=empty,
-            unstaged_diff_sha256=empty,
-            untracked_manifest_sha256=empty,
-            tracked_change_count=0,
-            untracked_count=0,
-        )
-
-    status = _git_output(
-        root,
-        ("status", "--porcelain=v1", "-z", "--untracked-files=all"),
-        required=True,
-    )
-    staged = _git_output(
-        root,
-        ("diff", "--cached", "--binary", "--no-ext-diff", "--", "."),
-        required=True,
-    )
-    unstaged = _git_output(
-        root,
-        ("diff", "--binary", "--no-ext-diff", "--", "."),
-        required=True,
-    )
-    untracked = _git_output(
-        root,
-        ("ls-files", "--others", "--exclude-standard", "-z"),
-        required=True,
-    )
-    assert status is not None and staged is not None and unstaged is not None
-    assert untracked is not None
-    manifest = _untracked_manifest(root, untracked)
-    head_text = head.decode("ascii", errors="strict").strip()
-    if re.fullmatch(r"[0-9a-fA-F]{40,64}", head_text) is None:
-        raise AssistantBridgeError("Git HEAD attestation is malformed.")
-    status_entries = [item for item in status.split(b"\0") if item]
-    untracked_entries = [item for item in untracked.split(b"\0") if item]
-    untracked_count = len(untracked_entries)
-    tracked_count = sum(1 for item in status_entries if not item.startswith(b"?? "))
-    fields = {
-        "root_sha256": _sha256_text(str(root)),
-        "git_repository": True,
-        "head_sha": head_text.lower(),
-        "status_sha256": _sha256_bytes(status),
-        "staged_diff_sha256": _sha256_bytes(staged),
-        "unstaged_diff_sha256": _sha256_bytes(unstaged),
-        "untracked_manifest_sha256": _sha256_bytes(manifest),
-        "tracked_change_count": tracked_count,
-        "untracked_count": untracked_count,
-    }
-    return WorkspaceAttestation(
-        root=str(root),
-        fingerprint=_sha256_text(_canonical_json(fields)),
-        git_repository=True,
-        head_sha=head_text.lower(),
-        status_sha256=str(fields["status_sha256"]),
-        staged_diff_sha256=str(fields["staged_diff_sha256"]),
-        unstaged_diff_sha256=str(fields["unstaged_diff_sha256"]),
-        untracked_manifest_sha256=str(fields["untracked_manifest_sha256"]),
-        tracked_change_count=tracked_count,
-        untracked_count=untracked_count,
-    )
+    try:
+        snapshot = snapshot_workspace(root, WorkspaceScopePolicy())
+    except WorkspaceSecurityError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    return _receipt_workspace_attestation(snapshot)
 
 
 def collect_git_evidence(
@@ -1936,13 +1843,13 @@ def collect_git_evidence(
     attestation = attest_workspace(workspace)
     if not attestation.git_repository:
         return DiffEvidence(
-            sha256="",
+            sha256=attestation.manifest_sha256,
             characters=0,
             excerpt="",
             truncated=False,
-            staged_sha256=attestation.staged_diff_sha256,
-            unstaged_sha256=attestation.unstaged_diff_sha256,
-            untracked_manifest_sha256=attestation.untracked_manifest_sha256,
+            staged_sha256="",
+            unstaged_sha256="",
+            untracked_manifest_sha256="",
         )
     root = Path(attestation.root)
     staged = _git_output(
@@ -2456,6 +2363,105 @@ def _redact_capsule_text(
     return redacted, result.redaction_count, truncated, result.residual_detector
 
 
+def _redact_public_capsule_payload(
+    payload: Mapping[str, object],
+    policy: SecretRedactionPolicy,
+) -> tuple[dict[str, object], int, str]:
+    """Redact every public user string and every mapping key, then assure residue."""
+
+    try:
+        keyed, key_count, key_detector = _redact_capsule_mapping_keys(
+            payload,
+            policy,
+        )
+        structural_plugins = tuple(
+            name
+            for name in policy.residual_plugins
+            if name
+            not in {
+                "Base64HighEntropyString",
+                "HexHighEntropyString",
+                "KeywordDetector",
+            }
+        )
+        public_policy = replace(
+            policy,
+            user_controlled_fields=frozenset({"*"}),
+            require_residual_assurance=True,
+            residual_plugins=structural_plugins,
+        )
+        result = redact_user_controlled_fields(keyed, public_policy)
+    except ResidualAssuranceUnavailableError:
+        raise AssistantBridgeError(
+            "Residual secret assurance is unavailable; capsule creation failed closed."
+        ) from None
+    except AssistantBridgeError:
+        raise
+    except Exception:
+        raise AssistantBridgeError(
+            "Recursive capsule secret assurance failed closed."
+        ) from None
+    if not isinstance(result.value, Mapping):
+        raise AssistantBridgeError("Redacted capsule payload is not an object.")
+    if not result.residual_assured or not result.residual_detector:
+        raise AssistantBridgeError(
+            "Residual secret assurance is required for escalation capsules."
+        )
+    detector = result.residual_detector or key_detector or ""
+    return (
+        dict(result.value),
+        key_count + result.redaction_count,
+        detector,
+    )
+
+
+def _redact_capsule_mapping_keys(
+    value: object,
+    policy: SecretRedactionPolicy,
+) -> tuple[object, int, str]:
+    if isinstance(value, Mapping):
+        output: dict[str, object] = {}
+        count = 0
+        detector = ""
+        key_policy = replace(policy, require_residual_assurance=False)
+        for raw_key, nested in value.items():
+            if not isinstance(raw_key, str):
+                raise AssistantBridgeError(
+                    "Capsule public mappings require string keys."
+                )
+            key_result = redact_text(raw_key, key_policy)
+            if key_result.redaction_count:
+                raise AssistantBridgeError(
+                    "Capsule mapping key failed secret assurance."
+                )
+            safe_nested, nested_count, nested_detector = (
+                _redact_capsule_mapping_keys(nested, policy)
+            )
+            output[raw_key] = safe_nested
+            count += nested_count
+            detector = (
+                key_result.residual_detector or nested_detector or detector
+            )
+        return output, count, detector
+    if isinstance(value, (list, tuple)):
+        output_list: list[object] = []
+        count = 0
+        detector = ""
+        for nested in value:
+            safe_nested, nested_count, nested_detector = (
+                _redact_capsule_mapping_keys(nested, policy)
+            )
+            output_list.append(safe_nested)
+            count += nested_count
+            detector = nested_detector or detector
+        return output_list, count, detector
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value, 0, ""
+    raise AssistantBridgeError(
+        "Capsule public payload contains a non-JSON value."
+    )
+
+
 def build_escalation_capsule(
     task: AssistantTaskEnvelope,
     receipt: RouteDecisionReceipt,
@@ -2552,7 +2558,10 @@ def build_escalation_capsule(
             if count:
                 evidence_ref = ""
         safe_verification.append(replace(item, evidence_ref=evidence_ref))
-    base = {
+    raw_public: dict[str, object] = {
+        "schema_version": BRIDGE_SCHEMA_VERSION,
+        "contract": "EscalationCapsule",
+        "capsule_id": "",
         "task_id": task.task_id,
         "task_fingerprint": task.task_fingerprint,
         "objective": objective,
@@ -2564,12 +2573,38 @@ def build_escalation_capsule(
         "verification": [item.payload() for item in safe_verification],
         "failure_codes": list(safe_failures),
         "diff": diff_evidence.payload(),
-        "redaction_count": redaction_count,
-        "residual_assured": True,
-        "residual_detector": residual_detector,
+        "redaction": {
+            "count": redaction_count,
+            "residual_assured": True,
+            "residual_detector": residual_detector,
+            "truncated": diff_evidence.truncated,
+        },
+        "excluded": [
+            "conversation_history",
+            "hidden_reasoning",
+            "local_execution_transcript",
+            "command_output",
+            "credentials",
+        ],
     }
+    public_payload, final_count, final_detector = _redact_public_capsule_payload(
+        raw_public,
+        policy.secret_redaction,
+    )
+    redaction_count += final_count
+    redaction = public_payload.get("redaction")
+    if not isinstance(redaction, dict):
+        raise AssistantBridgeError("Capsule redaction metadata is invalid.")
+    redaction["count"] = redaction_count
+    redaction["residual_assured"] = True
+    residual_detector = final_detector or residual_detector
+    redaction["residual_detector"] = residual_detector
+    identity_payload = dict(public_payload)
+    identity_payload.pop("capsule_id", None)
+    capsule_id = f"capsule-{_sha256_text(_canonical_json(identity_payload))[:32]}"
+    public_payload["capsule_id"] = capsule_id
     capsule = EscalationCapsule(
-        capsule_id=f"capsule-{_sha256_text(_canonical_json(base))[:32]}",
+        capsule_id=capsule_id,
         task_id=task.task_id,
         task_fingerprint=task.task_fingerprint,
         objective=objective,
@@ -2585,6 +2620,7 @@ def build_escalation_capsule(
         residual_assured=True,
         residual_detector=residual_detector,
         truncated=diff_evidence.truncated,
+        public_payload=public_payload,
     )
     if len(_canonical_json(capsule.payload())) > policy.max_chars:
         raise AssistantBridgeError(
@@ -2597,6 +2633,7 @@ def build_escalation_capsule(
 class _PreparedExecution:
     receipt: RouteDecisionReceipt
     source_snapshot: WorkspaceSnapshot = field(repr=False)
+    prior_evidence: tuple[VerificationEvidence, ...] = field(repr=False)
     commands: tuple[CommandPlan, ...] = field(repr=False)
     verifier_plans: tuple[BoundVerifierPlan, ...] = field(repr=False)
     confirmation_binding_sha256: str
@@ -2808,6 +2845,7 @@ class AssistantBridgeRunner:
         return _PreparedExecution(
             receipt=receipt,
             source_snapshot=source_snapshot,
+            prior_evidence=bound_external,
             commands=tuple(commands),
             verifier_plans=verifier_plans,
             confirmation_binding_sha256=_confirmation_binding_sha256(
@@ -2871,7 +2909,10 @@ class AssistantBridgeRunner:
         receipt = prepared.receipt
         if receipt.route == "blocked":
             return BridgeRunResult(
-                status="blocked", code="route_blocked", receipt=receipt
+                status="blocked",
+                code="route_blocked",
+                receipt=receipt,
+                prior_verification=prepared.prior_evidence,
             )
 
         try:
@@ -2884,16 +2925,15 @@ class AssistantBridgeRunner:
                         prepared,
                         candidate,
                         transaction_id=transaction_id,
-                        external_evidence=external_evidence,
                         include_diff=include_diff,
                         capsule_out=capsule_out,
                         prior_commands=(),
-                        prior_evidence=(),
+                        prior_evidence=prepared.prior_evidence,
                         failure_codes=(
                             "policy_selected_premium",
                             *(
                                 item.code
-                                for item in external_evidence
+                                for item in prepared.prior_evidence
                                 if not item.passed
                             ),
                         ),
@@ -2911,18 +2951,21 @@ class AssistantBridgeRunner:
                     candidate,
                     local_result,
                     prepared.verifier_plans,
-                    external_evidence=external_evidence,
+                )
+                prior_failed = tuple(
+                    item for item in prepared.prior_evidence if not item.passed
                 )
                 if local_result.status == "blocked":
                     return BridgeRunResult(
                         status="blocked",
                         code="local_runtime_unavailable",
                         receipt=receipt,
+                        prior_verification=prepared.prior_evidence,
                         verification=local_evidence,
                         commands=(local_result,),
                         final_provider=self.config.local.id,
                     )
-                if _all_passed(local_evidence):
+                if _all_passed(local_evidence) and not prior_failed:
                     self._apply_verified_candidate(
                         task,
                         prepared,
@@ -2935,6 +2978,7 @@ class AssistantBridgeRunner:
                         status="completed",
                         code="local_verification_passed",
                         receipt=receipt,
+                        prior_verification=prepared.prior_evidence,
                         verification=local_evidence,
                         commands=(local_result,),
                         final_provider=self.config.local.id,
@@ -2948,6 +2992,7 @@ class AssistantBridgeRunner:
                         status="failed",
                         code="workspace_authority_violated",
                         receipt=receipt,
+                        prior_verification=prepared.prior_evidence,
                         verification=local_evidence,
                         commands=(local_result,),
                         final_provider=self.config.local.id,
@@ -2957,6 +3002,7 @@ class AssistantBridgeRunner:
                         status="failed",
                         code="local_verification_failed_remote_forbidden",
                         receipt=receipt,
+                        prior_verification=prepared.prior_evidence,
                         verification=local_evidence,
                         commands=(local_result,),
                         final_provider=self.config.local.id,
@@ -2967,13 +3013,14 @@ class AssistantBridgeRunner:
                     prepared,
                     candidate,
                     transaction_id=transaction_id,
-                    external_evidence=external_evidence,
                     include_diff=include_diff,
                     capsule_out=capsule_out,
                     prior_commands=(local_result,),
-                    prior_evidence=local_evidence,
+                    prior_evidence=(*prepared.prior_evidence, *local_evidence),
                     failure_codes=tuple(
-                        item.code for item in local_evidence if not item.passed
+                        item.code
+                        for item in (*prior_failed, *local_evidence)
+                        if not item.passed
                     ),
                     expected_plan=(
                         prepared.commands[1]
@@ -3034,7 +3081,6 @@ class AssistantBridgeRunner:
         candidate: MaterializedWorkspace,
         *,
         transaction_id: str,
-        external_evidence: Sequence[VerificationEvidence],
         include_diff: bool,
         capsule_out: str | Path | None,
         prior_commands: tuple[CommandResult, ...],
@@ -3047,9 +3093,12 @@ class AssistantBridgeRunner:
             candidate.root, self.config.workspace.scope
         )
         current_attestation = _receipt_workspace_attestation(current_snapshot)
-        bound_external = self._validate_external(
-            external_evidence, task, current_attestation
+        capsule_workspace_fingerprint = (
+            current_attestation.fingerprint
+            if prior_commands
+            else receipt.workspace.fingerprint
         )
+        bound_external = prepared.prior_evidence
         capsule_evidence = list(prior_evidence)
         existing = {(item.kind, item.id) for item in capsule_evidence}
         capsule_evidence.extend(
@@ -3069,7 +3118,7 @@ class AssistantBridgeRunner:
             self.config.capsule,
             failure_codes=failure_codes,
             diff_evidence=diff,
-            workspace_fingerprint=current_attestation.fingerprint,
+            workspace_fingerprint=capsule_workspace_fingerprint,
         )
         self._write_capsule(capsule, capsule_out)
         premium_result, premium_reserved = self._execute_premium_command(
@@ -3084,7 +3133,8 @@ class AssistantBridgeRunner:
                 status="blocked",
                 code="durable_premium_budget_exhausted",
                 receipt=receipt,
-                verification=prior_evidence,
+                prior_verification=tuple(capsule_evidence),
+                verification=(),
                 commands=prior_commands,
                 capsule=capsule,
                 final_provider=(
@@ -3096,9 +3146,7 @@ class AssistantBridgeRunner:
             candidate,
             premium_result,
             prepared.verifier_plans,
-            external_evidence=(),
         )
-        combined = (*capsule_evidence, *premium_evidence)
         if premium_result.status == "blocked":
             status, code = "blocked", "premium_runtime_unavailable"
         elif _all_passed(premium_evidence):
@@ -3117,7 +3165,8 @@ class AssistantBridgeRunner:
             status=status,
             code=code,
             receipt=receipt,
-            verification=combined,
+            prior_verification=tuple(capsule_evidence),
+            verification=premium_evidence,
             commands=(*prior_commands, premium_result),
             capsule=capsule,
             final_provider=self.config.premium.id,
@@ -3217,8 +3266,6 @@ class AssistantBridgeRunner:
         candidate: MaterializedWorkspace,
         result: CommandResult,
         verifier_plans: Sequence[BoundVerifierPlan],
-        *,
-        external_evidence: Sequence[VerificationEvidence],
     ) -> tuple[
         tuple[VerificationEvidence, ...],
         tuple[WorkspaceFile, ...],
@@ -3242,7 +3289,7 @@ class AssistantBridgeRunner:
                 self.config,
                 task=task,
                 workspace=attestation,
-                external_evidence=external_evidence,
+                external_evidence=(),
                 verifier_workspace=verifier_workspace,
                 verifier_plans=verifier_plans,
             )
@@ -3664,7 +3711,6 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
             "sandbox",
             "timeout_seconds",
             "tools",
-            "version_args",
             "workspace_access",
         },
     )
@@ -3709,10 +3755,6 @@ def _parse_provider(raw: Mapping[str, Any]) -> ProviderSpec:
         environment_allowlist=_string_tuple(
             raw.get("environment_allowlist", []),
             "environment_allowlist",
-        ),
-        version_args=_string_tuple(
-            raw.get("version_args", ["--version"]),
-            "version_args",
         ),
     )
 

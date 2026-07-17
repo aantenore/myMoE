@@ -254,6 +254,20 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertNotIn(secret, rendered)
         self.assertIn(plan.executable_identity.sha256, rendered)
 
+    def test_provider_config_rejects_pre_confirmation_version_probes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = json.loads(
+                (ROOT / "configs" / "assistant-bridge.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            raw["providers"]["local"]["version_args"] = ["--version"]
+            path = Path(tmp) / "assistant-bridge.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+
+            with self.assertRaisesRegex(AssistantBridgeError, "Unknown provider"):
+                load_assistant_bridge_config(path)
+
     def test_dangerous_extra_args_are_rejected(self) -> None:
         for value in (
             "--dangerously-bypass-approvals-and-sandbox",
@@ -330,6 +344,49 @@ class AssistantBridgeContractTests(unittest.TestCase):
             self.assertNotIn(secret, repr(task))
             self.assertNotIn(secret, repr(capsule))
         self.assertIn("[redacted]", rendered)
+
+    def test_capsule_recursively_redacts_capabilities_and_mapping_keys(self) -> None:
+        credential = "AKIAIOSFODNN7EXAMPLE"
+        task = build_assistant_task(
+            "Review the requested capability.",
+            required_capabilities=(credential,),
+            allow_remote=True,
+        )
+        receipt = plan_assistant_route(task, self.config, workspace=ROOT)
+        evidence = VerificationEvidence(
+            id="fixture-verifier",
+            verifier="fixture-verifier",
+            kind="external",
+            passed=False,
+            code=credential,
+            artifact_sha256="a" * 64,
+            task_fingerprint=task.task_fingerprint,
+            workspace_fingerprint=receipt.workspace.fingerprint,
+            verifier_spec_sha256="b" * 64,
+        )
+        capsule = build_escalation_capsule(
+            task,
+            receipt,
+            (evidence,),
+            self.config.capsule,
+            failure_codes=("capability_gap",),
+        )
+        rendered = json.dumps(
+            {
+                "capsule": capsule.payload(),
+                "metadata": capsule.metadata_payload(),
+            },
+            sort_keys=True,
+        )
+
+        self.assertNotIn(credential, rendered)
+        self.assertNotIn(credential, repr(capsule))
+        self.assertIn("[redacted]", rendered)
+        with self.assertRaisesRegex(AssistantBridgeError, "mapping key"):
+            assistant_bridge_module._redact_public_capsule_payload(
+                {"nested": {credential: "safe"}},
+                self.config.capsule.secret_redaction,
+            )
 
     def test_capsule_refuses_to_drop_critical_objective_or_constraints(self) -> None:
         task = build_assistant_task(
@@ -441,7 +498,7 @@ class AssistantBridgeContractTests(unittest.TestCase):
             with self.assertRaisesRegex(AssistantBridgeError, "Unknown verification"):
                 load_verification_evidence(path)
 
-    def test_complete_git_attestation_covers_staged_unstaged_and_untracked(
+    def test_workspace_attestation_reports_exact_snapshot_telemetry(
         self,
     ) -> None:
         with _git_workspace() as workspace:
@@ -452,15 +509,29 @@ class AssistantBridgeContractTests(unittest.TestCase):
             untracked = workspace / "untracked.txt"
             untracked.write_text("first\n", encoding="utf-8")
             first = attest_workspace(workspace)
+            first_snapshot = snapshot_workspace(workspace, WorkspaceScopePolicy())
             untracked.write_text("second\n", encoding="utf-8")
             second = attest_workspace(workspace)
+            second_snapshot = snapshot_workspace(workspace, WorkspaceScopePolicy())
 
-        self.assertNotEqual(first.staged_diff_sha256, hashlib.sha256(b"").hexdigest())
-        self.assertNotEqual(first.unstaged_diff_sha256, hashlib.sha256(b"").hexdigest())
-        self.assertEqual(first.untracked_count, 1)
-        self.assertNotEqual(
-            first.untracked_manifest_sha256, second.untracked_manifest_sha256
+        self.assertEqual(
+            first.fingerprint,
+            assistant_bridge_module._receipt_workspace_attestation(
+                first_snapshot
+            ).fingerprint,
         )
+        self.assertEqual(first.index_sha256, first_snapshot.index_sha256)
+        self.assertEqual(first.status_sha256, first_snapshot.status_sha256)
+        self.assertEqual(first.manifest_sha256, first_snapshot.manifest_sha256)
+        self.assertEqual(first.file_count, len(first_snapshot.files))
+        self.assertEqual(first.total_bytes, first_snapshot.total_bytes)
+        self.assertEqual(
+            second.fingerprint,
+            assistant_bridge_module._receipt_workspace_attestation(
+                second_snapshot
+            ).fingerprint,
+        )
+        self.assertNotEqual(first.manifest_sha256, second.manifest_sha256)
         self.assertNotEqual(first.fingerprint, second.fingerprint)
 
 
@@ -521,6 +592,35 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
 
         self.assertEqual(result.status, "failed")
+        self.assertEqual(source, "initial\n")
+
+    def test_task_verifier_observes_the_materialized_candidate_delta(self) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                write_relative="tracked.txt",
+                write_content="candidate-visible\n",
+                verifier_expected_content="different-candidate\n",
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            result = fixture.run(task)
+            source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(
+            any(
+                item.id == "fixture-task-verifier" and not item.passed
+                for item in result.verification
+            )
+        )
         self.assertEqual(source, "initial\n")
 
     def test_read_only_mutation_is_rejected_and_discarded(self) -> None:
@@ -678,6 +778,46 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             capsule["failure_codes"],
             ["policy_selected_premium", "tests-failed"],
         )
+
+    def test_direct_premium_applies_delta_with_prior_and_final_evidence_split(
+        self,
+    ) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                write_relative="tracked.txt",
+                write_content="premium-candidate\n",
+            ),
+        ):
+            task = build_assistant_task(
+                "Apply a verified premium change.",
+                profile="quality",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+                allow_remote=True,
+                allow_remote_workspace=True,
+            )
+            prior = (_external_evidence(task, fixture.root, passed=False),)
+            result = fixture.run(task, external_evidence=prior)
+            source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+            telemetry = result.metadata_payload()["verification"]
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(source, "premium-candidate\n")
+        self.assertEqual(
+            [item.code for item in result.prior_verification],
+            ["tests-failed"],
+        )
+        self.assertTrue(result.verification)
+        self.assertTrue(all(item.passed for item in result.verification))
+        self.assertIsInstance(telemetry, dict)
+        self.assertEqual(
+            [item["code"] for item in telemetry["prior"]],
+            ["tests-failed"],
+        )
+        self.assertTrue(all(item["passed"] for item in telemetry["final"]))
 
     def test_premium_budget_is_reserved_once_and_never_for_local(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -1401,13 +1541,22 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
                 "argv": [
                     process_executable,
                     "-c",
-                    "import os; raise SystemExit(int(os.environ.get('FAKE_VERIFIER_EXIT', '0')))",
+                    "from pathlib import Path; import os; "
+                    "relative=os.environ.get('FAKE_WRITE_RELATIVE', ''); "
+                    "expected=os.environ.get('FAKE_VERIFIER_EXPECT_CONTENT', ''); "
+                    "delta_visible=(not relative or Path(relative).read_text(encoding='utf-8') == expected); "
+                    "raise SystemExit(int(os.environ.get('FAKE_VERIFIER_EXIT', '0')) if delta_visible else 91)",
                 ],
                 "timeout_seconds": 30,
                 "purpose": "task",
                 "execution_boundary": "disposable_workspace",
                 "network_policy": "not_enforced",
-                "environment_allowlist": ["FAKE_VERIFIER_EXIT"],
+                "environment_allowlist": [
+                    "FAKE_VERIFIER_EXIT",
+                    "FAKE_VERIFIER_EXPECT_CONTENT",
+                    "FAKE_WRITE_CONTENT",
+                    "FAKE_WRITE_RELATIVE",
+                ],
                 "required_for_capabilities": [],
                 "required_for_tools": [],
                 "required_for_risks": [],
@@ -1447,6 +1596,7 @@ def _fake_environment(
     verifier_exit: int = 0,
     write_relative: str = "",
     write_content: str = "candidate-change\n",
+    verifier_expected_content: str | None = None,
 ):
     with patch.dict(
         os.environ,
@@ -1457,6 +1607,11 @@ def _fake_environment(
             "FAKE_OUTPUT_BYTES": str(output_bytes),
             "FAKE_STDOUT_BYTES": str(stdout_bytes),
             "FAKE_VERIFIER_EXIT": str(verifier_exit),
+            "FAKE_VERIFIER_EXPECT_CONTENT": (
+                write_content
+                if verifier_expected_content is None
+                else verifier_expected_content
+            ),
             "FAKE_WRITE_RELATIVE": write_relative,
             "FAKE_WRITE_CONTENT": write_content,
             "FAKE_EXIT_CODE": "0",
@@ -1499,9 +1654,7 @@ def _initialize_git(root: Path) -> None:
 
 
 def _external_evidence(task, workspace: Path, *, passed: bool) -> VerificationEvidence:
-    workspace_fingerprint = snapshot_workspace(
-        workspace, WorkspaceScopePolicy()
-    ).manifest_sha256
+    workspace_fingerprint = attest_workspace(workspace).fingerprint
     code = "tests-passed" if passed else "tests-failed"
     return VerificationEvidence(
         id="focused-tests",

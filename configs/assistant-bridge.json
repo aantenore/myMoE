@@ -28,7 +28,6 @@
       "timeout_seconds": 900,
       "launcher_args": [],
       "environment_allowlist": [],
-      "version_args": ["--version"],
       "extra_args": []
     },
     "premium": {
@@ -62,7 +61,6 @@
       "timeout_seconds": 900,
       "launcher_args": [],
       "environment_allowlist": [],
-      "version_args": ["--version"],
       "extra_args": []
     }
   },
@@ -196,9 +194,7 @@
     "stdout_limit_bytes": 2097152,
     "stderr_limit_bytes": 2097152,
     "cleanup_grace_seconds": 0.25,
-    "cleanup_kill_seconds": 0.75,
-    "version_timeout_seconds": 3,
-    "version_output_limit_bytes": 32768
+    "cleanup_kill_seconds": 0.75
   },
   "state": {
     "ledger_path": "work/runtime/assistant-bridge-state.json",
