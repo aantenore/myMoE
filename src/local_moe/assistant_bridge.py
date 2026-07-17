@@ -61,7 +61,6 @@ from .assistant_bridge_workspace import (
     apply_changeset,
     build_changeset,
     materialize_workspace,
-    snapshot_materialized,
     snapshot_workspace,
     trusted_git_session,
     workspace_write_capability,
@@ -3481,9 +3480,7 @@ class AssistantBridgeRunner:
         final_snapshot = snapshot_workspace(
             candidate.root, self.config.workspace.scope
         )
-        candidate_files = snapshot_materialized(
-            candidate.root, self.config.workspace.scope
-        )
+        candidate_files = candidate.snapshot()
         changes = build_changeset(candidate.baseline_files, candidate_files)
         attestation = _receipt_workspace_attestation(final_snapshot)
         with _disposable_verifier_workspace(

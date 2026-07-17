@@ -107,6 +107,19 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkspaceSecurityError, "file-count"):
                 snapshot_workspace(root, WorkspaceScopePolicy(max_files=1))
 
+    def test_non_git_snapshot_never_resolves_or_launches_git(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "value.txt").write_text("value", encoding="utf-8")
+            with mock.patch.object(
+                workspace_module,
+                "_resolve_trusted_git_identity",
+                side_effect=AssertionError("Git resolution must be skipped"),
+            ):
+                snapshot = snapshot_workspace(root, WorkspaceScopePolicy())
+
+        self.assertFalse(snapshot.git_repository)
+
     def test_symlink_escape_is_rejected(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlinks are unavailable")
@@ -241,6 +254,177 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                 _git_bytes(root, "ls-files", "--stage", "-z"), index_before
             )
             self.assertEqual(result.files, candidate)
+
+    def test_tracked_deletion_commits_without_mutating_the_git_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+            index_before = _git_bytes(root, "ls-files", "--stage", "-z")
+
+            with materialize_workspace(snapshot, policy) as materialized:
+                (materialized.root / "tracked.txt").unlink()
+                candidate = materialized.snapshot()
+                changes = build_changeset(materialized.baseline_files, candidate)
+                result = apply_changeset(
+                    source_snapshot=snapshot,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=changes,
+                    policy=policy,
+                    state_dir=Path(tmp) / "state",
+                    transaction_id=uuid4().hex,
+                )
+
+            self.assertFalse((root / "tracked.txt").exists())
+            self.assertEqual(
+                _git_bytes(root, "ls-files", "--stage", "-z"),
+                index_before,
+            )
+            deleted = {item.path: item for item in result.files}["tracked.txt"]
+            self.assertEqual(deleted.kind, "missing")
+
+    def test_initially_missing_tracked_file_can_be_restored_transactionally(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            (root / "tracked.txt").unlink()
+            policy = WorkspaceScopePolicy()
+            snapshot = snapshot_workspace(root, policy)
+
+            with materialize_workspace(snapshot, policy) as materialized:
+                self.assertEqual(
+                    {item.path: item for item in materialized.baseline_files}[
+                        "tracked.txt"
+                    ].kind,
+                    "missing",
+                )
+                (materialized.root / "tracked.txt").write_text(
+                    "restored\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                changes = build_changeset(materialized.baseline_files, candidate)
+                result = apply_changeset(
+                    source_snapshot=snapshot,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=changes,
+                    policy=policy,
+                    state_dir=Path(tmp) / "state",
+                    transaction_id=uuid4().hex,
+                )
+
+            self.assertEqual((root / "tracked.txt").read_text(), "restored\n")
+            restored = {item.path: item for item in result.files}["tracked.txt"]
+            self.assertEqual(restored.kind, "file")
+
+    def test_missing_declared_ignored_path_allows_unrelated_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            policy = WorkspaceScopePolicy(
+                ignored_paths=(IgnoredPathRule("optional.secret", "input_only"),)
+            )
+            snapshot = snapshot_workspace(root, policy)
+
+            with materialize_workspace(snapshot, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                changes = build_changeset(materialized.baseline_files, candidate)
+                result = apply_changeset(
+                    source_snapshot=snapshot,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=changes,
+                    policy=policy,
+                    state_dir=Path(tmp) / "state",
+                    transaction_id=uuid4().hex,
+                )
+
+            self.assertEqual((root / "tracked.txt").read_text(), "candidate\n")
+            optional = {item.path: item for item in result.files}["optional.secret"]
+            self.assertEqual(optional.kind, "missing")
+
+    def test_git_head_and_index_drift_roll_back_but_preserve_concurrent_git_state(
+        self,
+    ) -> None:
+        for drift in ("head", "index"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                _initialize_repo(root)
+                policy = WorkspaceScopePolicy()
+                snapshot = snapshot_workspace(root, policy)
+                tracked_blob = _git(root, "rev-parse", "HEAD:tracked.txt")
+                state = Path(tmp) / "state"
+                with materialize_workspace(snapshot, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    changes = build_changeset(materialized.baseline_files, candidate)
+
+                    def mutate_git_authority(_target: Path) -> None:
+                        if drift == "index":
+                            _git(
+                                root,
+                                "update-index",
+                                "--cacheinfo",
+                                "100755",
+                                tracked_blob,
+                                "tracked.txt",
+                            )
+                        else:
+                            _git(
+                                root,
+                                "-c",
+                                "user.name=Antonio Antenore",
+                                "-c",
+                                "user.email=ant_ant95@hotmail.it",
+                                "commit",
+                                "-q",
+                                "--allow-empty",
+                                "-m",
+                                "concurrent",
+                            )
+
+                    with self.assertRaisesRegex(
+                        WorkspaceSecurityError,
+                        "HEAD or index changed",
+                    ):
+                        apply_changeset(
+                            source_snapshot=snapshot,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=state,
+                            transaction_id=uuid4().hex,
+                            _test_hook_after_detach=mutate_git_authority,
+                        )
+
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "initial\n",
+                )
+                after = snapshot_workspace(root, policy)
+                if drift == "head":
+                    self.assertNotEqual(after.head_sha, snapshot.head_sha)
+                    self.assertEqual(after.index_sha256, snapshot.index_sha256)
+                else:
+                    self.assertEqual(after.head_sha, snapshot.head_sha)
+                    self.assertNotEqual(after.index_sha256, snapshot.index_sha256)
 
     def test_source_drift_blocks_apply_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

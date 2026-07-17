@@ -263,6 +263,7 @@ class WorkspaceSnapshot:
     manifest_sha256: str
     fingerprint: str
     files: tuple[WorkspaceFile, ...] = field(repr=False)
+    tracked_paths: tuple[str, ...] = field(repr=False)
     total_bytes: int
 
     def payload(self) -> dict[str, object]:
@@ -275,6 +276,7 @@ class WorkspaceSnapshot:
             "manifest_sha256": self.manifest_sha256,
             "fingerprint": self.fingerprint,
             "file_count": len(self.files),
+            "tracked_file_count": len(self.tracked_paths),
             "total_bytes": self.total_bytes,
             "scope": "tracked_untracked_nonignored_plus_declared_ignored",
         }
@@ -295,7 +297,10 @@ class MaterializedWorkspace:
     policy: WorkspaceScopePolicy
 
     def snapshot(self) -> tuple[WorkspaceFile, ...]:
-        return snapshot_materialized(self.root, self.policy)
+        return _canonical_materialized_files(
+            self.source_snapshot,
+            snapshot_materialized(self.root, self.policy),
+        )
 
 
 def snapshot_workspace(
@@ -304,7 +309,9 @@ def snapshot_workspace(
 ) -> WorkspaceSnapshot:
     root = _trusted_root(workspace, label="Workspace")
     repository_marker = _has_repository_marker(root)
-    git_identity = _resolve_trusted_git_identity(required=repository_marker)
+    git_identity = (
+        _resolve_trusted_git_identity(required=True) if repository_marker else None
+    )
     first = _snapshot_once(
         root,
         policy,
@@ -350,6 +357,9 @@ def snapshot_materialized(
             relative = (relative_dir / name).as_posix()
             paths.append(_safe_relative(relative))
     directions = {item.path: item.direction for item in policy.ignored_paths}
+    for rule in policy.ignored_paths:
+        if rule.path not in paths:
+            paths.append(rule.path)
     return _manifest_files(base, paths, policy, directions=directions)
 
 
@@ -373,7 +383,10 @@ def materialize_workspace(
             raise WorkspaceSecurityError(
                 "Workspace changed while the materialized candidate was created."
             )
-        baseline = snapshot_materialized(root, policy)
+        baseline = _canonical_materialized_files(
+            snapshot,
+            snapshot_materialized(root, policy),
+        )
         _initialize_synthetic_repository(root)
         yield MaterializedWorkspace(
             root=root,
@@ -404,6 +417,62 @@ def build_changeset(
     return tuple(changes)
 
 
+def _canonical_materialized_files(
+    source_snapshot: WorkspaceSnapshot,
+    candidate_files: Sequence[WorkspaceFile],
+) -> tuple[WorkspaceFile, ...]:
+    """Represent source-tracked deletions exactly as live Git snapshots do."""
+
+    result = {item.path: item for item in candidate_files}
+    source_files = {item.path: item for item in source_snapshot.files}
+    empty_sha256 = _sha256_bytes(b"")
+    for path in source_snapshot.tracked_paths:
+        if path in result:
+            continue
+        previous = source_files.get(path)
+        result[path] = WorkspaceFile(
+            path=path,
+            kind="missing",
+            sha256=empty_sha256,
+            size=0,
+            mode=0,
+            direction=(previous.direction if previous is not None else "round_trip"),
+        )
+    return tuple(sorted(result.values()))
+
+
+def _with_expected_missing_files(
+    observed_files: Sequence[WorkspaceFile],
+    expected_files: Sequence[WorkspaceFile],
+) -> tuple[WorkspaceFile, ...]:
+    result = {item.path: item for item in observed_files}
+    for item in expected_files:
+        if item.kind == "missing" and item.path not in result:
+            result[item.path] = item
+    return tuple(sorted(result.values()))
+
+
+def _canonical_changes(
+    changes: Sequence[WorkspaceChange],
+    candidate_files: Sequence[WorkspaceFile],
+) -> tuple[WorkspaceChange, ...]:
+    candidates = {item.path: item for item in candidate_files}
+    result: list[WorkspaceChange] = []
+    for change in changes:
+        after = change.after
+        canonical = candidates.get(change.path)
+        if after is None and canonical is not None and canonical.kind == "missing":
+            after = canonical
+        result.append(
+            WorkspaceChange(
+                path=change.path,
+                before=change.before,
+                after=after,
+            )
+        )
+    return tuple(result)
+
+
 def apply_changeset(
     *,
     source_snapshot: WorkspaceSnapshot,
@@ -420,6 +489,8 @@ def apply_changeset(
     _validate_transaction_id(transaction_id)
     source = _trusted_root(source_snapshot.root, label="Source workspace")
     candidate = _trusted_root(candidate_root, label="Candidate workspace")
+    candidate_files = _canonical_materialized_files(source_snapshot, candidate_files)
+    changes = _canonical_changes(changes, candidate_files)
     if changes:
         _require_secure_apply_capabilities()
     state = _prepare_state_directory(state_dir)
@@ -518,6 +589,14 @@ def apply_changeset(
             records[index]["status"] = "applied"
             _write_journal(journal, journal_payload)
         result = snapshot_workspace(source, policy)
+        if (
+            result.git_repository != source_snapshot.git_repository
+            or result.head_sha != source_snapshot.head_sha
+            or result.index_sha256 != source_snapshot.index_sha256
+        ):
+            raise WorkspaceSecurityError(
+                "Git HEAD or index changed during the workspace transaction."
+            )
         expected = tuple(sorted(candidate_files))
         if tuple(sorted(result.files)) != expected:
             raise WorkspaceSecurityError(
@@ -601,7 +680,22 @@ def _snapshot_once(
             git_identity=git_identity,
         )
         paths = [os.fsdecode(item) for item in raw_paths.split(b"\0") if item]
-        index = _git(root, "ls-files", "--stage", "-z", git_identity=git_identity)
+        index_entries = _git(
+            root,
+            "ls-files",
+            "--stage",
+            "-z",
+            git_identity=git_identity,
+        )
+        index = _git(
+            root,
+            "ls-files",
+            "--stage",
+            "--debug",
+            "-z",
+            git_identity=git_identity,
+        )
+        tracked_paths = _tracked_paths_from_index(index_entries)
         head_raw = _git_optional(
             root,
             "rev-parse",
@@ -628,6 +722,7 @@ def _snapshot_once(
             paths.extend((relative_dir / name).as_posix() for name in sorted(files))
         index = b""
         head = ""
+        tracked_paths = ()
     directions = {item.path: item.direction for item in policy.ignored_paths}
     for rule in policy.ignored_paths:
         if rule.path not in paths:
@@ -663,8 +758,24 @@ def _snapshot_once(
         manifest_sha256=str(fields["manifest_sha256"]),
         fingerprint=_sha256_text(_canonical_json(fields)),
         files=files,
+        tracked_paths=tracked_paths,
         total_bytes=sum(item.size for item in files),
     )
+
+
+def _tracked_paths_from_index(index: bytes) -> tuple[str, ...]:
+    paths: set[str] = set()
+    for record in (item for item in index.split(b"\0") if item):
+        header, separator, raw_path = record.partition(b"\t")
+        if (
+            not separator
+            or not raw_path
+            or re.fullmatch(rb"[0-7]{6} [0-9a-fA-F]{40,64} [0-3]", header)
+            is None
+        ):
+            raise WorkspaceSecurityError("Git index attestation is malformed.")
+        paths.add(_safe_relative(os.fsdecode(raw_path)))
+    return tuple(sorted(paths))
 
 
 def _manifest_files(
@@ -778,14 +889,20 @@ def _stage_attested_candidate(
     records: list[dict[str, object]],
 ) -> None:
     expected = tuple(sorted(candidate_files))
-    first = snapshot_materialized(candidate_root, policy)
-    second = snapshot_materialized(candidate_root, policy)
+    first = _with_expected_missing_files(
+        snapshot_materialized(candidate_root, policy),
+        expected,
+    )
+    second = _with_expected_missing_files(
+        snapshot_materialized(candidate_root, policy),
+        expected,
+    )
     if first != second or second != expected:
         raise WorkspaceSecurityError(
             "Candidate workspace changed or does not match its attested manifest."
         )
     for index, change in enumerate(changes):
-        if change.after is None:
+        if change.after is None or change.after.kind == "missing":
             continue
         data = _read_attested_file(candidate_root, change.after, policy)
         staged = staged_dir / f"{index:08d}.bin"
@@ -839,7 +956,7 @@ def _apply_change_fail_closed(
         test_hook(target)
 
     installed_identity: dict[str, int] | None = None
-    if change.after is not None:
+    if change.after is not None and change.after.kind != "missing":
         if staged is None:
             raise WorkspaceSecurityError("Candidate staging artifact is missing.")
         data = _read_staged_file(staged, change.after)
@@ -883,7 +1000,7 @@ def _plan_created_directories(
     result: list[tuple[str, ...]] = []
     for change in changes:
         planned: list[str] = []
-        if change.after is not None:
+        if change.after is not None and change.after.kind != "missing":
             parts = Path(change.path).parts[:-1]
             for depth in range(1, len(parts) + 1):
                 relative = Path(*parts[:depth]).as_posix()
@@ -1003,7 +1120,7 @@ def _rollback_from_journal(
             )
         rollback_detached: Path | None = None
         if _entry_matches(target, change.after):
-            if change.after is not None:
+            if change.after is not None and change.after.kind != "missing":
                 installed_identity = _recorded_file_identity(
                     raw.get("installed_identity")
                 )
@@ -1027,7 +1144,7 @@ def _rollback_from_journal(
             )
         backup_name = raw.get("backup")
         if backup_name is None:
-            if change.before is not None:
+            if change.before is not None and change.before.kind != "missing":
                 raise WorkspaceSecurityError(
                     "Workspace recovery backup is missing for an existing value."
                 )
@@ -1035,6 +1152,7 @@ def _rollback_from_journal(
             isinstance(backup_name, str)
             and _SAFE_BACKUP_NAME.fullmatch(backup_name)
             and change.before is not None
+            and change.before.kind != "missing"
         ):
             backup = backup_dir / backup_name
             data, backup_metadata = _read_regular_path_nofollow(
