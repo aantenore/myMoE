@@ -5544,15 +5544,20 @@ def _disposable_verifier_workspace(
     expected_baseline = tuple(baseline_files)
     expected_candidate = tuple(candidate_files)
     expected_changes = tuple(changes)
+    if expected_snapshot.files != expected_candidate:
+        raise WorkspaceSecurityError(
+            "Verifier candidate manifest does not match its workspace attestation."
+        )
     if build_changeset(expected_baseline, expected_candidate) != expected_changes:
         raise WorkspaceSecurityError(
             "Verifier changes do not match the attested candidate manifest."
         )
-    if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
+    current_source = snapshot_workspace(source_root, policy)
+    if current_source.fingerprint != expected_snapshot.fingerprint:
         raise WorkspaceSecurityError(
             "Candidate changed before verifier workspace materialization."
         )
-    if snapshot_materialized(source_root, policy) != expected_candidate:
+    if current_source.files != expected_candidate:
         raise WorkspaceSecurityError(
             "Candidate manifest changed before verifier workspace materialization."
         )
@@ -5576,16 +5581,16 @@ def _disposable_verifier_workspace(
                 state_dir=state,
                 transaction_id=secrets.token_hex(16),
             )
-        if snapshot_workspace(source_root, policy).fingerprint != expected_snapshot.fingerprint:
+        current_source = snapshot_workspace(source_root, policy)
+        if current_source.fingerprint != expected_snapshot.fingerprint:
             raise WorkspaceSecurityError(
                 "Candidate changed while verifier workspace was materialized."
             )
-        copied = snapshot_materialized(materialized.root, policy)
-        if copied != expected_candidate:
+        verifier_final = snapshot_workspace(materialized.root, policy)
+        if verifier_final.files != expected_candidate:
             raise WorkspaceSecurityError(
                 "Verifier workspace does not match the final candidate manifest."
             )
-        verifier_final = snapshot_workspace(materialized.root, policy)
         if (
             verifier_final.head_sha != verifier_baseline.head_sha
             or verifier_final.index_sha256 != verifier_baseline.index_sha256

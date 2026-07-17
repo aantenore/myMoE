@@ -19,7 +19,6 @@ from local_moe.assistant_bridge_workspace import (
     WorkspaceScopePolicy,
     build_changeset,
     materialize_workspace,
-    snapshot_materialized,
     snapshot_workspace,
 )
 
@@ -243,7 +242,7 @@ class VerifierIsolationTests(unittest.TestCase):
                     check=True,
                 )
                 expected = snapshot_workspace(candidate.root, policy)
-                candidate_files = snapshot_materialized(candidate.root, policy)
+                candidate_files = candidate.snapshot()
                 changes = build_changeset(candidate.baseline_files, candidate_files)
                 plan = assistant_bridge._build_verifier_plan(
                     spec,
@@ -306,7 +305,7 @@ class VerifierIsolationTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     final_snapshot = snapshot_workspace(candidate.root, policy)
-                    candidate_files = snapshot_materialized(candidate.root, policy)
+                    candidate_files = candidate.snapshot()
                     changes = build_changeset(
                         candidate.baseline_files,
                         candidate_files,
@@ -371,6 +370,68 @@ class VerifierIsolationTests(unittest.TestCase):
                     evidence.code,
                     "builtin_passed" if should_pass else "builtin_check_failed",
                 )
+
+    def test_trusted_git_builtin_preserves_tracked_deletion_against_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            policy = WorkspaceScopePolicy()
+            source_snapshot = snapshot_workspace(root, policy)
+            with materialize_workspace(source_snapshot, policy) as candidate:
+                (candidate.root / "tracked.txt").unlink()
+                final_snapshot = snapshot_workspace(candidate.root, policy)
+                candidate_files = candidate.snapshot()
+                changes = build_changeset(
+                    candidate.baseline_files,
+                    candidate_files,
+                )
+                spec = assistant_bridge.CommandVerifierSpec(
+                    id="trusted-git-tracked-deletion",
+                    kind="trusted_git_diff_check",
+                    argv=(),
+                    timeout_seconds=10,
+                    purpose="hygiene",
+                    execution_boundary="trusted_git_session",
+                    network_policy="denied",
+                    runtime_read_roots=(),
+                )
+                plan = assistant_bridge._build_verifier_plan(
+                    spec,
+                    workspace=candidate.root,
+                    runtime_policy=self.config.runtime,
+                    isolation_policy=self.config.verifier_isolation,
+                )
+                with assistant_bridge._disposable_verifier_workspace(
+                    candidate.root,
+                    source_snapshot=candidate.source_snapshot,
+                    baseline_files=candidate.baseline_files,
+                    expected_snapshot=final_snapshot,
+                    candidate_files=candidate_files,
+                    changes=changes,
+                    policy=policy,
+                ) as disposable:
+                    git = assistant_bridge.trusted_git_executable().resolved_path
+                    head_content = subprocess.run(
+                        [git, "show", "HEAD:tracked.txt"],
+                        cwd=disposable,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout
+                    deleted_from_worktree = not (disposable / "tracked.txt").exists()
+                    evidence = assistant_bridge._run_bound_verifier(
+                        plan,
+                        task=assistant_bridge.build_assistant_task(
+                            "Check tracked deletion hygiene."
+                        ),
+                        workspace=assistant_bridge.attest_workspace(candidate.root),
+                        verifier_workspace=disposable,
+                    )
+
+        self.assertEqual(head_content, "initial\n")
+        self.assertTrue(deleted_from_worktree)
+        self.assertTrue(evidence.passed)
+        self.assertEqual(evidence.code, "builtin_passed")
 
     def test_linux_bubblewrap_plan_drops_capabilities_before_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -603,7 +664,7 @@ class VerifierIsolationTests(unittest.TestCase):
         )
         with materialize_workspace(source_snapshot, policy) as candidate:
             expected = snapshot_workspace(candidate.root, policy)
-            candidate_files = snapshot_materialized(candidate.root, policy)
+            candidate_files = candidate.snapshot()
             changes = build_changeset(candidate.baseline_files, candidate_files)
             with assistant_bridge._disposable_verifier_workspace(
                 candidate.root,
