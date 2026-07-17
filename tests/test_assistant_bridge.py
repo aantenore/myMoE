@@ -643,6 +643,11 @@ class AssistantBridgeContractTests(unittest.TestCase):
             receipt.task["profile"] = "quality"  # type: ignore[index]
 
     def test_verifier_executes_the_exact_environment_bound_to_its_plan(self) -> None:
+        capability = assistant_bridge_module.verifier_isolation_capability(
+            self.config.verifier_isolation
+        )
+        if not capability.supported:
+            self.skipTest(capability.reason)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _initialize_git(root)
@@ -699,6 +704,11 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertIsNotNone(execute.call_args.kwargs["launcher_chain"])
 
     def test_verifier_rebuilds_exact_chain_in_disposable_workspace(self) -> None:
+        capability = assistant_bridge_module.verifier_isolation_capability(
+            self.config.verifier_isolation
+        )
+        if not capability.supported:
+            self.skipTest(capability.reason)
         with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
             roots = (Path(first_tmp), Path(second_tmp))
             for root in roots:
@@ -732,18 +742,26 @@ class AssistantBridgeContractTests(unittest.TestCase):
         current = execute.call_args.kwargs["launcher_chain"]
         self.assertTrue(evidence.passed)
         self.assertEqual(current.cwd, str(roots[1].resolve()))
-        self.assertNotEqual(current.fingerprint, plan.launcher_chain.fingerprint)
+        self.assertIsNotNone(plan.sandbox_launcher_chain)
+        assert plan.sandbox_launcher_chain is not None
+        self.assertIsNotNone(plan.isolation)
+        assert plan.isolation is not None
+        self.assertNotEqual(
+            current.fingerprint,
+            plan.sandbox_launcher_chain.fingerprint,
+        )
         self.assertEqual(
-            assistant_bridge_module._launcher_chain_authority_sha256(
+            assistant_bridge_module._sandbox_launcher_authority_sha256(
                 current,
+                isolation=plan.isolation,
                 executable=execute.call_args.args[0],
                 workspace=roots[1],
                 output_path="",
                 environment=execute.call_args.kwargs["env"],
                 ephemeral_workspace=True,
-                ephemeral_environment_keys=(),
+                ephemeral_environment_keys=("HOME", "TEMP", "TMP", "TMPDIR"),
             ),
-            plan.launcher_authority_sha256,
+            plan.sandbox_launcher_authority_sha256,
         )
 
     def test_verifier_propagates_unverified_process_cleanup(self) -> None:
@@ -2380,6 +2398,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         raw = json.loads(
             (ROOT / "configs" / "assistant-bridge.json").read_text(encoding="utf-8")
         )
+        for command_verifier in raw["verification"]["command_verifiers"]:
+            if command_verifier["id"] == "project-test-suite":
+                command_verifier["workspace_python_paths"] = []
         executable = local_executable or process_executable
         launcher_args = (
             list(local_launcher_args)
@@ -2455,6 +2476,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             *raw["verification"]["command_verifiers"],
             {
                 "id": "fixture-task-verifier",
+                "kind": "command",
                 "argv": [
                     process_executable,
                     "{workspace}/fixture_task_verifier.py",
@@ -2467,10 +2489,11 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
                     if process_proxy
                     else []
                 ),
+                "runtime_read_roots": ["{python_runtime}"],
                 "timeout_seconds": 30,
                 "purpose": "task",
-                "execution_boundary": "disposable_workspace",
-                "network_policy": "not_enforced",
+                "execution_boundary": "hard_sandbox",
+                "network_policy": "denied",
                 "environment_allowlist": [
                     "FAKE_VERIFIER_EXIT",
                     "FAKE_VERIFIER_EXPECT_CONTENT",
