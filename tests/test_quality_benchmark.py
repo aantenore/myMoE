@@ -152,7 +152,9 @@ class QualityBenchmarkTests(unittest.TestCase):
             config,
             timeout_seconds=0.1,
             model_match="exact",
-            opener=lambda *args, **kwargs: _Response({"data": [{"id": "required-model"}]}),
+            opener=lambda *args, **kwargs: _Response(
+                {"data": [{"id": "required-model"}]}
+            ),
         )
 
         self.assertEqual(missing["status"], "blocked")
@@ -274,9 +276,7 @@ class QualityBenchmarkTests(unittest.TestCase):
             prompt="Explain",
             category="reasoning",
             complexity="simple",
-            task_checks=(
-                {"id": "length", "type": "min_words", "value": 3},
-            ),
+            task_checks=({"id": "length", "type": "min_words", "value": 3},),
             quality_rubric=(
                 {
                     "id": "risk",
@@ -348,7 +348,9 @@ class QualityBenchmarkTests(unittest.TestCase):
                     "status": "blocked",
                     "experts": [{"expert_id": "general", "status": "blocked"}],
                 },
-                memory_sampler=lambda: memory_calls.append(True) or _host_memory_sample(1, 1),
+                memory_sampler=lambda: (
+                    memory_calls.append(True) or _host_memory_sample(1, 1)
+                ),
             )
 
         self.assertEqual(payload["status"], "blocked")
@@ -384,7 +386,9 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertEqual(payload["readiness"]["status"], "ready")
         self.assertEqual(payload["execution"]["planned_records"], 3)
         self.assertEqual(len(payload["execution"]["records"]), 3)
-        self.assertEqual(set(payload["metrics"]), {"single_general", "moe_top1", "moe_top2"})
+        self.assertEqual(
+            set(payload["metrics"]), {"single_general", "moe_top1", "moe_top2"}
+        )
         self.assertIn("manifest_sha256", payload["provenance"])
         self.assertIn("source_config_sha256", payload["provenance"])
         self.assertIn("dataset_sha256", payload["provenance"])
@@ -430,7 +434,9 @@ class QualityBenchmarkTests(unittest.TestCase):
             20,
         )
 
-    def test_memory_sampler_failure_is_explicit_and_does_not_break_benchmark(self) -> None:
+    def test_memory_sampler_failure_is_explicit_and_does_not_break_benchmark(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             spec = _write_synthetic_spec(Path(tmp))
 
@@ -540,7 +546,9 @@ class QualityBenchmarkTests(unittest.TestCase):
 
     def test_top1_non_regression_and_latency_win_passes_value_gate(self) -> None:
         metrics = _gate_metrics()
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -550,8 +558,7 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertTrue(gate["diagnostic_checks"][0]["passed"])
         self.assertTrue(
             all(
-                check["absolute_latency_passed"]
-                for check in gate["operational_checks"]
+                check["absolute_latency_passed"] for check in gate["operational_checks"]
             )
         )
 
@@ -571,9 +578,7 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertTrue(gate["moe_value_checks"][0]["passed"])
         self.assertFalse(gate["passed"])
         self.assertEqual(
-            gate["operational_thresholds"][
-                "maximum_operational_mean_latency_seconds"
-            ],
+            gate["operational_thresholds"]["maximum_operational_mean_latency_seconds"],
             30.0,
         )
         self.assertTrue(
@@ -610,7 +615,9 @@ class QualityBenchmarkTests(unittest.TestCase):
     def test_top1_unfulfilled_route_cannot_claim_value(self) -> None:
         metrics = _gate_metrics()
         metrics["moe_top1"]["route_fulfillment_rate"] = 0.875
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -621,7 +628,9 @@ class QualityBenchmarkTests(unittest.TestCase):
     def test_top1_response_error_cannot_claim_value(self) -> None:
         metrics = _gate_metrics()
         metrics["moe_top1"]["response_error_rate"] = 0.125
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -660,7 +669,9 @@ class QualityBenchmarkTests(unittest.TestCase):
         metrics = _gate_metrics()
         metrics["moe_top1"]["finish_reason_counts"] = {"length": 1, "stop": 7}
         metrics["moe_top1"]["truncation_rate"] = 0.125
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -708,7 +719,9 @@ class QualityBenchmarkTests(unittest.TestCase):
     def test_too_few_routed_cases_cannot_claim_latency_value(self) -> None:
         metrics = _gate_metrics()
         metrics["moe_top1"]["non_general_case_keys"] = ["fast#1"]
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -719,7 +732,9 @@ class QualityBenchmarkTests(unittest.TestCase):
         metrics = _gate_metrics()
         metrics["moe_top1"]["quality_score"] = 0.79
         metrics["moe_top2"]["quality_score"] = 1.0
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
@@ -730,7 +745,9 @@ class QualityBenchmarkTests(unittest.TestCase):
     def test_incomplete_top2_compare_fails_only_diagnostic_contract(self) -> None:
         metrics = _gate_metrics()
         metrics["moe_top2"]["complete_compare_rate"] = 0.875
-        comparisons = compare_to_baseline(metrics, {"baseline_variant": "single_general"})
+        comparisons = compare_to_baseline(
+            metrics, {"baseline_variant": "single_general"}
+        )
 
         gate = evaluate_benchmark_gate(metrics, comparisons, _gate_decision())
 
