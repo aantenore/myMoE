@@ -158,3 +158,7 @@ Current measured results and their limits are documented in [Tested Performance]
 ## Product Boundary
 
 myMoE is a local workstation application and evaluation harness. It is not a trained sparse transformer, a hosted multi-tenant service, or an unrestricted autonomous agent platform. Automatic specialist cold-loading and automatic durable compaction are not implemented; both remain explicit operator decisions.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
