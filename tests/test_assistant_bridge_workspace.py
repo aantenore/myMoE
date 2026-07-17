@@ -314,6 +314,41 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
                 "value\n",
             )
 
+    def test_git_attestation_ignores_ambient_state_and_fsmonitor_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            attacker = Path(tmp) / "attacker"
+            attacker.mkdir()
+            _initialize_repo(attacker)
+            (attacker / "attacker.txt").write_text("attacker\n", encoding="utf-8")
+            _git(attacker, "add", "attacker.txt")
+            helper = Path(tmp) / "fsmonitor-helper"
+            marker = Path(tmp) / "helper-ran"
+            helper.write_text(
+                f"#!/bin/sh\ntouch '{marker}'\nexit 0\n",
+                encoding="utf-8",
+            )
+            helper.chmod(0o700)
+            _git(root, "config", "core.fsmonitor", str(helper))
+            poisoned = {
+                "GIT_DIR": str(attacker / ".git"),
+                "GIT_WORK_TREE": str(attacker),
+                "GIT_CONFIG_COUNT": "2",
+                "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                "GIT_CONFIG_VALUE_0": str(helper),
+                "GIT_CONFIG_KEY_1": "credential.helper",
+                "GIT_CONFIG_VALUE_1": f"!{helper}",
+            }
+
+            with mock.patch.dict(os.environ, poisoned, clear=False):
+                snapshot = snapshot_workspace(root, WorkspaceScopePolicy())
+
+            self.assertFalse(marker.exists())
+            self.assertIn("tracked.txt", {item.path for item in snapshot.files})
+            self.assertNotIn("attacker.txt", {item.path for item in snapshot.files})
+
     def test_journal_flushes_file_before_replace_and_directory_after(self) -> None:
         if os.name != "posix":
             self.skipTest("POSIX fsync ordering probe")

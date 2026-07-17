@@ -543,23 +543,14 @@ def _manifest_files(
 
 
 def _initialize_synthetic_repository(root: Path) -> None:
-    env = {
-        "PATH": os.environ.get("PATH", os.defpath),
-        "HOME": str(root.parent),
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_AUTHOR_NAME": "Antonio Antenore",
-        "GIT_AUTHOR_EMAIL": "ant_ant95@hotmail.it",
-        "GIT_COMMITTER_NAME": "Antonio Antenore",
-        "GIT_COMMITTER_EMAIL": "ant_ant95@hotmail.it",
-    }
-    _run(("git", "init", "-q", "--template="), root, env)
-    _run(("git", "add", "-f", "--all"), root, env)
-    _run(
-        ("git", "commit", "-q", "--allow-empty", "-m", "materialized baseline"),
+    _run_git(("init", "-q", "--template="), root, identity=True)
+    _run_git(("add", "-f", "--all"), root, identity=True)
+    _run_git(
+        ("commit", "-q", "--allow-empty", "-m", "materialized baseline"),
         root,
-        env,
+        identity=True,
     )
-    remotes = _run(("git", "remote"), root, env, capture=True).splitlines()
+    remotes = _run_git(("remote",), root, identity=True, capture=True).splitlines()
     if remotes:
         raise WorkspaceSecurityError(
             "Synthetic repository unexpectedly contains remotes."
@@ -891,29 +882,17 @@ def _rollback_created_directories(root: Path, raw_directories: object) -> None:
 
 
 def _is_git_workspace(root: Path) -> bool:
-    completed = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        timeout=10,
-        check=False,
-    )
-    return completed.returncode == 0 and completed.stdout.strip() == b"true"
+    try:
+        output = _run_git(
+            ("rev-parse", "--is-inside-work-tree"), root, capture_bytes=True
+        )
+    except WorkspaceSecurityError:
+        return False
+    return output.strip() == b"true"
 
 
 def _git(root: Path, *args: str) -> bytes:
-    completed = subprocess.run(
-        ["git", "-C", str(root), *args],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=20,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise WorkspaceSecurityError("Git workspace attestation failed.")
-    return completed.stdout
+    return _run_git(args, root, capture_bytes=True)
 
 
 def _git_optional(root: Path, *args: str) -> bytes | None:
@@ -923,27 +902,96 @@ def _git_optional(root: Path, *args: str) -> bytes | None:
         return None
 
 
-def _run(
+def _run_git(
     argv: Sequence[str],
     cwd: Path,
-    env: dict[str, str],
     *,
     capture: bool = False,
-) -> str:
+    capture_bytes: bool = False,
+    identity: bool = False,
+) -> str | bytes:
+    executable = shutil.which("git", path=os.environ.get("PATH", os.defpath))
+    if executable is None:
+        raise WorkspaceSecurityError("Git executable is unavailable.")
+    null_config = os.devnull
+    command = [
+        executable,
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "-c",
+        f"core.excludesFile={null_config}",
+        "-c",
+        f"core.hooksPath={null_config}",
+        "-c",
+        "credential.helper=",
+        "-c",
+        "core.sshCommand=false",
+        "-c",
+        "diff.external=",
+        "-c",
+        "protocol.ext.allow=never",
+        "-c",
+        "protocol.file.allow=never",
+    ]
+    if _entry_exists(cwd / ".git"):
+        command.extend(("-c", f"core.worktree={cwd}"))
+    command.extend(("-C", str(cwd), *argv))
+    env = _sanitized_git_environment(identity=identity)
     completed = subprocess.run(
-        list(argv),
-        cwd=cwd,
+        command,
         env=env,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stdout=(subprocess.PIPE if capture or capture_bytes else subprocess.DEVNULL),
         stderr=subprocess.PIPE,
-        text=True,
+        text=not capture_bytes,
         timeout=30,
         check=False,
     )
     if completed.returncode != 0:
-        raise WorkspaceSecurityError("Synthetic repository initialization failed.")
+        raise WorkspaceSecurityError("Git workspace attestation failed.")
+    if capture_bytes:
+        if not isinstance(completed.stdout, bytes):
+            raise WorkspaceSecurityError("Git returned an invalid byte stream.")
+        return completed.stdout
     return completed.stdout if capture else ""
+
+
+def _sanitized_git_environment(*, identity: bool) -> dict[str, str]:
+    allowed = {
+        "PATH",
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LC_ALL",
+    }
+    env = {key: value for key, value in os.environ.items() if key in allowed}
+    env.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+        }
+    )
+    if identity:
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "Antonio Antenore",
+                "GIT_AUTHOR_EMAIL": "ant_ant95@hotmail.it",
+                "GIT_COMMITTER_NAME": "Antonio Antenore",
+                "GIT_COMMITTER_EMAIL": "ant_ant95@hotmail.it",
+            }
+        )
+    return env
 
 
 def _safe_relative(value: str) -> str:
