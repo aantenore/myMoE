@@ -72,8 +72,11 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
                     f"AWS {aws}",
                     f"Authorization: Basic {basic}",
                     'JSON {"api_key":"json-value"}',
+                    'JSON {"OPENAI_API_KEY":"prefixed-json-value"}',
                     "PASSWORD=two assignment words",
                     'client_secret="quoted secret words"',
+                    "AWS_SECRET_ACCESS_KEY=aws/secret+material=",
+                    "GITHUB_TOKEN=opaque-provider-value",
                 )
             ),
             "config": {
@@ -95,8 +98,11 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
             aws,
             basic,
             "json-value",
+            "prefixed-json-value",
             "two assignment words",
             "quoted secret words",
+            "aws/secret+material=",
+            "opaque-provider-value",
             "nested-client-value",
             "nested-value",
         ):
@@ -161,6 +167,7 @@ class AssistantBridgeSecretRedactionTests(unittest.TestCase):
             "objective": objective,
             "token_budget": 8192,
             "max_token": 4096,
+            "min_tokens": 128,
             "output_token_count": 42,
             "monkey": "banana",
             "keynote": "architecture",

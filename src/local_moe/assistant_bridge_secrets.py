@@ -40,12 +40,19 @@ def _pattern(name: str, expression: str, flags: int = 0) -> TextSecretPattern:
     return TextSecretPattern(name=name, regex=re.compile(expression, flags))
 
 
+_NON_SECRET_TOKEN_KEY = (
+    r"(?!(?:max|min|input|output|total|prompt|completion)[_-]?"
+    r"tokens?(?:[_-](?:budget|count))?\b)"
+)
+_KEY_PREFIX = r"(?:[A-Za-z0-9]+[_-])*"
 _SENSITIVE_KEY = (
+    rf"{_NON_SECRET_TOKEN_KEY}{_KEY_PREFIX}"
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|"
     r"authorization|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|"
     r"password|passwd|pwd|credential(?:s)?|secret|token)"
 )
 _ASSIGNMENT_SENSITIVE_KEY = (
+    rf"{_NON_SECRET_TOKEN_KEY}{_KEY_PREFIX}"
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|"
     r"client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|"
     r"password|passwd|pwd|credential(?:s)?|secret|token)"
