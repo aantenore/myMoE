@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib import request
 import unittest
 
-from local_moe.web import build_server
+from local_moe.web import _download_disposition, build_server
 from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
 HTTP_TEST_TIMEOUT_SECONDS = 15
@@ -65,6 +65,26 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(result["accuracy"], 1.0)
         self.assertEqual(result["total"], 8)
+
+    def test_eval_endpoint_rejects_paths_outside_configured_directory(self) -> None:
+        server = build_server("tests/fixtures/moe.synthetic.json", port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            with self.assertRaises(HTTPError) as raised:
+                _post_json(
+                    base_url + "/api/evaluate",
+                    {"eval_path": "../configs/app.json"},
+                )
+            payload = json.loads(raised.exception.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(raised.exception.code, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(payload["error"], "invalid_evaluation_set")
 
     def test_serves_runtime_and_extensions(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -301,7 +321,7 @@ class WebTests(unittest.TestCase):
                 try:
                     _post_json(
                         base_url + "/api/config/activate-profile",
-                        {"profile_path": "tests/fixtures/moe.synthetic.json"},
+                        {"profile_path": "configs/moe.live.general-mlx.example.json"},
                     )
                     self.fail("Expected confirmation guard to reject profile activation")
                 except HTTPError as exc:
@@ -309,7 +329,7 @@ class WebTests(unittest.TestCase):
                 confirmed = _post_json(
                     base_url + "/api/config/activate-profile",
                     {
-                        "profile_path": "tests/fixtures/moe.synthetic.json",
+                        "profile_path": "configs/moe.live.general-mlx.example.json",
                         "confirm": True,
                     },
                 )
@@ -324,7 +344,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(confirmed["status"], "ok")
         self.assertTrue(confirmed["activated"])
         self.assertTrue(confirmed["restart_required"])
-        self.assertEqual(updated["default_moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(updated["default_moe_config"], "configs/moe.live.general-mlx.example.json")
 
     def test_profile_preparation_endpoint_uses_requested_profile(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
@@ -335,7 +355,7 @@ class WebTests(unittest.TestCase):
             guarded = _post_json(
                 base_url + "/api/config/prepare-profile",
                 {
-                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                    "profile_path": "configs/moe.live.general-mlx.example.json",
                     "execute": True,
                     "download_models": True,
                 },
@@ -343,7 +363,7 @@ class WebTests(unittest.TestCase):
             confirmed = _post_json(
                 base_url + "/api/config/prepare-profile",
                 {
-                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                    "profile_path": "configs/moe.live.general-mlx.example.json",
                 },
             )
         finally:
@@ -352,10 +372,17 @@ class WebTests(unittest.TestCase):
             server.server_close()
 
         self.assertEqual(guarded["status"], "confirmation_required")
-        self.assertEqual(guarded["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(guarded["profile_path"], "configs/moe.live.general-mlx.example.json")
         self.assertEqual(confirmed["status"], "planned")
-        self.assertEqual(confirmed["profile_path"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(confirmed["profile_path"], "configs/moe.live.general-mlx.example.json")
         self.assertTrue(confirmed["ok"])
+
+    def test_download_filename_removes_header_control_characters(self) -> None:
+        disposition = _download_disposition('report"\r\nX-Injected: yes.md')
+
+        self.assertEqual(disposition.count("\r"), 0)
+        self.assertEqual(disposition.count("\n"), 0)
+        self.assertEqual(disposition, 'attachment; filename="report___X-Injected__yes.md"')
 
     def test_startup_endpoint_is_confirmation_guarded(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)

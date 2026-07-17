@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .path_security import read_text_file
+
 
 class ConfigError(ValueError):
     """Raised when MoE configuration is invalid."""
@@ -80,6 +82,22 @@ class MoEConfig:
 def load_config(path: str | Path) -> MoEConfig:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     return parse_config(raw)
+
+
+def load_config_within(
+    path: str | Path,
+    *,
+    allowed_roots: tuple[str | Path, ...],
+) -> MoEConfig:
+    """Load a config selected by an API caller within configured profile roots."""
+
+    _, text = read_text_file(
+        path,
+        allowed_roots=allowed_roots,
+        label="runtime profile",
+        max_bytes=2 * 1024 * 1024,
+    )
+    return parse_config(json.loads(text))
 
 
 def parse_config(raw: dict[str, Any]) -> MoEConfig:

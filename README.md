@@ -103,7 +103,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 
 | Configuration | Responsibility |
 | --- | --- |
-| [`configs/app.json`](configs/app.json) | Active profile, local work directory, backend preferences, language policy, extension paths, and permissions. |
+| [`configs/app.json`](configs/app.json) | Active profile, allowed profile/evaluation directories, local work directory, backend preferences, language policy, extension paths, and permissions. |
 | [`configs/moe.*.json`](configs/) | Experts, endpoints, models, generation parameters, routing strategy, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](configs/context-policy.json) | Context limit, reserved output, compaction threshold, recent-turn limit, and memory limit. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |

@@ -424,21 +424,25 @@ class LocalToolRunner:
             raise ToolExecutionError("profile.activate requires an app config.")
         if not self._active_config_path:
             raise ToolExecutionError("profile.activate requires the active MoE config path.")
-        if payload.get("recommended") is True:
-            result = activate_recommended_config_profile(
-                active_config_path=self._active_config_path,
-                app_config=self._app_config,
-                app_config_path=self._app_config_path,
-                confirm=True,
-            )
-        else:
-            result = activate_config_profile(
-                _required_text(payload, "profile_path"),
-                active_config_path=self._active_config_path,
-                app_config=self._app_config,
-                app_config_path=self._app_config_path,
-                confirm=True,
-            )
+        try:
+            if payload.get("recommended") is True:
+                result = activate_recommended_config_profile(
+                    active_config_path=self._active_config_path,
+                    app_config=self._app_config,
+                    app_config_path=self._app_config_path,
+                    confirm=True,
+                )
+            else:
+                result = activate_config_profile(
+                    _required_text(payload, "profile_path"),
+                    active_config_path=self._active_config_path,
+                    app_config=self._app_config,
+                    app_config_path=self._app_config_path,
+                    profile_roots=(self._app_config.runtime.profile_dir,),
+                    confirm=True,
+                )
+        except ValueError as exc:
+            raise ToolExecutionError(f"profile.activate rejected the requested profile: {exc}") from exc
         return _ok(tool, "Runtime profile default updated.", result)
 
     def _storage_inspect(self, tool: ToolDefinition, payload: dict[str, Any]) -> ToolRunResult:

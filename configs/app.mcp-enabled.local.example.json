@@ -19,6 +19,8 @@
     "work_dir": "work/runtime",
     "context_policy_config": "configs/context-policy.json",
     "context_policy_profile": "qwen3_4b_general_24gb",
+    "profile_dir": "configs",
+    "evaluation_dir": "experiments",
     "cron_auto_run": true,
     "cron_poll_seconds": 300,
     "cron_confirm_writes": false

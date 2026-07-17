@@ -336,19 +336,27 @@ class ToolRunnerTests(unittest.TestCase):
 
             with self.assertRaises(ToolExecutionError):
                 runner.run("profile.activate", {"profile_path": "tests/fixtures/moe.synthetic.json"})
+            with self.assertRaisesRegex(ToolExecutionError, "configured directory"):
+                runner.run(
+                    "profile.activate",
+                    {
+                        "profile_path": "tests/fixtures/moe.synthetic.json",
+                        "confirm": True,
+                    },
+                )
             result = runner.run(
                 "profile.activate",
                 {
-                    "profile_path": "tests/fixtures/moe.synthetic.json",
+                    "profile_path": "configs/moe.live.general-mlx.example.json",
                     "confirm": True,
                 },
             )
             raw = json.loads(app_config_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.payload["new_default_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(result.payload["new_default_config"], "configs/moe.live.general-mlx.example.json")
         self.assertTrue(result.payload["restart_required"])
-        self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(raw["default_moe_config"], "configs/moe.live.general-mlx.example.json")
 
     def test_storage_inspect_reports_configured_paths_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

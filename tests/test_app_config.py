@@ -13,6 +13,8 @@ class AppConfigTests(unittest.TestCase):
         config = load_app_config("configs/app.json")
 
         self.assertTrue(config.language.respond_in_user_language)
+        self.assertEqual(config.runtime.profile_dir, "configs")
+        self.assertEqual(config.runtime.evaluation_dir, "experiments")
         self.assertTrue(
             app_config_payload(config)["language"]["respond_in_user_language"]
         )

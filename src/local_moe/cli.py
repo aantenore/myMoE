@@ -519,6 +519,7 @@ def main() -> None:
                 active_config_path=config_path,
                 app_config=app_config,
                 app_config_path=args.app_config,
+                profile_roots=(Path(args.activate_profile).parent,),
                 confirm=args.profile_confirm,
             )
         print(json.dumps(payload, indent=2))

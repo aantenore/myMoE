@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from .app_config import AppConfig
-from .config import load_config
+from .config import load_config_within
 from .config_profiles import recommend_config_profile
 from .hardware import HardwareProfile
+from .path_security import PathBoundaryError, resolve_existing_file
 
 
 class ProfileActivationError(ValueError):
@@ -20,10 +21,20 @@ def activate_config_profile(
     active_config_path: str,
     app_config: AppConfig,
     app_config_path: str = "configs/app.json",
+    profile_roots: tuple[str | Path, ...] | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    target_path = _display_path(profile_path)
-    _validate_profile(target_path)
+    roots = profile_roots or (app_config.runtime.profile_dir,)
+    try:
+        target = resolve_existing_file(
+            profile_path,
+            allowed_roots=roots,
+            label="runtime profile",
+        )
+        _validate_profile(target, profile_roots=roots)
+    except (PathBoundaryError, OSError) as exc:
+        raise ProfileActivationError(str(exc)) from exc
+    target_path = _display_path(target)
     previous_default = _display_path(app_config.default_moe_config)
     active_path = _display_path(active_config_path)
     restart_required = active_path != target_path
@@ -65,16 +76,17 @@ def activate_recommended_config_profile(
     active_config_path: str,
     app_config: AppConfig,
     app_config_path: str = "configs/app.json",
-    config_dir: str | Path = "configs",
+    config_dir: str | Path | None = None,
     hardware_profile: HardwareProfile | None = None,
     candidate_paths: tuple[str | Path, ...] | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
+    configured_dir = config_dir or app_config.runtime.profile_dir
     recommendation = recommend_config_profile(
         active_config_path=active_config_path,
         app_config=app_config,
         app_config_path=app_config_path,
-        config_dir=config_dir,
+        config_dir=configured_dir,
         hardware_profile=hardware_profile,
         candidate_paths=candidate_paths,
     )["recommendation"]
@@ -86,17 +98,23 @@ def activate_recommended_config_profile(
         active_config_path=active_config_path,
         app_config=app_config,
         app_config_path=app_config_path,
+        profile_roots=_trusted_recommendation_roots(
+            configured_dir,
+            active_config_path,
+            app_config.default_moe_config,
+        ),
         confirm=confirm,
     )
     return {**result, "recommendation": recommendation}
 
 
-def _validate_profile(profile_path: str) -> None:
-    path = Path(profile_path)
-    if not path.exists():
-        raise ProfileActivationError(f"Runtime profile does not exist: {profile_path}")
+def _validate_profile(
+    profile_path: str | Path,
+    *,
+    profile_roots: tuple[str | Path, ...],
+) -> None:
     try:
-        load_config(path)
+        load_config_within(profile_path, allowed_roots=profile_roots)
     except Exception as exc:
         raise ProfileActivationError(f"Runtime profile is invalid: {exc}") from exc
 
@@ -125,9 +143,21 @@ def _restart_command(app_config_path: str, profile_path: str) -> list[str]:
 def _display_path(path: str | Path) -> str:
     candidate = Path(path)
     try:
-        return candidate.resolve().relative_to(Path.cwd().resolve()).as_posix()
-    except (OSError, ValueError):
+        return candidate.relative_to(Path.cwd()).as_posix()
+    except ValueError:
         return candidate.as_posix()
+
+
+def _trusted_recommendation_roots(
+    configured_dir: str | Path,
+    active_config_path: str | Path,
+    default_config_path: str | Path,
+) -> tuple[str | Path, ...]:
+    return (
+        configured_dir,
+        Path(active_config_path).parent,
+        Path(default_config_path).parent,
+    )
 
 
 def _display_command(argv: list[str], *, env: dict[str, str]) -> str:

@@ -7,9 +7,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from .app_config import app_config_payload, load_app_config
+from .app_config import AppConfig, app_config_payload, load_app_config
 from .audit import AuditLogStore, audit_log_payload, audit_prune_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
@@ -34,7 +34,7 @@ from .environment import (
     environment_report_filename,
     render_environment_report_markdown,
 )
-from .evaluator import evaluate_router, load_eval_cases
+from .evaluator import evaluate_router, load_eval_cases_within
 from .extensions import (
     ExtensionError,
     audit_extension_registry,
@@ -54,6 +54,7 @@ from .memory import (
 from .model_inventory import build_model_asset_inventory
 from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
+from .path_security import PathBoundaryError, resolve_existing_file
 from .performance_report import (
     build_performance_report,
     performance_report_filename,
@@ -169,7 +170,7 @@ def build_server(
 def _make_handler(
     config_path: str,
     app_config_path: str,
-    app_config: object,
+    app_config: AppConfig,
     config: object,
     context_policy: object,
     moe: LocalMoE,
@@ -205,6 +206,7 @@ def _make_handler(
                         active_config_path=config_path,
                         app_config=app_config,
                         app_config_path=app_config_path,
+                        config_dir=app_config.runtime.profile_dir,
                     ),
                 )
                 return
@@ -216,6 +218,7 @@ def _make_handler(
                         active_config_path=config_path,
                         app_config=app_config,
                         app_config_path=app_config_path,
+                        config_dir=app_config.runtime.profile_dir,
                     ),
                 )
                 return
@@ -1114,8 +1117,20 @@ def _make_handler(
 
             if path == "/api/evaluate":
                 payload = _read_json(self)
-                eval_path = str(payload.get("eval_path", "experiments/eval_set.jsonl"))
-                result = evaluate_router(config, load_eval_cases(eval_path))
+                eval_path = str(payload.get("eval_path", "eval_set.jsonl"))
+                try:
+                    cases = load_eval_cases_within(
+                        eval_path,
+                        allowed_roots=(app_config.runtime.evaluation_dir,),
+                    )
+                    result = evaluate_router(config, cases)
+                except (PathBoundaryError, OSError, ValueError, json.JSONDecodeError) as exc:
+                    _send_json(
+                        self,
+                        {"error": "invalid_evaluation_set", "message": str(exc)},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
                 _send_json(self, result)
                 return
 
@@ -1183,14 +1198,22 @@ def _make_handler(
                             active_config_path=config_path,
                             app_config=app_config,
                             app_config_path=app_config_path,
+                            config_dir=app_config.runtime.profile_dir,
                         )["recommendation"]
                         profile_path = str(recommended.get("profile_path") or "")
                         if not profile_path:
                             raise ValueError("No recommended runtime profile is available.")
+                        allowed_profile_roots = _profile_roots(app_config, config_path)
                     else:
                         profile_path = _required_payload_text(payload, "profile_path")
+                        allowed_profile_roots = (app_config.runtime.profile_dir,)
+                    resolved_profile_path = resolve_existing_file(
+                        profile_path,
+                        allowed_roots=allowed_profile_roots,
+                        label="runtime profile",
+                    )
                     result = run_runtime_setup(
-                        config_path=profile_path,
+                        config_path=str(resolved_profile_path),
                         app_config_path=app_config_path,
                         execute=bool(payload.get("execute", False)),
                         download_models=bool(payload.get("download_models", False)),
@@ -1223,7 +1246,7 @@ def _make_handler(
                     },
                 )
                 response = setup_run_payload(result)
-                response["profile_path"] = profile_path
+                response["profile_path"] = _display_local_path(resolved_profile_path)
                 _send_json(self, response)
                 return
 
@@ -1236,6 +1259,7 @@ def _make_handler(
                             active_config_path=config_path,
                             app_config=app_config,
                             app_config_path=app_config_path,
+                            config_dir=app_config.runtime.profile_dir,
                             confirm=confirm,
                         )
                     else:
@@ -1244,6 +1268,7 @@ def _make_handler(
                             active_config_path=config_path,
                             app_config=app_config,
                             app_config_path=app_config_path,
+                            profile_roots=(app_config.runtime.profile_dir,),
                             confirm=confirm,
                         )
                 except (ProfileActivationError, ValueError) as exc:
@@ -1767,9 +1792,21 @@ def _send_download(
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
+    handler.send_header("Content-Disposition", _download_disposition(filename))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _download_disposition(filename: str) -> str:
+    safe_filename = "".join(
+        character
+        if character.isascii() and (character.isalnum() or character in {".", "_", "-"})
+        else "_"
+        for character in filename
+    ).strip(".")
+    if not safe_filename:
+        safe_filename = "download"
+    return f'attachment; filename="{safe_filename[:160]}"'
 
 
 def _send_sse_headers(handler: BaseHTTPRequestHandler) -> None:
@@ -1826,6 +1863,25 @@ def _audit_log_path(app_config: object) -> str:
 
 def _run_log_path(app_config: object) -> str:
     return f"{app_config.runtime.work_dir.rstrip('/')}/runs.jsonl"
+
+
+def _profile_roots(
+    app_config: AppConfig,
+    active_config_path: str | Path,
+) -> tuple[str | Path, ...]:
+    return (
+        app_config.runtime.profile_dir,
+        Path(active_config_path).parent,
+        Path(app_config.default_moe_config).parent,
+    )
+
+
+def _display_local_path(path: str | Path) -> str:
+    candidate = Path(path)
+    try:
+        return candidate.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return candidate.as_posix()
 
 
 def _path_tail(path: str, prefix: str) -> str:

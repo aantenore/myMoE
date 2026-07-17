@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from local_moe.config import load_config
-from local_moe.evaluator import evaluate_router, load_eval_cases
+from local_moe.evaluator import evaluate_router, load_eval_cases, load_eval_cases_within
+from local_moe.path_security import PathBoundaryError
 
 
 class EvaluatorTests(unittest.TestCase):
@@ -23,6 +24,19 @@ class EvaluatorTests(unittest.TestCase):
 
         self.assertEqual([case.id for case in cases], ["a", "b"])
         self.assertEqual(cases[1].complexity, "unknown")
+
+    def test_web_loader_confines_eval_cases_to_configured_root(self) -> None:
+        cases = load_eval_cases_within(
+            "eval_set.jsonl",
+            allowed_roots=("experiments",),
+        )
+        with self.assertRaises(PathBoundaryError):
+            load_eval_cases_within(
+                "../configs/app.json",
+                allowed_roots=("experiments",),
+            )
+
+        self.assertEqual(len(cases), 8)
 
     def test_evaluates_accuracy_and_complexity_breakdown(self) -> None:
         config = load_config("tests/fixtures/moe.synthetic.json")

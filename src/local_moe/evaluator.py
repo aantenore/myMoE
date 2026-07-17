@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 from .config import MoEConfig
+from .path_security import read_text_file
 from .router import RuleRouter
 
 
@@ -28,8 +29,28 @@ class EvalResult:
 
 
 def load_eval_cases(path: str | Path) -> list[EvalCase]:
+    return _parse_eval_cases(Path(path).read_text(encoding="utf-8"))
+
+
+def load_eval_cases_within(
+    path: str | Path,
+    *,
+    allowed_roots: tuple[str | Path, ...],
+) -> list[EvalCase]:
+    """Load a web-requested eval set inside configured evaluation roots."""
+
+    _, text = read_text_file(
+        path,
+        allowed_roots=allowed_roots,
+        label="evaluation set",
+        max_bytes=16 * 1024 * 1024,
+    )
+    return _parse_eval_cases(text)
+
+
+def _parse_eval_cases(text: str) -> list[EvalCase]:
     cases: list[EvalCase] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         raw = json.loads(line)

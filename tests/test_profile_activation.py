@@ -24,6 +24,7 @@ class ProfileActivationTests(unittest.TestCase):
                 active_config_path="configs/moe.live.fast-mlx.example.json",
                 app_config=app_config,
                 app_config_path=str(app_config_path),
+                profile_roots=("tests/fixtures",),
             )
             raw = json.loads(app_config_path.read_text(encoding="utf-8"))
 
@@ -42,6 +43,7 @@ class ProfileActivationTests(unittest.TestCase):
                 active_config_path="configs/moe.live.fast-mlx.example.json",
                 app_config=app_config,
                 app_config_path=str(app_config_path),
+                profile_roots=("tests/fixtures",),
                 confirm=True,
             )
             raw = json.loads(app_config_path.read_text(encoding="utf-8"))
@@ -53,6 +55,25 @@ class ProfileActivationTests(unittest.TestCase):
         self.assertEqual(raw["default_moe_config"], "tests/fixtures/moe.synthetic.json")
         self.assertIn("--config", result["restart_command"])
         self.assertIn("tests/fixtures/moe.synthetic.json", result["restart_command"])
+
+    def test_rejects_profile_outside_configured_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config_path = _write_temp_app_config(
+                root,
+                default_config="configs/moe.live.fast-mlx.example.json",
+            )
+            app_config = load_app_config(app_config_path)
+
+            with self.assertRaisesRegex(ValueError, "configured directory"):
+                activate_config_profile(
+                    "tests/fixtures/moe.synthetic.json",
+                    active_config_path="configs/moe.live.fast-mlx.example.json",
+                    app_config=app_config,
+                    app_config_path=str(app_config_path),
+                    profile_roots=("configs",),
+                    confirm=True,
+                )
 
     def test_can_activate_current_recommended_profile_without_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
