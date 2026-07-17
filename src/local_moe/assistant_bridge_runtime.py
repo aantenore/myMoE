@@ -45,7 +45,7 @@ import subprocess
 import threading
 import time
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 try:  # Optional by design; capability reporting below makes absence observable.
     import psutil as _psutil
@@ -71,6 +71,7 @@ _SCRIPT_SUFFIXES = frozenset(
         ".sh",
     }
 )
+_NATIVE_EXECUTABLE_SUFFIXES = frozenset({".com", ".exe"})
 _DANGEROUS_ENVIRONMENT_KEYS = frozenset(
     {
         "BASH_ENV",
@@ -840,9 +841,10 @@ def resolve_launcher_chain(
     The returned identity never stages or rewrites the executable, entrypoint,
     or companions.  Direct shebang scripts therefore retain their original
     ``$0``/``dirname`` behavior, while interpreter-driven scripts retain the
-    exact argv token supplied by the caller.  In strict mode, path arguments
-    that look like undeclared scripts and direct scripts whose interpreter
-    cannot be resolved are rejected before launch.
+    exact argv token supplied by the caller.  In strict mode, every argv value
+    that resolves to a script or executable path must match the declared
+    entrypoint or one of its companions, and direct scripts must expose a
+    resolvable interpreter before launch.
     """
 
     if not isinstance(strict, bool):
@@ -891,11 +893,6 @@ def resolve_launcher_chain(
             )
         interpreter = executable
     elif strict:
-        undeclared = _undeclared_script_argument(argv, cwd=root)
-        if undeclared is not None:
-            raise LauncherChainError(
-                "Script launcher arguments must declare an attested entrypoint"
-            )
         if executable_path.suffix.lower() in {".bat", ".cmd"}:
             raise LauncherChainError(
                 "Direct command scripts require an explicit native interpreter"
@@ -912,6 +909,21 @@ def resolve_launcher_chain(
         resolved_paths
     ):
         raise LauncherChainError("Launcher entrypoint cannot also be a companion")
+    if strict:
+        declared = (
+            (() if declared_entrypoint is None else (declared_entrypoint,))
+            + companion_identities
+        )
+        undeclared = _undeclared_executable_argument(
+            argv,
+            cwd=root,
+            declared=declared,
+        )
+        if undeclared is not None:
+            raise LauncherChainError(
+                "Script or executable launcher arguments must declare an attested "
+                "entrypoint or companion"
+            )
 
     return LauncherChainIdentity(
         executable_fingerprint=executable.fingerprint,
@@ -2080,11 +2092,9 @@ def _argv_declares_artifact(
     *,
     cwd: Path,
 ) -> bool:
-    for argument in argv:
-        if argument.startswith("-"):
-            continue
+    for _, value in _argv_artifact_values(argv):
         try:
-            candidate = _normalized_declared_path(argument, cwd=cwd)
+            candidate = _normalized_declared_path(value, cwd=cwd)
         except LauncherChainError:
             continue
         if str(candidate) == identity.launch_path:
@@ -2092,28 +2102,50 @@ def _argv_declares_artifact(
     return False
 
 
-def _undeclared_script_argument(
+def _argv_artifact_values(argv: Sequence[str]) -> Iterator[tuple[str, str]]:
+    for argument in argv:
+        if argument.startswith("-"):
+            if "=" not in argument:
+                continue
+            _, _, value = argument.partition("=")
+            if value:
+                yield argument, value
+            continue
+        yield argument, argument
+
+
+def _undeclared_executable_argument(
     argv: Sequence[str],
     *,
     cwd: Path,
+    declared: Sequence[LauncherArtifactIdentity],
 ) -> str | None:
-    for argument in argv:
-        if argument.startswith("-"):
-            continue
+    declared_paths = {item.launch_path for item in declared}
+    for argument, value in _argv_artifact_values(argv):
+        suffix = Path(value).suffix.lower()
+        known_executable_suffix = suffix in (
+            _SCRIPT_SUFFIXES | _NATIVE_EXECUTABLE_SUFFIXES
+        )
         try:
-            normalized = _normalized_declared_path(argument, cwd=cwd)
+            normalized = _normalized_declared_path(value, cwd=cwd)
         except LauncherChainError:
-            if Path(argument).suffix.lower() in _SCRIPT_SUFFIXES:
+            if known_executable_suffix:
                 return argument
             continue
+        if str(normalized) in declared_paths:
+            continue
         try:
-            first_line = _read_stable_first_line(normalized)
+            descriptor, before = _open_regular_file_descriptor(normalized)
         except FileNotFoundError:
+            if known_executable_suffix:
+                return argument
             continue
         except OSError as exc:
             try:
                 metadata = normalized.lstat()
             except FileNotFoundError:
+                if known_executable_suffix:
+                    return argument
                 continue
             except OSError:
                 raise LauncherChainError(
@@ -2124,8 +2156,35 @@ def _undeclared_script_argument(
             raise LauncherChainError(
                 "Path-shaped launcher arguments must be regular files"
             ) from exc
-        if normalized.suffix.lower() in _SCRIPT_SUFFIXES or bool(
-            _parse_shebang(first_line)
+        first_line = bytearray()
+        try:
+            while len(first_line) < 4097:
+                chunk = os.read(descriptor, 4097 - len(first_line))
+                if not chunk:
+                    break
+                newline = chunk.find(b"\n")
+                if newline >= 0:
+                    first_line.extend(chunk[: newline + 1])
+                    break
+                first_line.extend(chunk)
+            after = os.fstat(descriptor)
+        except OSError as exc:
+            raise LauncherChainError(
+                "Path-shaped launcher argument cannot be inspected"
+            ) from exc
+        finally:
+            os.close(descriptor)
+        if _stat_identity(before) != _stat_identity(after):
+            raise LauncherChainError(
+                "Path-shaped launcher argument changed during inspection"
+            )
+        executable_mode = bool(
+            before.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        )
+        if (
+            known_executable_suffix
+            or executable_mode
+            or bool(_parse_shebang(bytes(first_line)))
         ):
             return argument
     return None

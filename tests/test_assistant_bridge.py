@@ -6,11 +6,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import local_moe.assistant_bridge as assistant_bridge_module
 import local_moe.assistant_bridge_runtime as assistant_bridge_runtime
@@ -500,6 +501,91 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertEqual(result.code, "runtime_attestation_failed")
         self.assertEqual(reservations, 0)
 
+    def test_premium_auth_staging_is_exclusive_bounded_and_fd_hardened(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "auth.json"
+            content = b'{"fixture":"credential-secret"}'
+            expected = assistant_bridge_module.PremiumAuthAttestation(
+                source_path=str(root / "source-auth.json"),
+                sha256=hashlib.sha256(content).hexdigest(),
+                size_bytes=len(content),
+                content=content,
+            )
+            real_open = os.open
+            real_fchmod = getattr(os, "fchmod", None)
+            with patch.object(
+                assistant_bridge_module.os,
+                "open",
+                wraps=real_open,
+            ) as opened:
+                if real_fchmod is None:
+                    staged = assistant_bridge_module._stage_premium_auth(
+                        destination,
+                        content,
+                        expected=expected,
+                    )
+                    hardened = None
+                else:
+                    with patch.object(
+                        assistant_bridge_module.os,
+                        "fchmod",
+                        wraps=real_fchmod,
+                    ) as hardened:
+                        staged = assistant_bridge_module._stage_premium_auth(
+                            destination,
+                            content,
+                            expected=expected,
+                        )
+
+            creation = next(
+                call
+                for call in opened.call_args_list
+                if len(call.args) >= 3
+                and Path(call.args[0]) == destination
+            )
+            creation_flags = int(creation.args[1])
+            assistant_bridge_module._verify_staged_premium_auth(
+                staged,
+                expected=expected,
+            )
+
+        self.assertTrue(creation_flags & os.O_EXCL)
+        if getattr(os, "O_NOFOLLOW", 0):
+            self.assertTrue(creation_flags & os.O_NOFOLLOW)
+        if hardened is not None:
+            hardened.assert_any_call(ANY, 0o600)
+        self.assertEqual(stat.S_IMODE(staged.mode), 0o600)
+        self.assertFalse(staged.metadata_payload()["hard_containment"])
+        self.assertEqual(
+            staged.metadata_payload()["verification_scope"],
+            "pre_reservation_same_user_change_detection",
+        )
+        self.assertNotIn("credential-secret", repr(staged))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink staging semantics")
+    def test_premium_auth_staging_rejects_preexisting_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            content = b'{"fixture":"credential"}'
+            source = root / "source.json"
+            source.write_bytes(content)
+            destination = root / "auth.json"
+            destination.symlink_to(source.name)
+            expected = assistant_bridge_module.PremiumAuthAttestation(
+                source_path=str(source),
+                sha256=hashlib.sha256(content).hexdigest(),
+                size_bytes=len(content),
+                content=content,
+            )
+
+            with self.assertRaisesRegex(AssistantBridgeError, "stage"):
+                assistant_bridge_module._stage_premium_auth(
+                    destination,
+                    content,
+                    expected=expected,
+                )
+
     def test_provider_config_rejects_pre_confirmation_version_probes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw = json.loads(
@@ -659,6 +745,43 @@ class AssistantBridgeContractTests(unittest.TestCase):
             ),
             plan.launcher_authority_sha256,
         )
+
+    def test_verifier_propagates_unverified_process_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            (root / "verifier.py").write_text(
+                "print('must be reaped')\n", encoding="utf-8"
+            )
+            spec = assistant_bridge_module.CommandVerifierSpec(
+                id="cleanup-boundary",
+                argv=(sys.executable, "{workspace}/verifier.py"),
+                launcher_entrypoint="{workspace}/verifier.py",
+                timeout_seconds=10,
+            )
+            plan = assistant_bridge_module._build_verifier_plan(
+                spec,
+                workspace=root,
+                runtime_policy=self.config.runtime,
+            )
+            cleanup = assistant_bridge_module.ProcessCleanupError(
+                "cleanup could not be verified",
+                details={"verified": False},
+            )
+
+            with patch.object(
+                assistant_bridge_module,
+                "execute_process",
+                side_effect=cleanup,
+            ), self.assertRaises(assistant_bridge_module.ProcessCleanupError) as raised:
+                assistant_bridge_module._run_bound_verifier(
+                    plan,
+                    task=build_assistant_task("Verify cleanup propagation."),
+                    workspace=attest_workspace(root),
+                    verifier_workspace=root,
+                )
+
+        self.assertIs(raised.exception, cleanup)
 
     def test_provider_and_verifier_deny_environment_injection_variables(
         self,
@@ -1177,6 +1300,42 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(source, "initial\n")
 
+    def test_verifier_cleanup_failure_prevents_escalation_and_budget(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task(
+                "Verify locally before any escalation.",
+                required_verifier_ids=("fixture-task-verifier",),
+                allow_remote=True,
+            )
+            real_execute = assistant_bridge_runtime.execute_process
+
+            def fail_verifier_cleanup(executable, args=(), **kwargs):
+                if any("fixture_task_verifier.py" in item for item in args):
+                    raise assistant_bridge_module.ProcessCleanupError(
+                        "verifier cleanup failed",
+                        details={"verified": False},
+                    )
+                return real_execute(executable, args, **kwargs)
+
+            with (
+                patch.object(
+                    assistant_bridge_module,
+                    "execute_process",
+                    side_effect=fail_verifier_cleanup,
+                ),
+                patch.object(
+                    fixture.runner,
+                    "_reserve_budget",
+                    wraps=fixture.runner._reserve_budget,
+                ) as reserve,
+                self.assertRaises(assistant_bridge_module.ProcessCleanupError),
+            ):
+                fixture.run(task)
+            invocations = _read_jsonl(fixture.log)
+
+        self.assertEqual(reserve.call_count, 0)
+        self.assertEqual([item["mode"] for item in invocations], ["local"])
+
     def test_task_verifier_observes_the_materialized_candidate_delta(self) -> None:
         with (
             _fake_bridge() as fixture,
@@ -1526,6 +1685,41 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
 
         self.assertEqual(recovered.status, "completed")
         self.assertEqual([item["mode"] for item in invocations], ["premium"])
+
+    def test_staged_premium_auth_drift_blocks_before_budget_reservation(
+        self,
+    ) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task("Use premium.", profile="quality")
+            real_verify = assistant_bridge_module._verify_staged_premium_auth
+
+            def tamper_before_reservation(staged, *, expected):
+                Path(staged.path).write_text(
+                    '{"fixture":"staged-drift"}',
+                    encoding="utf-8",
+                )
+                return real_verify(staged, expected=expected)
+
+            with (
+                patch.object(
+                    assistant_bridge_module,
+                    "_verify_staged_premium_auth",
+                    side_effect=tamper_before_reservation,
+                ),
+                patch.object(
+                    fixture.runner,
+                    "_reserve_budget",
+                    wraps=fixture.runner._reserve_budget,
+                ) as reserve,
+            ):
+                result = fixture.run(task)
+            launched = fixture.log.exists()
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "premium_runtime_unavailable")
+        self.assertEqual(result.premium_calls_used, 0)
+        self.assertEqual(reserve.call_count, 0)
+        self.assertFalse(launched)
 
     def test_premium_runtime_preflight_failure_does_not_consume_budget(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):

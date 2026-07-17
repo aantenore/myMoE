@@ -123,6 +123,13 @@ Routes are `local`, `premium`, `local_then_verify`, and `blocked`. Profiles are
     temporary home, a sanitized environment, no native web tool, and agent-tool
     network disabled.
 
+Premium authentication is copied into that temporary home through an exclusive,
+no-follow file descriptor, restricted on the descriptor itself, synced, read
+back under a bounded attestation, and verified again immediately before the
+premium budget reservation. This is same-user change detection, not hard
+containment: a process with the same account authority can still race after the
+last check, so stronger isolation requires a separate OS security boundary.
+
 ## What cost it can and cannot avoid
 
 A preflight launcher can keep the complete initial task local and contact a paid

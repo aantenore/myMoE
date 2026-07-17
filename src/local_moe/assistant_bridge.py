@@ -1148,6 +1148,51 @@ class PremiumAuthAttestation:
 
 
 @dataclass(frozen=True)
+class StagedPremiumAuthAttestation:
+    path: str = field(repr=False)
+    sha256: str = field(repr=False)
+    size_bytes: int
+    mtime_ns: int = field(repr=False)
+    device_id: int = field(repr=False)
+    inode: int = field(repr=False)
+    mode: int = field(repr=False)
+    owner_uid: int | None = field(repr=False)
+    owner_gid: int | None = field(repr=False)
+    source_binding_sha256: str
+    hard_containment: bool = field(default=False, init=False)
+    verification_scope: str = field(
+        default="pre_reservation_same_user_change_detection",
+        init=False,
+    )
+
+    def binding_payload(self) -> dict[str, object]:
+        return {
+            "path_sha256": _sha256_text(self.path),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "mtime_ns": self.mtime_ns,
+            "device_id": self.device_id,
+            "inode": self.inode,
+            "mode": self.mode,
+            "owner_uid": self.owner_uid,
+            "owner_gid": self.owner_gid,
+            "source_binding_sha256": self.source_binding_sha256,
+            "hard_containment": self.hard_containment,
+            "verification_scope": self.verification_scope,
+        }
+
+    def metadata_payload(self) -> dict[str, object]:
+        return {
+            "path_sha256": _sha256_text(self.path),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "source_binding_sha256": self.source_binding_sha256,
+            "hard_containment": False,
+            "verification_scope": self.verification_scope,
+        }
+
+
+@dataclass(frozen=True)
 class EscalationCapsule:
     capsule_id: str
     task_id: str
@@ -3420,6 +3465,10 @@ class AssistantBridgeRunner:
                 copy_auth=True,
                 expected_auth=prepared.premium_auth,
             ) as codex_home:
+                staged_auth = _attest_staged_premium_auth(
+                    Path(codex_home) / "auth.json",
+                    expected=prepared.premium_auth,
+                )
                 premium_accounted = False
                 authorization_requested = False
 
@@ -3430,6 +3479,10 @@ class AssistantBridgeRunner:
                             "Premium launch authorization was requested more than once."
                         )
                     authorization_requested = True
+                    _verify_staged_premium_auth(
+                        staged_auth,
+                        expected=prepared.premium_auth,
+                    )
                     lease = self._reserve_budget(task, prepared)
                     if lease is None:
                         return None
@@ -4419,6 +4472,8 @@ def _run_bound_verifier(
             "cleanup": outcome.cleanup.payload(),
         }
         observed = outcome.stdout_bytes + outcome.stderr_bytes
+    except ProcessCleanupError:
+        raise
     except AssistantBridgeRuntimeError:
         passed = False
         code = "runtime_attestation_failed"
@@ -4480,44 +4535,259 @@ def _sanitized_environment(
     return env
 
 
-def _attest_premium_auth(*, include_content: bool = False) -> PremiumAuthAttestation:
-    source_home = Path(
-        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-    ).expanduser()
-    source = source_home / "auth.json"
+def _premium_auth_open_flags(*, exclusive: bool) -> int:
+    flags = os.O_RDWR if exclusive else os.O_RDONLY
+    if exclusive:
+        flags |= os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
+    return flags
+
+
+def _premium_auth_stat_identity(metadata: os.stat_result) -> tuple[object, ...]:
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(metadata.st_mode),
+        int(metadata.st_size),
+        int(metadata.st_mtime_ns),
+        None
+        if not hasattr(metadata, "st_uid")
+        else int(getattr(metadata, "st_uid")),
+        None
+        if not hasattr(metadata, "st_gid")
+        else int(getattr(metadata, "st_gid")),
+    )
+
+
+def _read_premium_auth_descriptor(
+    descriptor: int,
+    path: Path,
+) -> tuple[bytes, os.stat_result]:
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode):
+        raise AssistantBridgeError(
+            "Premium authentication must be a regular non-symlink file."
+        )
+    if before.st_size > _MAX_JSON_BYTES:
+        raise AssistantBridgeError("Premium authentication artifact is too large.")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    content = bytearray()
+    while len(content) <= _MAX_JSON_BYTES:
+        remaining = _MAX_JSON_BYTES + 1 - len(content)
+        chunk = os.read(descriptor, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        content.extend(chunk)
+    if len(content) > _MAX_JSON_BYTES:
+        raise AssistantBridgeError("Premium authentication artifact is too large.")
+    after = os.fstat(descriptor)
     try:
-        before = source.lstat()
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-            raise AssistantBridgeError(
-                "Premium authentication must be a regular non-symlink file."
-            )
-        if before.st_size > _MAX_JSON_BYTES:
-            raise AssistantBridgeError("Premium authentication artifact is too large.")
-        content = source.read_bytes()
-        after = source.lstat()
+        observed = path.lstat()
+    except OSError:
+        raise AssistantBridgeError(
+            "Premium authentication changed during attestation."
+        ) from None
+    if (
+        _is_link_or_reparse(observed)
+        or not stat.S_ISREG(observed.st_mode)
+        or _premium_auth_stat_identity(before)
+        != _premium_auth_stat_identity(after)
+        or _premium_auth_stat_identity(after)
+        != _premium_auth_stat_identity(observed)
+        or len(content) != after.st_size
+    ):
+        raise AssistantBridgeError(
+            "Premium authentication changed during attestation."
+        )
+    return bytes(content), after
+
+
+def _read_premium_auth_file(path: Path) -> tuple[bytes, os.stat_result]:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            _premium_auth_open_flags(exclusive=False),
+        )
+        return _read_premium_auth_descriptor(descriptor, path)
     except AssistantBridgeError:
         raise
     except OSError:
         raise AssistantBridgeError(
             "Premium authentication is unavailable for the confirmed route."
         ) from None
-    stable = (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-    ) == (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-        after.st_mtime_ns,
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _premium_auth_source_binding(expected: PremiumAuthAttestation) -> str:
+    return _sha256_text(_canonical_json(expected.binding_payload()))
+
+
+def _staged_premium_auth_attestation(
+    path: Path,
+    content: bytes,
+    metadata: os.stat_result,
+    *,
+    expected: PremiumAuthAttestation,
+) -> StagedPremiumAuthAttestation:
+    digest = _sha256_bytes(content)
+    if digest != expected.sha256 or len(content) != expected.size_bytes:
+        raise AssistantBridgeError(
+            "Staged premium authentication does not match the confirmed plan."
+        )
+    mode = int(metadata.st_mode)
+    if os.name == "posix" and stat.S_IMODE(mode) != 0o600:
+        raise AssistantBridgeError(
+            "Staged premium authentication permissions are unsafe."
+        )
+    owner_uid = (
+        None
+        if not hasattr(metadata, "st_uid")
+        else int(getattr(metadata, "st_uid"))
     )
-    if not stable or len(content) != after.st_size:
+    if (
+        os.name == "posix"
+        and hasattr(os, "geteuid")
+        and owner_uid != int(os.geteuid())
+    ):
+        raise AssistantBridgeError(
+            "Staged premium authentication ownership is unsafe."
+        )
+    return StagedPremiumAuthAttestation(
+        path=str(path),
+        sha256=digest,
+        size_bytes=len(content),
+        mtime_ns=int(metadata.st_mtime_ns),
+        device_id=int(metadata.st_dev),
+        inode=int(metadata.st_ino),
+        mode=mode,
+        owner_uid=owner_uid,
+        owner_gid=(
+            None
+            if not hasattr(metadata, "st_gid")
+            else int(getattr(metadata, "st_gid"))
+        ),
+        source_binding_sha256=_premium_auth_source_binding(expected),
+    )
+
+
+def _attest_staged_premium_auth(
+    path: str | Path,
+    *,
+    expected: PremiumAuthAttestation,
+) -> StagedPremiumAuthAttestation:
+    target = Path(path)
+    content, metadata = _read_premium_auth_file(target)
+    return _staged_premium_auth_attestation(
+        target,
+        content,
+        metadata,
+        expected=expected,
+    )
+
+
+def _verify_staged_premium_auth(
+    staged: StagedPremiumAuthAttestation,
+    *,
+    expected: PremiumAuthAttestation,
+) -> None:
+    current = _attest_staged_premium_auth(staged.path, expected=expected)
+    if current.binding_payload() != staged.binding_payload():
+        raise AssistantBridgeError(
+            "Staged premium authentication changed before launch authorization."
+        )
+
+
+def _sync_premium_auth_parent(parent: Path) -> None:
+    if os.name != "posix":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _stage_premium_auth(
+    destination: Path,
+    content: bytes,
+    *,
+    expected: PremiumAuthAttestation,
+) -> StagedPremiumAuthAttestation:
+    if len(content) > _MAX_JSON_BYTES:
+        raise AssistantBridgeError("Premium authentication artifact is too large.")
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            destination,
+            _premium_auth_open_flags(exclusive=True),
+            0o600,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+        except AttributeError:  # pragma: no cover - absent on some Windows builds.
+            os.chmod(destination, 0o600)
+        view = memoryview(content)
+        offset = 0
+        while offset < len(view):
+            written = os.write(descriptor, view[offset:])
+            if written <= 0:
+                raise OSError("premium authentication write made no progress")
+            offset += written
+        os.fsync(descriptor)
+        readback, metadata = _read_premium_auth_descriptor(
+            descriptor,
+            destination,
+        )
+        staged = _staged_premium_auth_attestation(
+            destination,
+            readback,
+            metadata,
+            expected=expected,
+        )
+    except AssistantBridgeError:
+        raise
+    except OSError:
+        raise AssistantBridgeError(
+            "Could not stage isolated Codex authentication."
+        ) from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    try:
+        _sync_premium_auth_parent(destination.parent)
+    except OSError:
+        raise AssistantBridgeError(
+            "Could not sync isolated Codex authentication."
+        ) from None
+    current = _attest_staged_premium_auth(destination, expected=expected)
+    if current.binding_payload() != staged.binding_payload():
+        raise AssistantBridgeError(
+            "Staged premium authentication changed after durable staging."
+        )
+    return current
+
+
+def _attest_premium_auth(*, include_content: bool = False) -> PremiumAuthAttestation:
+    source_home = Path(
+        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+    ).expanduser()
+    source = source_home / "auth.json"
+    content, _ = _read_premium_auth_file(source)
+    try:
+        source_path = str(source.resolve(strict=True))
+    except OSError:
         raise AssistantBridgeError(
             "Premium authentication changed during attestation."
-        )
+        ) from None
     return PremiumAuthAttestation(
-        source_path=str(source.resolve()),
+        source_path=source_path,
         sha256=_sha256_bytes(content),
         size_bytes=len(content),
         content=content if include_content else None,
@@ -4548,16 +4818,11 @@ def _isolated_codex_home(
                 )
             assert current.content is not None
             destination = target / "auth.json"
-            try:
-                with destination.open("xb") as handle:
-                    handle.write(current.content)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                destination.chmod(0o600)
-            except OSError:
-                raise AssistantBridgeError(
-                    "Could not stage isolated Codex authentication."
-                ) from None
+            _stage_premium_auth(
+                destination,
+                current.content,
+                expected=current,
+            )
         yield target
 
 

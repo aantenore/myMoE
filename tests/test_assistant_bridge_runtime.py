@@ -502,6 +502,82 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
 
                 popen.assert_not_called()
 
+    def test_strict_chain_rejects_additional_undeclared_executable_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entrypoint = root / "entrypoint.py"
+            entrypoint.write_text("print('entrypoint')\n", encoding="utf-8")
+            helper_script = root / "helper.js"
+            helper_script.write_text("console.log('helper')\n", encoding="utf-8")
+            native_helper = root / "native-helper"
+            native_helper.write_text("native helper\n", encoding="utf-8")
+            native_helper.chmod(0o700)
+            identity = resolve_executable(sys.executable)
+
+            for extra in (
+                str(helper_script),
+                f"--loader={helper_script}",
+                str(native_helper),
+            ):
+                with self.subTest(extra=extra), self.assertRaisesRegex(
+                    LauncherChainError,
+                    "entrypoint or companion",
+                ):
+                    resolve_launcher_chain(
+                        identity,
+                        (str(entrypoint), extra),
+                        entrypoint=entrypoint,
+                        cwd=root,
+                        strict=True,
+                    )
+
+    def test_declared_helper_drift_fails_before_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entrypoint = root / "entrypoint.py"
+            entrypoint.write_text("print('entrypoint')\n", encoding="utf-8")
+            helper = root / "helper.js"
+            helper.write_text("console.log('planned')\n", encoding="utf-8")
+            identity = resolve_executable(sys.executable)
+            args = (str(entrypoint), f"--loader={helper}")
+            chain = resolve_launcher_chain(
+                identity,
+                args,
+                entrypoint=entrypoint,
+                companions=(helper,),
+                cwd=root,
+                strict=True,
+            )
+            helper.write_text("console.log('drifted')\n", encoding="utf-8")
+            reservations = 0
+
+            def reserve():
+                nonlocal reservations
+                reservations += 1
+                return None
+
+            with patch.object(bridge_runtime.subprocess, "Popen") as popen:
+                with self.assertRaisesRegex(
+                    LauncherChainChangedError,
+                    "changed",
+                ):
+                    execute_process(
+                        identity,
+                        args,
+                        cwd=root,
+                        timeout_seconds=1.0,
+                        launcher_chain=chain,
+                        reserve_launch=reserve,
+                        policy=ProcessExecutionPolicy(
+                            require_tree_isolation=False,
+                            require_psutil=False,
+                            require_launcher_chain=True,
+                        ),
+                    )
+
+            self.assertEqual(reservations, 0)
+            popen.assert_not_called()
+
     def test_strict_policy_rejects_missing_chain_for_native_executable(self) -> None:
         identity = resolve_executable(sys.executable)
 
