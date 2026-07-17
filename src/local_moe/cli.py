@@ -1684,9 +1684,24 @@ def _validate_assistant_bridge_authority(
         .strip()
         .lower()
     )
-    if execution_policy != "receipt_confirmation":
+    if execution_policy == "disabled":
         raise AssistantBridgeError(
             "Application policy disables Assistant Bridge process execution."
+        )
+    if execution_policy not in {
+        "local_only",
+        "hybrid_receipt_confirmation",
+    }:
+        raise AssistantBridgeError("Application Assistant Bridge policy is invalid.")
+    remote_possible = (
+        task.profile != "offline"
+        and task.allow_remote is not False
+        and (task.profile != "privacy" or task.allow_remote is True)
+        and task.budget.max_premium_calls != 0
+    )
+    if execution_policy == "local_only" and remote_possible:
+        raise AssistantBridgeError(
+            "Application local_only policy forbids a route that can invoke premium execution."
         )
     if task.capability_demand.risk_class == "write_local":
         policy = str(app_config.permissions.default_write_policy).strip().lower()

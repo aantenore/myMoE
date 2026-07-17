@@ -59,6 +59,19 @@ class AppConfig:
 
 def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    _reject_unknown_keys(
+        "root",
+        raw,
+        {
+            "name",
+            "mode",
+            "default_moe_config",
+            "language",
+            "runtime",
+            "extensions",
+            "permissions",
+        },
+    )
     language_raw = raw.get("language", {})
     _reject_unknown_keys(
         "language",
@@ -66,17 +79,54 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
         {"mode", "respond_in_user_language", "supported"},
     )
     runtime_raw = raw.get("runtime", {})
+    _reject_unknown_keys(
+        "runtime",
+        runtime_raw,
+        {
+            "auto_configure",
+            "preferred_backends",
+            "model_cache_dir",
+            "work_dir",
+            "context_policy_config",
+            "context_policy_profile",
+            "profile_dir",
+            "evaluation_dir",
+            "cron_auto_run",
+            "cron_poll_seconds",
+            "cron_confirm_writes",
+        },
+    )
     extensions_raw = raw.get("extensions", {})
+    _reject_unknown_keys(
+        "extensions",
+        extensions_raw,
+        {"plugins_dir", "skills_dir", "tools_config", "mcp_config", "cron_config"},
+    )
     permissions_raw = raw.get("permissions", {})
+    _reject_unknown_keys(
+        "permissions",
+        permissions_raw,
+        {
+            "default_write_policy",
+            "allow_process_execution",
+            "assistant_bridge_execution_policy",
+            "connector_install_policy",
+            "external_communication_policy",
+        },
+    )
     assistant_bridge_execution_policy = str(
         permissions_raw.get(
             "assistant_bridge_execution_policy",
             "disabled",
         )
     )
-    if assistant_bridge_execution_policy not in {"disabled", "receipt_confirmation"}:
+    if assistant_bridge_execution_policy not in {
+        "disabled",
+        "local_only",
+        "hybrid_receipt_confirmation",
+    }:
         raise ValueError(
-            "permissions.assistant_bridge_execution_policy must be disabled or receipt_confirmation."
+            "permissions.assistant_bridge_execution_policy must be disabled, local_only, or hybrid_receipt_confirmation."
         )
     return AppConfig(
         name=str(raw.get("name", "myMoE")),
@@ -94,7 +144,10 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             ),
         ),
         runtime=RuntimePolicy(
-            auto_configure=bool(runtime_raw.get("auto_configure", True)),
+            auto_configure=_strict_bool(
+                runtime_raw.get("auto_configure", True),
+                "runtime.auto_configure",
+            ),
             preferred_backends={
                 str(key): str(value)
                 for key, value in runtime_raw.get("preferred_backends", {}).items()
@@ -111,9 +164,15 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             ),
             profile_dir=str(runtime_raw.get("profile_dir", "configs")),
             evaluation_dir=str(runtime_raw.get("evaluation_dir", "experiments")),
-            cron_auto_run=bool(runtime_raw.get("cron_auto_run", False)),
+            cron_auto_run=_strict_bool(
+                runtime_raw.get("cron_auto_run", False),
+                "runtime.cron_auto_run",
+            ),
             cron_poll_seconds=float(runtime_raw.get("cron_poll_seconds", 300)),
-            cron_confirm_writes=bool(runtime_raw.get("cron_confirm_writes", False)),
+            cron_confirm_writes=_strict_bool(
+                runtime_raw.get("cron_confirm_writes", False),
+                "runtime.cron_confirm_writes",
+            ),
         ),
         extensions=ExtensionPaths(
             plugins_dir=str(extensions_raw.get("plugins_dir", "plugins")),
@@ -126,8 +185,9 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             default_write_policy=str(
                 permissions_raw.get("default_write_policy", "approval_required")
             ),
-            allow_process_execution=bool(
-                permissions_raw.get("allow_process_execution", False)
+            allow_process_execution=_strict_bool(
+                permissions_raw.get("allow_process_execution", False),
+                "permissions.allow_process_execution",
             ),
             assistant_bridge_execution_policy=assistant_bridge_execution_policy,
             connector_install_policy=str(
@@ -179,3 +239,9 @@ def _reject_unknown_keys(
     if unknown:
         names = ", ".join(unknown)
         raise ValueError(f"Unknown app config keys in {section!r}: {names}.")
+
+
+def _strict_bool(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be boolean.")
+    return value
