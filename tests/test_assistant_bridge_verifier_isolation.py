@@ -630,6 +630,83 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertNotIn(str(launcher), bind_sources)
         self.assertEqual(argv[separator + 1], str(launcher))
 
+    def test_linux_bubblewrap_mounts_attested_runtime_alias_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp).resolve()
+            workspace = fixture / "workspace"
+            runtime = fixture / "python-3.12.13"
+            alias = fixture / "python-3.12"
+            venv = fixture / "venv"
+            workspace.mkdir()
+            (runtime / "bin").mkdir(parents=True)
+            interpreter = runtime / "bin" / "python3.12"
+            interpreter.write_bytes(b"attested-interpreter")
+            alias.symlink_to(runtime, target_is_directory=True)
+            (venv / "bin").mkdir(parents=True)
+            launcher = venv / "bin" / "python"
+            launcher.symlink_to(alias / "bin" / "python3.12")
+            argv = verifier_isolation._bubblewrap_argv(
+                workspace=workspace,
+                runtime_roots=(venv, runtime),
+                attested_read_artifacts=(launcher,),
+                command_argv=(str(launcher),),
+            )
+
+        separator = argv.index("--")
+        wrapper = argv[:separator]
+        bind_sources = tuple(
+            wrapper[index + 1]
+            for index, item in enumerate(wrapper)
+            if item == "--ro-bind"
+        )
+        self.assertIn(str(venv), bind_sources)
+        self.assertIn(str(runtime), bind_sources)
+        self.assertIn(str(alias), bind_sources)
+        self.assertNotIn(str(launcher), bind_sources)
+        self.assertEqual(argv[separator + 1], str(launcher))
+
+    def test_linux_bubblewrap_does_not_mount_broad_ancestor_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp).resolve()
+            workspace = fixture / "workspace"
+            broad_root = fixture / "broad-root"
+            runtime = broad_root / "runtime"
+            ancestor_alias = fixture / "runtime-parent-alias"
+            venv = fixture / "venv"
+            workspace.mkdir()
+            (runtime / "bin").mkdir(parents=True)
+            interpreter = runtime / "bin" / "python3.12"
+            interpreter.write_bytes(b"attested-interpreter")
+            (broad_root / "unrelated-secret").write_text(
+                "must-not-be-mounted",
+                encoding="utf-8",
+            )
+            ancestor_alias.symlink_to(broad_root, target_is_directory=True)
+            (venv / "bin").mkdir(parents=True)
+            launcher = venv / "bin" / "python"
+            launcher.symlink_to(
+                ancestor_alias / "runtime" / "bin" / "python3.12"
+            )
+            argv = verifier_isolation._bubblewrap_argv(
+                workspace=workspace,
+                runtime_roots=(venv, runtime),
+                attested_read_artifacts=(launcher,),
+                command_argv=(str(launcher),),
+            )
+
+        separator = argv.index("--")
+        wrapper = argv[:separator]
+        bind_sources = tuple(
+            wrapper[index + 1]
+            for index, item in enumerate(wrapper)
+            if item == "--ro-bind"
+        )
+        self.assertIn(str(venv), bind_sources)
+        self.assertIn(str(runtime), bind_sources)
+        self.assertNotIn(str(broad_root), bind_sources)
+        self.assertNotIn(str(ancestor_alias), bind_sources)
+        self.assertEqual(argv[separator + 1], str(launcher))
+
     def test_cleanup_failure_propagates_from_sandboxed_verifier(self) -> None:
         capability = verifier_isolation_capability(
             self.config.verifier_isolation

@@ -636,13 +636,24 @@ def _bubblewrap_read_roots(
     declared_roots = _remove_contained_paths(
         _deduplicate_paths((*system_roots, *runtime_roots))
     )
+    # A virtual-environment launcher can traverse a version alias that Python
+    # also retains in its runtime search paths. Mount every attested symlink
+    # hop instead of exposing only the canonical installation directory, but
+    # never widen a declared root through a broader ancestor alias.
+    artifact_paths = tuple(
+        candidate
+        for artifact in attested_read_artifacts
+        for candidate in _symlink_resolution_paths(artifact)
+        if not candidate.is_dir()
+        or _path_is_covered(candidate.resolve(strict=True), declared_roots)
+    )
     return _remove_contained_paths(
         _deduplicate_paths(
             (
                 *declared_roots,
                 *(
                     item
-                    for item in attested_read_artifacts
+                    for item in artifact_paths
                     if not _path_is_covered(
                         item, (*declared_roots, workspace)
                     )
