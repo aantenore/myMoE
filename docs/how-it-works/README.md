@@ -1,6 +1,6 @@
 # How myMoE Works
 
-This guide explains the implemented myMoE runtime from startup to a persisted answer. Normal chat and the optional agent loop have different tool-safety rules, but every model invocation shares the same execution-scope boundary.
+This guide explains the implemented myMoE runtime from startup to a persisted answer. Normal chat and the optional local agent loop have different tool-safety rules, but their model invocations share the same execution-scope boundary. The separately gated Assistant Bridge keeps its own authority and budget boundary.
 
 ## 1. The System in One Diagram
 
