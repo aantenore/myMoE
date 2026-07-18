@@ -21,6 +21,7 @@ from local_moe.assistant_bridge_two_phase import (
     TwoPhaseWorkflowConfig,
     TwoPhaseWorkflowError,
     TwoPhaseWorkflowService,
+    candidate_workspace_snapshot_fingerprint,
 )
 from local_moe.assistant_bridge_two_phase_contracts import (
     AttestationCheck,
@@ -31,6 +32,7 @@ from local_moe.assistant_bridge_workflow_store import SQLiteWorkflowStore
 from local_moe.assistant_bridge_workspace import (
     WorkspaceScopePolicy,
     apply_changeset as real_apply_changeset,
+    snapshot_workspace,
 )
 
 
@@ -51,6 +53,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(envelope,),
                 now=110,
@@ -58,6 +62,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             result = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=111,
@@ -65,6 +71,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             repeated = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=112,
@@ -78,7 +86,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertTrue(repeated.idempotent_replay)
             self.assertEqual(repeated.transaction_id, result.transaction_id)
 
-    def test_stage_replay_is_stable_and_drifted_candidate_is_rejected(self) -> None:
+    def test_stage_replay_is_stable_and_does_not_reread_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
 
@@ -88,10 +96,32 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertTrue(second.idempotent_replay)
 
             (context.candidate / "app.txt").write_text("drifted\n")
+            third = context.stage(now=100)
+
+            self.assertEqual(first.binding, third.binding)
+            self.assertTrue(third.idempotent_replay)
+
+    def test_stage_rejects_candidate_drift_after_snapshot_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            candidate_snapshot_fingerprint = (
+                candidate_workspace_snapshot_fingerprint(
+                    context.candidate,
+                    context.service.config.workspace_policy,
+                )
+            )
+            (context.candidate / "app.txt").write_text("drifted\n")
+
             with self.assertRaisesRegex(
-                TwoPhaseWorkflowError, "another candidate"
+                TwoPhaseWorkflowError,
+                "evaluated snapshot",
             ):
-                context.stage(now=100)
+                context.stage(
+                    now=100,
+                    expected_candidate_snapshot_fingerprint=(
+                        candidate_snapshot_fingerprint
+                    ),
+                )
 
     def test_source_drift_before_plan_is_terminal_and_never_issues_authority(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -103,6 +133,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                 context.service.plan_resume(
                     receipt.workflow_id,
                     workspace=context.source,
+                    expected_source_fingerprint=receipt.binding.source_fingerprint,
+                    expected_config_sha256=CONFIG_SHA256,
                     idempotency_key=RESUME_KEY,
                     attestation_envelopes=(context.envelope(receipt.binding),),
                     now=110,
@@ -122,6 +154,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -131,6 +165,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             result = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=111,
@@ -147,6 +183,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -155,6 +193,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             result = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=111,
@@ -171,6 +211,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -186,6 +228,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -197,6 +241,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             recovered = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=113,
@@ -214,12 +260,16 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             new_plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key="resume-workflow-operation-0000002",
                 now=114,
             )
             applied = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=new_plan.plan_id,
                 confirmation_id=new_plan.confirmation_id,
                 now=115,
@@ -233,6 +283,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -248,6 +300,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -258,6 +312,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             recovered = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=250,
@@ -265,6 +321,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             repeated = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=251,
@@ -285,6 +343,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -298,6 +358,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -306,6 +368,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             recovered = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=250,
@@ -322,6 +386,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -335,6 +401,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -343,6 +411,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             recovered = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=112,
@@ -350,6 +420,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             repeated = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=113,
@@ -367,6 +439,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -381,6 +455,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -390,6 +466,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             recovered = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=112,
@@ -406,6 +484,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -420,6 +500,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     context.service.apply_resume(
                         receipt.workflow_id,
                         workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
                         plan_id=plan.plan_id,
                         confirmation_id=plan.confirmation_id,
                         now=111,
@@ -433,6 +515,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             finalized = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=250,
@@ -440,6 +524,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             replayed = context.service.apply_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 plan_id=plan.plan_id,
                 confirmation_id=plan.confirmation_id,
                 now=251,
@@ -459,6 +545,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             plan = context.service.plan_resume(
                 receipt.workflow_id,
                 workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
                 idempotency_key=RESUME_KEY,
                 attestation_envelopes=(context.envelope(receipt.binding),),
                 now=110,
@@ -470,6 +558,8 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                 context.service.apply_resume(
                     receipt.workflow_id,
                     workspace=other,
+                    expected_source_fingerprint=receipt.binding.source_fingerprint,
+                    expected_config_sha256=CONFIG_SHA256,
                     plan_id=plan.plan_id,
                     confirmation_id=plan.confirmation_id,
                     now=111,
@@ -519,12 +609,24 @@ class _Context:
             trust_store=trust,
         )
 
-    def stage(self, *, now: float) -> object:
+    def stage(
+        self,
+        *,
+        now: float,
+        expected_candidate_snapshot_fingerprint: str | None = None,
+    ) -> object:
+        source_fingerprint = snapshot_workspace(
+            self.source, self.service.config.workspace_policy
+        ).fingerprint
         return self.service.stage_candidate(
             source_workspace=self.source,
             candidate_workspace=self.candidate,
             task_fingerprint=TASK_SHA256,
-            config_sha256=CONFIG_SHA256,
+            expected_source_fingerprint=source_fingerprint,
+            expected_config_sha256=CONFIG_SHA256,
+            expected_candidate_snapshot_fingerprint=(
+                expected_candidate_snapshot_fingerprint
+            ),
             verification_policy=self.policy,
             idempotency_key=STAGE_KEY,
             now=now,

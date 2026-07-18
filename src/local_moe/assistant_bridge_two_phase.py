@@ -47,6 +47,15 @@ class TwoPhaseWorkflowError(ValueError):
     """Raised when a two-phase workflow cannot progress safely."""
 
 
+def candidate_workspace_snapshot_fingerprint(
+    workspace: str | Path,
+    policy: WorkspaceScopePolicy,
+) -> str:
+    """Fingerprint the exact materialized files evaluated by a generator."""
+
+    return _candidate_snapshot_fingerprint(snapshot_materialized(workspace, policy))
+
+
 @dataclass(frozen=True)
 class TwoPhaseWorkflowConfig:
     workspace_policy: WorkspaceScopePolicy
@@ -94,14 +103,22 @@ class TwoPhaseWorkflowService:
         source_workspace: str | Path,
         candidate_workspace: str | Path,
         task_fingerprint: str,
-        config_sha256: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
         verification_policy: VerificationPolicy,
         idempotency_key: str,
+        expected_candidate_snapshot_fingerprint: str | None = None,
         ttl_seconds: float | None = None,
         now: float | None = None,
     ) -> StageReceipt:
         require_sha256(task_fingerprint, "task_fingerprint")
-        require_sha256(config_sha256, "config_sha256")
+        require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
+        require_sha256(expected_config_sha256, "expected_config_sha256")
+        if expected_candidate_snapshot_fingerprint is not None:
+            require_sha256(
+                expected_candidate_snapshot_fingerprint,
+                "expected_candidate_snapshot_fingerprint",
+            )
         lifetime = (
             self.config.candidate_ttl_seconds
             if ttl_seconds is None
@@ -110,15 +127,39 @@ class TwoPhaseWorkflowService:
         if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
             raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
         current = _now(now)
+        replay = self.find_stage_replay(
+            source_workspace=source_workspace,
+            task_fingerprint=task_fingerprint,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+            verification_policy=verification_policy,
+            idempotency_key=idempotency_key,
+            now=current,
+        )
+        if replay is not None:
+            return replay
         try:
             source = snapshot_workspace(
                 source_workspace, self.config.workspace_policy
             )
+            if source.fingerprint != expected_source_fingerprint:
+                raise TwoPhaseWorkflowError(
+                    "Workspace source no longer matches the expected stage input."
+                )
+            materialized_candidate = snapshot_materialized(
+                candidate_workspace, self.config.workspace_policy
+            )
+            if (
+                expected_candidate_snapshot_fingerprint is not None
+                and _candidate_snapshot_fingerprint(materialized_candidate)
+                != expected_candidate_snapshot_fingerprint
+            ):
+                raise TwoPhaseWorkflowError(
+                    "Candidate workspace no longer matches the evaluated snapshot."
+                )
             candidate_files = _candidate_files(
                 source,
-                snapshot_materialized(
-                    candidate_workspace, self.config.workspace_policy
-                ),
+                materialized_candidate,
             )
             changes = build_changeset(source.files, candidate_files)
             source_identity = _source_identity(source)
@@ -129,6 +170,15 @@ class TwoPhaseWorkflowService:
                 source_fingerprint=source.fingerprint,
                 source_identity=source_identity,
             )
+            if (
+                snapshot_materialized(
+                    candidate_workspace, self.config.workspace_policy
+                )
+                != materialized_candidate
+            ):
+                raise TwoPhaseWorkflowError(
+                    "Candidate workspace changed while it was staged."
+                )
             workflow_id, challenge, stage_sha256 = self.store.stage_identity(
                 idempotency_key
             )
@@ -136,7 +186,7 @@ class TwoPhaseWorkflowService:
                 workflow_id=workflow_id,
                 stage_idempotency_sha256=stage_sha256,
                 task_fingerprint=task_fingerprint,
-                config_sha256=config_sha256,
+                config_sha256=expected_config_sha256,
                 source_fingerprint=source.fingerprint,
                 challenge_sha256=sha256_bytes(challenge.encode("utf-8")),
                 manifest=manifest,
@@ -172,6 +222,71 @@ class TwoPhaseWorkflowService:
             binding=record.binding,
             challenge=challenge,
             idempotent_replay=replay,
+        )
+
+    def find_stage_replay(
+        self,
+        *,
+        source_workspace: str | Path,
+        task_fingerprint: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        verification_policy: VerificationPolicy,
+        idempotency_key: str,
+        now: float | None = None,
+    ) -> StageReceipt | None:
+        """Return an existing stage before a candidate generator is invoked."""
+
+        require_sha256(task_fingerprint, "task_fingerprint")
+        require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
+        require_sha256(expected_config_sha256, "expected_config_sha256")
+        current = _now(now)
+        try:
+            source = snapshot_workspace(
+                source_workspace, self.config.workspace_policy
+            )
+            if source.fingerprint != expected_source_fingerprint:
+                raise TwoPhaseWorkflowError(
+                    "Workspace source no longer matches the expected stage input."
+                )
+            workflow_id, challenge, stage_sha256 = self.store.stage_identity(
+                idempotency_key
+            )
+            record = self.store.find_workflow(workflow_id, now=current)
+        except (
+            OSError,
+            ValueError,
+            WorkspaceSecurityError,
+            WorkflowStoreError,
+        ) as exc:
+            if isinstance(exc, TwoPhaseWorkflowError):
+                raise
+            raise TwoPhaseWorkflowError(str(exc)) from exc
+        if record is None:
+            return None
+        source_identity = _source_identity(source)
+        binding = record.binding
+        if (
+            binding.stage_idempotency_sha256 != stage_sha256
+            or binding.task_fingerprint != task_fingerprint
+            or binding.source_fingerprint != expected_source_fingerprint
+            or binding.config_sha256 != expected_config_sha256
+            or binding.verification_policy != verification_policy
+            or record.workspace_root_sha256 != source_identity["rootSha256"]
+        ):
+            raise TwoPhaseWorkflowError(
+                "Stage idempotency key is bound to another operation."
+            )
+        if record.status not in {"staged", "attested", "ready"}:
+            raise TwoPhaseWorkflowError(
+                "Stage idempotency replay targets a terminal workflow."
+            )
+        return StageReceipt(
+            workflow_id=record.workflow_id,
+            status=record.status,
+            binding=binding,
+            challenge=challenge,
+            idempotent_replay=True,
         )
 
     def status(
@@ -217,12 +332,19 @@ class TwoPhaseWorkflowService:
         *,
         workspace: str | Path,
         idempotency_key: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
         attestation_envelopes: Sequence[bytes] = (),
         ttl_seconds: float | None = None,
         now: float | None = None,
     ) -> ResumePlan:
         current = _now(now)
         record = self.status(workflow_id, now=current)
+        self._validate_expected_binding(
+            record,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+        )
         source = self._attest_original_workspace(record, workspace)
         if source is None:
             self._conflict(record, "source-drift-before-resume-plan", current)
@@ -253,10 +375,17 @@ class TwoPhaseWorkflowService:
         workspace: str | Path,
         plan_id: str,
         confirmation_id: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
         now: float | None = None,
     ) -> ResumeResult:
         current_time = _now(now)
         record = self.status(workflow_id, now=current_time)
+        self._validate_expected_binding(
+            record,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+        )
         if record.status in {"staged", "attested", "ready"}:
             record = self._reverify_attestations(
                 workflow_id, now=current_time
@@ -443,6 +572,26 @@ class TwoPhaseWorkflowService:
         root_sha256 = snapshot.payload().get("root_sha256")
         if root_sha256 != record.workspace_root_sha256:
             raise TwoPhaseWorkflowError("Workflow targets another workspace root.")
+
+    @staticmethod
+    def _validate_expected_binding(
+        record: WorkflowRecord,
+        *,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+    ) -> None:
+        require_sha256(
+            expected_source_fingerprint, "expected_source_fingerprint"
+        )
+        require_sha256(expected_config_sha256, "expected_config_sha256")
+        if record.binding.source_fingerprint != expected_source_fingerprint:
+            raise TwoPhaseWorkflowError(
+                "Workflow source does not match the expected source fingerprint."
+            )
+        if record.binding.config_sha256 != expected_config_sha256:
+            raise TwoPhaseWorkflowError(
+                "Workflow configuration does not match the expected configuration."
+            )
 
     @staticmethod
     def _validate_artifact_binding(
@@ -643,6 +792,15 @@ def _source_identity(snapshot: WorkspaceSnapshot) -> dict[str, object]:
         "headSha": snapshot.head_sha if snapshot.git_repository else None,
         "indexSha256": snapshot.index_sha256,
     }
+
+
+def _candidate_snapshot_fingerprint(files: Sequence[WorkspaceFile]) -> str:
+    return canonical_sha256(
+        {
+            "derivation": "mymoe-materialized-candidate-snapshot/v1",
+            "files": [item.payload() for item in sorted(files)],
+        }
+    )
 
 
 def _candidate_files(

@@ -346,12 +346,33 @@ class SQLiteWorkflowStore:
         *,
         now: float | None = None,
     ) -> WorkflowRecord:
+        record = self.find_workflow(workflow_id, now=now)
+        if record is None:
+            raise WorkflowStoreError("Workflow was not found.")
+        return record
+
+    def find_workflow(
+        self,
+        workflow_id: str,
+        *,
+        now: float | None = None,
+    ) -> WorkflowRecord | None:
+        """Return a workflow when present without weakening normal validation.
+
+        Stage composition uses this lookup before invoking an expensive candidate
+        generator. Existing records still receive the same clock, expiry, and
+        attestation-status checks as ``get_workflow``.
+        """
+
         require_safe_id(workflow_id, "workflow_id")
         current = _wall_time(now)
         with self._transaction() as connection:
-            record = self._selected_record(
-                connection, workflow_id, active_at=current
-            )
+            row = connection.execute(
+                "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            record = self._record(connection, row, active_at=current)
             self._check_clock(record, current)
             if record.status == "applying":
                 return record
