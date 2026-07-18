@@ -177,6 +177,14 @@ class VerificationPolicy:
             )
         if len({item.verifier_id for item in ordered}) != len(ordered):
             raise TwoPhaseContractError("Verification policy repeats a verifier_id.")
+        if len({(item.adapter_id, item.key_id) for item in ordered}) != len(ordered):
+            raise TwoPhaseContractError(
+                "Verification policy repeats an adapter-scoped key_id."
+            )
+        if len({item.public_key_sha256 for item in ordered}) != len(ordered):
+            raise TwoPhaseContractError(
+                "Verification policy repeats a physical public key."
+            )
         if (
             isinstance(self.quorum, bool)
             or not isinstance(self.quorum, int)

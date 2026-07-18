@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 import sqlite3
 import stat
 import time
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Mapping
 
 from platformdirs import user_state_path
 
@@ -20,10 +21,14 @@ from .assistant_bridge_attestation import (
     AttestationTrustStore,
     AttestationVerificationError,
 )
+from .assistant_bridge_cas import (
+    ContentAddressedStore,
+    ContentAddressedStoreError,
+)
 from .assistant_bridge_integrity import canonical_json_bytes, canonical_sha256, sha256_bytes
 from .assistant_bridge_two_phase_contracts import (
+    ArtifactDescriptor,
     CandidateBinding,
-    IndependentAttestation,
     ResumePlan,
     WORKFLOW_STATES,
     require_safe_id,
@@ -31,7 +36,9 @@ from .assistant_bridge_two_phase_contracts import (
 )
 
 
-WORKFLOW_STORE_SCHEMA_VERSION = "1.0"
+WORKFLOW_STORE_SCHEMA_VERSION = "2.0"
+_ENVELOPE_MEDIA_TYPE = "application/vnd.dsse.envelope+json"
+_STATEMENT_MEDIA_TYPE = "application/vnd.in-toto+json"
 _SECRET_BYTES = 32
 _READ_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
     os, "O_NOFOLLOW", 0
@@ -48,7 +55,7 @@ class WorkflowStatePaths:
     cas_root: Path
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class RecordedAttestation:
     verifier_id: str
     adapter_id: str
@@ -56,6 +63,8 @@ class RecordedAttestation:
     attestation_id: str
     evidence_sha256: str
     statement_sha256: str
+    envelope: ArtifactDescriptor
+    statement: ArtifactDescriptor
     issued_at: float
     expires_at: float
     recorded_at: float
@@ -70,6 +79,13 @@ class RecordedAttestation:
             require_safe_id(value, label)
         require_sha256(self.evidence_sha256, "recorded evidence_sha256")
         require_sha256(self.statement_sha256, "recorded statement_sha256")
+        if (
+            self.envelope.media_type != _ENVELOPE_MEDIA_TYPE
+            or self.envelope.sha256 != self.evidence_sha256
+            or self.statement.media_type != _STATEMENT_MEDIA_TYPE
+            or self.statement.sha256 != self.statement_sha256
+        ):
+            raise WorkflowStoreError("Recorded evidence descriptors are incoherent.")
         for value in (self.issued_at, self.expires_at, self.recorded_at):
             _wall_time(value)
 
@@ -81,6 +97,8 @@ class RecordedAttestation:
             "attestationId": self.attestation_id,
             "evidenceSha256": self.evidence_sha256,
             "statementSha256": self.statement_sha256,
+            "envelope": self.envelope.payload(),
+            "statement": self.statement.payload(),
             "issuedAt": self.issued_at,
             "expiresAt": self.expires_at,
             "recordedAt": self.recorded_at,
@@ -94,7 +112,9 @@ class WorkflowRecord:
     binding: CandidateBinding
     workspace_root_sha256: str
     attestations: tuple[RecordedAttestation, ...]
+    active_attestation_count: int
     apply_transaction_id: str
+    recovered_transaction_id: str
     result_sha256: str
     created_at: float
     updated_at: float
@@ -107,16 +127,29 @@ class WorkflowRecord:
         require_sha256(self.workspace_root_sha256, "workspace_root_sha256")
         if self.apply_transaction_id:
             require_sha256(self.apply_transaction_id, "apply_transaction_id")
+        if self.recovered_transaction_id:
+            require_sha256(
+                self.recovered_transaction_id, "recovered_transaction_id"
+            )
         if self.result_sha256:
             require_sha256(self.result_sha256, "result_sha256")
         ordered = tuple(sorted(self.attestations, key=lambda item: item.verifier_id))
         if len({item.verifier_id for item in ordered}) != len(ordered):
             raise WorkflowStoreError("Workflow repeats an attestation verifier.")
         object.__setattr__(self, "attestations", ordered)
+        if (
+            isinstance(self.active_attestation_count, bool)
+            or not isinstance(self.active_attestation_count, int)
+            or not 0 <= self.active_attestation_count <= len(ordered)
+        ):
+            raise WorkflowStoreError("Active attestation count is invalid.")
 
     @property
     def quorum_satisfied(self) -> bool:
-        return len(self.attestations) >= self.binding.verification_policy.quorum
+        return (
+            self.active_attestation_count
+            >= self.binding.verification_policy.quorum
+        )
 
     def quorum_satisfied_at(self, now: float) -> bool:
         current = _wall_time(now)
@@ -154,10 +187,12 @@ class WorkflowRecord:
             "attestations": [item.payload() for item in self.attestations],
             "quorum": {
                 "required": self.binding.verification_policy.quorum,
-                "verified": len(self.attestations),
+                "verified": self.active_attestation_count,
+                "recorded": len(self.attestations),
                 "satisfied": self.quorum_satisfied,
             },
             "applyTransactionId": self.apply_transaction_id or None,
+            "recoveredTransactionId": self.recovered_transaction_id or None,
             "resultSha256": self.result_sha256 or None,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
@@ -176,7 +211,7 @@ class WorkflowEvent:
 
 def default_workflow_state_paths() -> WorkflowStatePaths:
     base = user_state_path("myMoE", appauthor=False, ensure_exists=True)
-    root = Path(base) / "assistant-bridge" / "v1"
+    root = Path(base) / "assistant-bridge" / "v2"
     return WorkflowStatePaths(
         database=root / "workflows.sqlite3",
         cas_root=root / "cas",
@@ -186,9 +221,27 @@ def default_workflow_state_paths() -> WorkflowStatePaths:
 class SQLiteWorkflowStore:
     """Durable, quorum-aware, replay-safe workflow state and event journal."""
 
-    def __init__(self, path: str | Path | None = None, *, timeout: float = 5.0) -> None:
-        selected = default_workflow_state_paths().database if path is None else Path(path)
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        evidence_cas: ContentAddressedStore | None = None,
+        timeout: float = 5.0,
+    ) -> None:
+        defaults = default_workflow_state_paths()
+        selected = defaults.database if path is None else Path(path)
         self.path = _prepare_database_path(selected)
+        cas_root = defaults.cas_root if path is None else self.path.parent / "cas"
+        try:
+            self.evidence_cas = (
+                ContentAddressedStore(cas_root)
+                if evidence_cas is None
+                else evidence_cas
+            )
+        except ContentAddressedStoreError as exc:
+            raise WorkflowStoreError(str(exc)) from exc
+        if type(self.evidence_cas) is not ContentAddressedStore:
+            raise WorkflowStoreError("Workflow evidence CAS type is unsupported.")
         if not 0.1 <= timeout <= 60:
             raise WorkflowStoreError("SQLite workflow timeout is outside safe bounds.")
         self.timeout = timeout
@@ -242,7 +295,7 @@ class SQLiteWorkflowStore:
                 (binding.workflow_id, idempotency_sha256),
             ).fetchone()
             if row is not None:
-                record = self._record(connection, row)
+                record = self._record(connection, row, active_at=current)
                 self._check_clock(record, current)
                 if (
                     record.workflow_id != binding.workflow_id
@@ -284,7 +337,9 @@ class SQLiteWorkflowStore:
                 },
                 now=current,
             )
-            return self._selected_record(connection, binding.workflow_id), False
+            return self._selected_record(
+                connection, binding.workflow_id, active_at=current
+            ), False
 
     def get_workflow(
         self,
@@ -295,7 +350,9 @@ class SQLiteWorkflowStore:
         require_safe_id(workflow_id, "workflow_id")
         current = _wall_time(now)
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
             self._check_clock(record, current)
             if record.status not in {"applied", "conflicted", "failed", "expired"}:
                 if current > record.binding.expires_at:
@@ -308,18 +365,53 @@ class SQLiteWorkflowStore:
                         payload={"expiresAt": record.binding.expires_at},
                         now=current,
                     )
-                    return self._selected_record(connection, workflow_id)
+                    return self._selected_record(
+                        connection, workflow_id, active_at=current
+                    )
+                if record.status != "applying":
+                    record = self._refresh_attestation_status(
+                        connection, record, now=current
+                    )
             return record
 
     def list_workflows(self, *, limit: int = 100) -> tuple[WorkflowRecord, ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
             raise WorkflowStoreError("Workflow list limit is outside safe bounds.")
-        with self._connect() as connection:
+        with self._transaction() as connection:
+            current = _wall_time(None)
             rows = connection.execute(
                 "SELECT * FROM workflows ORDER BY updated_at DESC, workflow_id LIMIT ?",
                 (limit,),
             ).fetchall()
-            return tuple(self._record(connection, row) for row in rows)
+            records: list[WorkflowRecord] = []
+            for row in rows:
+                record = self._record(connection, row, active_at=current)
+                self._check_clock(record, current)
+                if record.status not in {
+                    "applied",
+                    "conflicted",
+                    "failed",
+                    "expired",
+                }:
+                    if current > record.binding.expires_at:
+                        self._transition(
+                            connection,
+                            record,
+                            status="expired",
+                            event_type="workflow_expired",
+                            event_key="expiry",
+                            payload={"expiresAt": record.binding.expires_at},
+                            now=current,
+                        )
+                        record = self._selected_record(
+                            connection, record.workflow_id, active_at=current
+                        )
+                    elif record.status != "applying":
+                        record = self._refresh_attestation_status(
+                            connection, record, now=current
+                        )
+                records.append(record)
+            return tuple(records)
 
     def record_attestation_envelope(
         self,
@@ -334,7 +426,12 @@ class SQLiteWorkflowStore:
             raise WorkflowStoreError("Attestation trust store type is unsupported.")
         current = _wall_time(now)
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
+            record = self._refresh_attestation_status(
+                connection, record, now=current
+            )
             self._check_live(record, current)
             if record.status not in {"staged", "attested", "ready"}:
                 raise WorkflowStoreError(
@@ -345,7 +442,8 @@ class SQLiteWorkflowStore:
             except AttestationVerificationError as exc:
                 raise WorkflowStoreError(str(exc)) from exc
             existing_evidence = connection.execute(
-                "SELECT workflow_id, verifier_id FROM workflow_attestations "
+                "SELECT workflow_id, verifier_id, expires_at, superseded_at "
+                "FROM workflow_attestations "
                 "WHERE evidence_sha256 = ?",
                 (attestation.evidence_sha256,),
             ).fetchone()
@@ -354,19 +452,42 @@ class SQLiteWorkflowStore:
                     str(existing_evidence["workflow_id"]) == workflow_id
                     and str(existing_evidence["verifier_id"])
                     == attestation.verifier_id
+                    and existing_evidence["superseded_at"] is None
+                    and current <= float(existing_evidence["expires_at"])
                 ):
-                    return self._selected_record(connection, workflow_id), True
-                raise WorkflowStoreError(
-                    "Independent attestation replayed across workflows."
-                )
+                    return self._selected_record(
+                        connection, workflow_id, active_at=current
+                    ), True
+                raise WorkflowStoreError("Independent attestation was replayed.")
             existing_verifier = connection.execute(
-                "SELECT evidence_sha256 FROM workflow_attestations "
-                "WHERE workflow_id = ? AND verifier_id = ?",
+                "SELECT evidence_sha256, expires_at FROM workflow_attestations "
+                "WHERE workflow_id = ? AND verifier_id = ? "
+                "AND superseded_at IS NULL",
                 (workflow_id, attestation.verifier_id),
             ).fetchone()
             if existing_verifier is not None:
-                raise WorkflowStoreError(
-                    "Workflow verifier is already bound to another attestation."
+                if current <= float(existing_verifier["expires_at"]):
+                    raise WorkflowStoreError(
+                        "Workflow verifier is already bound to a live attestation."
+                    )
+                connection.execute(
+                    "UPDATE workflow_attestations SET superseded_at = ? "
+                    "WHERE evidence_sha256 = ? AND superseded_at IS NULL",
+                    (current, str(existing_verifier["evidence_sha256"])),
+                )
+                self._append_event(
+                    connection,
+                    workflow_id,
+                    event_type="independent_attestation_superseded",
+                    event_key=(
+                        "attestation-expired:"
+                        f"{str(existing_verifier['evidence_sha256'])}"
+                    ),
+                    payload={
+                        "evidenceSha256": str(existing_verifier["evidence_sha256"]),
+                        "verifierId": attestation.verifier_id,
+                    },
+                    now=current,
                 )
             existing_id = connection.execute(
                 "SELECT workflow_id FROM workflow_attestations "
@@ -378,13 +499,31 @@ class SQLiteWorkflowStore:
             metadata = attestation.metadata_payload()
             metadata_json = canonical_json_bytes(metadata).decode("utf-8")
             statement_sha256 = sha256_bytes(attestation.statement_bytes)
+            try:
+                envelope_descriptor = self.evidence_cas.put_bytes(
+                    attestation.envelope_bytes,
+                    media_type=_ENVELOPE_MEDIA_TYPE,
+                )
+                statement_descriptor = self.evidence_cas.put_bytes(
+                    attestation.statement_bytes,
+                    media_type=_STATEMENT_MEDIA_TYPE,
+                )
+            except ContentAddressedStoreError as exc:
+                raise WorkflowStoreError(str(exc)) from exc
+            envelope_descriptor_json = canonical_json_bytes(
+                envelope_descriptor.payload()
+            ).decode("utf-8")
+            statement_descriptor_json = canonical_json_bytes(
+                statement_descriptor.payload()
+            ).decode("utf-8")
             connection.execute(
                 """
                 INSERT INTO workflow_attestations (
                     evidence_sha256, workflow_id, verifier_id, adapter_id, key_id,
-                    attestation_id, statement_sha256, metadata_json,
-                    metadata_sha256, issued_at, expires_at, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    attestation_id, statement_sha256, envelope_descriptor_json,
+                    statement_descriptor_json, metadata_json, metadata_sha256,
+                    issued_at, expires_at, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attestation.evidence_sha256,
@@ -394,6 +533,8 @@ class SQLiteWorkflowStore:
                     attestation.key_id,
                     attestation.attestation_id,
                     statement_sha256,
+                    envelope_descriptor_json,
+                    statement_descriptor_json,
                     metadata_json,
                     sha256_bytes(metadata_json.encode("utf-8")),
                     attestation.issued_at,
@@ -403,8 +544,10 @@ class SQLiteWorkflowStore:
             )
             verified = int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM workflow_attestations WHERE workflow_id = ?",
-                    (workflow_id,),
+                    "SELECT COUNT(*) FROM workflow_attestations "
+                    "WHERE workflow_id = ? AND superseded_at IS NULL "
+                    "AND issued_at <= ? AND expires_at >= ?",
+                    (workflow_id, current, current),
                 ).fetchone()[0]
             )
             status = (
@@ -429,7 +572,9 @@ class SQLiteWorkflowStore:
                 },
                 now=current,
             )
-            return self._selected_record(connection, workflow_id), False
+            return self._selected_record(
+                connection, workflow_id, active_at=current
+            ), False
 
     def issue_resume_plan(
         self,
@@ -446,7 +591,12 @@ class SQLiteWorkflowStore:
         key = _idempotency_key(idempotency_key)
         idempotency_sha256 = sha256_bytes(key)
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
+            record = self._refresh_attestation_status(
+                connection, record, now=current
+            )
             self._check_live(record, current)
             if record.status != "ready" or not record.quorum_satisfied_at(current):
                 raise WorkflowStoreError(
@@ -471,7 +621,11 @@ class SQLiteWorkflowStore:
                 record.binding.expires_at,
                 record.quorum_expires_at(current),
             )
-            evidence = [item.evidence_sha256 for item in record.attestations]
+            evidence = [
+                item.evidence_sha256
+                for item in record.attestations
+                if item.issued_at <= current <= item.expires_at
+            ]
             plan_id = canonical_sha256(
                 {
                     "workflowId": workflow_id,
@@ -533,6 +687,64 @@ class SQLiteWorkflowStore:
             assert row is not None
             return self._resume_plan(record, row, idempotent_replay=False)
 
+    def reverify_attestations(
+        self,
+        workflow_id: str,
+        *,
+        trust_store: AttestationTrustStore,
+        now: float | None = None,
+    ) -> WorkflowRecord:
+        """Rebuild verifier authority from durable envelopes before any write plan."""
+
+        require_safe_id(workflow_id, "workflow_id")
+        if type(trust_store) is not AttestationTrustStore:
+            raise WorkflowStoreError("Attestation trust store type is unsupported.")
+        current = _wall_time(now)
+        with self._transaction() as connection:
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
+            if record.status not in {"applying", "applied"}:
+                record = self._refresh_attestation_status(
+                    connection, record, now=current
+                )
+            self._check_live(record, current)
+            active = tuple(
+                item
+                for item in record.attestations
+                if item.issued_at <= current <= item.expires_at
+            )
+            if len(active) < record.binding.verification_policy.quorum:
+                raise WorkflowStoreError(
+                    "Workflow has no currently valid attestation quorum."
+                )
+            for persisted in active:
+                try:
+                    envelope = self.evidence_cas.get_bytes(persisted.envelope)
+                    verified = trust_store.verify(
+                        record.binding, envelope, now=current
+                    )
+                except (
+                    AttestationVerificationError,
+                    ContentAddressedStoreError,
+                ) as exc:
+                    raise WorkflowStoreError(str(exc)) from exc
+                if (
+                    verified.verifier_id != persisted.verifier_id
+                    or verified.adapter_id != persisted.adapter_id
+                    or verified.key_id != persisted.key_id
+                    or verified.attestation_id != persisted.attestation_id
+                    or verified.evidence_sha256 != persisted.evidence_sha256
+                    or sha256_bytes(verified.statement_bytes)
+                    != persisted.statement_sha256
+                    or verified.issued_at != persisted.issued_at
+                    or verified.expires_at != persisted.expires_at
+                ):
+                    raise WorkflowStoreError(
+                        "Durable attestation changed during re-verification."
+                    )
+            return record
+
     def consume_resume_confirmation(
         self,
         workflow_id: str,
@@ -550,7 +762,13 @@ class SQLiteWorkflowStore:
             raise WorkflowStoreError("Resume confirmation is invalid.")
         token_sha256 = sha256_bytes(confirmation_id.encode("utf-8"))
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
+            if record.status not in {"applying", "applied"}:
+                record = self._refresh_attestation_status(
+                    connection, record, now=current
+                )
             self._check_clock(record, current)
             confirmation = connection.execute(
                 "SELECT * FROM resume_confirmations WHERE token_sha256 = ?",
@@ -572,15 +790,30 @@ class SQLiteWorkflowStore:
                 or binding_sha256 != record.binding.binding_sha256
             ):
                 raise WorkflowStoreError("Resume confirmation binding is invalid.")
+            transaction_id = _resume_transaction_id(
+                workflow_id, plan_id, binding_sha256
+            )
             if confirmation["consumed_at"] is not None and record.status in {
                 "applying",
                 "applied",
             }:
-                if not record.apply_transaction_id:
+                if record.apply_transaction_id != transaction_id:
                     raise WorkflowStoreError(
                         "Consumed confirmation lost its apply transaction binding."
                     )
                 return record, True
+            if confirmation["consumed_at"] is not None:
+                recovery = connection.execute(
+                    "SELECT workflow_id FROM apply_recoveries "
+                    "WHERE transaction_id = ?",
+                    (transaction_id,),
+                ).fetchone()
+                if recovery is not None:
+                    if str(recovery["workflow_id"]) != workflow_id:
+                        raise WorkflowStoreError(
+                            "Recovered confirmation binding is invalid."
+                        )
+                    return record, True
             self._check_live(record, current)
             if record.status != "ready" or not record.quorum_satisfied_at(current):
                 raise WorkflowStoreError("Workflow is not ready to resume.")
@@ -592,14 +825,6 @@ class SQLiteWorkflowStore:
                 raise WorkflowStoreError("Clock rollback detected for confirmation.")
             if current > float(confirmation["expires_at"]):
                 raise WorkflowStoreError("Resume confirmation expired.")
-            transaction_id = canonical_sha256(
-                {
-                    "workflowId": workflow_id,
-                    "planId": plan_id,
-                    "bindingSha256": binding_sha256,
-                    "authority": "workspace-transaction/v1",
-                }
-            )
             connection.execute(
                 "UPDATE resume_confirmations SET consumed_at = ? "
                 "WHERE token_sha256 = ?",
@@ -622,7 +847,9 @@ class SQLiteWorkflowStore:
                 payload={"planId": plan_id, "transactionId": transaction_id},
                 now=current,
             )
-            return self._selected_record(connection, workflow_id), False
+            return self._selected_record(
+                connection, workflow_id, active_at=current
+            ), False
 
     def mark_applied(
         self,
@@ -637,7 +864,9 @@ class SQLiteWorkflowStore:
         require_sha256(result_sha256, "result_sha256")
         current = _wall_time(now)
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
             self._check_clock(record, current)
             if record.status == "applied":
                 if (
@@ -671,7 +900,9 @@ class SQLiteWorkflowStore:
                 },
                 now=current,
             )
-            return self._selected_record(connection, workflow_id), False
+            return self._selected_record(
+                connection, workflow_id, active_at=current
+            ), False
 
     def reset_after_recovery(
         self,
@@ -679,18 +910,39 @@ class SQLiteWorkflowStore:
         *,
         transaction_id: str,
         now: float | None = None,
-    ) -> WorkflowRecord:
+    ) -> tuple[WorkflowRecord, bool]:
         require_safe_id(workflow_id, "workflow_id")
         require_sha256(transaction_id, "transaction_id")
         current = _wall_time(now)
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
             self._check_clock(record, current)
+            existing = connection.execute(
+                "SELECT workflow_id FROM apply_recoveries WHERE transaction_id = ?",
+                (transaction_id,),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["workflow_id"]) != workflow_id:
+                    raise WorkflowStoreError(
+                        "Workflow recovery transaction binding is invalid."
+                    )
+                if record.status not in {"applying", "applied"}:
+                    record = self._refresh_attestation_status(
+                        connection, record, now=current
+                    )
+                return record, True
             if (
                 record.status != "applying"
                 or record.apply_transaction_id != transaction_id
             ):
                 raise WorkflowStoreError("Workflow recovery transaction is invalid.")
+            connection.execute(
+                "INSERT INTO apply_recoveries "
+                "(transaction_id, workflow_id, recovered_at) VALUES (?, ?, ?)",
+                (transaction_id, workflow_id, current),
+            )
             connection.execute(
                 """
                 UPDATE workflows
@@ -708,7 +960,9 @@ class SQLiteWorkflowStore:
                 payload={"transactionId": transaction_id},
                 now=current,
             )
-            return self._selected_record(connection, workflow_id)
+            return self._selected_record(
+                connection, workflow_id, active_at=current
+            ), False
 
     def mark_conflicted(
         self,
@@ -723,7 +977,9 @@ class SQLiteWorkflowStore:
         current = _wall_time(now)
         reason_sha256 = sha256_bytes(reason.encode("utf-8"))
         with self._transaction() as connection:
-            record = self._selected_record(connection, workflow_id)
+            record = self._selected_record(
+                connection, workflow_id, active_at=current
+            )
             self._check_clock(record, current)
             if record.status == "applied":
                 raise WorkflowStoreError("Applied workflow cannot become conflicted.")
@@ -737,7 +993,9 @@ class SQLiteWorkflowStore:
                     payload={"reasonSha256": reason_sha256},
                     now=current,
                 )
-            return self._selected_record(connection, workflow_id)
+            return self._selected_record(
+                connection, workflow_id, active_at=current
+            )
 
     def events(self, workflow_id: str) -> tuple[WorkflowEvent, ...]:
         require_safe_id(workflow_id, "workflow_id")
@@ -835,12 +1093,14 @@ class SQLiteWorkflowStore:
                 key_id TEXT NOT NULL,
                 attestation_id TEXT NOT NULL,
                 statement_sha256 TEXT NOT NULL,
+                envelope_descriptor_json TEXT NOT NULL,
+                statement_descriptor_json TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
                 metadata_sha256 TEXT NOT NULL,
                 issued_at REAL NOT NULL,
                 expires_at REAL NOT NULL,
                 recorded_at REAL NOT NULL,
-                UNIQUE(workflow_id, verifier_id),
+                superseded_at REAL,
                 UNIQUE(verifier_id, attestation_id)
             ) STRICT;
             CREATE TABLE IF NOT EXISTS workflow_events (
@@ -863,14 +1123,22 @@ class SQLiteWorkflowStore:
                 consumed_at REAL,
                 revoked_at REAL
             ) STRICT;
+            CREATE TABLE IF NOT EXISTS apply_recoveries (
+                transaction_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL REFERENCES workflows(workflow_id),
+                recovered_at REAL NOT NULL
+            ) STRICT;
             CREATE INDEX IF NOT EXISTS workflow_events_workflow_idx
                 ON workflow_events(workflow_id, sequence);
             CREATE INDEX IF NOT EXISTS attestations_workflow_idx
                 ON workflow_attestations(workflow_id, verifier_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS active_attestations_verifier_idx
+                ON workflow_attestations(workflow_id, verifier_id)
+                WHERE superseded_at IS NULL;
             CREATE INDEX IF NOT EXISTS resume_confirmations_workflow_idx
                 ON resume_confirmations(workflow_id, issued_at);
             INSERT INTO store_meta(key, value)
-                VALUES ('schema_version', '1.0')
+                VALUES ('schema_version', '2.0')
                 ON CONFLICT(key) DO NOTHING;
             COMMIT;
             """
@@ -889,17 +1157,25 @@ class SQLiteWorkflowStore:
         _validate_database_file(self.path)
 
     def _selected_record(
-        self, connection: sqlite3.Connection, workflow_id: str
+        self,
+        connection: sqlite3.Connection,
+        workflow_id: str,
+        *,
+        active_at: float | None = None,
     ) -> WorkflowRecord:
         row = connection.execute(
             "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
         ).fetchone()
         if row is None:
             raise WorkflowStoreError("Workflow was not found.")
-        return self._record(connection, row)
+        return self._record(connection, row, active_at=active_at)
 
     def _record(
-        self, connection: sqlite3.Connection, row: sqlite3.Row
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        active_at: float | None = None,
     ) -> WorkflowRecord:
         try:
             binding_raw = json.loads(str(row["binding_json"]))
@@ -919,30 +1195,53 @@ class SQLiteWorkflowStore:
             raise WorkflowStoreError("Persisted workflow binding was tampered with.")
         attestation_rows = connection.execute(
             "SELECT * FROM workflow_attestations WHERE workflow_id = ? "
-            "ORDER BY verifier_id",
+            "AND superseded_at IS NULL ORDER BY verifier_id",
             (binding.workflow_id,),
         ).fetchall()
-        attestations = tuple(self._attestation(row) for row in attestation_rows)
+        attestations = tuple(
+            self._attestation(attestation_row, binding=binding)
+            for attestation_row in attestation_rows
+        )
+        recovery = connection.execute(
+            "SELECT transaction_id FROM apply_recoveries WHERE workflow_id = ? "
+            "ORDER BY recovered_at DESC, transaction_id DESC LIMIT 1",
+            (binding.workflow_id,),
+        ).fetchone()
+        evaluation_time = (
+            float(row["last_wall_time"])
+            if active_at is None
+            else _wall_time(active_at)
+        )
+        active_count = sum(
+            item.issued_at <= evaluation_time <= item.expires_at
+            for item in attestations
+        )
         record = WorkflowRecord(
             workflow_id=str(row["workflow_id"]),
             status=str(row["status"]),
             binding=binding,
             workspace_root_sha256=str(row["workspace_root_sha256"]),
             attestations=attestations,
+            active_attestation_count=active_count,
             apply_transaction_id=str(row["apply_transaction_id"] or ""),
+            recovered_transaction_id=(
+                "" if recovery is None else str(recovery["transaction_id"])
+            ),
             result_sha256=str(row["result_sha256"] or ""),
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
             last_wall_time=float(row["last_wall_time"]),
         )
-        if record.status == "ready" and not record.quorum_satisfied:
-            raise WorkflowStoreError("Ready workflow lost its attestation quorum.")
         if record.status in {"applying", "applied"} and not record.apply_transaction_id:
             raise WorkflowStoreError("Applying workflow lost its transaction id.")
         return record
 
-    @staticmethod
-    def _attestation(row: sqlite3.Row) -> RecordedAttestation:
+    def _attestation(
+        self,
+        row: sqlite3.Row,
+        *,
+        binding: CandidateBinding,
+    ) -> RecordedAttestation:
         metadata_json = str(row["metadata_json"])
         if sha256_bytes(metadata_json.encode("utf-8")) != str(row["metadata_sha256"]):
             raise WorkflowStoreError("Persisted attestation metadata was tampered with.")
@@ -966,6 +1265,34 @@ class SQLiteWorkflowStore:
         }
         if metadata != expected:
             raise WorkflowStoreError("Persisted attestation metadata binding is invalid.")
+        envelope_descriptor = _descriptor_from_json(
+            str(row["envelope_descriptor_json"]),
+            media_type=_ENVELOPE_MEDIA_TYPE,
+            label="attestation envelope",
+        )
+        statement_descriptor = _descriptor_from_json(
+            str(row["statement_descriptor_json"]),
+            media_type=_STATEMENT_MEDIA_TYPE,
+            label="attestation statement",
+        )
+        if (
+            envelope_descriptor.sha256 != expected["evidenceSha256"]
+            or statement_descriptor.sha256 != expected["statementSha256"]
+        ):
+            raise WorkflowStoreError(
+                "Persisted attestation descriptor binding is invalid."
+            )
+        try:
+            envelope_bytes = self.evidence_cas.get_bytes(envelope_descriptor)
+            statement_bytes = self.evidence_cas.get_bytes(statement_descriptor)
+        except ContentAddressedStoreError as exc:
+            raise WorkflowStoreError(str(exc)) from exc
+        _validate_persisted_attestation_artifacts(
+            envelope_bytes,
+            statement_bytes,
+            binding=binding,
+            expected=expected,
+        )
         return RecordedAttestation(
             verifier_id=expected["verifierId"],
             adapter_id=expected["adapterId"],
@@ -973,6 +1300,8 @@ class SQLiteWorkflowStore:
             attestation_id=expected["attestationId"],
             evidence_sha256=expected["evidenceSha256"],
             statement_sha256=expected["statementSha256"],
+            envelope=envelope_descriptor,
+            statement=statement_descriptor,
             issued_at=expected["issuedAt"],
             expires_at=expected["expiresAt"],
             recorded_at=float(row["recorded_at"]),
@@ -1009,6 +1338,55 @@ class SQLiteWorkflowStore:
         self._check_clock(record, now)
         if record.status == "expired" or now > record.binding.expires_at:
             raise WorkflowStoreError("Workflow expired.")
+
+    def _refresh_attestation_status(
+        self,
+        connection: sqlite3.Connection,
+        record: WorkflowRecord,
+        *,
+        now: float,
+    ) -> WorkflowRecord:
+        if record.status in {"applying", "applied", "conflicted", "failed", "expired"}:
+            return record
+        active = tuple(
+            item
+            for item in record.attestations
+            if item.issued_at <= now <= item.expires_at
+        )
+        if len(active) >= record.binding.verification_policy.quorum:
+            desired = "ready"
+        elif active:
+            desired = "attested"
+        else:
+            desired = "staged"
+        if desired == record.status:
+            return self._selected_record(
+                connection, record.workflow_id, active_at=now
+            )
+        evidence = sorted(item.evidence_sha256 for item in active)
+        state_sha256 = canonical_sha256(
+            {
+                "status": desired,
+                "activeEvidenceSha256": evidence,
+                "quorum": record.binding.verification_policy.quorum,
+            }
+        )
+        self._transition(
+            connection,
+            record,
+            status=desired,
+            event_type="attestation_quorum_changed",
+            event_key=f"quorum:{state_sha256}",
+            payload={
+                "status": desired,
+                "activeEvidenceSha256": evidence,
+                "quorum": record.binding.verification_policy.quorum,
+            },
+            now=now,
+        )
+        return self._selected_record(
+            connection, record.workflow_id, active_at=now
+        )
 
     def _transition(
         self,
@@ -1084,6 +1462,99 @@ class SQLiteWorkflowStore:
             }
         )
         return base64.urlsafe_b64encode(self._mac(value)).decode("ascii").rstrip("=")
+
+
+def _descriptor_from_json(
+    value: str,
+    *,
+    media_type: str,
+    label: str,
+) -> ArtifactDescriptor:
+    try:
+        payload = json.loads(value)
+        if not isinstance(payload, Mapping):
+            raise TypeError("descriptor must be an object")
+        if canonical_json_bytes(payload).decode("utf-8") != value:
+            raise ValueError("descriptor must be canonical")
+        descriptor = ArtifactDescriptor.from_payload(payload)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise WorkflowStoreError(f"Persisted {label} descriptor is invalid.") from exc
+    if descriptor.media_type != media_type:
+        raise WorkflowStoreError(f"Persisted {label} media type is invalid.")
+    return descriptor
+
+
+def _resume_transaction_id(
+    workflow_id: str,
+    plan_id: str,
+    binding_sha256: str,
+) -> str:
+    return canonical_sha256(
+        {
+            "workflowId": workflow_id,
+            "planId": plan_id,
+            "bindingSha256": binding_sha256,
+            "authority": "workspace-transaction/v1",
+        }
+    )
+
+
+def _validate_persisted_attestation_artifacts(
+    envelope_bytes: bytes,
+    statement_bytes: bytes,
+    *,
+    binding: CandidateBinding,
+    expected: Mapping[str, object],
+) -> None:
+    try:
+        envelope = json.loads(envelope_bytes)
+        statement = json.loads(statement_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkflowStoreError("Persisted attestation evidence is invalid.") from exc
+    if (
+        not isinstance(envelope, Mapping)
+        or canonical_json_bytes(envelope) != envelope_bytes
+        or set(envelope) != {"payloadType", "payload", "signatures"}
+        or not isinstance(statement, Mapping)
+        or canonical_json_bytes(statement) != statement_bytes
+    ):
+        raise WorkflowStoreError("Persisted attestation evidence is not canonical.")
+    payload = envelope.get("payload")
+    signatures = envelope.get("signatures")
+    if (
+        not isinstance(payload, str)
+        or not isinstance(signatures, list)
+        or len(signatures) != 1
+        or not isinstance(signatures[0], Mapping)
+        or signatures[0].get("keyid") != expected["keyId"]
+    ):
+        raise WorkflowStoreError("Persisted attestation envelope binding is invalid.")
+    try:
+        decoded_statement = base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise WorkflowStoreError("Persisted attestation payload is invalid.") from exc
+    if decoded_statement != statement_bytes:
+        raise WorkflowStoreError("Persisted envelope and statement do not match.")
+    predicate = statement.get("predicate")
+    attestation = (
+        predicate.get("attestation") if isinstance(predicate, Mapping) else None
+    )
+    outcome = predicate.get("outcome") if isinstance(predicate, Mapping) else None
+    if (
+        not isinstance(predicate, Mapping)
+        or predicate.get("binding") != binding.payload()
+        or predicate.get("bindingSha256") != binding.binding_sha256
+        or not isinstance(attestation, Mapping)
+        or attestation.get("verifierId") != expected["verifierId"]
+        or attestation.get("adapterId") != expected["adapterId"]
+        or attestation.get("keyId") != expected["keyId"]
+        or attestation.get("attestationId") != expected["attestationId"]
+        or attestation.get("issuedAt") != expected["issuedAt"]
+        or attestation.get("expiresAt") != expected["expiresAt"]
+        or not isinstance(outcome, Mapping)
+        or outcome.get("passed") is not True
+    ):
+        raise WorkflowStoreError("Persisted attestation statement binding is invalid.")
 
 
 def _prepare_database_path(value: Path) -> Path:

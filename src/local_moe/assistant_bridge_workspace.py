@@ -1770,6 +1770,7 @@ def _validate_journal(payload: object, transaction_id: str) -> None:
         "prepared",
         "applying",
         "recovery_required",
+        "rolled_back",
     }:
         raise WorkspaceSecurityError("Workspace recovery journal status is invalid.")
 

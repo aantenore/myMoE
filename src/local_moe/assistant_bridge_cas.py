@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import secrets
 import stat
 import tempfile
+import unicodedata
 from typing import Any, Iterator, Mapping, Sequence
 
 from .assistant_bridge_integrity import canonical_json_bytes, sha256_bytes
@@ -21,6 +22,13 @@ CAS_SCHEMA_VERSION = "1.0"
 _EMPTY_SHA256 = sha256_bytes(b"")
 _FILE_FIELDS = {"path", "kind", "sha256", "size", "mode", "direction"}
 _DIRECTIONS = {"input_only", "round_trip"}
+_SOURCE_FIELDS = {
+    "rootSha256",
+    "fingerprint",
+    "gitRepository",
+    "headSha",
+    "indexSha256",
+}
 _READ_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_CLOEXEC", 0)
@@ -42,9 +50,37 @@ def _safe_relative_path(value: str) -> str:
         or path.is_absolute()
         or ".." in path.parts
         or path.as_posix() != value
+        or not path.parts
+        or path == PurePosixPath(".")
+        or any(part in {"", "."} for part in path.parts)
+        or _portable_path_component(path.parts[0]) == ".git"
     ):
         raise ContentAddressedStoreError("Candidate path is unsafe.")
     return value
+
+
+def _portable_path_component(value: str) -> str:
+    return unicodedata.normalize("NFC", value).casefold()
+
+
+def _portable_path_key(value: str) -> str:
+    return "/".join(
+        _portable_path_component(part) for part in PurePosixPath(value).parts
+    )
+
+
+def _require_portable_unique_paths(
+    paths: Sequence[str], *, label: str
+) -> None:
+    portable: dict[str, str] = {}
+    for path in paths:
+        key = _portable_path_key(path)
+        existing = portable.get(key)
+        if existing is not None and existing != path:
+            raise ContentAddressedStoreError(
+                f"{label} contains non-portable path collisions."
+            )
+        portable[key] = path
 
 
 def _regular_file_state(path: Path) -> os.stat_result:
@@ -188,8 +224,12 @@ class ContentAddressedStore:
         changes: Sequence[Mapping[str, Any]],
         *,
         source_fingerprint: str,
+        source_identity: Mapping[str, Any],
     ) -> tuple[ArtifactDescriptor, ArtifactDescriptor]:
         require_sha256(source_fingerprint, "source_fingerprint")
+        normalized_source = _normalize_source_identity(
+            source_identity, source_fingerprint=source_fingerprint
+        )
         raw_root = Path(candidate_root)
         if raw_root.is_symlink():
             raise ContentAddressedStoreError("Candidate root cannot be a symbolic link.")
@@ -227,6 +267,10 @@ class ContentAddressedStore:
                     "content": None if content is None else content.payload(),
                 }
             )
+        _require_portable_unique_paths(
+            [str(item["path"]) for item in file_records],
+            label="Candidate manifest",
+        )
         normalized_changes = sorted(
             (_normalize_change(item) for item in changes),
             key=lambda item: str(item["path"]),
@@ -235,6 +279,10 @@ class ContentAddressedStore:
             normalized_changes
         ):
             raise ContentAddressedStoreError("Changeset contains duplicate paths.")
+        _require_portable_unique_paths(
+            [str(item["path"]) for item in normalized_changes],
+            label="Changeset",
+        )
         _validate_changes_against_manifest(normalized_changes, file_records)
         changeset = self.put_json(
             {
@@ -248,6 +296,7 @@ class ContentAddressedStore:
             {
                 "schemaVersion": CAS_SCHEMA_VERSION,
                 "sourceFingerprint": source_fingerprint,
+                "source": normalized_source,
                 "files": file_records,
                 "changeset": changeset.payload(),
             },
@@ -264,11 +313,19 @@ class ContentAddressedStore:
         if set(manifest) != {
             "schemaVersion",
             "sourceFingerprint",
+            "source",
             "files",
             "changeset",
         } or manifest.get("schemaVersion") != CAS_SCHEMA_VERSION:
             raise ContentAddressedStoreError("Candidate manifest schema is unsupported.")
         require_sha256(str(manifest.get("sourceFingerprint", "")), "source_fingerprint")
+        raw_source = manifest.get("source")
+        if not isinstance(raw_source, Mapping):
+            raise ContentAddressedStoreError("Candidate source identity is invalid.")
+        _normalize_source_identity(
+            raw_source,
+            source_fingerprint=str(manifest["sourceFingerprint"]),
+        )
         raw_changeset = manifest.get("changeset")
         if not isinstance(raw_changeset, Mapping):
             raise ContentAddressedStoreError("Candidate changeset descriptor is invalid.")
@@ -326,6 +383,25 @@ class ContentAddressedStore:
                 finally:
                     os.close(descriptor_fd)
             yield root
+
+    def load_candidate(
+        self,
+        manifest_descriptor: ArtifactDescriptor,
+        changeset_descriptor: ArtifactDescriptor,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return fully validated immutable-artifact payload copies."""
+
+        manifest = self.get_json(manifest_descriptor)
+        if manifest.get("changeset") != changeset_descriptor.payload():
+            raise ContentAddressedStoreError(
+                "Candidate manifest does not bind the requested changeset."
+            )
+        # Materialization performs the complete manifest/changeset coherence
+        # validation without exposing any content before those checks pass.
+        with self.materialize_candidate(manifest_descriptor):
+            pass
+        changeset = self.get_json(changeset_descriptor)
+        return manifest, changeset
 
     def _object_path(self, digest: str, *, create_parent: bool) -> Path:
         require_sha256(digest, "CAS digest")
@@ -432,6 +508,7 @@ def _validated_manifest_records(values: Sequence[Any]) -> list[dict[str, object]
         raise ContentAddressedStoreError(
             "Candidate manifest paths must be ordered and unique."
         )
+    _require_portable_unique_paths(paths, label="Candidate manifest")
     return records
 
 
@@ -480,7 +557,47 @@ def _validate_stored_changeset(
         raise ContentAddressedStoreError(
             "Candidate changeset paths must be ordered and unique."
         )
+    _require_portable_unique_paths(paths, label="Candidate changeset")
     _validate_changes_against_manifest(normalized, files)
+
+
+def _normalize_source_identity(
+    value: Mapping[str, Any],
+    *,
+    source_fingerprint: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _SOURCE_FIELDS:
+        raise ContentAddressedStoreError("Candidate source identity shape is invalid.")
+    root_sha256 = value.get("rootSha256")
+    fingerprint = value.get("fingerprint")
+    git_repository = value.get("gitRepository")
+    head_sha = value.get("headSha")
+    index_sha256 = value.get("indexSha256")
+    if not isinstance(root_sha256, str) or not isinstance(fingerprint, str):
+        raise ContentAddressedStoreError("Candidate source digest types are invalid.")
+    require_sha256(root_sha256, "source root sha256")
+    require_sha256(fingerprint, "source fingerprint")
+    if fingerprint != source_fingerprint:
+        raise ContentAddressedStoreError("Candidate source fingerprint is incoherent.")
+    if not isinstance(git_repository, bool):
+        raise ContentAddressedStoreError("Candidate source Git flag is invalid.")
+    if head_sha is not None and not isinstance(head_sha, str):
+        raise ContentAddressedStoreError("Candidate source HEAD is invalid.")
+    if not isinstance(index_sha256, str):
+        raise ContentAddressedStoreError("Candidate source index digest is invalid.")
+    require_sha256(index_sha256, "source index sha256")
+    if git_repository:
+        if not head_sha or len(head_sha) > 128:
+            raise ContentAddressedStoreError("Candidate source HEAD is invalid.")
+    elif head_sha is not None:
+        raise ContentAddressedStoreError("Non-Git source cannot bind a HEAD.")
+    return {
+        "rootSha256": root_sha256,
+        "fingerprint": fingerprint,
+        "gitRepository": git_repository,
+        "headSha": head_sha,
+        "indexSha256": index_sha256,
+    }
 
 
 def _read_candidate_file(root: Path, relative: str, *, expected_size: int) -> bytes:

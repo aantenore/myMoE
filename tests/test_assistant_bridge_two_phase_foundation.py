@@ -112,6 +112,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 (after,),
                 ({"path": "src/module.py", "before": None, "after": after},),
                 source_fingerprint=DIGEST_A,
+                source_identity=_source_identity(DIGEST_A),
             )
 
             manifest_payload = store.get_json(manifest)
@@ -146,6 +147,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                             (mutation,),
                             (),
                             source_fingerprint=DIGEST_A,
+                            source_identity=_source_identity(DIGEST_A),
                         )
             with self.assertRaisesRegex(ContentAddressedStoreError, "path binding"):
                 store.store_candidate(
@@ -159,6 +161,49 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                         },
                     ),
                     source_fingerprint=DIGEST_A,
+                    source_identity=_source_identity(DIGEST_A),
+                )
+
+    def test_cas_rejects_repository_metadata_root_and_portable_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            store = ContentAddressedStore(root / "cas")
+
+            for unsafe in (".", ".git/config", ".GIT/HEAD"):
+                with self.subTest(unsafe=unsafe):
+                    with self.assertRaisesRegex(
+                        ContentAddressedStoreError, "path is unsafe"
+                    ):
+                        store.store_candidate(
+                            candidate,
+                            (_file(unsafe, b"value"),),
+                            (),
+                            source_fingerprint=DIGEST_A,
+                            source_identity=_source_identity(DIGEST_A),
+                        )
+
+            empty = sha256_bytes(b"")
+
+            def missing(path: str) -> dict[str, object]:
+                return {
+                    "path": path,
+                    "kind": "missing",
+                    "sha256": empty,
+                    "size": 0,
+                    "mode": 0,
+                    "direction": "round_trip",
+                }
+            with self.assertRaisesRegex(
+                ContentAddressedStoreError, "non-portable path collisions"
+            ):
+                store.store_candidate(
+                    candidate,
+                    (missing("Readme.md"), missing("README.md")),
+                    (),
+                    source_fingerprint=DIGEST_A,
+                    source_identity=_source_identity(DIGEST_A),
                 )
 
     def test_candidate_content_and_subject_identity_exclude_fresh_challenge(self) -> None:
@@ -182,6 +227,19 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             self.assertEqual(first.candidate_fingerprint, second.candidate_fingerprint)
             self.assertNotEqual(first.binding_sha256, second.binding_sha256)
             self.assertIsNotNone(private_key)
+
+    def test_verification_policy_counts_physical_keys_not_verifier_labels(self) -> None:
+        _, requirement = _verifier("verifier-a")
+        alias = replace(
+            requirement,
+            verifier_id="verifier-alias",
+            key_id="verifier-alias-key",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "repeats a physical public key"
+        ):
+            VerificationPolicy("policy-v1", 2, (requirement, alias))
 
     def test_real_dsse_adapter_verifies_signed_complete_predicate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -282,6 +340,60 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             self.assertEqual(ready.status, "ready")
             self.assertFalse(ready_replay)
             self.assertTrue(ready.quorum_satisfied)
+            self.assertEqual(
+                ready.attestations[0].envelope.sha256,
+                ready.attestations[0].evidence_sha256,
+            )
+            self.assertEqual(
+                ready.attestations[0].statement.sha256,
+                ready.attestations[0].statement_sha256,
+            )
+
+    def test_durable_attestation_is_reloaded_and_cas_tampering_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state" / "workflows.sqlite3")
+            private_key, requirement = _verifier("verifier-a")
+            policy = VerificationPolicy("policy-v1", 1, (requirement,))
+            binding, challenge = _binding(root / "binding", store, policy)
+            store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            trust = AttestationTrustStore(
+                (TrustedEd25519Verifier(requirement, private_key.public_key()),)
+            )
+            ready, _ = store.record_attestation_envelope(
+                binding.workflow_id,
+                _envelope(binding, requirement, private_key),
+                trust_store=trust,
+                now=110,
+            )
+            evidence = ready.attestations[0].envelope
+
+            reopened = SQLiteWorkflowStore(store.path)
+            reloaded = reopened.reverify_attestations(
+                binding.workflow_id,
+                trust_store=trust,
+                now=111,
+            )
+            self.assertEqual(reloaded.status, "ready")
+            object_path = (
+                reopened.evidence_cas.root
+                / "objects"
+                / "sha256"
+                / evidence.sha256[:2]
+                / evidence.sha256[2:]
+            )
+            object_path.write_bytes(b"tampered")
+
+            with self.assertRaisesRegex(
+                WorkflowStoreError, "size binding|digest binding"
+            ):
+                reopened.get_workflow(binding.workflow_id, now=112)
 
     def test_stage_idempotency_creation_time_and_database_identity_are_fail_closed(
         self,
@@ -441,6 +553,154 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     now=121,
                 )
 
+    def test_expired_attestation_degrades_and_can_be_atomically_refreshed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "workflows.sqlite3")
+            private_key, requirement = _verifier("verifier-a")
+            policy = VerificationPolicy("policy-v1", 1, (requirement,))
+            binding, challenge = _binding(
+                root / "binding", store, policy, expires_at=300
+            )
+            store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            trust = AttestationTrustStore(
+                (TrustedEd25519Verifier(requirement, private_key.public_key()),)
+            )
+            first_envelope = _envelope(
+                binding,
+                requirement,
+                private_key,
+                attestation_id="attestation-old",
+                expires_at=120,
+            )
+            store.record_attestation_envelope(
+                binding.workflow_id,
+                first_envelope,
+                trust_store=trust,
+                now=110,
+            )
+            first_plan = store.issue_resume_plan(
+                binding.workflow_id,
+                idempotency_key=RESUME_KEY,
+                ttl_seconds=5,
+                now=111,
+            )
+
+            degraded = store.get_workflow(binding.workflow_id, now=121)
+            self.assertEqual(degraded.status, "staged")
+            self.assertFalse(degraded.quorum_satisfied)
+            with self.assertRaisesRegex(
+                WorkflowStoreError, "not currently valid|replayed"
+            ):
+                store.record_attestation_envelope(
+                    binding.workflow_id,
+                    first_envelope,
+                    trust_store=trust,
+                    now=121,
+                )
+
+            refreshed, replay = store.record_attestation_envelope(
+                binding.workflow_id,
+                _envelope(
+                    binding,
+                    requirement,
+                    private_key,
+                    attestation_id="attestation-new",
+                    issued_at=121,
+                    expires_at=180,
+                ),
+                trust_store=trust,
+                now=122,
+            )
+            second_plan = store.issue_resume_plan(
+                binding.workflow_id,
+                idempotency_key="resume-operation-000000000000002",
+                ttl_seconds=30,
+                now=123,
+            )
+
+            self.assertFalse(replay)
+            self.assertEqual(refreshed.status, "ready")
+            self.assertEqual(len(refreshed.attestations), 1)
+            self.assertNotEqual(first_plan.plan_id, second_plan.plan_id)
+            self.assertIn(
+                "independent_attestation_superseded",
+                {item.event_type for item in store.events(binding.workflow_id)},
+            )
+
+    def test_recovery_and_consumed_confirmation_replays_are_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "workflows.sqlite3")
+            private_key, requirement = _verifier("verifier-a")
+            policy = VerificationPolicy("policy-v1", 1, (requirement,))
+            binding, challenge = _binding(root / "binding", store, policy)
+            store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            trust = AttestationTrustStore(
+                (TrustedEd25519Verifier(requirement, private_key.public_key()),)
+            )
+            store.record_attestation_envelope(
+                binding.workflow_id,
+                _envelope(binding, requirement, private_key, expires_at=190),
+                trust_store=trust,
+                now=110,
+            )
+            plan = store.issue_resume_plan(
+                binding.workflow_id,
+                idempotency_key=RESUME_KEY,
+                ttl_seconds=30,
+                now=111,
+            )
+            applying, _ = store.consume_resume_confirmation(
+                binding.workflow_id,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                binding_sha256=plan.binding_sha256,
+                now=112,
+            )
+            first, first_replay = store.reset_after_recovery(
+                binding.workflow_id,
+                transaction_id=applying.apply_transaction_id,
+                now=113,
+            )
+            repeated, repeated_replay = store.reset_after_recovery(
+                binding.workflow_id,
+                transaction_id=applying.apply_transaction_id,
+                now=114,
+            )
+            old_confirmation, confirmation_replay = (
+                store.consume_resume_confirmation(
+                    binding.workflow_id,
+                    plan_id=plan.plan_id,
+                    confirmation_id=plan.confirmation_id,
+                    binding_sha256=plan.binding_sha256,
+                    now=115,
+                )
+            )
+
+            self.assertFalse(first_replay)
+            self.assertTrue(repeated_replay)
+            self.assertTrue(confirmation_replay)
+            self.assertEqual(first.status, "ready")
+            self.assertEqual(repeated.status, "ready")
+            self.assertEqual(old_confirmation.status, "ready")
+            self.assertEqual(
+                old_confirmation.recovered_transaction_id,
+                applying.apply_transaction_id,
+            )
+
     def test_persisted_binding_tampering_is_detected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -489,6 +749,16 @@ def _verifier(name: str) -> tuple[Ed25519PrivateKey, VerifierRequirement]:
     return private_key, requirement
 
 
+def _source_identity(fingerprint: str) -> dict[str, object]:
+    return {
+        "rootSha256": DIGEST_E,
+        "fingerprint": fingerprint,
+        "gitRepository": False,
+        "headSha": None,
+        "indexSha256": sha256_bytes(b""),
+    }
+
+
 def _binding(
     root: Path,
     workflow_store: SQLiteWorkflowStore,
@@ -507,6 +777,7 @@ def _binding(
         (),
         (),
         source_fingerprint=DIGEST_D,
+        source_identity=_source_identity(DIGEST_D),
     )
     workflow_id, challenge, stage_sha256 = workflow_store.stage_identity(stage_key)
     return (
