@@ -1482,7 +1482,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             any(item.code == "two_phase_required" for item in evidence)
         )
 
-    def test_failed_task_verifier_never_applies_candidate(self) -> None:
+    def test_two_phase_write_never_launches_candidate_verifier(self) -> None:
         with (
             _fake_bridge() as fixture,
             _fake_environment(
@@ -1501,9 +1501,12 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             )
             result = fixture.run(task)
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+            invocations = _read_jsonl(fixture.log)
 
-        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
         self.assertEqual(source, "initial\n")
+        self.assertEqual(invocations, [])
 
     def test_verifier_cleanup_failure_prevents_escalation_and_budget(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -1541,7 +1544,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(reserve.call_count, 0)
         self.assertEqual([item["mode"] for item in invocations], ["local"])
 
-    def test_task_verifier_observes_the_materialized_candidate_delta(self) -> None:
+    def test_two_phase_write_does_not_use_candidate_delta_as_authority(self) -> None:
         with (
             _fake_bridge() as fixture,
             _fake_environment(
@@ -1560,15 +1563,12 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             )
             result = fixture.run(task)
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+            invocations = _read_jsonl(fixture.log)
 
-        self.assertEqual(result.status, "failed")
-        self.assertTrue(
-            any(
-                item.id == "fixture-task-verifier" and not item.passed
-                for item in result.verification
-            )
-        )
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
         self.assertEqual(source, "initial\n")
+        self.assertEqual(invocations, [])
 
     def test_read_only_mutation_is_rejected_and_discarded(self) -> None:
         with (
@@ -1582,7 +1582,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(result.code, "workspace_authority_violated")
         self.assertFalse(leaked)
 
-    def test_source_drift_before_apply_is_never_overwritten(self) -> None:
+    def test_legacy_write_never_reaches_the_apply_hook(self) -> None:
         real_apply = assistant_bridge_module.apply_changeset
 
         def drift_then_apply(**kwargs):
@@ -1603,7 +1603,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                 assistant_bridge_module,
                 "apply_changeset",
                 side_effect=drift_then_apply,
-            ),
+            ) as apply,
         ):
             task = build_assistant_task(
                 "Change the tracked file.",
@@ -1612,11 +1612,13 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                 risk_class="write_local",
                 required_verifier_ids=("fixture-task-verifier",),
             )
-            with self.assertRaisesRegex(AssistantBridgeError, "changed after"):
-                fixture.run(task)
+            result = fixture.run(task)
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
 
-        self.assertEqual(source, "concurrent-source-change\n")
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
+        self.assertEqual(source, "initial\n")
+        apply.assert_not_called()
 
     def test_confirmation_ticket_is_one_shot(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -1663,7 +1665,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
 
         self.assertEqual(_read_jsonl(fixture.log), [])
 
-    def test_node_like_write_without_selected_task_verifier_stays_unverified(
+    def test_node_like_write_without_independent_evidence_is_blocked(
         self,
     ) -> None:
         with (
@@ -1688,11 +1690,13 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                 risk_class="write_local",
             )
             result = fixture.run(task)
+            candidate_exists = (fixture.root / "src" / "index.js").exists()
+            invocations = _read_jsonl(fixture.log)
 
-        self.assertEqual(result.status, "failed")
-        self.assertTrue(
-            any(item.code == "verification_required" for item in result.verification)
-        )
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
+        self.assertFalse(candidate_exists)
+        self.assertEqual(invocations, [])
 
     def test_quality_profile_executes_the_exact_confirmed_premium_plan(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -1726,7 +1730,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             ["policy_selected_premium", "tests-failed"],
         )
 
-    def test_direct_premium_applies_delta_with_prior_and_final_evidence_split(
+    def test_direct_premium_write_requires_the_two_phase_path(
         self,
     ) -> None:
         with (
@@ -1749,22 +1753,16 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             prior = (_external_evidence(task, fixture.root, passed=False),)
             result = fixture.run(task, external_evidence=prior)
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
-            telemetry = result.metadata_payload()["verification"]
+            invocations = _read_jsonl(fixture.log)
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(source, "premium-candidate\n")
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
+        self.assertEqual(source, "initial\n")
+        self.assertEqual(invocations, [])
         self.assertEqual(
             [item.code for item in result.prior_verification],
             ["tests-failed"],
         )
-        self.assertTrue(result.verification)
-        self.assertTrue(all(item.passed for item in result.verification))
-        self.assertIsInstance(telemetry, dict)
-        self.assertEqual(
-            [item["code"] for item in telemetry["prior"]],
-            ["tests-failed"],
-        )
-        self.assertTrue(all(item["passed"] for item in telemetry["final"]))
 
     def test_premium_budget_is_reserved_once_and_never_for_local(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
@@ -2029,7 +2027,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(blocked.premium_calls_used, 1)
         self.assertNotIn("sensitive release failure", json.dumps(blocked.user_payload()))
 
-    def test_verified_local_result_is_returned_to_the_user_without_premium(
+    def test_declared_write_uses_two_phase_even_when_no_delta_is_expected(
         self,
     ) -> None:
         with (
@@ -2053,12 +2051,9 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
             invocations = _read_jsonl(fixture.log)
 
         telemetry = json.dumps(result.metadata_payload(), sort_keys=True)
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.code, "local_verification_passed")
-        self.assertEqual([item["mode"] for item in invocations], ["local"])
-        self.assertEqual(
-            result.user_payload()["result"]["content"], "VERIFIED local user result"
-        )
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.code, "route_blocked")
+        self.assertEqual(invocations, [])
         self.assertNotIn("local user result", telemetry)
 
     def test_failure_language_cannot_false_positive(self) -> None:
@@ -2318,7 +2313,11 @@ class AssistantBridgeCliTests(unittest.TestCase):
             )
 
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload["route_receipt"]["route"], "local_then_verify")
+        self.assertEqual(payload["route_receipt"]["route"], "blocked")
+        self.assertIn(
+            "two_phase_required",
+            payload["route_receipt"]["rationale_codes"],
+        )
         self.assertTrue(str(payload["confirmation_id"]).startswith("confirm-v2-"))
         self.assertNotIn("Refactor the parser", completed.stdout)
 
