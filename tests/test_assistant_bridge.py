@@ -1035,11 +1035,12 @@ class AssistantBridgeContractTests(unittest.TestCase):
         )
         self.assertEqual(plan.resources.wall_time_milliseconds, 10_000)
 
-    @unittest.skipIf(
-        os.name == "nt",
-        "Windows has no runnable hard-sandbox verifier backend",
-    )
     def test_verifier_propagates_unverified_process_cleanup(self) -> None:
+        capability = assistant_bridge_module.verifier_isolation_capability(
+            self.config.verifier_isolation
+        )
+        if not capability.supported:
+            self.skipTest(capability.reason)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _initialize_git(root)
@@ -1641,12 +1642,13 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(source, "initial\n")
         self.assertEqual(invocations, [])
 
-    @unittest.skipIf(
-        os.name == "nt",
-        "Windows has no runnable hard-sandbox verifier backend",
-    )
     def test_verifier_cleanup_failure_prevents_escalation_and_budget(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
+            capability = assistant_bridge_module.verifier_isolation_capability(
+                fixture.config.verifier_isolation
+            )
+            if not capability.supported:
+                self.skipTest(capability.reason)
             task = build_assistant_task(
                 "Verify locally before any escalation.",
                 required_verifier_ids=("fixture-task-verifier",),
