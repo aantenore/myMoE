@@ -295,6 +295,16 @@ database reset commits, and then cleans it up idempotently. A journal without
 the policy binding falls back to the configuration-backed recovery path; it is
 never treated as fresh write authority.
 
+On Windows, the CRT cannot open directory descriptors for `fsync`. myMoE still
+writes and synchronizes the exact CAS object and workflow-state secret bytes
+before publishing them with exclusive filesystem operations. If opening the
+containing directory returns the Windows `EACCES` unsupported-operation result,
+however, it cannot force that new directory entry to stable storage. A sudden
+power loss may therefore lose a just-created CAS object or first-created state
+secret; subsequent binding and readback checks fail closed, but this is not
+equivalent to POSIX directory-`fsync` crash durability. Workspace transactions
+and capsule replacement use separate Win32 flush and write-through paths.
+
 `--assistant-capsule-out` writes bounded but still task-bearing data. Review it
 before sharing. `--assistant-include-diff` is also explicit because even a
 bounded, redacted diff can contain proprietary code. Diff collection reflects
