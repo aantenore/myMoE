@@ -13,6 +13,7 @@ from local_moe.agent_provider import (
 )
 from local_moe.agent_types import AgentMessage, AgentToolSpec
 from local_moe.config import ExpertConfig, parse_config
+from local_moe.execution_scope import ScopePolicyError
 from local_moe.providers import ProviderError
 
 
@@ -148,6 +149,37 @@ def test_adapter_caps_http_timeout_to_remaining_soft_deadline() -> None:
     )
 
     assert captured["timeout"] == 0.25
+
+
+def test_adapter_blocks_remote_execution_before_custom_transport() -> None:
+    calls = 0
+
+    def transport(_http_request, _timeout):
+        nonlocal calls
+        calls += 1
+        return {"choices": [{"message": {"content": "unexpected"}}]}
+
+    expert = ExpertConfig(
+        id="remote",
+        provider="openai_compatible",
+        model="remote-agent",
+        role="general",
+        base_url="https://models.example.test/v1",
+    )
+    adapter = OpenAICompatibleAgentAdapter(expert, transport=transport)
+
+    try:
+        adapter.generate(
+            (AgentMessage(role="user", content="Stay local."),),
+            (),
+            correlation_id="remote-blocked",
+        )
+    except ScopePolicyError as exc:
+        assert "scope_blocked" in str(exc)
+    else:
+        raise AssertionError("Expected remote agent execution to be blocked")
+
+    assert calls == 0
 
 
 def test_parser_rejects_non_standard_nan_json_arguments() -> None:
@@ -341,7 +373,7 @@ def test_local_agent_endpoint_policy_accepts_loopback_and_rejects_remote() -> No
         validate_local_agent_endpoints(config)
     except ProviderError as exc:
         assert "remote-fallback" in str(exc)
-        assert "non-loopback" in str(exc)
+        assert "blocked expert" in str(exc)
     else:
         raise AssertionError("Expected remote fallback endpoint to be rejected")
 

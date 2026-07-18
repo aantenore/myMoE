@@ -13,6 +13,7 @@ from .agent_types import (
     AgentToolSpec,
 )
 from .config import ExpertConfig, MoEConfig
+from .execution_scope import ExecutionScopeGuard
 from .http_boundary import is_loopback_http_url, open_model_endpoint
 from .providers import ProviderError, _remote_params, strip_reasoning_content
 
@@ -31,6 +32,7 @@ class OpenAICompatibleAgentAdapter:
         *,
         transport: AgentHttpTransport | None = None,
         parallel_tool_calls: bool | None = False,
+        execution_guard: ExecutionScopeGuard | None = None,
     ):
         if expert.provider != "openai_compatible":
             raise ProviderError(
@@ -41,6 +43,7 @@ class OpenAICompatibleAgentAdapter:
         self._expert = expert
         self._transport = transport or _default_transport
         self._parallel_tool_calls = parallel_tool_calls
+        self._execution_guard = execution_guard or ExecutionScopeGuard()
 
     @property
     def expert(self) -> ExpertConfig:
@@ -62,6 +65,7 @@ class OpenAICompatibleAgentAdapter:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        self._execution_guard.require_allowed(self._expert.execution_target)
         try:
             parsed = self._transport(
                 http_request,
@@ -125,9 +129,15 @@ def build_openai_compatible_agent_adapter(
     *,
     expert_id: str | None = None,
     transport: AgentHttpTransport | None = None,
+    execution_guard: ExecutionScopeGuard | None = None,
 ) -> OpenAICompatibleAgentAdapter:
     expert = select_agent_expert(config, expert_id=expert_id)
-    return OpenAICompatibleAgentAdapter(expert, transport=transport)
+    return OpenAICompatibleAgentAdapter(
+        expert,
+        transport=transport,
+        execution_guard=execution_guard
+        or ExecutionScopeGuard(config.execution_policy),
+    )
 
 
 def select_agent_expert(
@@ -155,18 +165,21 @@ def select_agent_expert(
 
 
 def validate_local_agent_endpoints(config: MoEConfig) -> None:
-    """Reject configured HTTP model endpoints that are not loopback-only."""
+    """Reject agent experts that cannot satisfy the configured execution policy."""
 
-    non_loopback = sorted(
+    guard = ExecutionScopeGuard(config.execution_policy)
+    blocked = sorted(
         expert.id
         for expert in config.experts
-        if expert.base_url and not is_loopback_base_url(str(expert.base_url))
+        if expert.provider == "openai_compatible"
+        and not guard.evaluate(expert.execution_target).allowed
     )
-    if non_loopback:
-        rendered = ", ".join(non_loopback)
+    if blocked:
+        rendered = ", ".join(blocked)
         raise ProviderError(
-            "Agent mode requires loopback model endpoints when the app mode is "
-            f"local_model_required; non-loopback expert(s): {rendered}."
+            "Agent mode requires execution-policy-compliant model endpoints when "
+            "the app mode is local_model_required; blocked expert(s): "
+            f"{rendered}."
         )
 
 

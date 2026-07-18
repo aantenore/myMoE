@@ -176,7 +176,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("local_model_required", completed.stderr)
-        self.assertIn("non-loopback", completed.stderr)
+        self.assertIn("blocked expert", completed.stderr)
 
     def test_deprecated_agent_max_wall_time_alias_warns(self) -> None:
         def respond(_request_payload: dict[str, object]) -> dict[str, object]:

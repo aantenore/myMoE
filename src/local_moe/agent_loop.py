@@ -23,6 +23,7 @@ from .agent_tools import (
 )
 from .agent_types import AgentMessage, AgentModelAdapter, AgentToolCall
 from .config import MoEConfig
+from .execution_scope import ExecutionScopeGuard
 from .extensions import ExtensionRegistry
 from .providers import strip_reasoning_content
 
@@ -582,11 +583,13 @@ def build_local_agent_loop(
     budget: AgentLoopBudget | None = None,
     system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT,
     transport: AgentHttpTransport | None = None,
+    execution_guard: ExecutionScopeGuard | None = None,
 ) -> AgentLoop:
     model = build_openai_compatible_agent_adapter(
         config,
         expert_id=expert_id,
         transport=transport,
+        execution_guard=execution_guard,
     )
     tools = AgentToolRegistry.from_local_tools(
         runner,
