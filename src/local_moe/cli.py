@@ -37,6 +37,7 @@ from .context_policy import load_context_policy
 from .doctor import build_doctor_report, render_doctor_report_markdown
 from .environment import build_environment_report, render_environment_report_markdown
 from .evaluator import evaluate_router, load_eval_cases
+from .execution_scope import ScopePolicyError
 from .extensions import (
     create_plugin_scaffold,
     load_extension_registry,
@@ -461,6 +462,8 @@ def main() -> None:
                 correlation_id=args.agent_correlation_id,
                 approval_handler=_agent_approval_handler(args.agent_approve),
             )
+        except ScopePolicyError as exc:
+            _exit_scope_blocked(exc)
         except (ProviderError, ToolExecutionError, ValueError) as exc:
             print(
                 json.dumps(
@@ -744,6 +747,8 @@ def main() -> None:
                     "previous_summary_present": bool(session.summary.strip()),
                 },
             )
+        except ScopePolicyError as exc:
+            _exit_scope_blocked(exc)
         except (KeyError, ProviderError, ValueError) as exc:
             print(
                 json.dumps({"error": "compact_error", "message": str(exc)}, indent=2),
@@ -1019,7 +1024,9 @@ def main() -> None:
                 app_config_path=args.app_config,
                 active_config_path=config_path,
             ).run(args.run_tool, tool_input)
-        except (json.JSONDecodeError, ToolExecutionError) as exc:
+        except ScopePolicyError as exc:
+            _exit_scope_blocked(exc)
+        except (json.JSONDecodeError, ToolExecutionError, ProviderError) as exc:
             print(
                 json.dumps({"error": "tool_error", "message": str(exc)}, indent=2),
                 file=sys.stderr,
@@ -1059,6 +1066,8 @@ def main() -> None:
                 new_chat=args.new_chat,
                 chat_title=args.chat_title,
             )
+        except ScopePolicyError as exc:
+            _exit_scope_blocked(exc)
         except (KeyError, ProviderError) as exc:
             print(
                 json.dumps({"error": "chat_error", "message": str(exc)}, indent=2),
@@ -1068,7 +1077,16 @@ def main() -> None:
         _print_chat_payload(payload, json_output=args.json_output)
         return
 
-    response = moe.generate(args.prompt)
+    try:
+        response = moe.generate(args.prompt)
+    except ScopePolicyError as exc:
+        _exit_scope_blocked(exc)
+    except ProviderError as exc:
+        print(
+            json.dumps({"error": "provider_error", "message": str(exc)}, indent=2),
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
     _print_response(response, json_output=args.json_output)
 
 
@@ -1149,10 +1167,25 @@ def _interactive(
                 mode="cli-interactive",
             )
             session_id = str(payload["session_id"])
+        except ScopePolicyError as exc:
+            print(
+                json.dumps(_scope_blocked_payload(exc), indent=2),
+                file=sys.stderr,
+            )
+            continue
         except (KeyError, ProviderError) as exc:
             print(f"Generation failed: {exc}", file=sys.stderr)
             continue
         _print_chat_payload(payload, json_output=json_output)
+
+
+def _scope_blocked_payload(exc: ScopePolicyError) -> dict[str, str]:
+    return {"error": exc.reason_code, "message": str(exc)}
+
+
+def _exit_scope_blocked(exc: ScopePolicyError) -> None:
+    print(json.dumps(_scope_blocked_payload(exc), indent=2), file=sys.stderr)
+    raise SystemExit(2) from exc
 
 
 def _generate_persistent_prompt(

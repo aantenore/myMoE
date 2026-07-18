@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from local_moe.config import load_config
+from local_moe.execution_scope import ScopePolicyError
 from local_moe.smoke import build_generation_smoke_report
 
 
@@ -50,6 +51,21 @@ class GenerationSmokeTests(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["content_chars"], 0)
         self.assertIn("no visible content", " ".join(report["recommendations"]).lower())
+
+    def test_reports_scope_block_without_treating_it_as_provider_failure(self) -> None:
+        config = load_config("tests/fixtures/moe.synthetic.json")
+
+        with patch("local_moe.smoke.LocalMoE") as moe_class:
+            moe_class.return_value.generate.side_effect = ScopePolicyError(
+                "remote execution is outside the active policy.",
+                expert_id="general",
+            )
+            report = build_generation_smoke_report(config, prompt="Keep this local.")
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason_code"], "scope_blocked")
+        self.assertIn("scope_blocked", report["error"])
+        self.assertIn("execution-scope policy", " ".join(report["recommendations"]))
 
 
 if __name__ == "__main__":

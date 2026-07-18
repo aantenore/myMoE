@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from .config import MoEConfig
+from .execution_scope import ScopePolicyError
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 
@@ -26,22 +27,34 @@ def build_generation_smoke_report(
             correlation_id=correlation_id,
             route_prompt=prompt,
         )
-    except ProviderError as exc:
+    except (ScopePolicyError, ProviderError) as exc:
+        reason_code = (
+            exc.reason_code if isinstance(exc, ScopePolicyError) else "provider_error"
+        )
+        recommendations = (
+            [
+                "Review the active execution-scope policy and the selected expert declaration.",
+                "Provide a trusted external attestor before enabling non-local transports.",
+            ]
+            if isinstance(exc, ScopePolicyError)
+            else [
+                "Start configured local model servers and rerun the generation smoke test.",
+                "Inspect System Doctor and model logs if endpoints are reachable but generation fails.",
+            ]
+        )
         return {
             "schema_version": "1.0",
             "generated_at": _now_iso(),
             "status": "fail",
             "latency_ms": _elapsed_ms(started),
             "prompt": prompt,
+            "reason_code": reason_code,
             "error": str(exc),
             "route": None,
             "results": [],
             "content": "",
             "content_chars": 0,
-            "recommendations": [
-                "Start configured local model servers and rerun the generation smoke test.",
-                "Inspect System Doctor and model logs if endpoints are reachable but generation fails.",
-            ],
+            "recommendations": recommendations,
         }
 
     content = response.content.strip()

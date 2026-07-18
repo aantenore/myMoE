@@ -178,6 +178,37 @@ class CliTests(unittest.TestCase):
         self.assertIn("local_model_required", completed.stderr)
         self.assertIn("blocked expert", completed.stderr)
 
+    def test_prompt_reports_scope_block_before_remote_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url="https://models.example.com/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--prompt",
+                    "Keep this private prompt on device.",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(json.loads(completed.stderr)["error"], "scope_blocked")
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_deprecated_agent_max_wall_time_alias_warns(self) -> None:
         def respond(_request_payload: dict[str, object]) -> dict[str, object]:
             return {"choices": [{"message": {"content": "Done."}}]}

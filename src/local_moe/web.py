@@ -35,6 +35,7 @@ from .environment import (
     render_environment_report_markdown,
 )
 from .evaluator import evaluate_router, load_eval_cases_within
+from .execution_scope import ScopePolicyError
 from .extensions import (
     ExtensionError,
     audit_extension_registry,
@@ -664,6 +665,12 @@ def _make_handler(
                         "error",
                         {"error": "provider_error", "message": "Stream ended without a final response."},
                     )
+                except ScopePolicyError as exc:
+                    _send_sse_event(
+                        self,
+                        "error",
+                        {"error": exc.reason_code, "message": str(exc)},
+                    )
                 except ProviderError as exc:
                     _send_sse_event(
                         self,
@@ -718,6 +725,13 @@ def _make_handler(
                         correlation_id=_optional_str(payload.get("correlation_id")),
                         route_prompt=prompt,
                     )
+                except ScopePolicyError as exc:
+                    _send_json(
+                        self,
+                        {"error": exc.reason_code, "message": str(exc)},
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
                 except ProviderError as exc:
                     _send_json(
                         self,
@@ -1072,6 +1086,13 @@ def _make_handler(
                         existing_summary=session.summary,
                         correlation_id=_optional_str(payload.get("correlation_id")),
                     )
+                except ScopePolicyError as exc:
+                    _send_json(
+                        self,
+                        {"error": exc.reason_code, "message": str(exc)},
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
                 except ProviderError as exc:
                     _send_json(
                         self,
@@ -1530,6 +1551,21 @@ def _make_handler(
                         app_config_path=app_config_path,
                         active_config_path=config_path,
                     ).run(name, tool_input)
+                except ScopePolicyError as exc:
+                    _audit(
+                        audit_store,
+                        "tool.run",
+                        exc.reason_code,
+                        risk_class="compute_only",
+                        subject=name,
+                        metadata={"message": str(exc)},
+                    )
+                    _send_json(
+                        self,
+                        {"error": exc.reason_code, "message": str(exc)},
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
                 except ToolExecutionError as exc:
                     _audit(
                         audit_store,

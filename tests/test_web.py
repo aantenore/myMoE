@@ -50,6 +50,34 @@ class WebTests(unittest.TestCase):
         self.assertIn("context", result)
         self.assertIn("token_estimate", result["context"])
 
+    def test_generate_reports_scope_block_before_remote_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_remote_moe_config(root)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                str(config_path),
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(
+                        base_url + "/api/generate",
+                        {"prompt": "Keep this private prompt on device."},
+                    )
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, HTTPStatus.FORBIDDEN)
+        self.assertEqual(payload["error"], "scope_blocked")
+
     def test_runs_eval_endpoint(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1477,6 +1505,33 @@ def _write_temp_app_config(root: Path, *, context_policy_path: Path | None = Non
         raw["runtime"]["context_policy_profile"] = "default"
     path = root / "app.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
+
+
+def _write_remote_moe_config(root: Path) -> Path:
+    path = root / "moe.remote.json"
+    path.write_text(
+        json.dumps(
+            {
+                "routing": {
+                    "top_k": 1,
+                    "fallback_order": ["general"],
+                    "aggregation": "best",
+                },
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "openai_compatible",
+                        "base_url": "https://models.example.com/v1",
+                        "model": "remote/model",
+                        "role": "general",
+                    }
+                ],
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 

@@ -12,11 +12,19 @@ All notable changes to myMoE are documented in this file.
   policy vocabulary plus `direct_local`, `mesh_llm`, and `gateway` transports.
 - Fail-closed `scope_blocked` behavior and immediate pre-invocation rechecks.
 - Explicit execution policy and expert declarations in shipped local profiles.
+- Structured `scope_blocked` responses across CLI, Web, streaming, chat
+  compaction, tools, and generation smoke reports.
 
 ### Changed
 
 - Product positioning now describes myMoE as a local-first orchestration
   runtime rather than a prototype.
+- Model HTTP calls now reject cross-origin redirects, validate the final URL,
+  preserve POST bodies only for 307/308 redirects, and ignore ambient proxies
+  for loopback endpoints.
+- Compaction, agent calls, health checks, model management, and benchmark
+  readiness probes now enforce the same execution-scope policy before network
+  access.
 
 ### Known limitations
 
