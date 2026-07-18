@@ -5,8 +5,10 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
-from urllib import request, error
+from typing import Any, Callable
+from urllib import error
+
+from .http_boundary import open_model_endpoint
 
 
 @dataclass(frozen=True)
@@ -79,12 +81,17 @@ class ManagedLlamaServer:
             self._log_file.close()
 
 
-def wait_for_health(url: str, timeout_seconds: float) -> dict[str, Any]:
+def wait_for_health(
+    url: str,
+    timeout_seconds: float,
+    *,
+    opener: Callable[..., Any] = open_model_endpoint,
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     last_error = ""
     while time.monotonic() < deadline:
         try:
-            with request.urlopen(url, timeout=2) as response:
+            with opener(url, timeout=2) as response:
                 body = response.read().decode("utf-8")
             parsed = json.loads(body)
             if parsed.get("status") == "ok":
@@ -94,4 +101,3 @@ def wait_for_health(url: str, timeout_seconds: float) -> dict[str, Any]:
             last_error = str(exc)
         time.sleep(1)
     raise TimeoutError(f"Server did not become healthy: {last_error}")
-

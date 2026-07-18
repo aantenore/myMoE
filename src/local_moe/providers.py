@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Iterator, Protocol
-from urllib import request, error
+from typing import Any, Callable, Iterator, Protocol
+from urllib import error, request
 
 from .config import ExpertConfig
+from .http_boundary import open_model_endpoint
 
 LOCAL_PROVIDER_PARAMS = {
     "runtime_backend",
@@ -83,6 +84,9 @@ class SyntheticProvider:
 
 
 class OpenAICompatibleProvider:
+    def __init__(self, *, opener: Callable[..., Any] | None = None):
+        self._opener = opener or open_model_endpoint
+
     def generate(self, expert: ExpertConfig, req: GenerationRequest) -> ExpertResult:
         if not expert.base_url:
             raise ProviderError(f"Expert {expert.id} has no base_url.")
@@ -90,7 +94,7 @@ class OpenAICompatibleProvider:
         http_req = _chat_request(expert, req)
 
         try:
-            with request.urlopen(http_req, timeout=expert.timeout_seconds) as response:
+            with self._opener(http_req, timeout=expert.timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         except error.URLError as exc:
             raise ProviderError(f"Expert {expert.id} request failed: {exc}") from exc
@@ -137,7 +141,7 @@ class OpenAICompatibleProvider:
         non_sse_lines: list[str] = []
 
         try:
-            with request.urlopen(http_req, timeout=expert.timeout_seconds) as response:
+            with self._opener(http_req, timeout=expert.timeout_seconds) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8").strip()
                     if not line:

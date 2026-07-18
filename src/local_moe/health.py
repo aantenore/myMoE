@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import time
-from typing import Any
-from urllib import error, request
+from typing import Any, Callable
+from urllib import error
 from urllib.parse import urlparse
 
 from .config import ExpertConfig, MoEConfig
+from .http_boundary import open_model_endpoint
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,20 @@ class RuntimeHealth:
     experts: tuple[ExpertHealth, ...]
 
 
-def check_runtime_health(config: MoEConfig, *, timeout_seconds: float = 1.5) -> RuntimeHealth:
-    experts = tuple(_check_expert(expert, timeout_seconds=timeout_seconds) for expert in config.experts)
+def check_runtime_health(
+    config: MoEConfig,
+    *,
+    timeout_seconds: float = 1.5,
+    opener: Callable[..., Any] = open_model_endpoint,
+) -> RuntimeHealth:
+    experts = tuple(
+        _check_expert(
+            expert,
+            timeout_seconds=timeout_seconds,
+            opener=opener,
+        )
+        for expert in config.experts
+    )
     required = [expert for expert in experts if expert.provider == "openai_compatible"]
     status = "ready" if all(item.status == "ok" for item in required) else "degraded"
     if not required:
@@ -61,7 +74,12 @@ def runtime_health_payload(health: RuntimeHealth) -> dict[str, Any]:
     }
 
 
-def _check_expert(expert: ExpertConfig, *, timeout_seconds: float) -> ExpertHealth:
+def _check_expert(
+    expert: ExpertConfig,
+    *,
+    timeout_seconds: float,
+    opener: Callable[..., Any],
+) -> ExpertHealth:
     if expert.provider != "openai_compatible":
         return ExpertHealth(
             expert_id=expert.id,
@@ -99,7 +117,7 @@ def _check_expert(expert: ExpertConfig, *, timeout_seconds: float) -> ExpertHeal
     for url in probe_urls:
         started = time.perf_counter()
         try:
-            with request.urlopen(url, timeout=timeout_seconds) as response:
+            with opener(url, timeout=timeout_seconds) as response:
                 body = response.read().decode("utf-8")
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
             message = _health_message(body)

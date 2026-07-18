@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from ipaddress import ip_address
 import json
 import math
 from typing import Any, Callable, Sequence
 from urllib import error, request
-from urllib.parse import urlparse
 
 from .agent_types import (
     AgentMessage,
@@ -15,6 +13,7 @@ from .agent_types import (
     AgentToolSpec,
 )
 from .config import ExpertConfig, MoEConfig
+from .http_boundary import is_loopback_http_url, open_model_endpoint
 from .providers import ProviderError, _remote_params, strip_reasoning_content
 
 
@@ -172,21 +171,7 @@ def validate_local_agent_endpoints(config: MoEConfig) -> None:
 
 
 def is_loopback_base_url(base_url: str) -> bool:
-    parsed = urlparse(str(base_url).strip())
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-        return False
-
-    host = parsed.hostname.rstrip(".").lower()
-    if host == "localhost":
-        return True
-    try:
-        address = ip_address(host)
-    except ValueError:
-        return False
-    if address.is_loopback:
-        return True
-    mapped = getattr(address, "ipv4_mapped", None)
-    return bool(mapped and mapped.is_loopback)
+    return is_loopback_http_url(base_url)
 
 
 def parse_openai_compatible_output(
@@ -305,7 +290,7 @@ def _argument_text(arguments: object) -> str:
 def _default_transport(
     http_request: request.Request, timeout_seconds: float
 ) -> MappingPayload:
-    with request.urlopen(http_request, timeout=timeout_seconds) as response:
+    with open_model_endpoint(http_request, timeout=timeout_seconds) as response:
         raw_bytes = response.read(MAX_AGENT_RESPONSE_BYTES + 1)
     if len(raw_bytes) > MAX_AGENT_RESPONSE_BYTES:
         raise ProviderError("Agent provider response exceeded the size limit.")

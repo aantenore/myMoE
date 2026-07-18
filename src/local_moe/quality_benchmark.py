@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from typing import Any, Callable, Iterable
-from urllib import error, request
+from urllib import error
 from urllib.parse import urlparse
 
 from .config import (
@@ -33,6 +33,7 @@ from .deterministic_evaluator import (
     evaluate_case_output,
     load_benchmark_cases,
 )
+from .http_boundary import open_model_endpoint
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 
@@ -199,7 +200,7 @@ def check_benchmark_readiness(
     *,
     timeout_seconds: float,
     model_match: str,
-    opener: Callable[..., Any] = request.urlopen,
+    opener: Callable[..., Any] = open_model_endpoint,
 ) -> dict[str, Any]:
     checks = [
         _check_expert_readiness(

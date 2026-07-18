@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import platform
 import shutil
-from urllib import error, request
+from typing import Any, Callable
+from urllib import error
 from urllib.parse import urlparse
 
 from .config import MoEConfig
+from .http_boundary import open_model_endpoint
 
 
 @dataclass(frozen=True)
@@ -89,14 +91,19 @@ def build_runtime_plan(config: MoEConfig, preferred_backends: dict[str, str] | N
     )
 
 
-def endpoint_is_reachable(base_url: str, timeout_seconds: float = 2.0) -> bool:
+def endpoint_is_reachable(
+    base_url: str,
+    timeout_seconds: float = 2.0,
+    *,
+    opener: Callable[..., Any] = open_model_endpoint,
+) -> bool:
     parsed = urlparse(base_url)
     if not parsed.scheme or not parsed.netloc:
         return False
     root = f"{parsed.scheme}://{parsed.netloc}"
     for suffix in ("/v1/models", "/health"):
         try:
-            with request.urlopen(root + suffix, timeout=timeout_seconds):
+            with opener(root + suffix, timeout=timeout_seconds):
                 return True
         except (OSError, ValueError, error.URLError):
             continue
