@@ -38,6 +38,20 @@ STRICT_EXECUTION_AVAILABLE = runtime_capabilities().strict_tree_supported
 
 
 class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
+    def test_regular_file_attestation_requests_binary_mode_when_available(
+        self,
+    ) -> None:
+        binary_flag = 1 << 28
+        with patch.object(
+            bridge_runtime.os,
+            "O_BINARY",
+            binary_flag,
+            create=True,
+        ):
+            flags = bridge_runtime._regular_file_open_flags()
+
+        self.assertTrue(flags & binary_flag)
+
     def _assert_isolated_python_succeeds(self, source: str) -> None:
         try:
             completed = subprocess.run(
@@ -240,16 +254,18 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
     def test_public_executable_payload_omits_local_and_version_details(self) -> None:
         identity = inspect_executable(sys.executable, version_args=("--version",))
 
-        public = json.dumps(identity.payload(), sort_keys=True)
-        private = json.dumps(identity.binding_payload(), sort_keys=True)
+        public_payload = identity.payload()
+        private_payload = identity.binding_payload()
+        public = json.dumps(public_payload, sort_keys=True)
 
         self.assertNotIn(identity.requested, public)
         self.assertNotIn(identity.resolved_path, public)
         self.assertNotIn("--version", public)
         assert identity.version is not None
         self.assertNotIn(identity.version.text, public)
-        self.assertIn(identity.resolved_path, private)
-        self.assertIn("--version", private)
+        self.assertEqual(private_payload["requested"], identity.requested)
+        self.assertEqual(private_payload["resolved_path"], identity.resolved_path)
+        self.assertEqual(private_payload["version"]["args"], ["--version"])
         self.assertEqual(len(identity.payload()["resolved_path_sha256"]), 64)
         self.assertNotIn("mtime_ns", identity.payload())
         self.assertIn("mtime_ns", identity.binding_payload())
@@ -477,7 +493,10 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
             )
 
         self.assertEqual(result.code, "completed")
-        self.assertEqual(result.stdout, b"cross-platform-companion\n")
+        self.assertEqual(
+            result.stdout.decode("utf-8").splitlines(),
+            ["cross-platform-companion"],
+        )
 
     def test_strict_mode_rejects_undeclared_script_entrypoint(self) -> None:
         for filename, content in (
@@ -509,7 +528,9 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
             entrypoint.write_text("print('entrypoint')\n", encoding="utf-8")
             helper_script = root / "helper.js"
             helper_script.write_text("console.log('helper')\n", encoding="utf-8")
-            native_helper = root / "native-helper"
+            native_helper = root / (
+                "native-helper.exe" if os.name == "nt" else "native-helper"
+            )
             native_helper.write_text("native helper\n", encoding="utf-8")
             native_helper.chmod(0o700)
             identity = resolve_executable(sys.executable)
@@ -711,7 +732,12 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 "Popen",
                 side_effect=replace_after_spawn,
             ):
-                with self.assertRaisesRegex(ProcessLaunchError, "launcher chain"):
+                expected_error = (
+                    (ProcessLaunchError, ProcessCleanupError)
+                    if os.name == "nt"
+                    else ProcessLaunchError
+                )
+                with self.assertRaises(expected_error) as raised:
                     execute_process(
                         identity,
                         (str(entrypoint),),
@@ -720,6 +746,11 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                         launcher_chain=chain,
                         policy=ProcessExecutionPolicy(require_launcher_chain=True),
                     )
+
+            if isinstance(raised.exception, ProcessLaunchError):
+                self.assertIn("launcher chain", str(raised.exception))
+            else:
+                self.assertFalse(raised.exception.details["verified"])
 
             self.assertEqual(len(spawned), 1)
             self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
@@ -1079,7 +1110,7 @@ class AssistantBridgeRuntimeProcessTests(unittest.TestCase):
         )
 
         self.assertEqual(result.code, "completed")
-        self.assertEqual(result.stdout, b"ready\n")
+        self.assertEqual(result.stdout.decode("utf-8").splitlines(), ["ready"])
         self.assertFalse(result.timed_out)
         self.assertLess(result.execution_duration_ms, 900)
         self.assertTrue(result.cleanup.verified)

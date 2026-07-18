@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -50,6 +51,50 @@ EXTERNAL_SPEC_SHA256 = (
 class AssistantBridgeContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = _load_test_assistant_bridge_config()
+
+    def test_python_runner_attestation_uses_binary_descriptors(self) -> None:
+        binary_flag = 1 << 28
+        platform_binary_flag = getattr(os, "O_BINARY", 0)
+        real_open = os.open
+        observed_flags: list[int] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runner.py"
+            content = b"print('raw')\r\n# \x1a marker\r\n"
+            path.write_bytes(content)
+
+            def open_with_observed_flags(raw_path, flags, *args, **kwargs):
+                observed_flags.append(flags)
+                return real_open(
+                    raw_path,
+                    (flags & ~binary_flag) | platform_binary_flag,
+                    *args,
+                    **kwargs,
+                )
+
+            with (
+                patch.object(
+                    assistant_bridge_module.os,
+                    "O_BINARY",
+                    binary_flag,
+                    create=True,
+                ),
+                patch.object(
+                    assistant_bridge_module.os,
+                    "open",
+                    side_effect=open_with_observed_flags,
+                ),
+            ):
+                size, _, digest = assistant_bridge_module._attest_python_runner_file(
+                    path
+                )
+
+        self.assertEqual(size, len(content))
+        self.assertEqual(digest, hashlib.sha256(content).hexdigest())
+        self.assertTrue(observed_flags[0] & binary_flag)
+        self.assertIn(
+            'getattr(os, "O_BINARY", 0)',
+            assistant_bridge_module._PYTHON_UNITTEST_BOOTSTRAP,
+        )
 
     def test_workspace_synthetic_git_identity_is_configurable(self) -> None:
         self.assertEqual(
@@ -448,12 +493,19 @@ class AssistantBridgeContractTests(unittest.TestCase):
     def test_command_plan_payload_hides_executable_path_and_version_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             version_marker = "private-version-material"
-            executable = Path(tmp) / f"tool-{version_marker}"
-            executable.write_text(
-                f"#!/bin/sh\necho '{version_marker}'\n",
-                encoding="utf-8",
+            executable = Path(tmp) / (
+                f"tool-{version_marker}.exe"
+                if os.name == "nt"
+                else f"tool-{version_marker}"
             )
-            executable.chmod(0o700)
+            if os.name == "nt":
+                shutil.copy2(sys.executable, executable)
+            else:
+                executable.write_text(
+                    f"#!/bin/sh\necho '{version_marker}'\n",
+                    encoding="utf-8",
+                )
+                executable.chmod(0o700)
             provider = replace(
                 self.config.local,
                 executable=str(executable),
@@ -769,7 +821,10 @@ class AssistantBridgeContractTests(unittest.TestCase):
             self.assertTrue(creation_flags & os.O_NOFOLLOW)
         if hardened is not None:
             hardened.assert_any_call(ANY, 0o600)
-        self.assertEqual(stat.S_IMODE(staged.mode), 0o600)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(staged.mode), 0o600)
+        else:
+            self.assertTrue(stat.S_ISREG(staged.mode))
         self.assertFalse(staged.metadata_payload()["hard_containment"])
         self.assertEqual(
             staged.metadata_payload()["verification_scope"],
@@ -980,6 +1035,10 @@ class AssistantBridgeContractTests(unittest.TestCase):
         )
         self.assertEqual(plan.resources.wall_time_milliseconds, 10_000)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows has no runnable hard-sandbox verifier backend",
+    )
     def test_verifier_propagates_unverified_process_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1582,6 +1641,10 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(source, "initial\n")
         self.assertEqual(invocations, [])
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows has no runnable hard-sandbox verifier backend",
+    )
     def test_verifier_cleanup_failure_prevents_escalation_and_budget(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
             task = build_assistant_task(
@@ -2349,7 +2412,8 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertFalse(sentinel.exists())
         self.assertNotIn(str(sentinel), invocation["argv"])
-        self.assertIn(str(sentinel), invocation["stdin"])
+        prompt_payload = json.loads(invocation["stdin"].rsplit("\n\n", 1)[-1])
+        self.assertIn(str(sentinel), prompt_payload["objective"])
         self.assertIsNone(invocation["leaked_env"])
 
     def test_durable_budget_survives_runner_recreation(self) -> None:
@@ -2750,6 +2814,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             encoding="utf-8",
         )
         process_executable = sys.executable
+        proxy_launcher_args: list[str] | None = None
+        proxy_launcher_entrypoint = ""
+        proxy_launcher_companions: list[str] = []
         if process_proxy:
             process_log = root / "process-probe.log"
             proxy = fixture_root / "python_proxy.py"
@@ -2764,7 +2831,14 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
                 encoding="utf-8",
             )
             proxy.chmod(0o700)
-            process_executable = str(proxy)
+            if os.name == "nt":
+                proxy_launcher_args = [str(proxy), str(launcher)]
+                proxy_launcher_entrypoint = str(proxy)
+                proxy_launcher_companions = [str(launcher)]
+            else:
+                process_executable = str(proxy)
+                proxy_launcher_args = [str(launcher)]
+                proxy_launcher_companions = [str(launcher)]
         raw = json.loads(
             (ROOT / "configs" / "assistant-bridge.json").read_text(encoding="utf-8")
         )
@@ -2772,32 +2846,46 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
             if command_verifier["id"] == "project-test-suite":
                 command_verifier["workspace_python_paths"] = []
         executable = local_executable or process_executable
+        local_uses_process_proxy = (
+            process_proxy
+            and local_executable is None
+            and local_launcher_args is None
+        )
         launcher_args = (
             list(local_launcher_args)
             if local_launcher_args is not None
-            else [str(launcher)]
+            else (
+                list(proxy_launcher_args)
+                if local_uses_process_proxy and proxy_launcher_args is not None
+                else [str(launcher)]
+            )
         )
         raw["providers"]["local"]["executable"] = executable
         raw["providers"]["local"]["launcher_args"] = launcher_args
         raw["providers"]["premium"]["executable"] = process_executable
-        raw["providers"]["premium"]["launcher_args"] = [str(launcher)]
         local_uses_fixture_launcher = local_launcher_args is None
-        local_uses_direct_proxy = process_proxy and executable == process_executable
         raw["providers"]["local"]["launcher_entrypoint"] = (
-            str(launcher)
-            if local_uses_fixture_launcher and not local_uses_direct_proxy
+            proxy_launcher_entrypoint
+            if local_uses_process_proxy
+            else str(launcher)
+            if local_uses_fixture_launcher
             else ""
         )
         raw["providers"]["local"]["launcher_companions"] = (
-            [str(launcher)]
-            if local_uses_fixture_launcher and local_uses_direct_proxy
+            list(proxy_launcher_companions)
+            if local_uses_process_proxy
             else []
         )
+        raw["providers"]["premium"]["launcher_args"] = (
+            list(proxy_launcher_args)
+            if proxy_launcher_args is not None
+            else [str(launcher)]
+        )
         raw["providers"]["premium"]["launcher_entrypoint"] = (
-            "" if process_proxy else str(launcher)
+            proxy_launcher_entrypoint if process_proxy else str(launcher)
         )
         raw["providers"]["premium"]["launcher_companions"] = (
-            [str(launcher)] if process_proxy else []
+            list(proxy_launcher_companions) if process_proxy else []
         )
         verifier = root / "fixture_task_verifier.py"
         verifier.write_text(

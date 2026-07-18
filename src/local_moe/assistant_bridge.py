@@ -135,7 +135,12 @@ import sys
 
 
 def _read_file(path):
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     descriptor = os.open(path, flags)
     try:
         before = os.fstat(descriptor)
@@ -6693,6 +6698,7 @@ def _attest_python_runner_file(path: Path) -> tuple[int, int, str]:
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     try:
         descriptor = os.open(path, flags)

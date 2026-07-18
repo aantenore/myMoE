@@ -84,6 +84,7 @@ class VerifierResourceContractTests(unittest.TestCase):
             capability.payload()["environment_keys"], ["XDG_RUNTIME_DIR"]
         )
 
+    @unittest.skipIf(os.name == "nt", "POSIX setrlimit backend is unavailable")
     def test_linux_fallback_never_labels_process_limits_as_kernel_hard(self) -> None:
         with mock.patch.object(
             resources, "_linux_cgroup_v2_available", return_value=False
@@ -148,6 +149,7 @@ class VerifierResourceContractTests(unittest.TestCase):
         self.assertFalse(plan.runnable)
         self.assertEqual(plan.reason, "filesystem_network_sandbox_unavailable")
 
+    @unittest.skipIf(os.name == "nt", "POSIX setrlimit backend is unavailable")
     def test_supervisor_source_is_bound_inline_and_never_carried_in_environment(self) -> None:
         policy = VerifierResourcePolicy()
         capability = verifier_resource_capabilities(
@@ -333,6 +335,7 @@ class VerifierResourceContractTests(unittest.TestCase):
             )
             self.assertNotIn(str(cgroup_root), completed.stdout.decode("utf-8"))
 
+    @unittest.skipIf(os.name == "nt", "POSIX setrlimit backend is unavailable")
     def test_report_keeps_output_cleanup_and_workspace_controls_distinct(self) -> None:
         policy = VerifierResourcePolicy(workspace_growth_bytes=8)
         capability = verifier_resource_capabilities(
@@ -380,6 +383,7 @@ class VerifierResourceContractTests(unittest.TestCase):
         )
         self.assertEqual(payload["workspace_growth"]["growth_bytes"], 2)
 
+    @unittest.skipIf(os.name == "nt", "POSIX setrlimit backend is unavailable")
     def test_report_refuses_compliance_when_required_strength_is_missing(self) -> None:
         policy = VerifierResourcePolicy(
             required=False,
