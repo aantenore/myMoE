@@ -36,6 +36,10 @@ class WorkspaceSecurityError(ValueError):
     """Raised when a workspace cannot be snapshotted or changed safely."""
 
 
+class WorkspaceRecoveryPolicyUnavailable(WorkspaceSecurityError):
+    """Raised when an older recovery journal has no durable policy binding."""
+
+
 class _SimulatedTransactionCrash(RuntimeError):
     pass
 
@@ -335,6 +339,89 @@ class WorkspaceScopePolicy:
             raise WorkspaceSecurityError("Ignored path rules contain a collision.")
 
 
+def _workspace_policy_recovery_payload(
+    policy: WorkspaceScopePolicy,
+) -> dict[str, object]:
+    return {
+        "max_files": policy.max_files,
+        "max_total_bytes": policy.max_total_bytes,
+        "max_file_bytes": policy.max_file_bytes,
+        "ignored_paths": [
+            {"path": item.path, "direction": item.direction}
+            for item in policy.ignored_paths
+        ],
+        "synthetic_git_identity": policy.synthetic_git_identity.payload(),
+    }
+
+
+def _workspace_policy_from_recovery_journal(
+    payload: dict[str, object],
+) -> WorkspaceScopePolicy:
+    raw = payload.get("workspace_policy")
+    if raw is None:
+        raise WorkspaceRecoveryPolicyUnavailable(
+            "Workspace recovery policy is unavailable."
+        )
+    if not isinstance(raw, dict) or set(raw) != {
+        "ignored_paths",
+        "max_file_bytes",
+        "max_files",
+        "max_total_bytes",
+        "synthetic_git_identity",
+    }:
+        raise WorkspaceSecurityError("Workspace recovery policy binding is invalid.")
+    limits = (
+        raw.get("max_files"),
+        raw.get("max_total_bytes"),
+        raw.get("max_file_bytes"),
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in limits):
+        raise WorkspaceSecurityError("Workspace recovery policy bounds are invalid.")
+    raw_rules = raw.get("ignored_paths")
+    raw_identity = raw.get("synthetic_git_identity")
+    if (
+        not isinstance(raw_rules, list)
+        or len(raw_rules) > 100_000
+        or not isinstance(raw_identity, dict)
+        or set(raw_identity) != {"email", "name"}
+        or not isinstance(raw_identity.get("name"), str)
+        or not isinstance(raw_identity.get("email"), str)
+    ):
+        raise WorkspaceSecurityError("Workspace recovery policy metadata is invalid.")
+    rules: list[IgnoredPathRule] = []
+    for item in raw_rules:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"direction", "path"}
+            or not isinstance(item.get("path"), str)
+            or not isinstance(item.get("direction"), str)
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace recovery ignored-path policy is invalid."
+            )
+        rules.append(
+            IgnoredPathRule(
+                path=item["path"],
+                direction=item["direction"],
+            )
+        )
+    try:
+        return WorkspaceScopePolicy(
+            max_files=limits[0],
+            max_total_bytes=limits[1],
+            max_file_bytes=limits[2],
+            ignored_paths=tuple(rules),
+            synthetic_git_identity=GitIdentity(
+                name=raw_identity["name"],
+                email=raw_identity["email"],
+            ),
+        )
+    except (TypeError, ValueError, WorkspaceSecurityError) as exc:
+        raise WorkspaceSecurityError(
+            "Workspace recovery policy binding is invalid."
+        ) from exc
+
+
 @dataclass(frozen=True, order=True)
 class WorkspaceFile:
     path: str
@@ -629,6 +716,7 @@ def apply_changeset(
         "transaction_id": transaction_id,
         "source_root_sha256": _sha256_text(str(source)),
         "source_fingerprint": source_snapshot.fingerprint,
+        "workspace_policy": _workspace_policy_recovery_payload(policy),
         "status": "prepared",
         "changes": records,
     }
@@ -736,8 +824,16 @@ def recover_workspace_transaction(
     transaction_id: str,
     source_root: str | Path,
     lock_ttl_seconds: float = 120.0,
+    expected_source_fingerprint: str | None = None,
+    retain_recovered_journal: bool = False,
 ) -> None:
     _validate_transaction_id(transaction_id)
+    if not isinstance(retain_recovered_journal, bool):
+        raise WorkspaceSecurityError("Workspace recovery retention mode is invalid.")
+    if retain_recovered_journal and expected_source_fingerprint is None:
+        raise WorkspaceSecurityError(
+            "Retained workspace recovery requires a source binding."
+        )
     state = _trusted_root(state_dir, label="Workspace state")
     source = _trusted_root(source_root, label="Source workspace")
     transaction = state / f"transaction-{transaction_id}"
@@ -754,9 +850,63 @@ def recover_workspace_transaction(
             raise WorkspaceSecurityError(
                 "Workspace recovery journal targets another root."
             )
-        _rollback_from_journal(source, payload, transaction / "backups")
+        recovery_policy: WorkspaceScopePolicy | None = None
+        if expected_source_fingerprint is not None:
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", expected_source_fingerprint) is None
+                or payload.get("source_fingerprint") != expected_source_fingerprint
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery journal source binding is invalid."
+                )
+            recovery_policy = _workspace_policy_from_recovery_journal(payload)
+        if payload.get("status") != "recovered":
+            _rollback_from_journal(source, payload, transaction / "backups")
+        if recovery_policy is not None:
+            restored = snapshot_workspace(source, recovery_policy)
+            if restored.fingerprint != expected_source_fingerprint:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery did not restore the bound source."
+                )
         payload["status"] = "recovered"
         _write_journal(journal, payload)
+        if not retain_recovered_journal:
+            _durable_rmtree(transaction, state)
+    finally:
+        _release_transaction_lock(lock)
+
+
+def finalize_recovered_workspace_transaction(
+    *,
+    state_dir: str | Path,
+    transaction_id: str,
+    source_root: str | Path,
+    expected_source_fingerprint: str,
+    lock_ttl_seconds: float = 120.0,
+) -> None:
+    """Remove a recovered journal only after its database reset commits."""
+
+    _validate_transaction_id(transaction_id)
+    if re.fullmatch(r"[0-9a-f]{64}", expected_source_fingerprint) is None:
+        raise WorkspaceSecurityError("Workspace recovery source binding is invalid.")
+    state = _trusted_root(state_dir, label="Workspace state")
+    source = _trusted_root(source_root, label="Source workspace")
+    transaction = state / f"transaction-{transaction_id}"
+    journal = transaction / "journal.json"
+    lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
+    _acquire_transaction_lock(lock, lock_ttl_seconds)
+    try:
+        raw_journal, _ = _read_regular_path_nofollow(journal, 16 * 1024 * 1024)
+        payload = json.loads(raw_journal.decode("utf-8"))
+        _validate_journal(payload, transaction_id)
+        if (
+            payload.get("status") != "recovered"
+            or payload.get("source_root_sha256") != _sha256_text(str(source))
+            or payload.get("source_fingerprint") != expected_source_fingerprint
+        ):
+            raise WorkspaceSecurityError(
+                "Recovered workspace journal binding is invalid."
+            )
         _durable_rmtree(transaction, state)
     finally:
         _release_transaction_lock(lock)
@@ -1825,6 +1975,7 @@ def _validate_journal(payload: object, transaction_id: str) -> None:
         "applying",
         "recovery_required",
         "rolled_back",
+        "recovered",
     }:
         raise WorkspaceSecurityError("Workspace recovery journal status is invalid.")
 

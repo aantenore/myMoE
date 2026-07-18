@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "state": {
+    "database_path": "../../.mymoe-state/assistant-bridge/workflows.sqlite3",
+    "cas_path": "../../.mymoe-state/assistant-bridge/cas",
+    "transaction_state_dir": "../../.mymoe-state/assistant-bridge/transactions",
+    "candidate_ttl_seconds": 86400,
+    "confirmation_ttl_seconds": 300,
+    "transaction_lock_ttl_seconds": 120,
+    "sqlite_timeout_seconds": 5
+  },
+  "trust": {
+    "policy_id": "independent-project-verification-v1",
+    "quorum": 1,
+    "verifiers": [
+      {
+        "verifier_id": "independent-project-tests",
+        "adapter_id": "dsse-ed25519-v1",
+        "key_id": "independent-project-tests-key-v1",
+        "public_key_file": "../../.mymoe-state/assistant-bridge/verifier-public.pem",
+        "spec_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ]
+  }
+}

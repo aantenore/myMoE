@@ -6,6 +6,7 @@ from unittest.mock import patch
 from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
+    CandidateGenerationRequest,
     ProviderAdapterRegistry,
     build_assistant_task,
     default_provider_adapter_registry,
@@ -22,6 +23,76 @@ LIFECYCLE_CONFIG_SHA256 = "d" * 64
 
 
 class AssistantBridgeCandidateGeneratorTests(unittest.TestCase):
+    def test_candidate_request_preserves_existing_positional_field_order(self) -> None:
+        task = build_assistant_task(
+            "Change one file.",
+            profile="offline",
+            required_capabilities=("code",),
+            risk_class="write_local",
+        )
+
+        request = CandidateGenerationRequest(
+            task,
+            "confirmation",
+            "ollama",
+            (),
+            True,
+        )
+
+        self.assertEqual(request.local_provider_override, "ollama")
+        self.assertEqual(request.external_evidence, ())
+        self.assertTrue(request.include_diff)
+        self.assertEqual(len(request.operation_sha256), 64)
+
+    def test_confirmation_binds_exact_stage_operation_and_inspection_is_ticketless(
+        self,
+    ) -> None:
+        with _fake_bridge() as fixture:
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+            )
+            source = snapshot_workspace(fixture.root, fixture.config.workspace.scope)
+            generator = fixture.runner.candidate_generator()
+            with patch.object(
+                fixture.runner.state_ledger,
+                "issue_confirmation",
+                wraps=fixture.runner.state_ledger.issue_confirmation,
+            ) as issue_confirmation:
+                receipt = generator.inspect_candidate(
+                    task,
+                    workspace=fixture.root,
+                    expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                    operation_sha256="a" * 64,
+                )
+                issue_confirmation.assert_not_called()
+                plan = generator.plan_candidate(
+                    task,
+                    workspace=fixture.root,
+                    expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                    operation_sha256="a" * 64,
+                )
+            request = generator.request(
+                task,
+                confirmation=str(plan["confirmation_id"]),
+                operation_sha256="b" * 64,
+            )
+
+            with self.assertRaisesRegex(AssistantBridgeError, "another stage"):
+                with generator.generate(
+                    request,
+                    source_workspace=fixture.root,
+                    expected_source_fingerprint=source.fingerprint,
+                    expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                    expected_operation_sha256="a" * 64,
+                ):
+                    pass
+
+        self.assertEqual(receipt.route, "local")
+        self.assertEqual(plan["operation_sha256"], "a" * 64)
+
     def test_local_candidate_is_temporary_and_never_applies_source(self) -> None:
         with (
             _fake_bridge() as fixture,
@@ -207,7 +278,9 @@ class AssistantBridgeCandidateGeneratorTests(unittest.TestCase):
         self.assertEqual([item["mode"] for item in invocations], ["local", "premium"])
         self.assertEqual(source_content, "initial\n")
 
-    def test_balanced_local_quality_pass_does_not_escalate_for_attestation(self) -> None:
+    def test_balanced_local_quality_pass_does_not_escalate_for_attestation(
+        self,
+    ) -> None:
         with (
             _fake_bridge() as fixture,
             _fake_environment(

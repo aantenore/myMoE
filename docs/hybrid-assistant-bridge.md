@@ -177,10 +177,114 @@ external evidence, diff policy, and capsule target:
   --json
 ```
 
+### Two-phase write lifecycle
+
+Tasks that require independent evidence do not use the legacy direct-apply
+path. The shipped bridge policy deliberately routes those writes through a
+temporary candidate, independent attestation, and a separately confirmed
+resume. Candidate generation never receives authority to update the source
+workspace.
+
+Copy
+[`configs/assistant-bridge-workflow.example.json`](../configs/assistant-bridge-workflow.example.json)
+and replace the public-verifier path and `spec_sha256` with the verifier's real
+public contract. Keep the database, candidate store, and transaction directory
+outside the governed workspace. Only public verification material belongs in
+this configuration.
+
+First request a candidate-generation plan. The workspace and stage
+idempotency key are explicit and are cryptographically bound to the returned
+one-shot confirmation:
+
+```bash
+.venv/bin/mymoe \
+  --assistant-bridge-stage \
+  --assistant-task-file /path/to/task.json \
+  --assistant-workspace /absolute/path/to/project \
+  --assistant-workflow-config /path/to/assistant-bridge-workflow.json \
+  --assistant-idempotency-key stage-project-change-00000001 \
+  --json
+```
+
+Repeat the unchanged command with the exact candidate confirmation to generate
+and stage the immutable candidate. Repeating an already completed stage with
+the same bindings returns its existing `StageReceipt` before another ticket is
+issued or a generator runs.
+
+The candidate-generator port requires the stage `operation_sha256` on planning,
+request construction, and generation. That binding is mandatory; adapters must
+not retry without it or silently fall back to an unbound request.
+
+```bash
+.venv/bin/mymoe \
+  --assistant-bridge-stage \
+  --assistant-task-file /path/to/task.json \
+  --assistant-workspace /absolute/path/to/project \
+  --assistant-workflow-config /path/to/assistant-bridge-workflow.json \
+  --assistant-idempotency-key stage-project-change-00000001 \
+  --assistant-confirm-receipt='candidate-confirmation-from-the-plan' \
+  --json
+```
+
+An independent verifier then evaluates the staged binding according to the
+[versioned predicate](spec/independent-candidate-attestation/v1/README.md) and
+returns a DSSE envelope. Verifier signing material remains outside myMoE.
+Inspect status without loading provider, application, or trust configuration:
+
+```bash
+.venv/bin/mymoe \
+  --assistant-bridge-status wf-from-the-stage-receipt \
+  --assistant-workflow-config /path/to/assistant-bridge-workflow.json \
+  --json
+```
+
+Record one or more independent envelopes and request the local-write resume
+plan. Each file is read as a bounded, stable, non-link regular file; repeat the
+option for quorum policies with multiple verifiers.
+
+```bash
+.venv/bin/mymoe \
+  --assistant-bridge-resume-plan wf-from-the-stage-receipt \
+  --assistant-workspace /absolute/path/to/project \
+  --assistant-workflow-config /path/to/assistant-bridge-workflow.json \
+  --assistant-idempotency-key resume-project-change-00000001 \
+  --assistant-attestation-file /path/to/verifier-one.dsse.json \
+  --json
+```
+
+Apply only with the exact `planId` and one-shot `confirmationId` emitted by the
+resume plan:
+
+```bash
+.venv/bin/mymoe \
+  --assistant-bridge-resume wf-from-the-stage-receipt \
+  --assistant-workspace /absolute/path/to/project \
+  --assistant-workflow-config /path/to/assistant-bridge-workflow.json \
+  --assistant-resume-plan-id '64-character-plan-digest' \
+  --assistant-confirm-receipt='resume-confirmation-from-the-plan' \
+  --json
+```
+
+Lifecycle commands emit canonical JSON only. Exit `0` means the requested
+operation completed, `2` means invocation or configuration is invalid, `3`
+means the workflow is not ready or needs a fresh confirmation, and `4` means a
+conflict, recovery, integrity, or runtime failure. Status output contains
+lineage metadata and digests, never task content, paths, attestation envelopes,
+or statements. The stage challenge and the two confirmation values appear only
+in their successful response payloads because the next explicit step requires
+them.
+
 The app-level `permissions.assistant_bridge_execution_policy` supports
 `disabled`, `local_only`, and `hybrid_receipt_confirmation`. The shipped app
 config opts in explicitly; an omitted setting defaults to `disabled`. Both
 denial policies are checked without invoking provider or verifier binaries.
+
+An applying transaction's durable journal binds the original source
+fingerprint and exact workspace-snapshot policy. Recovery verifies the restored
+source before resetting workflow state, retains the recovered journal until the
+database reset commits, and then cleans it up idempotently. A journal without
+the policy binding falls back to the configuration-backed recovery path; it is
+never treated as fresh write authority.
 
 `--assistant-capsule-out` writes bounded but still task-bearing data. Review it
 before sharing. `--assistant-include-diff` is also explicit because even a

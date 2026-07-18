@@ -13,6 +13,7 @@ from .assistant_bridge_workflow_store import (
     SQLiteWorkflowStore,
     WorkflowArtifactError,
     WorkflowClockConflictError,
+    WorkflowConfirmationNotReadyError,
     WorkflowNotFoundError,
     WorkflowRecord,
     WorkflowStoreError,
@@ -36,9 +37,7 @@ _STATUS_ERROR_MESSAGES: dict[TwoPhaseStatusErrorCode, str] = {
     "artifact_invalid": "Two-phase workflow artifacts are invalid.",
     "status_runtime_failed": "Two-phase workflow status could not be read.",
 }
-_CANDIDATE_REQUIRED_STATES = frozenset(
-    {"staged", "attested", "ready", "applying"}
-)
+_CANDIDATE_REQUIRED_STATES = frozenset({"staged", "attested", "ready", "applying"})
 
 
 class TwoPhaseStatusError(ValueError):
@@ -47,6 +46,18 @@ class TwoPhaseStatusError(ValueError):
     def __init__(self, code: TwoPhaseStatusErrorCode) -> None:
         self.code = code
         super().__init__(_STATUS_ERROR_MESSAGES[code])
+
+
+class TwoPhaseAppliedReplayNotReadyError(ValueError):
+    """Raised when an applied replay lacks its original confirmation."""
+
+
+class TwoPhaseAppliedReplayError(ValueError):
+    """Raised when applied replay authority cannot be trusted."""
+
+
+class TwoPhaseAppliedReplayUnavailable(TwoPhaseAppliedReplayError):
+    """Signals that initialized applied state is not available."""
 
 
 class TwoPhaseStatusReader:
@@ -106,6 +117,76 @@ class TwoPhaseStatusReader:
             raise TwoPhaseStatusError("status_runtime_failed") from exc
         return record
 
+    def replay_applied(
+        self,
+        workflow_id: str,
+        *,
+        plan_id: str,
+        confirmation_id: str,
+        now: float | None = None,
+    ) -> WorkflowRecord:
+        try:
+            record = self.store.read_applied_replay(
+                workflow_id,
+                plan_id=plan_id,
+                confirmation_id=confirmation_id,
+                now=now,
+            )
+            if record is None:
+                raise TwoPhaseAppliedReplayError(
+                    "Applied replay state changed while being read."
+                )
+            return record
+        except WorkflowConfirmationNotReadyError as exc:
+            raise TwoPhaseAppliedReplayNotReadyError(
+                "Applied replay confirmation is unavailable."
+            ) from exc
+        except WorkflowStoreError as exc:
+            raise TwoPhaseAppliedReplayError(
+                "Applied replay authority is invalid."
+            ) from exc
+        except Exception as exc:
+            raise TwoPhaseAppliedReplayError(
+                "Applied replay authority could not be read."
+            ) from exc
+
+
+class TwoPhaseAppliedReplayReader:
+    """Validate historical apply authority from durable metadata only."""
+
+    def __init__(self, store: SQLiteWorkflowStore) -> None:
+        self.store = store
+
+    def replay(
+        self,
+        workflow_id: str,
+        *,
+        plan_id: str,
+        confirmation_id: str,
+        now: float | None = None,
+    ) -> WorkflowRecord | None:
+        try:
+            return self.store.read_applied_replay(
+                workflow_id,
+                plan_id=plan_id,
+                confirmation_id=confirmation_id,
+                now=now,
+            )
+        except WorkflowNotFoundError:
+            return None
+        except WorkflowConfirmationNotReadyError as exc:
+            raise TwoPhaseAppliedReplayNotReadyError(
+                "Applied replay confirmation is unavailable."
+            ) from exc
+        except WorkflowStoreError as exc:
+            raise TwoPhaseAppliedReplayError(
+                "Applied replay authority is invalid."
+            ) from exc
+        except Exception as exc:
+            raise TwoPhaseAppliedReplayError(
+                "Applied replay authority could not be read."
+            ) from exc
+
 
 def build_two_phase_status_reader(
     config: TwoPhaseStateConfig,
@@ -131,3 +212,25 @@ def build_two_phase_status_reader(
     except Exception as exc:
         raise TwoPhaseStatusError("status_runtime_failed") from exc
     return TwoPhaseStatusReader(store, cas)
+
+
+def build_two_phase_applied_replay_reader(
+    config: TwoPhaseStateConfig,
+) -> TwoPhaseAppliedReplayReader:
+    try:
+        store = SQLiteWorkflowStore(
+            config.database_path,
+            timeout=config.sqlite_timeout_seconds,
+            replay_only=True,
+        )
+    except WorkflowStoreUninitializedError as exc:
+        raise TwoPhaseAppliedReplayUnavailable(
+            "Applied replay state is not initialized."
+        ) from exc
+    except WorkflowStoreError as exc:
+        raise TwoPhaseAppliedReplayError("Applied replay state is invalid.") from exc
+    except Exception as exc:
+        raise TwoPhaseAppliedReplayError(
+            "Applied replay state could not be opened."
+        ) from exc
+    return TwoPhaseAppliedReplayReader(store)

@@ -86,6 +86,7 @@ class CandidateGenerator(Protocol[TRequest]):
         source_workspace: str | Path,
         expected_source_fingerprint: str,
         expected_config_sha256: str,
+        expected_operation_sha256: str,
     ) -> ContextManager[GeneratedCandidate]: ...
 
 
@@ -128,14 +129,11 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         ttl_seconds: float | None = None,
         now: float | None = None,
     ) -> StageReceipt:
-        self._require_current_config(expected_config_sha256)
-        self._require_governed_workspace(source_workspace)
-        replay = self.workflow_service.find_stage_replay(
+        replay = self.find_stage_replay(
             source_workspace=source_workspace,
             task_fingerprint=task_fingerprint,
             expected_source_fingerprint=expected_source_fingerprint,
             expected_config_sha256=expected_config_sha256,
-            verification_policy=self.config.trust.policy,
             idempotency_key=idempotency_key,
             ttl_seconds=ttl_seconds,
             now=now,
@@ -143,11 +141,20 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         if replay is not None:
             return replay
         self._require_generator_config_unchanged()
+        operation_sha256 = self.stage_operation_sha256(
+            source_workspace=source_workspace,
+            task_fingerprint=task_fingerprint,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+            idempotency_key=idempotency_key,
+            ttl_seconds=ttl_seconds,
+        )
         with self.candidate_generator.generate(
             request,
             source_workspace=source_workspace,
             expected_source_fingerprint=expected_source_fingerprint,
             expected_config_sha256=expected_config_sha256,
+            expected_operation_sha256=operation_sha256,
         ) as candidate:
             if candidate.source_fingerprint != expected_source_fingerprint:
                 raise TwoPhaseLifecycleError(
@@ -177,6 +184,62 @@ class TwoPhaseLifecycle(Generic[TRequest]):
                 ttl_seconds=ttl_seconds,
                 now=now,
             )
+
+    def stage_operation_sha256(
+        self,
+        *,
+        source_workspace: str | Path,
+        task_fingerprint: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        idempotency_key: str,
+        ttl_seconds: float | None = None,
+    ) -> str:
+        """Bind candidate confirmation to the exact durable stage operation."""
+
+        self._require_current_config(expected_config_sha256)
+        self._require_governed_workspace(source_workspace)
+        require_sha256(task_fingerprint, "task_fingerprint")
+        require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
+        return canonical_sha256(
+            {
+                "contract": "assistant-bridge-stage-operation/v1",
+                "taskFingerprint": task_fingerprint,
+                "sourceFingerprint": expected_source_fingerprint,
+                "configSha256": expected_config_sha256,
+                "verificationPolicy": self.config.trust.policy.payload(),
+                "stageIdentity": self.workflow_service.stage_operation_identity(
+                    idempotency_key,
+                    ttl_seconds=ttl_seconds,
+                ),
+            }
+        )
+
+    def find_stage_replay(
+        self,
+        *,
+        source_workspace: str | Path,
+        task_fingerprint: str,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        idempotency_key: str,
+        ttl_seconds: float | None = None,
+        now: float | None = None,
+    ) -> StageReceipt | None:
+        """Return an exact replay before candidate planning or confirmation use."""
+
+        self._require_current_config(expected_config_sha256)
+        self._require_governed_workspace(source_workspace)
+        return self.workflow_service.find_stage_replay(
+            source_workspace=source_workspace,
+            task_fingerprint=task_fingerprint,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+            verification_policy=self.config.trust.policy,
+            idempotency_key=idempotency_key,
+            ttl_seconds=ttl_seconds,
+            now=now,
+        )
 
     def status(self, workflow_id: str, *, now: float | None = None) -> WorkflowRecord:
         return self.workflow_service.status(workflow_id, now=now)

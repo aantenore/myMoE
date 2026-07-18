@@ -28,6 +28,7 @@ from .deterministic_evaluator import (
     validate_checks,
 )
 from .assistant_bridge_ledger import (
+    BridgeConfirmationNotReadyError,
     BridgeLedgerError,
     BridgeStateLedger,
     PremiumBudgetLease,
@@ -121,6 +122,9 @@ _CODEX_EPHEMERAL_ENVIRONMENT_KEYS = ("CODEX_HOME", "HOME")
 _DIRECT_APPLY_INTENT = "direct_apply"
 _CANDIDATE_GENERATION_INTENT = "candidate_generation"
 _EXECUTION_INTENTS = {_DIRECT_APPLY_INTENT, _CANDIDATE_GENERATION_INTENT}
+_STANDALONE_CANDIDATE_OPERATION_SHA256 = hashlib.sha256(
+    b"assistant-bridge-candidate-standalone/v1"
+).hexdigest()
 _PYTHON_UNITTEST_BOOTSTRAP = r"""
 import hashlib
 import json
@@ -227,6 +231,12 @@ _BASE_ENV_KEYS = {
 }
 class AssistantBridgeError(ValueError):
     """Raised when a bridge contract, policy, or binding is invalid."""
+
+
+class AssistantBridgeConfirmationError(AssistantBridgeError):
+    """Raised when candidate generation needs a fresh confirmation plan."""
+
+    code = "confirmation_not_ready"
 
 
 @dataclass(frozen=True)
@@ -1690,6 +1700,7 @@ class CandidateGenerationRequest:
     local_provider_override: str | None = None
     external_evidence: tuple[VerificationEvidence, ...] = field(default=(), repr=False)
     include_diff: bool = False
+    operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256
 
     def __post_init__(self) -> None:
         if (
@@ -1699,6 +1710,10 @@ class CandidateGenerationRequest:
             or "\x00" in self.confirmation
         ):
             raise AssistantBridgeError("Candidate generation confirmation is invalid.")
+        _require_sha256(
+            self.operation_sha256,
+            "candidate operation",
+        )
         if self.local_provider_override not in {None, "lmstudio", "ollama"}:
             raise AssistantBridgeError(
                 "Local provider override must be ollama or lmstudio."
@@ -3622,6 +3637,7 @@ def _registered_provider_adapter(
 class _PreparedExecution:
     execution_intent: str
     expected_lifecycle_config_sha256: str | None
+    candidate_operation_sha256: str | None
     receipt: RouteDecisionReceipt
     source_snapshot: WorkspaceSnapshot = field(repr=False)
     workspace_write_capability: WorkspaceWriteCapability
@@ -3770,6 +3786,7 @@ class AssistantBridgeRunner:
         capsule_out: str | Path | None,
         execution_intent: str = _DIRECT_APPLY_INTENT,
         expected_lifecycle_config_sha256: str | None = None,
+        candidate_operation_sha256: str | None = None,
     ) -> _PreparedExecution:
         if execution_intent not in _EXECUTION_INTENTS:
             raise AssistantBridgeError("Assistant execution intent is invalid.")
@@ -3783,9 +3800,18 @@ class AssistantBridgeRunner:
                 expected_lifecycle_config_sha256,
                 "candidate lifecycle configuration",
             )
-        elif expected_lifecycle_config_sha256 is not None:
+            if candidate_operation_sha256 is None:
+                candidate_operation_sha256 = _STANDALONE_CANDIDATE_OPERATION_SHA256
+            _require_sha256(
+                candidate_operation_sha256,
+                "candidate operation",
+            )
+        elif (
+            expected_lifecycle_config_sha256 is not None
+            or candidate_operation_sha256 is not None
+        ):
             raise AssistantBridgeError(
-                "Direct execution cannot bind a candidate lifecycle configuration."
+                "Direct execution cannot bind candidate lifecycle state."
             )
         self._validate_verifier_selection(task)
         try:
@@ -3959,6 +3985,7 @@ class AssistantBridgeRunner:
         execution_binding = _execution_binding(
             execution_intent=execution_intent,
             expected_lifecycle_config_sha256=expected_lifecycle_config_sha256,
+            candidate_operation_sha256=candidate_operation_sha256,
             external_evidence=bound_external,
             include_diff=include_diff,
             capsule_out=capsule_out,
@@ -3972,6 +3999,7 @@ class AssistantBridgeRunner:
         return _PreparedExecution(
             execution_intent=execution_intent,
             expected_lifecycle_config_sha256=expected_lifecycle_config_sha256,
+            candidate_operation_sha256=candidate_operation_sha256,
             receipt=receipt,
             source_snapshot=source_snapshot,
             workspace_write_capability=write_capability,
@@ -4032,7 +4060,7 @@ class AssistantBridgeRunner:
                 confirmation,
                 prepared.confirmation_binding_sha256,
             )
-        except BridgeLedgerError as exc:
+        except BridgeLedgerError:
             raise AssistantBridgeError(
                 "Execution confirmation is invalid, expired, consumed, or no longer bound."
             ) from None
@@ -4782,7 +4810,7 @@ class AssistantBridgeCandidateGenerator:
         return _sha256_text(
             _canonical_json(
                 {
-                    "contract": "assistant-bridge-candidate-generator/v1",
+                    "contract": "assistant-bridge-candidate-generator/v2",
                     "bridge_config_sha256": self._runner.config.source_sha256,
                     "registry_ids": list(self._runner._adapter_registry.ids),
                     "adapters": adapters,
@@ -4796,6 +4824,7 @@ class AssistantBridgeCandidateGenerator:
         *,
         workspace: str | Path,
         expected_config_sha256: str,
+        operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256,
         local_provider_override: str | None = None,
         external_evidence: Sequence[VerificationEvidence] = (),
         include_diff: bool = False,
@@ -4804,6 +4833,7 @@ class AssistantBridgeCandidateGenerator:
             expected_config_sha256,
             "candidate lifecycle configuration",
         )
+        _require_sha256(operation_sha256, "candidate operation")
         generator_config_sha256 = self.configuration_sha256
         prepared = self._runner._prepare_execution(
             task,
@@ -4814,6 +4844,7 @@ class AssistantBridgeCandidateGenerator:
             capsule_out=None,
             execution_intent=_CANDIDATE_GENERATION_INTENT,
             expected_lifecycle_config_sha256=expected_config_sha256,
+            candidate_operation_sha256=operation_sha256,
         )
         ticket = None
         if prepared.receipt.route != "blocked":
@@ -4833,6 +4864,7 @@ class AssistantBridgeCandidateGenerator:
             "confirmation": (None if ticket is None else ticket.metadata_payload()),
             "generator_config_sha256": generator_config_sha256,
             "lifecycle_config_sha256": expected_config_sha256,
+            "operation_sha256": operation_sha256,
             "commands": [command.payload() for command in prepared.commands],
             "verifiers": [item.payload() for item in prepared.verifier_plans],
             "authority": {
@@ -4849,11 +4881,42 @@ class AssistantBridgeCandidateGenerator:
             "privacy": "metadata_only",
         }
 
+    def inspect_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        workspace: str | Path,
+        expected_config_sha256: str,
+        operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+    ) -> RouteDecisionReceipt:
+        """Inspect candidate authority without issuing a confirmation ticket."""
+
+        _require_sha256(
+            expected_config_sha256,
+            "candidate lifecycle configuration",
+        )
+        _require_sha256(operation_sha256, "candidate operation")
+        return self._runner._prepare_execution(
+            task,
+            workspace=workspace,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+            capsule_out=None,
+            execution_intent=_CANDIDATE_GENERATION_INTENT,
+            expected_lifecycle_config_sha256=expected_config_sha256,
+            candidate_operation_sha256=operation_sha256,
+        ).receipt
+
     @staticmethod
     def request(
         task: AssistantTaskEnvelope,
         *,
         confirmation: str,
+        operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256,
         local_provider_override: str | None = None,
         external_evidence: Sequence[VerificationEvidence] = (),
         include_diff: bool = False,
@@ -4861,6 +4924,7 @@ class AssistantBridgeCandidateGenerator:
         return CandidateGenerationRequest(
             task=task,
             confirmation=confirmation,
+            operation_sha256=operation_sha256,
             local_provider_override=local_provider_override,
             external_evidence=tuple(external_evidence),
             include_diff=include_diff,
@@ -4874,6 +4938,7 @@ class AssistantBridgeCandidateGenerator:
         source_workspace: str | Path,
         expected_source_fingerprint: str,
         expected_config_sha256: str,
+        expected_operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256,
     ) -> Iterator[GeneratedCandidate]:
         from .assistant_bridge_lifecycle import GeneratedCandidate
         from .assistant_bridge_two_phase import (
@@ -4892,6 +4957,14 @@ class AssistantBridgeCandidateGenerator:
             expected_config_sha256,
             "candidate lifecycle configuration",
         )
+        _require_sha256(
+            expected_operation_sha256,
+            "candidate operation",
+        )
+        if request.operation_sha256 != expected_operation_sha256:
+            raise AssistantBridgeError(
+                "Candidate request is bound to another stage operation."
+            )
         prepared = self._runner._prepare_execution(
             request.task,
             workspace=source_workspace,
@@ -4901,6 +4974,7 @@ class AssistantBridgeCandidateGenerator:
             capsule_out=None,
             execution_intent=_CANDIDATE_GENERATION_INTENT,
             expected_lifecycle_config_sha256=expected_config_sha256,
+            candidate_operation_sha256=expected_operation_sha256,
         )
         if prepared.source_snapshot.fingerprint != expected_source_fingerprint:
             raise AssistantBridgeError(
@@ -4913,9 +4987,13 @@ class AssistantBridgeCandidateGenerator:
                 request.confirmation,
                 prepared.confirmation_binding_sha256,
             )
+        except BridgeConfirmationNotReadyError:
+            raise AssistantBridgeConfirmationError(
+                "Candidate confirmation is unavailable; request a new plan."
+            ) from None
         except BridgeLedgerError:
             raise AssistantBridgeError(
-                "Candidate confirmation is invalid, expired, consumed, or no longer bound."
+                "Candidate confirmation state failed integrity validation."
             ) from None
         try:
             with materialize_workspace(
@@ -4973,6 +5051,7 @@ class AssistantBridgeCandidateGenerator:
         expected_source_fingerprint: str,
         expected_config_sha256: str,
         confirmation: str,
+        operation_sha256: str = _STANDALONE_CANDIDATE_OPERATION_SHA256,
         local_provider_override: str | None = None,
         external_evidence: Sequence[VerificationEvidence] = (),
         include_diff: bool = False,
@@ -4980,6 +5059,7 @@ class AssistantBridgeCandidateGenerator:
         request = self.request(
             task,
             confirmation=confirmation,
+            operation_sha256=operation_sha256,
             local_provider_override=local_provider_override,
             external_evidence=external_evidence,
             include_diff=include_diff,
@@ -4989,6 +5069,7 @@ class AssistantBridgeCandidateGenerator:
             source_workspace=source_workspace,
             expected_source_fingerprint=expected_source_fingerprint,
             expected_config_sha256=expected_config_sha256,
+            expected_operation_sha256=operation_sha256,
         ) as generated:
             yield generated
 
@@ -7486,6 +7567,7 @@ def _execution_binding(
     *,
     execution_intent: str,
     expected_lifecycle_config_sha256: str | None,
+    candidate_operation_sha256: str | None,
     external_evidence: Sequence[VerificationEvidence],
     include_diff: bool,
     capsule_out: str | Path | None,
@@ -7503,6 +7585,7 @@ def _execution_binding(
     return {
         "execution_intent": execution_intent,
         "expected_lifecycle_config_sha256": expected_lifecycle_config_sha256,
+        "candidate_operation_sha256": candidate_operation_sha256,
         "include_diff": include_diff,
         "capsule_out_sha256": (
             _sha256_text(capsule_target) if capsule_target else None

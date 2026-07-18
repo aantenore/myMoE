@@ -28,6 +28,12 @@ class BridgeLedgerError(ValueError):
     """Raised when authorization or budget state cannot be proven safely."""
 
 
+class BridgeConfirmationNotReadyError(BridgeLedgerError):
+    """Raised when a fresh one-shot confirmation must be planned."""
+
+    code = "confirmation_not_ready"
+
+
 @dataclass(frozen=True)
 class ConfirmationTicket:
     token: str = field(repr=False)
@@ -200,7 +206,7 @@ class BridgeStateLedger:
         now: float | None = None,
     ) -> str:
         if _TOKEN.fullmatch(token) is None:
-            raise BridgeLedgerError("Confirmation token is malformed.")
+            raise BridgeConfirmationNotReadyError("Confirmation token is malformed.")
         _require_sha256(binding_sha256, "confirmation binding")
         token_sha256 = _sha256_text(token)
         with self._locked_state(
@@ -211,16 +217,20 @@ class BridgeStateLedger:
             assert isinstance(confirmations, dict)
             raw = confirmations.get(token_sha256)
             if not isinstance(raw, dict):
-                raise BridgeLedgerError("Confirmation token is unknown.")
+                raise BridgeConfirmationNotReadyError("Confirmation token is unknown.")
             _validate_confirmation(raw)
             if raw["binding_sha256"] != binding_sha256:
                 raise BridgeLedgerError("Confirmation binding does not match the plan.")
             if raw["consumed_at"] is not None:
-                raise BridgeLedgerError("Confirmation token was already consumed.")
+                raise BridgeConfirmationNotReadyError(
+                    "Confirmation token was already consumed."
+                )
             if consumed_at < float(raw["issued_at"]):
                 raise BridgeLedgerError("Confirmation clock moved before issue time.")
             if consumed_at > float(raw["expires_at"]):
-                raise BridgeLedgerError("Confirmation token has expired.")
+                raise BridgeConfirmationNotReadyError(
+                    "Confirmation token has expired."
+                )
             raw["consumed_at"] = consumed_at
             transaction_id = str(raw["transaction_id"])
         return transaction_id

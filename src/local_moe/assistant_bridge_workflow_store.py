@@ -69,6 +69,18 @@ class WorkflowArtifactError(WorkflowStoreError):
     """Raised when durable workflow evidence cannot be validated."""
 
 
+class WorkflowOperationConflictError(WorkflowStoreError):
+    """Raised when an idempotency key is bound to another operation."""
+
+    code = "operation_conflict"
+
+
+class WorkflowConfirmationNotReadyError(WorkflowStoreError):
+    """Raised when resume requires a fresh confirmation plan."""
+
+    code = "confirmation_not_ready"
+
+
 @dataclass(frozen=True)
 class WorkflowStatePaths:
     database: Path
@@ -281,15 +293,30 @@ class SQLiteWorkflowStore:
         evidence_cas: EvidenceStore | None = None,
         timeout: float = 5.0,
         read_only: bool = False,
+        recovery_only: bool = False,
+        replay_only: bool = False,
     ) -> None:
-        if not isinstance(read_only, bool):
+        if (
+            not isinstance(read_only, bool)
+            or not isinstance(recovery_only, bool)
+            or not isinstance(replay_only, bool)
+        ):
             raise WorkflowStoreError("Workflow store access mode is invalid.")
-        if read_only and path is None:
+        if sum((read_only, recovery_only, replay_only)) > 1:
+            raise WorkflowStoreError("Workflow store access modes are incompatible.")
+        if (read_only or recovery_only or replay_only) and path is None:
             raise WorkflowStoreError(
                 "Read-only workflow status requires an explicit database path."
             )
-        self._read_only = read_only
-        if read_only:
+        if (recovery_only or replay_only) and evidence_cas is not None:
+            raise WorkflowStoreError(
+                "Metadata-only workflow access cannot use artifact storage."
+            )
+        self._read_only = read_only or replay_only
+        self._status_read_only = read_only
+        self._recovery_only = recovery_only
+        self._replay_only = replay_only
+        if read_only or recovery_only or replay_only:
             assert path is not None
             self.path = _prepare_existing_database_path(Path(path))
             cas_root = self.path.parent / "cas"
@@ -300,27 +327,30 @@ class SQLiteWorkflowStore:
         else:
             self.path = _prepare_database_path(Path(path))
             cas_root = self.path.parent / "cas"
-        try:
-            self.evidence_cas = (
-                ContentAddressedStore(
-                    cas_root,
-                    create_if_missing=not read_only,
+        if recovery_only or replay_only:
+            self.evidence_cas: EvidenceStore | None = None
+        else:
+            try:
+                self.evidence_cas = (
+                    ContentAddressedStore(
+                        cas_root,
+                        create_if_missing=not read_only,
+                    )
+                    if evidence_cas is None
+                    else evidence_cas
                 )
-                if evidence_cas is None
-                else evidence_cas
-            )
-        except ContentAddressedStoreError as exc:
-            raise WorkflowStoreError(str(exc)) from exc
+            except ContentAddressedStoreError as exc:
+                raise WorkflowStoreError(str(exc)) from exc
         if not 0.1 <= timeout <= 60:
             raise WorkflowStoreError("SQLite workflow timeout is outside safe bounds.")
         self.timeout = timeout
         self._database_identity: tuple[int, int] | None = None
         self._secret = (
             _load_existing_secret(self.path.with_suffix(".key"))
-            if read_only
+            if read_only or recovery_only or replay_only
             else _load_or_create_secret(self.path.with_suffix(".key"))
         )
-        if read_only:
+        if read_only or recovery_only or replay_only:
             self._database_identity = _database_identity(self.path)
             with self._connect() as connection:
                 self._validate_existing_schema(connection)
@@ -437,7 +467,7 @@ class SQLiteWorkflowStore:
     ) -> WorkflowRecord:
         """Return a current status view without persisting derived transitions."""
 
-        if not self._read_only:
+        if not self._status_read_only:
             raise WorkflowStoreError("Read-only workflow access was not configured.")
         require_safe_id(workflow_id, "workflow_id")
         current = _wall_time(now)
@@ -464,6 +494,165 @@ class SQLiteWorkflowStore:
         else:
             status = "staged"
         return record if status == record.status else replace(record, status=status)
+
+    def read_applying_recovery(
+        self,
+        workflow_id: str,
+        *,
+        now: float | None = None,
+    ) -> WorkflowRecord | None:
+        """Read only the durable authority needed to roll back an applying write.
+
+        This path deliberately validates binding, transaction, database, and
+        attestation metadata without dereferencing candidate or evidence CAS
+        objects. It never reports any state except ``applying`` and cannot be
+        used to grant fresh write authority.
+        """
+
+        if not self._recovery_only:
+            raise WorkflowStoreError(
+                "Applying recovery access was not configured."
+            )
+        require_safe_id(workflow_id, "workflow_id")
+        current = _wall_time(now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
+            ).fetchone()
+            if row is None:
+                raise WorkflowNotFoundError("Workflow was not found.")
+            record = self._record(
+                connection,
+                row,
+                active_at=current,
+                validate_artifacts=False,
+            )
+            self._check_clock(record, current)
+            if record.status != "applying":
+                return None
+            self._validate_applying_recovery_binding(connection, record)
+            return record
+
+    def read_recovered_cleanup(
+        self,
+        workflow_id: str,
+        *,
+        now: float | None = None,
+    ) -> tuple[WorkflowRecord, str] | None:
+        """Read a committed recovery whose retained journal needs cleanup."""
+
+        if not self._recovery_only:
+            raise WorkflowStoreError(
+                "Applying recovery access was not configured."
+            )
+        require_safe_id(workflow_id, "workflow_id")
+        current = _wall_time(now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
+            ).fetchone()
+            if row is None:
+                raise WorkflowNotFoundError("Workflow was not found.")
+            record = self._record(
+                connection,
+                row,
+                active_at=current,
+                validate_artifacts=False,
+            )
+            self._check_clock(record, current)
+            transaction_id = record.recovered_transaction_id
+            if record.status == "applying" or not transaction_id:
+                return None
+            recovery = connection.execute(
+                "SELECT workflow_id FROM apply_recoveries "
+                "WHERE transaction_id = ?",
+                (transaction_id,),
+            ).fetchone()
+            if (
+                recovery is None
+                or str(recovery["workflow_id"]) != workflow_id
+            ):
+                raise WorkflowStoreError(
+                    "Workflow recovery transaction binding is invalid."
+                )
+            self._validate_recovery_transaction_binding(
+                connection,
+                record,
+                transaction_id,
+            )
+            if current > record.binding.expires_at and record.status != "expired":
+                record = replace(record, status="expired")
+            return record, transaction_id
+
+    def read_applied_replay(
+        self,
+        workflow_id: str,
+        *,
+        plan_id: str,
+        confirmation_id: str,
+        now: float | None = None,
+    ) -> WorkflowRecord | None:
+        """Validate the consumed authority bound to one historical apply."""
+
+        if not self._read_only:
+            raise WorkflowStoreError("Applied replay requires read-only access.")
+        require_safe_id(workflow_id, "workflow_id")
+        require_sha256(plan_id, "plan_id")
+        if not isinstance(confirmation_id, str) or not confirmation_id:
+            raise WorkflowConfirmationNotReadyError(
+                "Resume confirmation is invalid."
+            )
+        current = _wall_time(now)
+        token_sha256 = sha256_bytes(confirmation_id.encode("utf-8"))
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            try:
+                record = self._selected_record(
+                    connection,
+                    workflow_id,
+                    active_at=current,
+                    validate_artifacts=not self._replay_only,
+                )
+                self._check_clock(record, current)
+                if record.status != "applied":
+                    return None
+                confirmation = connection.execute(
+                    "SELECT * FROM resume_confirmations WHERE token_sha256 = ?",
+                    (token_sha256,),
+                ).fetchone()
+                if confirmation is None:
+                    raise WorkflowConfirmationNotReadyError(
+                        "Resume confirmation is invalid."
+                    )
+                expected_token = self._confirmation_token(
+                    workflow_id,
+                    str(confirmation["plan_id"]),
+                    str(confirmation["idempotency_sha256"]),
+                )
+                if not hmac.compare_digest(expected_token, confirmation_id):
+                    raise WorkflowStoreError(
+                        "Resume confirmation integrity is invalid."
+                    )
+                if (
+                    str(confirmation["workflow_id"]) != workflow_id
+                    or str(confirmation["plan_id"]) != plan_id
+                    or str(confirmation["binding_sha256"])
+                    != record.binding.binding_sha256
+                    or confirmation["consumed_at"] is None
+                    or confirmation["revoked_at"] is not None
+                    or _resume_transaction_id(
+                        workflow_id,
+                        plan_id,
+                        record.binding.binding_sha256,
+                    )
+                    != record.apply_transaction_id
+                ):
+                    raise WorkflowStoreError(
+                        "Applied replay authority binding is invalid."
+                    )
+                return record
+            finally:
+                connection.rollback()
 
     def find_workflow(
         self,
@@ -764,7 +953,7 @@ class SQLiteWorkflowStore:
                     or str(existing["binding_sha256"])
                     != record.binding.binding_sha256
                 ):
-                    raise WorkflowStoreError(
+                    raise WorkflowOperationConflictError(
                         "Resume idempotency key is bound to another operation."
                     )
                 return self._resume_plan(record, existing, idempotent_replay=True)
@@ -872,7 +1061,9 @@ class SQLiteWorkflowStore:
         require_sha256(binding_sha256, "binding_sha256")
         current = _wall_time(now)
         if not isinstance(confirmation_id, str) or not confirmation_id:
-            raise WorkflowStoreError("Resume confirmation is invalid.")
+            raise WorkflowConfirmationNotReadyError(
+                "Resume confirmation is invalid."
+            )
         token_sha256 = sha256_bytes(confirmation_id.encode("utf-8"))
         with self._transaction() as connection:
             record = self._selected_record(
@@ -888,14 +1079,16 @@ class SQLiteWorkflowStore:
                 (token_sha256,),
             ).fetchone()
             if confirmation is None:
-                raise WorkflowStoreError("Resume confirmation is invalid.")
+                raise WorkflowConfirmationNotReadyError(
+                    "Resume confirmation is invalid."
+                )
             expected_token = self._confirmation_token(
                 workflow_id,
                 str(confirmation["plan_id"]),
                 str(confirmation["idempotency_sha256"]),
             )
             if not hmac.compare_digest(expected_token, confirmation_id):
-                raise WorkflowStoreError("Resume confirmation is invalid.")
+                raise WorkflowStoreError("Resume confirmation integrity is invalid.")
             if (
                 str(confirmation["workflow_id"]) != workflow_id
                 or str(confirmation["plan_id"]) != plan_id
@@ -927,17 +1120,27 @@ class SQLiteWorkflowStore:
                             "Recovered confirmation binding is invalid."
                         )
                     return record, True
-            self._check_live(record, current)
+            self._check_clock(record, current)
+            if record.status == "expired" or current > record.binding.expires_at:
+                raise WorkflowConfirmationNotReadyError("Workflow expired.")
             if record.status != "ready" or not record.quorum_satisfied_at(current):
-                raise WorkflowStoreError("Workflow is not ready to resume.")
+                raise WorkflowConfirmationNotReadyError(
+                    "Workflow is not ready to resume."
+                )
             if confirmation["revoked_at"] is not None:
-                raise WorkflowStoreError("Resume confirmation was revoked.")
+                raise WorkflowConfirmationNotReadyError(
+                    "Resume confirmation was revoked."
+                )
             if confirmation["consumed_at"] is not None:
-                raise WorkflowStoreError("Resume confirmation was already consumed.")
+                raise WorkflowConfirmationNotReadyError(
+                    "Resume confirmation was already consumed."
+                )
             if current < float(confirmation["issued_at"]):
                 raise WorkflowStoreError("Clock rollback detected for confirmation.")
             if current > float(confirmation["expires_at"]):
-                raise WorkflowStoreError("Resume confirmation expired.")
+                raise WorkflowConfirmationNotReadyError(
+                    "Resume confirmation expired."
+                )
             connection.execute(
                 "UPDATE resume_confirmations SET consumed_at = ? "
                 "WHERE token_sha256 = ?",
@@ -1024,14 +1227,54 @@ class SQLiteWorkflowStore:
         transaction_id: str,
         now: float | None = None,
     ) -> tuple[WorkflowRecord, bool]:
+        return self._reset_after_recovery(
+            workflow_id,
+            transaction_id=transaction_id,
+            now=now,
+            validate_artifacts=True,
+        )
+
+    def reset_applying_after_recovery(
+        self,
+        workflow_id: str,
+        *,
+        transaction_id: str,
+        now: float | None = None,
+    ) -> tuple[WorkflowRecord, bool]:
+        """Persist an applying-only journal rollback without CAS authority."""
+
+        if not self._recovery_only:
+            raise WorkflowStoreError(
+                "Applying recovery access was not configured."
+            )
+        return self._reset_after_recovery(
+            workflow_id,
+            transaction_id=transaction_id,
+            now=now,
+            validate_artifacts=False,
+        )
+
+    def _reset_after_recovery(
+        self,
+        workflow_id: str,
+        *,
+        transaction_id: str,
+        now: float | None,
+        validate_artifacts: bool,
+    ) -> tuple[WorkflowRecord, bool]:
         require_safe_id(workflow_id, "workflow_id")
         require_sha256(transaction_id, "transaction_id")
         current = _wall_time(now)
         with self._transaction() as connection:
             record = self._selected_record(
-                connection, workflow_id, active_at=current
+                connection,
+                workflow_id,
+                active_at=current,
+                validate_artifacts=validate_artifacts,
             )
             self._check_clock(record, current)
+            if not validate_artifacts:
+                self._validate_applying_recovery_binding(connection, record)
             existing = connection.execute(
                 "SELECT workflow_id FROM apply_recoveries WHERE transaction_id = ?",
                 (transaction_id,),
@@ -1083,7 +1326,10 @@ class SQLiteWorkflowStore:
                 now=current,
             )
             return self._selected_record(
-                connection, workflow_id, active_at=current
+                connection,
+                workflow_id,
+                active_at=current,
+                validate_artifacts=validate_artifacts,
             ), False
 
     def mark_conflicted(
@@ -1368,13 +1614,19 @@ class SQLiteWorkflowStore:
         workflow_id: str,
         *,
         active_at: float | None = None,
+        validate_artifacts: bool = True,
     ) -> WorkflowRecord:
         row = connection.execute(
             "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
         ).fetchone()
         if row is None:
             raise WorkflowNotFoundError("Workflow was not found.")
-        return self._record(connection, row, active_at=active_at)
+        return self._record(
+            connection,
+            row,
+            active_at=active_at,
+            validate_artifacts=validate_artifacts,
+        )
 
     def _record(
         self,
@@ -1382,6 +1634,7 @@ class SQLiteWorkflowStore:
         row: sqlite3.Row,
         *,
         active_at: float | None = None,
+        validate_artifacts: bool = True,
     ) -> WorkflowRecord:
         try:
             binding_raw = json.loads(str(row["binding_json"]))
@@ -1405,7 +1658,11 @@ class SQLiteWorkflowStore:
             (binding.workflow_id,),
         ).fetchall()
         attestations = tuple(
-            self._attestation(attestation_row, binding=binding)
+            self._attestation(
+                attestation_row,
+                binding=binding,
+                validate_artifacts=validate_artifacts,
+            )
             for attestation_row in attestation_rows
         )
         recovery = connection.execute(
@@ -1445,6 +1702,7 @@ class SQLiteWorkflowStore:
         row: sqlite3.Row,
         *,
         binding: CandidateBinding,
+        validate_artifacts: bool = True,
     ) -> RecordedAttestation:
         metadata_json = str(row["metadata_json"])
         if sha256_bytes(metadata_json.encode("utf-8")) != str(row["metadata_sha256"]):
@@ -1493,20 +1751,26 @@ class SQLiteWorkflowStore:
             raise WorkflowArtifactError(
                 "Persisted attestation artifact exceeds its read bound."
             )
-        try:
-            envelope_bytes = self.evidence_cas.get_bytes(envelope_descriptor)
-            statement_bytes = self.evidence_cas.get_bytes(statement_descriptor)
-        except ContentAddressedStoreError as exc:
-            raise WorkflowArtifactError(str(exc)) from exc
-        try:
-            _validate_persisted_attestation_artifacts(
-                envelope_bytes,
-                statement_bytes,
-                binding=binding,
-                expected=expected,
-            )
-        except WorkflowStoreError as exc:
-            raise WorkflowArtifactError(str(exc)) from exc
+        if validate_artifacts:
+            evidence_cas = self.evidence_cas
+            if evidence_cas is None:
+                raise WorkflowArtifactError(
+                    "Persisted attestation storage is unavailable."
+                )
+            try:
+                envelope_bytes = evidence_cas.get_bytes(envelope_descriptor)
+                statement_bytes = evidence_cas.get_bytes(statement_descriptor)
+            except ContentAddressedStoreError as exc:
+                raise WorkflowArtifactError(str(exc)) from exc
+            try:
+                _validate_persisted_attestation_artifacts(
+                    envelope_bytes,
+                    statement_bytes,
+                    binding=binding,
+                    expected=expected,
+                )
+            except WorkflowStoreError as exc:
+                raise WorkflowArtifactError(str(exc)) from exc
         attestation = RecordedAttestation(
             verifier_id=expected["verifierId"],
             adapter_id=expected["adapterId"],
@@ -1545,6 +1809,86 @@ class SQLiteWorkflowStore:
             binding_sha256=record.binding.binding_sha256,
             idempotent_replay=idempotent_replay,
         )
+
+    def _validate_applying_recovery_binding(
+        self,
+        connection: sqlite3.Connection,
+        record: WorkflowRecord,
+    ) -> None:
+        if record.status != "applying" or not record.apply_transaction_id:
+            raise WorkflowStoreError(
+                "Applying recovery requires an in-flight transaction."
+            )
+        self._validate_recovery_transaction_binding(
+            connection,
+            record,
+            record.apply_transaction_id,
+        )
+
+    def _validate_recovery_transaction_binding(
+        self,
+        connection: sqlite3.Connection,
+        record: WorkflowRecord,
+        transaction_id: str,
+    ) -> None:
+        require_sha256(transaction_id, "recovery transaction_id")
+        rows = connection.execute(
+            "SELECT * FROM resume_confirmations "
+            "WHERE workflow_id = ? AND consumed_at IS NOT NULL",
+            (record.workflow_id,),
+        ).fetchall()
+        matches = 0
+        for row in rows:
+            plan_id = str(row["plan_id"])
+            idempotency_sha256 = str(row["idempotency_sha256"])
+            binding_sha256 = str(row["binding_sha256"])
+            token_sha256 = str(row["token_sha256"])
+            try:
+                require_sha256(plan_id, "persisted recovery plan_id")
+                require_sha256(
+                    idempotency_sha256,
+                    "persisted recovery idempotency_sha256",
+                )
+                require_sha256(
+                    binding_sha256,
+                    "persisted recovery binding_sha256",
+                )
+                require_sha256(token_sha256, "persisted recovery token_sha256")
+                issued_at = _wall_time(float(row["issued_at"]))
+                expires_at = _wall_time(float(row["expires_at"]))
+                consumed_at = _wall_time(float(row["consumed_at"]))
+            except (TypeError, ValueError) as exc:
+                raise WorkflowStoreError(
+                    "Applying recovery confirmation is invalid."
+                ) from exc
+            persisted_transaction_id = _resume_transaction_id(
+                record.workflow_id,
+                plan_id,
+                binding_sha256,
+            )
+            if persisted_transaction_id != transaction_id:
+                continue
+            expected_token_sha256 = sha256_bytes(
+                self._confirmation_token(
+                    record.workflow_id,
+                    plan_id,
+                    idempotency_sha256,
+                ).encode("utf-8")
+            )
+            if (
+                binding_sha256 != record.binding.binding_sha256
+                or not hmac.compare_digest(token_sha256, expected_token_sha256)
+                or not issued_at <= consumed_at <= expires_at
+                or row["revoked_at"] is not None
+            ):
+                raise WorkflowStoreError(
+                    "Applying recovery confirmation binding is invalid."
+                )
+            matches += 1
+        if matches != 1:
+            raise WorkflowStoreError(
+                "Applying recovery transaction binding is invalid."
+            )
 
     def _check_clock(self, record: WorkflowRecord, now: float) -> None:
         if now < record.last_wall_time:

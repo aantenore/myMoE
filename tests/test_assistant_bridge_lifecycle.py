@@ -254,6 +254,34 @@ if loaded:
 
 
 class TwoPhaseLifecycleTests(unittest.TestCase):
+    def test_stage_operation_digest_binds_idempotency_namespace_and_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            common = {
+                "source_workspace": fixture.source,
+                "task_fingerprint": TASK_SHA256,
+                "expected_source_fingerprint": fixture.source_fingerprint,
+                "expected_config_sha256": lifecycle.effective_config_sha256,
+            }
+
+            default = lifecycle.stage_operation_sha256(
+                **common,
+                idempotency_key=STAGE_KEY,
+            )
+            another_key = lifecycle.stage_operation_sha256(
+                **common,
+                idempotency_key="stage-lifecycle-operation-00000002",
+            )
+            another_ttl = lifecycle.stage_operation_sha256(
+                **common,
+                idempotency_key=STAGE_KEY,
+                ttl_seconds=60,
+            )
+
+        self.assertEqual(len(default), 64)
+        self.assertEqual(len({default, another_key, another_ttl}), 3)
+
     def test_rejects_each_configured_state_path_inside_governed_workspace(
         self,
     ) -> None:
@@ -291,9 +319,7 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
             except OSError as exc:
                 self.skipTest(f"symbolic links unavailable: {exc}")
             raw = json.loads(fixture.config_path.read_text(encoding="utf-8"))
-            raw["state"]["database_path"] = (
-                "workspace-alias/.durable/workflows.sqlite3"
-            )
+            raw["state"]["database_path"] = "workspace-alias/.durable/workflows.sqlite3"
             fixture.config_path.write_text(json.dumps(raw), encoding="utf-8")
             generator = _CandidateGenerator(fixture.source)
 
@@ -937,12 +963,15 @@ class _CandidateGenerator:
         source_workspace: str | Path,
         expected_source_fingerprint: str,
         expected_config_sha256: str,
+        expected_operation_sha256: str,
     ):
         self.calls += 1
         if request != "change-app" or Path(source_workspace) != self.source:
             raise AssertionError("candidate request binding changed")
         if len(expected_config_sha256) != 64:
             raise AssertionError("candidate config binding changed")
+        if len(expected_operation_sha256) != 64:
+            raise AssertionError("candidate operation binding changed")
         with tempfile.TemporaryDirectory() as temporary:
             candidate = Path(temporary) / "candidate"
             shutil.copytree(self.source, candidate)

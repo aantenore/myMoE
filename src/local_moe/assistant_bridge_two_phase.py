@@ -26,6 +26,8 @@ from .assistant_bridge_two_phase_ports import (
 from .assistant_bridge_workflow_store import (
     RecordedAttestation,
     SQLiteWorkflowStore,
+    WorkflowConfirmationNotReadyError,
+    WorkflowOperationConflictError,
     WorkflowRecord,
     WorkflowStoreError,
 )
@@ -45,6 +47,18 @@ from .assistant_bridge_workspace import (
 
 class TwoPhaseWorkflowError(ValueError):
     """Raised when a two-phase workflow cannot progress safely."""
+
+
+class TwoPhaseWorkflowConflictError(TwoPhaseWorkflowError):
+    """Raised for a typed durable-operation binding conflict."""
+
+    code = "operation_conflict"
+
+
+class TwoPhaseConfirmationNotReadyError(TwoPhaseWorkflowError):
+    """Raised when a workflow needs a newly planned confirmation."""
+
+    code = "confirmation_not_ready"
 
 
 def candidate_workspace_snapshot_fingerprint(
@@ -102,6 +116,34 @@ class TwoPhaseWorkflowService:
         self.cas = cas
         self.config = config
         self.trust_store = trust_store
+
+    def stage_operation_identity(
+        self,
+        idempotency_key: str,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> dict[str, object]:
+        """Return the state-namespace identity bound by a stage confirmation."""
+
+        lifetime = (
+            self.config.candidate_ttl_seconds
+            if ttl_seconds is None
+            else ttl_seconds
+        )
+        if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
+            raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
+        try:
+            workflow_id, challenge, idempotency_sha256 = self.store.stage_identity(
+                idempotency_key
+            )
+        except (ValueError, WorkflowStoreError) as exc:
+            raise TwoPhaseWorkflowError(str(exc)) from exc
+        return {
+            "workflowId": workflow_id,
+            "challengeSha256": sha256_bytes(challenge.encode("utf-8")),
+            "stageIdempotencySha256": idempotency_sha256,
+            "candidateTtlSeconds": float(lifetime),
+        }
 
     def stage_candidate(
         self,
@@ -384,6 +426,10 @@ class TwoPhaseWorkflowService:
                 ),
                 now=current,
             )
+        except WorkflowOperationConflictError as exc:
+            raise TwoPhaseWorkflowConflictError(
+                "Resume plan conflicts with an existing operation."
+            ) from exc
         except (ValueError, WorkflowStoreError) as exc:
             raise TwoPhaseWorkflowError(str(exc)) from exc
 
@@ -457,6 +503,10 @@ class TwoPhaseWorkflowService:
                 binding_sha256=record.binding.binding_sha256,
                 now=current_time,
             )
+        except WorkflowConfirmationNotReadyError as exc:
+            raise TwoPhaseConfirmationNotReadyError(
+                "Resume requires a new confirmation plan."
+            ) from exc
         except (ValueError, WorkflowStoreError) as exc:
             raise TwoPhaseWorkflowError(str(exc)) from exc
         if applying.status == "applied":

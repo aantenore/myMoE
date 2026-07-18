@@ -7,21 +7,19 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import TYPE_CHECKING
 
 from .audit import AuditLogStore
 from .agent_loop import AgentLoopBudget, AgentRunResult, build_local_agent_loop
 from .agent_provider import validate_local_agent_endpoints
 from .agent_tools import AgentPermissionPolicy, ApprovalDecision, ApprovalRequest
 from .app_config import load_app_config
-from .assistant_bridge import (
-    AssistantBridgeError,
-    AssistantBridgeRunner,
-    AssistantTaskEnvelope,
-    BridgeRunResult,
-    build_assistant_task,
-    load_assistant_bridge_config,
-    load_assistant_task,
-    load_verification_evidence,
+from .assistant_lifecycle_cli import (
+    AssistantBridgeCliError,
+    canonical_json as assistant_bridge_canonical_json,
+    lifecycle_mode as assistant_bridge_lifecycle_mode,
+    load_cli_assistant_task,
+    run_lifecycle_cli,
 )
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_runtime import generate_chat_turn
@@ -75,8 +73,54 @@ from .support_bundle import build_support_bundle, support_bundle_filename
 from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payload
 
 
+if TYPE_CHECKING:
+    from .assistant_bridge import AssistantTaskEnvelope, BridgeRunResult
+
+
+class _MymoeArgumentParser(argparse.ArgumentParser):
+    """Preserve legacy errors while redacting lifecycle invocation failures."""
+
+    def error(self, message: str) -> None:
+        lifecycle_flags = {
+            "--assistant-bridge-stage": "stage",
+            "--assistant-bridge-status": "status",
+            "--assistant-bridge-resume-plan": "resume_plan",
+            "--assistant-bridge-resume": "resume",
+        }
+        selected = [
+            mode
+            for flag, mode in lifecycle_flags.items()
+            if any(
+                value == flag or value.startswith(f"{flag}=") for value in sys.argv[1:]
+            )
+        ]
+        if not selected:
+            abbreviated = [
+                mode
+                for flag, mode in lifecycle_flags.items()
+                if any(
+                    flag.startswith(value.split("=", 1)[0])
+                    and value.startswith("--assistant-bridge-")
+                    for value in sys.argv[1:]
+                )
+            ]
+            selected = abbreviated
+        if selected:
+            mode = selected[0] if len(selected) == 1 else "lifecycle"
+            failure = AssistantBridgeCliError(
+                mode=mode,
+                code="invocation_invalid",
+                exit_code=2,
+            )
+            self.exit(2, f"{assistant_bridge_canonical_json(failure.payload())}\n")
+        super().error(message)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Local MoE orchestrator")
+    parser = _MymoeArgumentParser(
+        description="Local MoE orchestrator",
+        allow_abbrev=False,
+    )
     parser.add_argument("--config")
     parser.add_argument("--app-config", default="configs/app.json")
     assistant_task_group = parser.add_mutually_exclusive_group()
@@ -115,12 +159,37 @@ def main() -> None:
     remote_group.add_argument("--assistant-deny-remote", action="store_true")
     parser.add_argument("--assistant-allow-remote-workspace", action="store_true")
     parser.add_argument("--assistant-max-premium-calls", type=int)
-    parser.add_argument("--assistant-workspace", default=".")
+    parser.add_argument("--assistant-workspace")
     parser.add_argument("--assistant-local-provider", choices=["ollama", "lmstudio"])
     parser.add_argument("--assistant-verification")
     parser.add_argument("--assistant-include-diff", action="store_true")
     parser.add_argument("--assistant-capsule-out")
-    parser.add_argument("--assistant-bridge-execute", action="store_true")
+    assistant_mode_group = parser.add_mutually_exclusive_group()
+    assistant_mode_group.add_argument("--assistant-bridge-execute", action="store_true")
+    assistant_mode_group.add_argument("--assistant-bridge-stage", action="store_true")
+    assistant_mode_group.add_argument(
+        "--assistant-bridge-status",
+        metavar="WORKFLOW_ID",
+    )
+    assistant_mode_group.add_argument(
+        "--assistant-bridge-resume-plan",
+        metavar="WORKFLOW_ID",
+    )
+    assistant_mode_group.add_argument(
+        "--assistant-bridge-resume",
+        metavar="WORKFLOW_ID",
+    )
+    parser.add_argument(
+        "--assistant-workflow-config",
+        help="Two-phase durable-state and public-trust configuration.",
+    )
+    parser.add_argument("--assistant-idempotency-key")
+    parser.add_argument(
+        "--assistant-attestation-file",
+        action="append",
+        help="Independent DSSE envelope; repeat for multiple verifiers.",
+    )
+    parser.add_argument("--assistant-resume-plan-id")
     parser.add_argument(
         "--assistant-confirm-receipt",
         help="Exact confirmation_id emitted by a prior plan for the unchanged task and workspace.",
@@ -252,32 +321,25 @@ def main() -> None:
     _validate_assistant_bridge_cli_mode(parser, args)
     _validate_agent_cli_mode(parser, args)
 
+    lifecycle_cli_mode = assistant_bridge_lifecycle_mode(args)
+    if lifecycle_cli_mode is not None:
+        _run_assistant_lifecycle_mode(args)
+        return
+
     app_config = load_app_config(args.app_config)
 
     if args.assistant_task is not None or args.assistant_task_file is not None:
+        from .assistant_bridge import (
+            AssistantBridgeError,
+            AssistantBridgeRunner,
+            load_assistant_bridge_config,
+            load_verification_evidence,
+        )
+
         assistant_execution_started = False
         try:
-            task = (
-                load_assistant_task(args.assistant_task_file)
-                if args.assistant_task_file is not None
-                else build_assistant_task(
-                    args.assistant_task,
-                    profile=args.assistant_profile or "balanced",
-                    required_capabilities=args.assistant_capability or (),
-                    required_tools=args.assistant_required_tool or (),
-                    risk_class=args.assistant_risk or "read_only",
-                    constraints=args.assistant_constraint or (),
-                    allow_remote=(
-                        True
-                        if args.assistant_allow_remote
-                        else False
-                        if args.assistant_deny_remote
-                        else None
-                    ),
-                    allow_remote_workspace=args.assistant_allow_remote_workspace,
-                    max_premium_calls=args.assistant_max_premium_calls,
-                )
-            )
+            task = load_cli_assistant_task(args)
+            assistant_workspace = args.assistant_workspace or "."
             bridge = AssistantBridgeRunner(
                 load_assistant_bridge_config(args.assistant_bridge_config)
             )
@@ -291,7 +353,7 @@ def main() -> None:
                     json.dumps(
                         bridge.plan(
                             task,
-                            workspace=args.assistant_workspace,
+                            workspace=assistant_workspace,
                             local_provider_override=args.assistant_local_provider,
                             external_evidence=external_evidence,
                             include_diff=args.assistant_include_diff,
@@ -308,7 +370,7 @@ def main() -> None:
                 raise
             authority_receipt = bridge.inspect_route(
                 task,
-                workspace=args.assistant_workspace,
+                workspace=assistant_workspace,
                 local_provider_override=args.assistant_local_provider,
                 external_evidence=external_evidence,
                 include_diff=args.assistant_include_diff,
@@ -329,7 +391,7 @@ def main() -> None:
             assistant_execution_started = True
             result = bridge.run(
                 task,
-                workspace=args.assistant_workspace,
+                workspace=assistant_workspace,
                 confirmation=args.assistant_confirm_receipt or "",
                 local_provider_override=args.assistant_local_provider,
                 external_evidence=external_evidence,
@@ -1330,6 +1392,41 @@ def _agent_approval_handler(
     return decide
 
 
+def _run_assistant_lifecycle_mode(
+    args: argparse.Namespace,
+    *,
+    app_config: object | None = None,
+) -> None:
+    mode = assistant_bridge_lifecycle_mode(args) or "lifecycle"
+    if app_config is None and mode == "stage":
+        try:
+            app_config = load_app_config(args.app_config)
+        except (OSError, ValueError):
+            failure = AssistantBridgeCliError(
+                mode=mode,
+                code="application_config_invalid",
+                exit_code=2,
+            )
+            print(assistant_bridge_canonical_json(failure.payload()), file=sys.stderr)
+            raise SystemExit(failure.exit_code) from None
+    try:
+        outcome = run_lifecycle_cli(args, app_config=app_config)
+    except AssistantBridgeCliError as exc:
+        print(assistant_bridge_canonical_json(exc.payload()), file=sys.stderr)
+        raise SystemExit(exc.exit_code) from None
+    except Exception:
+        failure = AssistantBridgeCliError(
+            mode=mode,
+            code="unexpected_runtime_failure",
+            exit_code=4,
+        )
+        print(assistant_bridge_canonical_json(failure.payload()), file=sys.stderr)
+        raise SystemExit(failure.exit_code) from None
+    print(assistant_bridge_canonical_json(outcome.payload))
+    if outcome.exit_code:
+        raise SystemExit(outcome.exit_code)
+
+
 def _validate_assistant_bridge_cli_mode(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -1343,6 +1440,16 @@ def _validate_assistant_bridge_cli_mode(
         "assistant_constraint",
         "assistant_max_premium_calls",
     )
+    lifecycle_cli_mode = assistant_bridge_lifecycle_mode(args)
+    if lifecycle_cli_mode is not None:
+        _validate_assistant_lifecycle_cli_mode(
+            parser,
+            args,
+            mode=lifecycle_cli_mode,
+            has_task=has_task,
+            construction_options=construction_options,
+        )
+        return
     bridge_options_active = (
         any(getattr(args, name) is not None for name in construction_options)
         or any(
@@ -1355,8 +1462,16 @@ def _validate_assistant_bridge_cli_mode(
                 "assistant_include_diff",
                 "assistant_capsule_out",
                 "assistant_bridge_execute",
+                "assistant_bridge_stage",
+                "assistant_bridge_status",
+                "assistant_bridge_resume_plan",
+                "assistant_bridge_resume",
                 "assistant_confirm_receipt",
                 "assistant_local_provider",
+                "assistant_workflow_config",
+                "assistant_idempotency_key",
+                "assistant_attestation_file",
+                "assistant_resume_plan_id",
             )
         )
         or any(
@@ -1410,15 +1525,171 @@ def _validate_assistant_bridge_cli_mode(
         "assistant_workspace",
         "json_output",
     }
-    active_conflicts = []
-    for name, value in vars(args).items():
-        if name in assistant_options:
-            continue
-        if value != parser.get_default(name):
-            active_conflicts.append(name)
+    _reject_assistant_mode_conflicts(parser, args, assistant_options)
+
+
+def _validate_assistant_lifecycle_cli_mode(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    mode: str,
+    has_task: bool,
+    construction_options: tuple[str, ...],
+) -> None:
+    if args.assistant_workflow_config is None:
+        parser.error("Lifecycle modes require --assistant-workflow-config")
+    if mode != "stage":
+        workflow_id = getattr(args, f"assistant_bridge_{mode}")
+        if (
+            not isinstance(workflow_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", workflow_id) is None
+        ):
+            parser.error("Lifecycle workflow id must be a safe identifier")
+    if mode == "stage":
+        if not has_task:
+            parser.error(
+                "--assistant-bridge-stage requires --assistant-task or --assistant-task-file"
+            )
+        if args.assistant_workspace is None:
+            parser.error("--assistant-bridge-stage requires --assistant-workspace")
+        if args.assistant_idempotency_key is None:
+            parser.error(
+                "--assistant-bridge-stage requires --assistant-idempotency-key"
+            )
+    else:
+        if has_task:
+            parser.error(
+                f"--assistant-bridge-{mode.replace('_', '-')} forbids task input"
+            )
+        if any(getattr(args, name) is not None for name in construction_options) or any(
+            (
+                args.assistant_allow_remote,
+                args.assistant_allow_remote_workspace,
+                args.assistant_deny_remote,
+            )
+        ):
+            parser.error("Task construction options require stage or legacy task mode")
+
+    if args.assistant_task_file is not None and (
+        any(getattr(args, name) is not None for name in construction_options)
+        or args.assistant_allow_remote
+        or args.assistant_allow_remote_workspace
+        or args.assistant_deny_remote
+    ):
+        parser.error(
+            "Assistant task construction options cannot override --assistant-task-file"
+        )
+
+    if args.assistant_idempotency_key is not None:
+        encoded = args.assistant_idempotency_key.encode("utf-8")
+        if not 16 <= len(encoded) <= 1024:
+            parser.error("--assistant-idempotency-key length is outside safe bounds")
+    if args.assistant_confirm_receipt is not None and (
+        not args.assistant_confirm_receipt
+        or len(args.assistant_confirm_receipt) > 4096
+        or "\x00" in args.assistant_confirm_receipt
+    ):
+        parser.error("--assistant-confirm-receipt is outside safe bounds")
+
+    common = {"assistant_workflow_config", "json_output"}
+    if mode == "stage":
+        allowed = common | {
+            "app_config",
+            "assistant_allow_remote",
+            "assistant_allow_remote_workspace",
+            "assistant_attestation_file",
+            "assistant_bridge_config",
+            "assistant_bridge_stage",
+            "assistant_capability",
+            "assistant_confirm_receipt",
+            "assistant_constraint",
+            "assistant_deny_remote",
+            "assistant_idempotency_key",
+            "assistant_include_diff",
+            "assistant_local_provider",
+            "assistant_max_premium_calls",
+            "assistant_profile",
+            "assistant_required_tool",
+            "assistant_risk",
+            "assistant_task",
+            "assistant_task_file",
+            "assistant_verification",
+            "assistant_workspace",
+        }
+        if args.assistant_attestation_file:
+            parser.error("Independent attestations are accepted only by resume-plan")
+    elif mode == "status":
+        allowed = common | {"assistant_bridge_status"}
+    elif mode == "resume_plan":
+        if args.assistant_workspace is None:
+            parser.error(
+                "--assistant-bridge-resume-plan requires --assistant-workspace"
+            )
+        if args.assistant_idempotency_key is None:
+            parser.error(
+                "--assistant-bridge-resume-plan requires --assistant-idempotency-key"
+            )
+        allowed = common | {
+            "assistant_attestation_file",
+            "assistant_bridge_config",
+            "assistant_bridge_resume_plan",
+            "assistant_idempotency_key",
+            "assistant_workspace",
+        }
+    else:
+        if args.assistant_workspace is None:
+            parser.error("--assistant-bridge-resume requires --assistant-workspace")
+        if args.assistant_resume_plan_id is None:
+            parser.error(
+                "--assistant-bridge-resume requires --assistant-resume-plan-id"
+            )
+        if re.fullmatch(r"[0-9a-f]{64}", args.assistant_resume_plan_id) is None:
+            parser.error(
+                "--assistant-resume-plan-id must be a lowercase SHA-256 digest"
+            )
+        if args.assistant_confirm_receipt is None:
+            parser.error(
+                "--assistant-bridge-resume requires --assistant-confirm-receipt"
+            )
+        allowed = common | {
+            "app_config",
+            "assistant_bridge_config",
+            "assistant_bridge_resume",
+            "assistant_confirm_receipt",
+            "assistant_resume_plan_id",
+            "assistant_workspace",
+        }
+    _reject_assistant_mode_conflicts(parser, args, allowed)
+
+
+def _reject_assistant_mode_conflicts(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    allowed: set[str],
+) -> None:
+    explicit = _explicit_argument_destinations(parser)
+    active_conflicts = [
+        name
+        for name, value in vars(args).items()
+        if name not in allowed
+        and (value != parser.get_default(name) or name in explicit)
+    ]
     if active_conflicts:
         rendered = ", ".join(f"--{name.replace('_', '-')}" for name in active_conflicts)
         parser.error(f"Assistant bridge mode cannot be combined with {rendered}")
+
+
+def _explicit_argument_destinations(
+    parser: argparse.ArgumentParser,
+) -> set[str]:
+    destinations: set[str] = set()
+    actions = parser._option_string_actions
+    for value in sys.argv[1:]:
+        option = value.split("=", 1)[0]
+        action = actions.get(option)
+        if action is not None:
+            destinations.add(action.dest)
+    return destinations
 
 
 def _validate_agent_cli_mode(
@@ -1714,6 +1985,8 @@ def _validate_assistant_bridge_authority(
     task: AssistantTaskEnvelope,
     route: str,
 ) -> None:
+    from .assistant_bridge import AssistantBridgeError
+
     execution_policy = _validate_assistant_bridge_policy_preflight(app_config)
     if execution_policy == "local_only" and route in {
         "local_then_verify",
@@ -1738,6 +2011,8 @@ def _validate_assistant_bridge_authority(
 
 def _validate_assistant_bridge_policy_preflight(app_config: object) -> str:
     """Reject process-wide bridge policy before any route preparation."""
+
+    from .assistant_bridge import AssistantBridgeError
 
     execution_policy = (
         str(
