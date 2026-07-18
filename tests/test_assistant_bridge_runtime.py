@@ -850,24 +850,43 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
             workspace.mkdir()
             displaced = root / "displaced"
             real_popen = bridge_runtime.subprocess.Popen
+            spawned: list[object] = []
 
             def swap_workspace(*args: object, **kwargs: object) -> object:
                 workspace.rename(displaced)
                 workspace.mkdir()
-                return real_popen(*args, **kwargs)
+                process = real_popen(*args, **kwargs)
+                spawned.append(process)
+                return process
 
             with patch.object(
                 bridge_runtime.subprocess,
                 "Popen",
                 side_effect=swap_workspace,
             ):
-                with self.assertRaisesRegex(ProcessLaunchError, "working directory"):
+                expected_error = (
+                    (ProcessLaunchError, ProcessCleanupError)
+                    if os.name == "nt"
+                    else ProcessLaunchError
+                )
+                with self.assertRaises(expected_error) as raised:
                     execute_process(
                         resolve_executable(sys.executable),
                         ("-c", "import time; time.sleep(30)"),
                         cwd=workspace,
                         timeout_seconds=2.0,
                     )
+
+            if isinstance(raised.exception, ProcessLaunchError):
+                self.assertIn("working directory", str(raised.exception))
+            else:
+                self.assertIsInstance(raised.exception.__cause__, ProcessLaunchError)
+                self.assertIn("working directory", str(raised.exception.__cause__))
+                self.assertTrue(raised.exception.details["attempted"])
+                self.assertFalse(raised.exception.details["verified"])
+
+            self.assertEqual(len(spawned), 1)
+            self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
 
     @staticmethod
     def _write_executable(path: Path, marker: str) -> None:
