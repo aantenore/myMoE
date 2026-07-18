@@ -11,6 +11,11 @@ from local_moe.assistant_bridge_runtime import runtime_capabilities
 REQUIRED_MINOR_SERIES = {
     "detect-secrets": (1, 5),
     "psutil": (7, 2),
+    "rfc8785": (0, 1),
+}
+REQUIRED_MAJOR_RANGES = {
+    "cryptography": (46, 48),
+    "platformdirs": (4, 5),
 }
 
 
@@ -57,12 +62,33 @@ def validate_optional_dependencies() -> dict[str, str]:
                 f"the installed version is {value}."
             )
         versions[distribution] = value
+    for distribution, (minimum, maximum) in REQUIRED_MAJOR_RANGES.items():
+        try:
+            value = metadata.version(distribution)
+            import_module(distribution.replace("-", "_"))
+        except (ImportError, metadata.PackageNotFoundError) as exc:
+            raise SystemExit(
+                f"The assistant-bridge extra is incomplete: {distribution} is missing."
+            ) from exc
+        major = _major_minor(value)[0]
+        if not minimum <= major < maximum:
+            raise SystemExit(
+                f"The assistant-bridge extra requires {distribution} "
+                f">={minimum},<{maximum}; the installed version is {value}."
+            )
+        versions[distribution] = value
     return versions
 
 
 def validate_installed_project_metadata() -> None:
     requirements = metadata.requires("local-moe-orchestrator") or []
-    expected = ("detect-secrets", "psutil")
+    expected = (
+        "cryptography",
+        "detect-secrets",
+        "platformdirs",
+        "psutil",
+        "rfc8785",
+    )
     for dependency in expected:
         matches = [
             requirement
@@ -92,6 +118,12 @@ def _metadata_range_is_supported(dependency: str, requirement: str) -> bool:
         return ">=7.2" in requirement and any(
             upper_bound in requirement for upper_bound in ("<7.3", "<8")
         )
+    if dependency == "cryptography":
+        return ">=46" in requirement and "<48" in requirement
+    if dependency == "platformdirs":
+        return ">=4.3" in requirement and "<5" in requirement
+    if dependency == "rfc8785":
+        return ">=0.1.4" in requirement and "<0.2" in requirement
     return False
 
 
