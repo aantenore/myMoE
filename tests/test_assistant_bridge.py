@@ -49,9 +49,7 @@ EXTERNAL_SPEC_SHA256 = (
 
 class AssistantBridgeContractTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_assistant_bridge_config(
-            ROOT / "configs" / "assistant-bridge.json"
-        )
+        self.config = _load_test_assistant_bridge_config()
 
     def test_workspace_synthetic_git_identity_is_configurable(self) -> None:
         self.assertEqual(
@@ -2895,26 +2893,38 @@ def _git_workspace():
 
 def _initialize_git(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Antonio Antenore"],
+        cwd=root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "ant_ant95@hotmail.it"],
+        cwd=root,
+        check=True,
+    )
     (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
     (root / ".gitignore").write_text(
         "invocations.jsonl\nprocess-probe.log\nruntime/\ncapsule.json\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tracked.txt", ".gitignore"], cwd=root, check=True)
-    env = dict(os.environ)
-    env.update(
-        {
-            "GIT_AUTHOR_NAME": "Antonio Antenore",
-            "GIT_AUTHOR_EMAIL": "ant_ant95@hotmail.it",
-            "GIT_COMMITTER_NAME": "Antonio Antenore",
-            "GIT_COMMITTER_EMAIL": "ant_ant95@hotmail.it",
-        }
-    )
     subprocess.run(
         ["git", "commit", "-q", "-m", "test fixture"],
         cwd=root,
-        env=env,
         check=True,
+    )
+
+
+def _load_test_assistant_bridge_config():
+    config = load_assistant_bridge_config(
+        ROOT / "configs" / "assistant-bridge.json"
+    )
+    executable = str(Path(sys.executable).resolve(strict=True))
+    return replace(
+        config,
+        local=replace(config.local, executable=executable),
+        premium=replace(config.premium, executable=executable),
     )
 
 

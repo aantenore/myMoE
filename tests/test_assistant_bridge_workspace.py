@@ -2211,14 +2211,12 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
 
 def _initialize_repo(root: Path) -> None:
     _git(root, "init", "-q")
+    _git(root, "config", "user.name", "Antonio Antenore")
+    _git(root, "config", "user.email", "ant_ant95@hotmail.it")
     (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
     _git(root, "add", "tracked.txt")
     _git(
         root,
-        "-c",
-        "user.name=Antonio Antenore",
-        "-c",
-        "user.email=ant_ant95@hotmail.it",
         "commit",
         "-q",
         "-m",
