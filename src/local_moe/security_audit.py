@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .app_config import app_config_payload
+from .execution_scope import ExecutionScopeGuard
 from .extensions import ExtensionRegistry, audit_extension_registry, load_extension_registry
 
 SECURITY_AUDIT_PREFIX = "mymoe-security-audit"
@@ -127,6 +128,7 @@ def render_security_audit_markdown(report: dict[str, Any]) -> str:
         f"- Failed checks: `{summary.get('failed', 0)}`",
         f"- App mode: `{app.get('mode', 'unknown')}`",
         f"- Remote model endpoints: `{models.get('remote_count', 0)}`",
+        f"- Scope-blocked model endpoints: `{models.get('blocked_count', 0)}`",
         f"- MCP env values configured: `{mcp.get('env_var_count', 0)}`",
         f"- Cron write-risk jobs enabled: `{cron.get('enabled_write_risk_count', 0)}`",
         f"- Enabled write-risk tools: `{tools.get('enabled_write_risk_count', 0)}`",
@@ -247,6 +249,9 @@ def _model_endpoint_summary(config: object) -> dict[str, Any]:
     endpoints = []
     remote_count = 0
     local_count = 0
+    allowed_count = 0
+    blocked_count = 0
+    guard = ExecutionScopeGuard(getattr(config, "execution_policy", None))
     for expert in getattr(config, "experts", ()):
         base_url = getattr(expert, "base_url", None)
         provider = str(getattr(expert, "provider", ""))
@@ -257,6 +262,12 @@ def _model_endpoint_summary(config: object) -> dict[str, Any]:
             local_count += 1
         elif base_url:
             remote_count += 1
+        target = expert.execution_target
+        eligibility = guard.evaluate(target)
+        if eligibility.allowed:
+            allowed_count += 1
+        else:
+            blocked_count += 1
         endpoints.append(
             {
                 "expert_id": str(getattr(expert, "id", "")),
@@ -264,12 +275,24 @@ def _model_endpoint_summary(config: object) -> dict[str, Any]:
                 "has_base_url": bool(base_url),
                 "host": host,
                 "local": local,
+                "execution_allowed": eligibility.allowed,
+                "execution_scope": (
+                    eligibility.scope.value if eligibility.scope is not None else None
+                ),
+                "execution_transport": (
+                    eligibility.transport.value
+                    if eligibility.transport is not None
+                    else None
+                ),
+                "reason_code": eligibility.reason_code,
             }
         )
     return {
         "expert_count": len(getattr(config, "experts", ())),
         "local_count": local_count,
         "remote_count": remote_count,
+        "allowed_count": allowed_count,
+        "blocked_count": blocked_count,
         "endpoints": endpoints,
     }
 
@@ -305,7 +328,15 @@ def _check_external_policy(external_communication_policy: str) -> dict[str, Any]
 
 
 def _check_model_endpoints(summary: dict[str, Any]) -> dict[str, Any]:
+    blocked_count = int(summary.get("blocked_count", 0))
     remote_count = int(summary.get("remote_count", 0))
+    if blocked_count:
+        return _check(
+            "model_endpoints",
+            "warn",
+            f"{blocked_count} configured model endpoint(s) are blocked by the execution policy.",
+            severity="required",
+        )
     if remote_count == 0:
         return _check("model_endpoints", "pass", "Configured model endpoints are local or provider-managed.")
     return _check("model_endpoints", "warn", f"{remote_count} configured model endpoint(s) are remote.", severity="required")

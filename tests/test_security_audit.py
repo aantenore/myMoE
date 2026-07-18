@@ -27,6 +27,7 @@ class SecurityAuditTests(unittest.TestCase):
         self.assertEqual(report["summary"]["failed"], 0)
         self.assertEqual(report["mcp"]["env_var_count"], 0)
         self.assertEqual(report["model_endpoints"]["remote_count"], 0)
+        self.assertEqual(report["model_endpoints"]["blocked_count"], 0)
         self.assertIn("environment variable names and values", " ".join(report["privacy"]["excludes"]))
 
     def test_warns_without_leaking_mcp_env_names_or_values(self) -> None:
@@ -125,6 +126,11 @@ class SecurityAuditTests(unittest.TestCase):
         self.assertEqual(report["mcp"]["env_var_count"], 1)
         self.assertEqual(report["mcp"]["servers"][0]["env_count"], 1)
         self.assertEqual(report["model_endpoints"]["remote_count"], 1)
+        self.assertEqual(report["model_endpoints"]["blocked_count"], 1)
+        self.assertEqual(
+            report["model_endpoints"]["endpoints"][0]["reason_code"],
+            "scope_blocked",
+        )
         self.assertNotIn("MCP_SECRET_TOKEN", serialized)
         self.assertNotIn("super-secret", serialized)
         self.assertNotIn("token@example.com", serialized)
