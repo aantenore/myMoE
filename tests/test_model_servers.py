@@ -86,6 +86,54 @@ class ModelServerManagerTests(unittest.TestCase):
         self.assertEqual(specs[0].log_path.endswith("model-1.log"), True)
         self.assertIn("llama-server", specs[0].command[0])
 
+    def test_scope_blocked_server_is_not_probed_or_started(self) -> None:
+        config = parse_config(
+            {
+                "routing": {"top_k": 1},
+                "experts": [
+                    {
+                        "id": "remote",
+                        "provider": "openai_compatible",
+                        "model": "remote-model",
+                        "role": "general",
+                        "base_url": "https://models.example.test/v1",
+                        "execution": {
+                            "scope": "paid_remote",
+                            "transport": "gateway",
+                        },
+                    }
+                ],
+                "rules": [],
+            }
+        )
+        probes = 0
+        starts = 0
+
+        def probe(_url: str) -> bool:
+            nonlocal probes
+            probes += 1
+            return True
+
+        def start(_command: tuple[str, ...], _log_path: Path) -> _FakeProcess:
+            nonlocal starts
+            starts += 1
+            return _FakeProcess(pid=9999)
+
+        manager = ModelServerManager.from_config(
+            config,
+            reachability_checker=probe,
+            process_factory=start,
+        )
+
+        status = manager.status()
+        action = manager.start(confirm=True)
+
+        self.assertEqual(status["servers"][0]["status"], "scope_blocked")
+        self.assertEqual(action.status, "scope_blocked")
+        self.assertFalse(action.ok)
+        self.assertEqual(probes, 0)
+        self.assertEqual(starts, 0)
+
     def test_reads_sanitized_model_server_log_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "model-1.log"

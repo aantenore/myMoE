@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .bootstrap import RuntimePlan, build_runtime_plan, endpoint_is_reachable
 from .config import MoEConfig
+from .execution_scope import ExecutionScopeGuard
 
 
 ReachabilityChecker = Callable[[str], bool]
@@ -22,6 +23,8 @@ class ModelServerSpec:
     base_url: str
     command: tuple[str, ...]
     log_path: str
+    execution_allowed: bool = True
+    execution_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,10 +91,16 @@ class ModelServerManager:
         work_dir: str | Path = "work/runtime",
         reachability_checker: ReachabilityChecker | None = None,
         process_factory: ProcessFactory | None = None,
+        execution_guard: ExecutionScopeGuard | None = None,
     ) -> "ModelServerManager":
         plan = build_runtime_plan(config, preferred_backends)
         return cls(
-            build_model_server_specs(config, plan, work_dir=work_dir),
+            build_model_server_specs(
+                config,
+                plan,
+                work_dir=work_dir,
+                execution_guard=execution_guard,
+            ),
             reachability_checker=reachability_checker,
             process_factory=process_factory,
         )
@@ -145,6 +154,16 @@ class ModelServerManager:
 
         results: list[ModelServerStatus] = []
         for spec in selected:
+            if not spec.execution_allowed:
+                results.append(
+                    self._status_for_spec(
+                        spec,
+                        status_override="scope_blocked",
+                        message=spec.execution_reason
+                        or "Model endpoint is outside the execution policy.",
+                    )
+                )
+                continue
             current = self._processes.get(spec.expert_id)
             if current is not None and _process_running(current):
                 results.append(self._status_for_spec(spec, message="Model server is already managed."))
@@ -162,10 +181,21 @@ class ModelServerManager:
             self._processes[spec.expert_id] = process
             results.append(self._status_for_spec(spec, message="Model server started."))
 
-        status = "started" if any(item.status == "managed_running" for item in results) else "skipped"
+        all_scope_blocked = bool(results) and all(
+            item.status == "scope_blocked" for item in results
+        )
+        status = (
+            "scope_blocked"
+            if all_scope_blocked
+            else (
+                "started"
+                if any(item.status == "managed_running" for item in results)
+                else "skipped"
+            )
+        )
         return ModelServerAction(
             status=status,
-            ok=True,
+            ok=not all_scope_blocked,
             confirmed=True,
             only_first=only_first,
             results=tuple(results),
@@ -213,7 +243,14 @@ class ModelServerManager:
         process = self._processes.get(spec.expert_id)
         managed_running = process is not None and _process_running(process)
         pid = int(getattr(process, "pid", 0)) if managed_running else None
-        endpoint_reachable = bool(spec.base_url and self._reachability_checker(spec.base_url))
+        endpoint_reachable = bool(
+            spec.execution_allowed
+            and spec.base_url
+            and self._reachability_checker(spec.base_url)
+        )
+        if not spec.execution_allowed:
+            status_override = status_override or "scope_blocked"
+            message = message or spec.execution_reason
         status = status_override or _server_status(managed_running, endpoint_reachable)
         return ModelServerStatus(
             expert_id=spec.expert_id,
@@ -235,12 +272,15 @@ def build_model_server_specs(
     plan: RuntimePlan,
     *,
     work_dir: str | Path,
+    execution_guard: ExecutionScopeGuard | None = None,
 ) -> tuple[ModelServerSpec, ...]:
     work = Path(work_dir)
+    guard = execution_guard or ExecutionScopeGuard(config.execution_policy)
     experts = tuple(expert for expert in config.experts if expert.provider == "openai_compatible")
     specs: list[ModelServerSpec] = []
     for index, expert in enumerate(experts):
         command = plan.model_commands[index] if index < len(plan.model_commands) else ()
+        eligibility = guard.evaluate(expert.execution_target)
         specs.append(
             ModelServerSpec(
                 expert_id=expert.id,
@@ -248,6 +288,8 @@ def build_model_server_specs(
                 base_url=expert.base_url or _base_url_from_command(command),
                 command=command,
                 log_path=str(work / f"model-{index + 1}.log"),
+                execution_allowed=eligibility.allowed,
+                execution_reason=eligibility.detail,
             )
         )
     return tuple(specs)
