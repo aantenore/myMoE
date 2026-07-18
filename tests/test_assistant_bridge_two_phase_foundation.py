@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import closing
 from dataclasses import replace
 import errno
 import json
@@ -1117,7 +1118,10 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             ):
                 root = Path(temporary)
                 store, binding, applying = _applying_workflow(root)
-                with sqlite3.connect(store.path) as connection:
+                with (
+                    closing(sqlite3.connect(store.path)) as connection,
+                    connection,
+                ):
                     if tamper == "binding":
                         connection.execute(
                             "UPDATE resume_confirmations SET binding_sha256 = ? "
@@ -1139,7 +1143,10 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                         result_sha256=DIGEST_C,
                         now=114,
                     )
-                with sqlite3.connect(store.path) as connection:
+                with (
+                    closing(sqlite3.connect(store.path)) as connection,
+                    connection,
+                ):
                     row = connection.execute(
                         "SELECT status, result_sha256 FROM workflows "
                         "WHERE workflow_id = ?",
@@ -1316,7 +1323,10 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 workspace_root_sha256=DIGEST_E,
                 now=100,
             )
-            with sqlite3.connect(store.path) as connection:
+            with (
+                closing(sqlite3.connect(store.path)) as connection,
+                connection,
+            ):
                 connection.execute(
                     "UPDATE workflows SET binding_sha256 = ? WHERE workflow_id = ?",
                     (DIGEST_A, binding.workflow_id),

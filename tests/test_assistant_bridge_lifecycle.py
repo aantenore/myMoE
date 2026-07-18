@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import hashlib
 import json
 import os
@@ -625,7 +625,10 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
             fixture = _Fixture(Path(temporary))
             fixture.lifecycle(_CandidateGenerator(fixture.source))
             state = load_two_phase_state_config(fixture.config_path)
-            with sqlite3.connect(state.database_path) as connection:
+            with (
+                closing(sqlite3.connect(state.database_path)) as connection,
+                connection,
+            ):
                 connection.execute("DROP TABLE workflow_events")
 
             with self.assertRaises(TwoPhaseStatusError) as caught:
@@ -647,7 +650,10 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
                 now=100,
             )
             state = load_two_phase_state_config(fixture.config_path)
-            with sqlite3.connect(state.database_path) as connection:
+            with (
+                closing(sqlite3.connect(state.database_path)) as connection,
+                connection,
+            ):
                 connection.execute("PRAGMA journal_mode = DELETE")
                 connection.execute(
                     "UPDATE workflows SET status = 'applied', "
