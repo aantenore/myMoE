@@ -1830,6 +1830,13 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
         "config_path": config_path,
         "requires_model": True,
         "routing": _routing_payload(config.routing),
+        "execution": {
+            "max_scope": config.execution_policy.max_scope.value,
+            "allowed_scopes": [
+                scope.value for scope in config.execution_policy.allowed_scopes
+            ],
+            "allow_scope_widening": config.execution_policy.allow_scope_widening,
+        },
         "experts": [
             {
                 "id": expert.id,
@@ -1839,6 +1846,18 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
                 "base_url": expert.base_url,
                 "weight": expert.weight,
                 "runtime_backend": str(expert.params.get("runtime_backend", "provider_default")),
+                "execution": {
+                    "scope": (
+                        expert.execution.scope.value
+                        if expert.execution.scope is not None
+                        else None
+                    ),
+                    "transport": (
+                        expert.execution.transport.value
+                        if expert.execution.transport is not None
+                        else None
+                    ),
+                },
             }
             for expert in config.experts
         ],

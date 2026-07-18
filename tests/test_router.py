@@ -12,6 +12,8 @@ class RouterTests(unittest.TestCase):
         router = RuleRouter(config)
         decision = router.route("Write Python code and tests for a class.")
         self.assertEqual(decision.selected[0].expert_id, "coder")
+        self.assertEqual(decision.selected[0].execution_scope, "device_only")
+        self.assertEqual(decision.selected[0].execution_transport, "direct_local")
 
     def test_routes_architecture_prompt_to_architect(self) -> None:
         config = load_config("tests/fixtures/moe.synthetic.json")

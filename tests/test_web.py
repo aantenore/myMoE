@@ -43,6 +43,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(config["routing"]["strategy"], "rules")
         self.assertIn("semantic", config["routing"])
         self.assertIn("distilled", config["routing"])
+        self.assertEqual(config["execution"]["max_scope"], "device_only")
+        self.assertEqual(config["experts"][0]["execution"]["scope"], "device_only")
         self.assertIn("[general:synthetic-general]", result["content"])
         self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
         self.assertIn("context", result)

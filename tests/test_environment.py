@@ -28,6 +28,11 @@ class EnvironmentReportTests(unittest.TestCase):
         self.assertIn("storage", report)
         self.assertEqual(report["storage"]["schema_version"], "1.0")
         self.assertEqual(report["runtime"]["expert_count"], 3)
+        self.assertEqual(report["runtime"]["execution"]["max_scope"], "device_only")
+        self.assertEqual(
+            report["runtime"]["experts"][0]["execution_transport"],
+            "direct_local",
+        )
         self.assertIn("chat transcripts", report["privacy"]["excludes"])
         serialized = str(report).lower()
         self.assertNotIn("api_key", serialized)

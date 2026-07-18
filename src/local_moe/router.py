@@ -19,6 +19,8 @@ class ExpertScore:
     expert_id: str
     score: float
     matched_keywords: tuple[str, ...]
+    execution_scope: str = ""
+    execution_transport: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,16 @@ class RuleRouter:
                     expert_id=expert_id,
                     score=score,
                     matched_keywords=tuple(matched_by_expert[expert_id]),
+                    execution_scope=(
+                        eligibility[expert_id].scope.value
+                        if eligibility[expert_id].scope is not None
+                        else ""
+                    ),
+                    execution_transport=(
+                        eligibility[expert_id].transport.value
+                        if eligibility[expert_id].transport is not None
+                        else ""
+                    ),
                 )
                 for expert_id, score in scores.items()
             ),

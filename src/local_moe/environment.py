@@ -104,6 +104,13 @@ def build_environment_report(
                 "distilled_enabled": config.routing.distilled.enabled,
                 "distilled_artifact_path": config.routing.distilled.artifact_path,
             },
+            "execution": {
+                "max_scope": config.execution_policy.max_scope.value,
+                "allowed_scopes": [
+                    scope.value for scope in config.execution_policy.allowed_scopes
+                ],
+                "allow_scope_widening": config.execution_policy.allow_scope_widening,
+            },
             "expert_count": len(config.experts),
             "experts": [_expert_payload(expert) for expert in config.experts],
         },
@@ -250,6 +257,14 @@ def _expert_payload(expert: object) -> dict[str, Any]:
         "timeout_seconds": expert.timeout_seconds,
         "safe_params": safe_params,
         "safe_param_keys": sorted(safe_params),
+        "execution_scope": (
+            expert.execution.scope.value if expert.execution.scope is not None else None
+        ),
+        "execution_transport": (
+            expert.execution.transport.value
+            if expert.execution.transport is not None
+            else None
+        ),
     }
 
 
