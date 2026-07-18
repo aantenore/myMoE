@@ -89,7 +89,7 @@ _GIT_EXECUTION_POLICY = ProcessExecutionPolicy(
 )
 _TRUSTED_DIFF_ATTRIBUTES = (
     b"** diff -text -filter -ident -working-tree-encoding "
-    b"whitespace=trailing-space,space-before-tab\n"
+    b"whitespace=trailing-space,space-before-tab,cr-at-eol\n"
 )
 
 

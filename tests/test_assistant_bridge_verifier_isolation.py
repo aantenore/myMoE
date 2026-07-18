@@ -302,18 +302,20 @@ class VerifierIsolationTests(unittest.TestCase):
 
     def test_trusted_git_builtin_checks_delta_against_baseline_head(self) -> None:
         cases = (
-            ("tracked-clean", "tracked.txt", "changed cleanly\n", True),
+            ("tracked-clean", "tracked.txt", b"changed cleanly\n", True),
+            ("tracked-crlf-clean", "tracked.txt", b"changed cleanly\r\n", True),
             (
                 "tracked-trailing-whitespace",
                 "tracked.txt",
-                "changed with trailing whitespace \n",
+                b"changed with trailing whitespace \n",
                 False,
             ),
-            ("added-clean", "added.txt", "added cleanly\n", True),
+            ("added-clean", "added.txt", b"added cleanly\n", True),
+            ("added-crlf-clean", "added.txt", b"added cleanly\r\n", True),
             (
                 "added-trailing-whitespace",
                 "added.txt",
-                "added with trailing whitespace \n",
+                b"added with trailing whitespace \n",
                 False,
             ),
         )
@@ -324,10 +326,7 @@ class VerifierIsolationTests(unittest.TestCase):
                 policy = WorkspaceScopePolicy()
                 source_snapshot = snapshot_workspace(root, policy)
                 with materialize_workspace(source_snapshot, policy) as candidate:
-                    (candidate.root / relative).write_text(
-                        content,
-                        encoding="utf-8",
-                    )
+                    (candidate.root / relative).write_bytes(content)
                     final_snapshot = snapshot_workspace(candidate.root, policy)
                     candidate_files = candidate.snapshot()
                     changes = build_changeset(
@@ -372,9 +371,7 @@ class VerifierIsolationTests(unittest.TestCase):
                             cwd=disposable,
                             capture_output=True,
                         ).returncode == 0
-                        worktree_content = (disposable / relative).read_text(
-                            encoding="utf-8"
-                        )
+                        worktree_content = (disposable / relative).read_bytes()
                         evidence = assistant_bridge._run_bound_verifier(
                             plan,
                             task=assistant_bridge.build_assistant_task(
