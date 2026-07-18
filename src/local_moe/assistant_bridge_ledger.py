@@ -481,10 +481,15 @@ class BridgeStateLedger:
                 # PermissionError instead of FileExistsError.  Keep the
                 # acquisition fail-closed, but give that transient collision
                 # the same bounded retry window as ordinary contention.
-                retryable_contention = (
-                    lock.is_dir()
-                    or (_IS_WINDOWS and isinstance(exc, PermissionError))
+                retryable_contention = _IS_WINDOWS and isinstance(
+                    exc,
+                    PermissionError,
                 )
+                if not retryable_contention:
+                    try:
+                        retryable_contention = lock.is_dir()
+                    except OSError:
+                        retryable_contention = False
                 if retryable_contention and time.monotonic() < deadline:
                     time.sleep(0.02)
                     continue

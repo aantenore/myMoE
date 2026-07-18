@@ -545,6 +545,43 @@ class AssistantBridgeLedgerTests(unittest.TestCase):
             self.assertEqual(attempts, 1)
             self.assertFalse(path.exists())
 
+    def test_lock_probe_error_is_redacted_and_remains_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            ledger = BridgeStateLedger(path, namespace="test")
+            lock = ledger.path.with_suffix(ledger.path.suffix + ".lock")
+            original_mkdir = Path.mkdir
+            original_is_dir = Path.is_dir
+
+            def fail_lock_mkdir(
+                path_value: Path,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                if path_value == lock:
+                    raise OSError("sensitive mkdir diagnostic")
+                original_mkdir(path_value, *args, **kwargs)  # type: ignore[arg-type]
+
+            def fail_lock_probe(path_value: Path) -> bool:
+                if path_value == lock:
+                    raise PermissionError("sensitive stat diagnostic")
+                return original_is_dir(path_value)
+
+            with (
+                patch("local_moe.assistant_bridge_ledger._IS_WINDOWS", False),
+                patch.object(Path, "mkdir", new=fail_lock_mkdir),
+                patch.object(Path, "is_dir", new=fail_lock_probe),
+                self.assertRaisesRegex(
+                    BridgeLedgerError,
+                    "lock could not be acquired",
+                ) as raised,
+            ):
+                ledger.consume_budget(DIGEST_A, 1)
+
+            self.assertNotIn("sensitive mkdir diagnostic", str(raised.exception))
+            self.assertNotIn("sensitive stat diagnostic", str(raised.exception))
+            self.assertFalse(path.exists())
+
     def test_symlinked_ledger_or_parent_is_rejected(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlinks are unavailable")
