@@ -47,6 +47,22 @@ class _SimulatedTransactionCrash(RuntimeError):
 _SAFE_TRANSACTION_ID = re.compile(r"^[a-f0-9]{32,64}$")
 _SAFE_BACKUP_NAME = re.compile(r"^[0-9]{8}\.bin$")
 _SAFE_QUARANTINE_NAME = re.compile(r"^\.mymoe-before-[a-f0-9]{32,64}-[0-9]{8}$")
+_SAFE_ROLLBACK_NAME = re.compile(r"^\.mymoe-rollback-[a-f0-9]{32,64}-[0-9]{8}$")
+_SAFE_RESTORE_NAME = re.compile(r"^\.mymoe-restore-[a-f0-9]{32,64}-[0-9]{8}$")
+_ROLLBACK_PHASES = (
+    "pending",
+    "detach_intent",
+    "detached",
+    "restore_intent",
+    "restored",
+    "restore_unlink_intent",
+    "restore_unlinked",
+    "rollback_unlink_intent",
+    "rollback_unlinked",
+    "quarantine_unlink_intent",
+    "quarantine_unlinked",
+    "complete",
+)
 _SECURE_OPEN_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_CLOEXEC", 0)
@@ -676,6 +692,7 @@ def apply_changeset(
     transaction_id: str,
     lock_ttl_seconds: float = 120.0,
     _fault_after_mutation: int | None = None,
+    _fault_after_commit: bool = False,
     _test_hook_after_detach: Callable[[Path], None] | None = None,
 ) -> WorkspaceSnapshot:
     _validate_transaction_id(transaction_id)
@@ -705,11 +722,14 @@ def apply_changeset(
             "staged": None,
             "staged_sha256": None,
             "quarantine": None,
+            "rollback": f".mymoe-rollback-{transaction_id}-{index:08d}",
+            "restore": f".mymoe-restore-{transaction_id}-{index:08d}",
+            "rollback_phase": "pending",
             "created_directories": [],
             "installed_identity": None,
             "status": "pending",
         }
-        for item in changes
+        for index, item in enumerate(changes)
     ]
     journal_payload: dict[str, object] = {
         "schema_version": "1.0",
@@ -797,13 +817,20 @@ def apply_changeset(
             )
         journal_payload["status"] = "committed"
         _write_journal(journal, journal_payload)
+        if _fault_after_commit:
+            raise _SimulatedTransactionCrash("simulated crash after commit journal")
         _durable_rmtree(transaction, state)
         return result
     except _SimulatedTransactionCrash:
         raise
     except Exception as original:
         try:
-            _rollback_from_journal(source, journal_payload, backup_dir)
+            _rollback_from_journal(
+                source,
+                journal_payload,
+                backup_dir,
+                journal=journal,
+            )
             journal_payload["status"] = "rolled_back"
             _write_journal(journal, journal_payload)
         except (OSError, WorkspaceSecurityError) as recovery_error:
@@ -826,6 +853,8 @@ def recover_workspace_transaction(
     lock_ttl_seconds: float = 120.0,
     expected_source_fingerprint: str | None = None,
     retain_recovered_journal: bool = False,
+    fallback_workspace_policy: WorkspaceScopePolicy | None = None,
+    _fault_after_rollback_step: str | None = None,
 ) -> None:
     _validate_transaction_id(transaction_id)
     if not isinstance(retain_recovered_journal, bool):
@@ -834,6 +863,11 @@ def recover_workspace_transaction(
         raise WorkspaceSecurityError(
             "Retained workspace recovery requires a source binding."
         )
+    if fallback_workspace_policy is not None and not isinstance(
+        fallback_workspace_policy,
+        WorkspaceScopePolicy,
+    ):
+        raise WorkspaceSecurityError("Workspace recovery fallback policy is invalid.")
     state = _trusted_root(state_dir, label="Workspace state")
     source = _trusted_root(source_root, label="Source workspace")
     transaction = state / f"transaction-{transaction_id}"
@@ -859,9 +893,20 @@ def recover_workspace_transaction(
                 raise WorkspaceSecurityError(
                     "Workspace recovery journal source binding is invalid."
                 )
-            recovery_policy = _workspace_policy_from_recovery_journal(payload)
+            try:
+                recovery_policy = _workspace_policy_from_recovery_journal(payload)
+            except WorkspaceRecoveryPolicyUnavailable:
+                if fallback_workspace_policy is None:
+                    raise
+                recovery_policy = fallback_workspace_policy
         if payload.get("status") != "recovered":
-            _rollback_from_journal(source, payload, transaction / "backups")
+            _rollback_from_journal(
+                source,
+                payload,
+                transaction / "backups",
+                journal=journal,
+                _fault_after_step=_fault_after_rollback_step,
+            )
         if recovery_policy is not None:
             restored = snapshot_workspace(source, recovery_policy)
             if restored.fingerprint != expected_source_fingerprint:
@@ -1370,11 +1415,19 @@ def _rollback_from_journal(
     root: Path,
     payload: dict[str, object],
     backup_dir: Path,
+    *,
+    journal: Path,
+    _fault_after_step: str | None = None,
 ) -> None:
     raw_changes = payload.get("changes")
     if not isinstance(raw_changes, list):
         raise WorkspaceSecurityError("Workspace recovery journal is malformed.")
-    for raw in reversed(raw_changes):
+    transaction_id = payload.get("transaction_id")
+    if not isinstance(transaction_id, str):
+        raise WorkspaceSecurityError("Workspace recovery transaction is malformed.")
+    _validate_transaction_id(transaction_id)
+    for index in reversed(range(len(raw_changes))):
+        raw = raw_changes[index]
         if not isinstance(raw, dict):
             raise WorkspaceSecurityError("Workspace recovery record is malformed.")
         status_value = raw.get("status")
@@ -1384,72 +1437,399 @@ def _rollback_from_journal(
             raise WorkspaceSecurityError("Workspace recovery status is invalid.")
         change = _change_from_payload(raw)
         target = root / change.path
-        if _entry_matches(target, change.before):
-            _remove_matching_quarantine(target, change.before, raw.get("quarantine"))
-            _rollback_created_directories(root, raw.get("created_directories"))
-            raw["status"] = "rolled_back"
-            continue
+        rollback = _journal_rollback(
+            target,
+            raw,
+            transaction_id=transaction_id,
+            index=index,
+        )
+        restore = _journal_restore(
+            target,
+            raw,
+            transaction_id=transaction_id,
+            index=index,
+        )
+        if raw.get("rollback_phase") is None:
+            raw["rollback_phase"] = "pending"
+        _rollback_phase(raw)
+        _write_journal(journal, payload)
         quarantine = _journal_quarantine(target, raw.get("quarantine"))
         if quarantine is not None and not _entry_matches(quarantine, change.before):
             raise WorkspaceSecurityError(
                 "Workspace recovery quarantine does not match the recorded value."
             )
-        rollback_detached: Path | None = None
-        if _entry_matches(target, change.after):
-            if change.after is not None and change.after.kind != "missing":
-                installed_identity = _recorded_file_identity(
-                    raw.get("installed_identity")
+        before_exists = change.before is not None and change.before.kind != "missing"
+        after_exists = change.after is not None and change.after.kind != "missing"
+        installed_identity = (
+            _recorded_file_identity(raw.get("installed_identity"))
+            if after_exists
+            else None
+        )
+        target_is_before = _entry_matches(target, change.before)
+        target_is_after = _entry_matches(target, change.after)
+        if (
+            after_exists
+            and installed_identity is None
+            and (
+                target_is_after or _entry_exists(rollback) or status_value == "applied"
+            )
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace recovery installed identity is unavailable."
+            )
+        if _entry_exists(rollback):
+            _assert_owned_rollback(rollback, change.after, installed_identity)
+        if after_exists and target_is_after:
+            if _entry_exists(rollback):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery rollback path is already occupied."
                 )
-                if (
-                    installed_identity is None
-                    or _regular_file_identity(target) != installed_identity
-                ):
-                    raise WorkspaceSecurityError(
-                        "Workspace recovery cannot prove ownership of the installed value."
-                    )
-                rollback_detached = target.with_name(f".mymoe-rollback-{uuid4().hex}")
-                _rename_no_replace(target, rollback_detached)
-                if not _entry_matches(rollback_detached, change.after):
-                    _restore_quarantine_no_replace(rollback_detached, target)
-                    raise WorkspaceSecurityError(
-                        "Workspace recovery lost compare-and-swap ownership."
-                    )
-        elif not (not _entry_exists(target) and quarantine is not None):
+            if _rollback_phase_index(raw) >= _rollback_phase_number("detached"):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery target regressed after detachment."
+                )
+            _advance_rollback_phase(
+                raw,
+                "detach_intent",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+            if _regular_file_identity(target) != installed_identity:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery cannot prove ownership of the installed value."
+                )
+            _rename_no_replace(target, rollback)
+            _raise_rollback_fault(_fault_after_step, "detach_action")
+            _assert_owned_rollback(rollback, change.after, installed_identity)
+            _advance_rollback_phase(
+                raw,
+                "detached",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+        elif after_exists and _entry_exists(rollback):
+            if _entry_exists(target) and not target_is_before:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery found a concurrent target value."
+                )
+            _advance_rollback_phase(
+                raw,
+                "detached",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+        elif (
+            after_exists
+            and not before_exists
+            and target_is_before
+            and installed_identity is not None
+            and _rollback_phase_index(raw)
+            < _rollback_phase_number("rollback_unlink_intent")
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace recovery lost ownership of the installed value."
+            )
+        elif not target_is_before and _entry_exists(target):
             raise WorkspaceSecurityError(
                 "Workspace recovery found a value matching neither before nor after."
             )
-        backup_name = raw.get("backup")
-        if backup_name is None:
-            if change.before is not None and change.before.kind != "missing":
-                raise WorkspaceSecurityError(
-                    "Workspace recovery backup is missing for an existing value."
-                )
-        elif (
-            isinstance(backup_name, str)
-            and _SAFE_BACKUP_NAME.fullmatch(backup_name)
-            and change.before is not None
-            and change.before.kind != "missing"
+        if (
+            before_exists
+            and not target_is_before
+            and _rollback_phase_index(raw) >= _rollback_phase_number("restored")
         ):
-            backup = backup_dir / backup_name
-            data, backup_metadata = _read_regular_path_nofollow(
-                backup, change.before.size
+            raise WorkspaceSecurityError(
+                "Workspace recovery target regressed after restoration."
             )
-            if _sha256_bytes(data) != raw.get("backup_sha256"):
+
+        restore_data: bytes | None = None
+        if before_exists and not target_is_before:
+            assert change.before is not None
+            restore_data = _read_recovery_backup(
+                raw,
+                backup_dir=backup_dir,
+                before=change.before,
+            )
+        elif not before_exists and _entry_exists(restore):
+            raise WorkspaceSecurityError(
+                "Workspace recovery restore path is unexpected."
+            )
+        if not _entry_matches(target, change.before):
+            if _entry_exists(target):
                 raise WorkspaceSecurityError(
-                    "Workspace recovery backup digest mismatch."
+                    "Workspace recovery target is occupied before restoration."
                 )
-            if stat.S_IMODE(backup_metadata.st_mode) != change.before.mode:
-                raise WorkspaceSecurityError("Workspace recovery backup mode mismatch.")
-            _install_bytes_no_replace(data, target, change.before.mode)
+            if not before_exists:
+                _advance_rollback_phase(
+                    raw,
+                    "restored",
+                    payload=payload,
+                    journal=journal,
+                    fault_after_step=_fault_after_step,
+                )
+            else:
+                assert change.before is not None
+                assert restore_data is not None
+                _advance_rollback_phase(
+                    raw,
+                    "restore_intent",
+                    payload=payload,
+                    journal=journal,
+                    fault_after_step=_fault_after_step,
+                )
+                if not _entry_exists(restore):
+                    _durable_write_new(
+                        restore,
+                        restore_data,
+                        change.before.mode,
+                    )
+                    _raise_rollback_fault(
+                        _fault_after_step,
+                        "restore_prepare_action",
+                    )
+                _assert_current_entry(restore, change.before)
+                try:
+                    os.link(restore, target)
+                except FileExistsError as exc:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery target changed during restoration."
+                    ) from exc
+                _fsync_directory(target.parent)
+                _raise_rollback_fault(_fault_after_step, "restore_action")
+                _assert_current_entry(target, change.before)
+                _advance_rollback_phase(
+                    raw,
+                    "restored",
+                    payload=payload,
+                    journal=journal,
+                    fault_after_step=_fault_after_step,
+                )
         else:
-            raise WorkspaceSecurityError("Workspace recovery backup is malformed.")
+            _advance_rollback_phase(
+                raw,
+                "restored",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
         _assert_current_entry(target, change.before)
-        for detached in (rollback_detached, quarantine):
-            if detached is not None:
-                detached.unlink(missing_ok=True)
-                _fsync_directory(detached.parent)
+
+        if _entry_exists(restore):
+            if not before_exists:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery restore path is unexpected."
+                )
+            assert change.before is not None
+            _assert_current_entry(restore, change.before)
+            if _rollback_phase_index(raw) >= _rollback_phase_number("restore_unlinked"):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery restore path reappeared after cleanup."
+                )
+            _advance_rollback_phase(
+                raw,
+                "restore_unlink_intent",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+            restore.unlink()
+            _fsync_directory(restore.parent)
+            _raise_rollback_fault(_fault_after_step, "restore_unlink_action")
+        _advance_rollback_phase(
+            raw,
+            "restore_unlinked",
+            payload=payload,
+            journal=journal,
+            fault_after_step=_fault_after_step,
+        )
+
+        if _entry_exists(rollback):
+            if _rollback_phase_index(raw) >= _rollback_phase_number(
+                "rollback_unlinked"
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery rollback path reappeared after cleanup."
+                )
+            _assert_owned_rollback(rollback, change.after, installed_identity)
+            _advance_rollback_phase(
+                raw,
+                "rollback_unlink_intent",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+            rollback.unlink()
+            _fsync_directory(rollback.parent)
+            _raise_rollback_fault(_fault_after_step, "rollback_unlink_action")
+        _advance_rollback_phase(
+            raw,
+            "rollback_unlinked",
+            payload=payload,
+            journal=journal,
+            fault_after_step=_fault_after_step,
+        )
+
+        quarantine = _journal_quarantine(target, raw.get("quarantine"))
+        if quarantine is not None:
+            if _rollback_phase_index(raw) >= _rollback_phase_number(
+                "quarantine_unlinked"
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery quarantine reappeared after cleanup."
+                )
+            if not _entry_matches(quarantine, change.before):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery quarantine does not match the recorded value."
+                )
+            _advance_rollback_phase(
+                raw,
+                "quarantine_unlink_intent",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+            quarantine.unlink()
+            _fsync_directory(quarantine.parent)
+            _raise_rollback_fault(_fault_after_step, "quarantine_unlink_action")
+        _advance_rollback_phase(
+            raw,
+            "quarantine_unlinked",
+            payload=payload,
+            journal=journal,
+            fault_after_step=_fault_after_step,
+        )
         _rollback_created_directories(root, raw.get("created_directories"))
         raw["status"] = "rolled_back"
+        raw["rollback_phase"] = "complete"
+        _write_journal(journal, payload)
+        _raise_rollback_fault(_fault_after_step, "record_rolled_back")
+
+
+def _journal_rollback(
+    target: Path,
+    raw: dict[str, object],
+    *,
+    transaction_id: str,
+    index: int,
+) -> Path:
+    expected = f".mymoe-rollback-{transaction_id}-{index:08d}"
+    raw_name = raw.get("rollback")
+    if raw_name is None:
+        raw["rollback"] = expected
+        raw_name = expected
+    if (
+        not isinstance(raw_name, str)
+        or raw_name != expected
+        or _SAFE_ROLLBACK_NAME.fullmatch(raw_name) is None
+    ):
+        raise WorkspaceSecurityError("Workspace recovery rollback path is malformed.")
+    return target.with_name(raw_name)
+
+
+def _journal_restore(
+    target: Path,
+    raw: dict[str, object],
+    *,
+    transaction_id: str,
+    index: int,
+) -> Path:
+    expected = f".mymoe-restore-{transaction_id}-{index:08d}"
+    raw_name = raw.get("restore")
+    if raw_name is None:
+        raw["restore"] = expected
+        raw_name = expected
+    if (
+        not isinstance(raw_name, str)
+        or raw_name != expected
+        or _SAFE_RESTORE_NAME.fullmatch(raw_name) is None
+    ):
+        raise WorkspaceSecurityError("Workspace recovery restore path is malformed.")
+    return target.with_name(raw_name)
+
+
+def _read_recovery_backup(
+    raw: dict[str, object],
+    *,
+    backup_dir: Path,
+    before: WorkspaceFile,
+) -> bytes:
+    backup_name = raw.get("backup")
+    if (
+        not isinstance(backup_name, str)
+        or _SAFE_BACKUP_NAME.fullmatch(backup_name) is None
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace recovery backup is missing or malformed."
+        )
+    backup = backup_dir / backup_name
+    data, backup_metadata = _read_regular_path_nofollow(backup, before.size)
+    if _sha256_bytes(data) != raw.get("backup_sha256"):
+        raise WorkspaceSecurityError("Workspace recovery backup digest mismatch.")
+    if stat.S_IMODE(backup_metadata.st_mode) != before.mode:
+        raise WorkspaceSecurityError("Workspace recovery backup mode mismatch.")
+    return data
+
+
+def _rollback_phase(raw: dict[str, object]) -> str:
+    phase = raw.get("rollback_phase", "pending")
+    if not isinstance(phase, str) or phase not in _ROLLBACK_PHASES:
+        raise WorkspaceSecurityError("Workspace recovery rollback phase is invalid.")
+    return phase
+
+
+def _rollback_phase_number(phase: str) -> int:
+    try:
+        return _ROLLBACK_PHASES.index(phase)
+    except ValueError as exc:
+        raise WorkspaceSecurityError(
+            "Workspace recovery rollback phase is invalid."
+        ) from exc
+
+
+def _rollback_phase_index(raw: dict[str, object]) -> int:
+    return _rollback_phase_number(_rollback_phase(raw))
+
+
+def _advance_rollback_phase(
+    raw: dict[str, object],
+    phase: str,
+    *,
+    payload: dict[str, object],
+    journal: Path,
+    fault_after_step: str | None,
+) -> None:
+    desired = _rollback_phase_number(phase)
+    current = _rollback_phase_index(raw)
+    if desired <= current:
+        return
+    raw["rollback_phase"] = phase
+    _write_journal(journal, payload)
+    _raise_rollback_fault(fault_after_step, phase)
+
+
+def _raise_rollback_fault(fault_after_step: str | None, step: str) -> None:
+    if fault_after_step == step:
+        raise _SimulatedTransactionCrash(f"simulated rollback crash after {step}")
+
+
+def _assert_owned_rollback(
+    rollback: Path,
+    expected: WorkspaceFile | None,
+    installed_identity: dict[str, int] | None,
+) -> None:
+    if (
+        expected is None
+        or expected.kind == "missing"
+        or installed_identity is None
+        or not _entry_matches(rollback, expected)
+        or _regular_file_identity(rollback) != installed_identity
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace recovery rollback path lost transaction ownership."
+        )
 
 
 def _journal_quarantine(target: Path, raw_name: object) -> Path | None:
@@ -1976,6 +2356,7 @@ def _validate_journal(payload: object, transaction_id: str) -> None:
         "recovery_required",
         "rolled_back",
         "recovered",
+        "committed",
     }:
         raise WorkspaceSecurityError("Workspace recovery journal status is invalid.")
 

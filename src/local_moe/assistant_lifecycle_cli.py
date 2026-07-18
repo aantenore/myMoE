@@ -309,6 +309,7 @@ def _run_resume(
     from .assistant_bridge_two_phase import TwoPhaseConfirmationNotReadyError
     from .assistant_bridge_two_phase_recovery import (
         TwoPhaseApplyingRecoveryError,
+        TwoPhaseApplyingRecoveryPolicyRequired,
         TwoPhaseApplyingRecoveryUnavailable,
     )
     from .assistant_bridge_two_phase_status import (
@@ -319,6 +320,21 @@ def _run_resume(
 
     try:
         recovered = _recover_applying_if_needed(args)
+    except TwoPhaseApplyingRecoveryPolicyRequired:
+        try:
+            recovered = _recover_applying_with_current_policy(args)
+        except TwoPhaseApplyingRecoveryError as exc:
+            raise AssistantBridgeCliError(
+                mode="resume",
+                code="resume_recovery_failed",
+                exit_code=EXIT_RUNTIME,
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise AssistantBridgeCliError(
+                mode="resume",
+                code="workflow_config_invalid",
+                exit_code=EXIT_INVOCATION,
+            ) from exc
     except TwoPhaseApplyingRecoveryUnavailable:
         recovered = None
     except TwoPhaseApplyingRecoveryError as exc:
@@ -537,6 +553,50 @@ def _recover_applying_if_needed(args: Any) -> Any | None:
     return build_two_phase_applying_recovery(state).recover_if_applying(
         args.assistant_bridge_resume,
         workspace=args.assistant_workspace,
+    )
+
+
+def _recover_applying_with_current_policy(args: Any) -> Any | None:
+    from .assistant_bridge import (
+        AssistantBridgeRunner,
+        load_assistant_bridge_config,
+    )
+    from .assistant_bridge_lifecycle import (
+        _resolve_disjoint_state_paths,
+        _resolve_existing_directory,
+        effective_lifecycle_config_sha256,
+    )
+    from .assistant_bridge_two_phase_config import (
+        load_two_phase_lifecycle_config,
+    )
+    from .assistant_bridge_two_phase_recovery import (
+        build_two_phase_applying_recovery,
+    )
+
+    runner = AssistantBridgeRunner(
+        load_assistant_bridge_config(args.assistant_bridge_config)
+    )
+    generator = runner.candidate_generator()
+    config = load_two_phase_lifecycle_config(args.assistant_workflow_config)
+    workspace = _resolve_existing_directory(
+        args.assistant_workspace,
+        "Governed workspace",
+    )
+    _resolve_disjoint_state_paths(
+        workspace,
+        database=config.state.database_path,
+        cas=config.state.cas_path,
+        transactions=config.state.transaction_state_dir,
+    )
+    effective_config_sha256 = effective_lifecycle_config_sha256(
+        config,
+        generator.configuration_sha256,
+    )
+    return build_two_phase_applying_recovery(config.state).recover_if_applying(
+        args.assistant_bridge_resume,
+        workspace=workspace,
+        fallback_workspace_policy=runner.config.workspace.scope,
+        expected_config_sha256=effective_config_sha256,
     )
 
 

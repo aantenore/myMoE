@@ -16,6 +16,7 @@ from .assistant_bridge_workflow_store import (
 )
 from .assistant_bridge_workspace import (
     WorkspaceRecoveryPolicyUnavailable,
+    WorkspaceScopePolicy,
     WorkspaceSecurityError,
     finalize_recovered_workspace_transaction,
     recover_workspace_transaction,
@@ -28,6 +29,10 @@ class TwoPhaseApplyingRecoveryError(ValueError):
 
 class TwoPhaseApplyingRecoveryUnavailable(TwoPhaseApplyingRecoveryError):
     """Signals that no initialized applying state exists to recover."""
+
+
+class TwoPhaseApplyingRecoveryPolicyRequired(TwoPhaseApplyingRecoveryUnavailable):
+    """Signals that an older journal needs its original configured policy."""
 
 
 class TwoPhaseApplyingRecovery:
@@ -55,7 +60,25 @@ class TwoPhaseApplyingRecovery:
         *,
         workspace: str | Path,
         now: float | None = None,
+        fallback_workspace_policy: WorkspaceScopePolicy | None = None,
+        expected_config_sha256: str | None = None,
     ) -> ResumeResult | None:
+        if (fallback_workspace_policy is None) != (expected_config_sha256 is None):
+            raise TwoPhaseApplyingRecoveryError(
+                "Applying recovery fallback binding is incomplete."
+            )
+        if fallback_workspace_policy is not None and (
+            not isinstance(fallback_workspace_policy, WorkspaceScopePolicy)
+            or not isinstance(expected_config_sha256, str)
+            or len(expected_config_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in expected_config_sha256
+            )
+        ):
+            raise TwoPhaseApplyingRecoveryError(
+                "Applying recovery fallback binding is invalid."
+            )
         try:
             record = self.store.read_applying_recovery(workflow_id, now=now)
             if record is None:
@@ -97,6 +120,13 @@ class TwoPhaseApplyingRecovery:
                 raise TwoPhaseApplyingRecoveryError(
                     "Applying recovery targets another workspace root."
                 )
+            if (
+                expected_config_sha256 is not None
+                and record.binding.config_sha256 != expected_config_sha256
+            ):
+                raise TwoPhaseApplyingRecoveryError(
+                    "Applying recovery configuration binding changed."
+                )
             recover_workspace_transaction(
                 state_dir=self.transaction_state_dir,
                 transaction_id=transaction_id,
@@ -104,6 +134,7 @@ class TwoPhaseApplyingRecovery:
                 lock_ttl_seconds=self.transaction_lock_ttl_seconds,
                 expected_source_fingerprint=record.binding.source_fingerprint,
                 retain_recovered_journal=True,
+                fallback_workspace_policy=fallback_workspace_policy,
             )
             recovered, _ = self.store.reset_applying_after_recovery(
                 workflow_id,
@@ -123,7 +154,7 @@ class TwoPhaseApplyingRecovery:
         except WorkflowNotFoundError:
             return None
         except WorkspaceRecoveryPolicyUnavailable as exc:
-            raise TwoPhaseApplyingRecoveryUnavailable(
+            raise TwoPhaseApplyingRecoveryPolicyRequired(
                 "Applying recovery needs the current lifecycle configuration."
             ) from exc
         except TwoPhaseApplyingRecoveryError:

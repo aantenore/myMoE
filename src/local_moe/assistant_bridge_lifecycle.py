@@ -90,6 +90,22 @@ class CandidateGenerator(Protocol[TRequest]):
     ) -> ContextManager[GeneratedCandidate]: ...
 
 
+def effective_lifecycle_config_sha256(
+    config: TwoPhaseLifecycleConfig,
+    candidate_generator_config_sha256: str,
+) -> str:
+    generator_sha256 = require_sha256(
+        candidate_generator_config_sha256,
+        "candidate generator configuration_sha256",
+    )
+    return canonical_sha256(
+        {
+            "candidateGeneratorConfigSha256": generator_sha256,
+            "twoPhaseConfigSha256": config.effective_sha256,
+        }
+    )
+
+
 class TwoPhaseLifecycle(Generic[TRequest]):
     """Compose candidate generation with durable stage/resume services."""
 
@@ -110,11 +126,9 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         self.config = config
         self._governed_workspace = governed_workspace
         self._generator_configuration_sha256 = generator_sha256
-        self.effective_config_sha256 = canonical_sha256(
-            {
-                "candidateGeneratorConfigSha256": generator_sha256,
-                "twoPhaseConfigSha256": config.effective_sha256,
-            }
+        self.effective_config_sha256 = effective_lifecycle_config_sha256(
+            config,
+            generator_sha256,
         )
 
     def stage(

@@ -37,6 +37,7 @@ from local_moe.assistant_bridge_two_phase_contracts import AttestationCheck
 from local_moe.assistant_bridge_workspace import (
     WorkspaceScopePolicy,
     apply_changeset as real_apply_changeset,
+    recover_workspace_transaction as real_recover_workspace_transaction,
 )
 from tests.test_assistant_bridge_lifecycle import _CandidateGenerator, _Fixture
 
@@ -320,6 +321,42 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
         self.assertEqual(not_ready.exception.exit_code, 3)
         self.assertEqual(not_ready.exception.code, "confirmation_not_ready")
         self.assertEqual(conflict.exception.exit_code, 4)
+
+    def test_resume_policy_required_recovers_before_live_status(self) -> None:
+        from local_moe.assistant_bridge_two_phase_recovery import (
+            TwoPhaseApplyingRecoveryPolicyRequired,
+        )
+
+        recovered = Mock(
+            status="ready",
+            code="recovered_confirmation_required",
+        )
+        recovered.payload.return_value = {
+            "mode": "assistant_bridge_resume",
+            "status": "ready",
+            "code": "recovered_confirmation_required",
+        }
+        with (
+            patch(
+                "local_moe.assistant_lifecycle_cli._recover_applying_if_needed",
+                side_effect=TwoPhaseApplyingRecoveryPolicyRequired(
+                    "configured policy required"
+                ),
+            ),
+            patch(
+                "local_moe.assistant_lifecycle_cli._recover_applying_with_current_policy",
+                return_value=recovered,
+            ) as policy_recovery,
+            patch(
+                "local_moe.assistant_lifecycle_cli._replay_applied_if_needed",
+                side_effect=AssertionError("live status must be skipped"),
+            ),
+        ):
+            outcome = run_lifecycle_cli(_resume_args())
+
+        policy_recovery.assert_called_once()
+        self.assertEqual(outcome.exit_code, 3)
+        self.assertEqual(outcome.payload["code"], "recovered_confirmation_required")
 
     def test_invalid_stage_app_config_is_redacted_exit_two(self) -> None:
         error_output = StringIO()
@@ -636,48 +673,100 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
             self.assertTrue(transaction.exists())
 
     def test_applying_recovery_falls_back_for_journal_without_policy(self) -> None:
+        from local_moe.assistant_bridge_two_phase_recovery import (
+            TwoPhaseApplyingRecoveryError,
+            TwoPhaseApplyingRecoveryPolicyRequired,
+            build_two_phase_applying_recovery,
+        )
+
         with tempfile.TemporaryDirectory() as temporary:
-            fixture, lifecycle, receipt, plan, _, transaction = (
-                _prepare_applying_workflow(Path(temporary))
+            fixture, lifecycle, receipt, _, _, transaction = _prepare_applying_workflow(
+                Path(temporary)
             )
             journal = transaction / "journal.json"
             payload = json.loads(journal.read_text(encoding="utf-8"))
             payload.pop("workspace_policy")
             journal.write_text(json.dumps(payload), encoding="utf-8")
-            applying = lifecycle.status(receipt.workflow_id)
-            args = _resume_args(
-                workflow_id=receipt.workflow_id,
-                plan_id=plan.plan_id,
-                confirmation=plan.confirmation_id,
+            shutil.rmtree(lifecycle.config.state.cas_path)
+            recovery = build_two_phase_applying_recovery(lifecycle.config.state)
+
+            with self.assertRaises(TwoPhaseApplyingRecoveryPolicyRequired):
+                recovery.recover_if_applying(
+                    receipt.workflow_id,
+                    workspace=fixture.source,
+                )
+            with self.assertRaises(TwoPhaseApplyingRecoveryError):
+                recovery.recover_if_applying(
+                    receipt.workflow_id,
+                    workspace=fixture.source,
+                    fallback_workspace_policy=WorkspaceScopePolicy(),
+                    expected_config_sha256="f" * 64,
+                )
+
+            result = recovery.recover_if_applying(
+                receipt.workflow_id,
+                workspace=fixture.source,
+                fallback_workspace_policy=WorkspaceScopePolicy(),
+                expected_config_sha256=lifecycle.effective_config_sha256,
             )
-            args.assistant_workflow_config = str(fixture.config_path)
-            args.assistant_workspace = str(fixture.source)
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(
+                result.code,
+                "recovered_confirmation_required",
+            )
+            self.assertEqual(
+                (fixture.source / "app.txt").read_text(encoding="utf-8"),
+                "source\n",
+            )
+            self.assertFalse(transaction.exists())
+
+    def test_configured_policy_fallback_does_not_recreate_missing_cas(self) -> None:
+        from local_moe.assistant_lifecycle_cli import (
+            _recover_applying_with_current_policy,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture, lifecycle, receipt, _, _, transaction = _prepare_applying_workflow(
+                Path(temporary)
+            )
+            journal = transaction / "journal.json"
+            payload = json.loads(journal.read_text(encoding="utf-8"))
+            payload.pop("workspace_policy")
+            journal.write_text(json.dumps(payload), encoding="utf-8")
+            shutil.rmtree(lifecycle.config.state.cas_path)
+            runner = SimpleNamespace(
+                candidate_generator=Mock(
+                    return_value=SimpleNamespace(configuration_sha256="b" * 64)
+                ),
+                config=SimpleNamespace(
+                    workspace=SimpleNamespace(scope=WorkspaceScopePolicy())
+                ),
+            )
+            args = SimpleNamespace(
+                assistant_bridge_config="bridge.json",
+                assistant_bridge_resume=receipt.workflow_id,
+                assistant_workflow_config=str(fixture.config_path),
+                assistant_workspace=str(fixture.source),
+            )
 
             with (
                 patch(
-                    "local_moe.assistant_lifecycle_cli._replay_applied_if_needed",
-                    return_value=None,
+                    "local_moe.assistant_bridge.AssistantBridgeRunner",
+                    return_value=runner,
                 ),
                 patch(
-                    "local_moe.assistant_lifecycle_cli._build_resume_lifecycle_context",
-                    return_value=(
-                        lifecycle,
-                        lifecycle.candidate_generator,
-                        str(fixture.source),
-                        lifecycle.workflow_service.config.workspace_policy,
-                        applying,
-                    ),
+                    "local_moe.assistant_bridge.load_assistant_bridge_config",
+                    return_value=object(),
                 ),
             ):
-                result = run_lifecycle_cli(
-                    args,
-                    app_config=_app_config(execution_policy="disabled"),
-                )
+                result = _recover_applying_with_current_policy(args)
 
-            self.assertEqual(
-                result.payload["code"],
-                "recovered_confirmation_required",
-            )
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result.code, "recovered_confirmation_required")
+            self.assertFalse(lifecycle.config.state.cas_path.exists())
             self.assertFalse(transaction.exists())
 
     def test_applying_recovery_rejects_unrelated_workspace_drift(self) -> None:
@@ -713,6 +802,127 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
             )
             self.assertTrue((fixture.source / "unrelated.txt").exists())
             self.assertTrue(transaction.exists())
+
+    def test_committed_journal_crash_recovers_without_cas_or_config(self) -> None:
+        from local_moe.assistant_bridge_two_phase_recovery import (
+            build_two_phase_applying_recovery,
+        )
+        from local_moe.assistant_bridge_workflow_store import SQLiteWorkflowStore
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture, lifecycle, receipt, _, transaction_id, transaction = (
+                _prepare_applying_workflow(
+                    Path(temporary),
+                    fault_after_commit=True,
+                )
+            )
+            journal = transaction / "journal.json"
+            self.assertEqual(
+                json.loads(journal.read_text(encoding="utf-8"))["status"],
+                "committed",
+            )
+            self.assertEqual(
+                (fixture.source / "app.txt").read_text(encoding="utf-8"),
+                "candidate\n",
+            )
+            shutil.rmtree(lifecycle.config.state.cas_path)
+            fixture.public_key_path.unlink()
+            fixture.config_path.unlink()
+
+            result = build_two_phase_applying_recovery(
+                lifecycle.config.state
+            ).recover_if_applying(
+                receipt.workflow_id,
+                workspace=fixture.source,
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result.code, "recovered_confirmation_required")
+            self.assertEqual(result.transaction_id, transaction_id)
+            self.assertEqual(
+                (fixture.source / "app.txt").read_text(encoding="utf-8"),
+                "source\n",
+            )
+            self.assertFalse(transaction.exists())
+            store = SQLiteWorkflowStore(
+                lifecycle.config.state.database_path,
+                timeout=lifecycle.config.state.sqlite_timeout_seconds,
+                recovery_only=True,
+            )
+            self.assertIsNone(store.read_applying_recovery(receipt.workflow_id))
+            cleanup = store.read_recovered_cleanup(receipt.workflow_id)
+            self.assertIsNotNone(cleanup)
+            assert cleanup is not None
+            recovered, recovered_transaction_id = cleanup
+            self.assertEqual(recovered.status, "ready")
+            self.assertEqual(recovered.apply_transaction_id, "")
+            self.assertEqual(recovered_transaction_id, transaction_id)
+
+    def test_rollback_journal_retries_every_persisted_boundary(self) -> None:
+        from local_moe.assistant_bridge_two_phase_recovery import (
+            build_two_phase_applying_recovery,
+        )
+
+        steps = (
+            "detach_intent",
+            "detach_action",
+            "detached",
+            "restore_intent",
+            "restore_prepare_action",
+            "restore_action",
+            "restored",
+            "restore_unlink_intent",
+            "restore_unlink_action",
+            "restore_unlinked",
+            "rollback_unlink_intent",
+            "rollback_unlink_action",
+            "rollback_unlinked",
+            "record_rolled_back",
+        )
+        for step in steps:
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as temporary:
+                fixture, lifecycle, receipt, _, _, transaction = (
+                    _prepare_applying_workflow(
+                        Path(temporary),
+                        fault_after_commit=True,
+                    )
+                )
+                state = lifecycle.config.state
+                shutil.rmtree(state.cas_path)
+                fixture.public_key_path.unlink()
+                fixture.config_path.unlink()
+
+                def crash_recovery(**kwargs: object) -> None:
+                    real_recover_workspace_transaction(
+                        **kwargs,
+                        _fault_after_rollback_step=step,
+                    )
+
+                recovery = build_two_phase_applying_recovery(state)
+                with patch(
+                    "local_moe.assistant_bridge_two_phase_recovery.recover_workspace_transaction",
+                    crash_recovery,
+                ):
+                    with self.assertRaises(RuntimeError):
+                        recovery.recover_if_applying(
+                            receipt.workflow_id,
+                            workspace=fixture.source,
+                        )
+
+                result = build_two_phase_applying_recovery(state).recover_if_applying(
+                    receipt.workflow_id,
+                    workspace=fixture.source,
+                )
+
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertEqual(result.code, "recovered_confirmation_required")
+                self.assertEqual(
+                    (fixture.source / "app.txt").read_text(encoding="utf-8"),
+                    "source\n",
+                )
+                self.assertFalse(transaction.exists())
 
     def test_applying_recovery_retries_after_db_reset_interruption(self) -> None:
         from local_moe.assistant_bridge_two_phase_recovery import (
@@ -1401,7 +1611,11 @@ def _resume_args(
     )
 
 
-def _prepare_applying_workflow(root: Path) -> tuple[object, ...]:
+def _prepare_applying_workflow(
+    root: Path,
+    *,
+    fault_after_commit: bool = False,
+) -> tuple[object, ...]:
     fixture = _Fixture(root)
     lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
     now = time.time() - 10
@@ -1441,6 +1655,8 @@ def _prepare_applying_workflow(root: Path) -> tuple[object, ...]:
     )
 
     def crash(**kwargs: object) -> object:
+        if fault_after_commit:
+            return real_apply_changeset(**kwargs, _fault_after_commit=True)
         return real_apply_changeset(**kwargs, _fault_after_mutation=0)
 
     with patch("local_moe.assistant_bridge_two_phase.apply_changeset", crash):
