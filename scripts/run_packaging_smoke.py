@@ -14,7 +14,10 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     packaging_python = _select_packaging_python(root)
     with tempfile.TemporaryDirectory(prefix="mymoe-package-") as tmp:
-        venv_dir = Path(tmp) / "venv"
+        temporary = Path(tmp)
+        venv_dir = temporary / "venv"
+        dist_dir = temporary / "dist"
+        dist_dir.mkdir()
         subprocess.run([str(packaging_python), "-m", "venv", str(venv_dir)], check=True)
         python = _venv_python(venv_dir)
         scripts_dir = _venv_scripts_dir(venv_dir)
@@ -38,16 +41,49 @@ def main() -> None:
                 str(python),
                 "-m",
                 "pip",
+                "wheel",
+                "--disable-pip-version-check",
+                "--no-build-isolation",
+                "--no-deps",
+                "--wheel-dir",
+                str(dist_dir),
+                str(root),
+            ],
+            cwd=temporary,
+            check=True,
+        )
+        wheels = sorted(dist_dir.glob("local_moe_orchestrator-*.whl"))
+        if len(wheels) != 1:
+            raise SystemExit("Packaging smoke did not produce exactly one myMoE wheel.")
+        wheel = wheels[0]
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
                 "install",
                 "--disable-pip-version-check",
                 "--no-deps",
-                "--no-build-isolation",
-                "-e",
-                str(root),
+                str(wheel),
             ],
-            cwd=root,
+            cwd=temporary,
             check=True,
         )
+        location_result = subprocess.run(
+            [
+                str(python),
+                "-c",
+                "from pathlib import Path; import local_moe; "
+                "print(Path(local_moe.__file__).resolve())",
+            ],
+            cwd=temporary,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        package_location = Path(location_result.stdout.strip())
+        if not package_location.is_relative_to(venv_dir.resolve()):
+            raise SystemExit("Packaging smoke imported local_moe outside the wheel environment.")
 
         mymoe = _console_script(scripts_dir, "mymoe")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
@@ -56,7 +92,7 @@ def main() -> None:
             [
                 str(mymoe),
                 "--config",
-                "tests/fixtures/moe.synthetic.json",
+                str(root / "tests" / "fixtures" / "moe.synthetic.json"),
                 "--prompt",
                 prompt,
                 "--json",
@@ -72,7 +108,7 @@ def main() -> None:
 
         help_result = subprocess.run(
             [str(mymoe_web), "--help"],
-            cwd=root,
+            cwd=temporary,
             check=True,
             text=True,
             capture_output=True,
@@ -80,17 +116,57 @@ def main() -> None:
         if "myMoE local web UI" not in help_result.stdout:
             raise SystemExit("mymoe-web console script did not expose the expected help output.")
 
+        web_result = subprocess.run(
+            [
+                str(python),
+                "-c",
+                _WEB_ROOT_SMOKE,
+                str(root / "tests" / "fixtures" / "moe.synthetic.json"),
+                str(root / "configs" / "app.json"),
+            ],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        if web_result.stdout.strip() != "web-root-ok":
+            raise SystemExit("Installed mymoe-web did not serve its packaged UI asset.")
+
         print(
             json.dumps(
                 {
                     "status": "passed",
                     "packaging_python": str(packaging_python),
                     "python": str(python),
+                    "wheel": wheel.name,
                     "scripts": [str(mymoe), str(mymoe_web)],
                 },
                 indent=2,
             )
         )
+
+
+_WEB_ROOT_SMOKE = """
+import sys
+from threading import Thread
+from urllib.request import urlopen
+
+from local_moe.web import build_server
+
+server = build_server(sys.argv[1], "127.0.0.1", 0, app_config_path=sys.argv[2])
+thread = Thread(target=server.serve_forever, daemon=True)
+thread.start()
+try:
+    with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5) as response:
+        body = response.read().decode("utf-8")
+        if response.status != 200 or "<title>myMoE</title>" not in body:
+            raise SystemExit("installed web root returned an unexpected response")
+finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+print("web-root-ok")
+"""
 
 
 def _select_packaging_python(root: Path) -> Path:

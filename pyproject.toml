@@ -53,5 +53,8 @@ mymoe-web = "local_moe.web:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+local_moe = ["ui/index.html"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
