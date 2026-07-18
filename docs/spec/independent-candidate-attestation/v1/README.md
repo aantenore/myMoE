@@ -156,4 +156,3 @@ not embed those artifacts in the predicate.
 statement payload. Its digests are illustrative fixtures. The contract test
 rebuilds it through the production constructor and requires exact structural
 and derivation equality.
-
