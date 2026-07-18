@@ -246,7 +246,7 @@ class TwoPhaseWorkflowService:
     ) -> ResumeResult:
         current_time = _now(now)
         record = self.status(workflow_id, now=current_time)
-        if record.status != "applied":
+        if record.status in {"staged", "attested", "ready"}:
             record = self._reverify_attestations(
                 workflow_id, now=current_time
             )
@@ -295,7 +295,7 @@ class TwoPhaseWorkflowService:
         if applying.status != "applying" and confirmation_replay:
             return _resume_result(
                 applying,
-                code="recovered_confirmation_required",
+                code=_recovery_code(applying),
                 idempotent_replay=True,
             )
         transaction_id = applying.apply_transaction_id
@@ -337,7 +337,7 @@ class TwoPhaseWorkflowService:
                 raise TwoPhaseWorkflowError(str(exc)) from exc
             return _resume_result(
                 recovered,
-                code="recovered_confirmation_required",
+                code=_recovery_code(recovered),
                 idempotent_replay=(confirmation_replay or recovery_replay),
             )
         if current.fingerprint != applying.binding.source_fingerprint:
@@ -392,7 +392,7 @@ class TwoPhaseWorkflowService:
                 )
                 return _resume_result(
                     recovered,
-                    code="recovered_confirmation_required",
+                    code=_recovery_code(recovered),
                     idempotent_replay=(confirmation_replay or recovery_replay),
                 )
             conflicted = self._conflict(
@@ -492,7 +492,7 @@ class TwoPhaseWorkflowService:
             raise TwoPhaseWorkflowError(str(exc)) from exc
         return _resume_result(
             ready,
-            code="recovered_confirmation_required",
+            code=_recovery_code(ready),
             idempotent_replay=True,
         )
 
@@ -731,6 +731,14 @@ def _resume_result(
         ),
         result_sha256=record.result_sha256 or None,
         idempotent_replay=idempotent_replay,
+    )
+
+
+def _recovery_code(record: WorkflowRecord) -> str:
+    return (
+        "recovered_expired"
+        if record.status == "expired"
+        else "recovered_confirmation_required"
     )
 
 

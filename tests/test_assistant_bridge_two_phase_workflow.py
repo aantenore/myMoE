@@ -226,6 +226,95 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(applied.status, "applied")
 
+    def test_expired_applying_journal_rolls_back_without_new_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            plan = context.service.plan_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                idempotency_key=RESUME_KEY,
+                attestation_envelopes=(context.envelope(receipt.binding),),
+                now=110,
+            )
+
+            def crash(**kwargs: object) -> object:
+                return real_apply_changeset(**kwargs, _fault_after_mutation=0)
+
+            with patch(
+                "local_moe.assistant_bridge_two_phase.apply_changeset", crash
+            ):
+                with self.assertRaises(RuntimeError):
+                    context.service.apply_resume(
+                        receipt.workflow_id,
+                        workspace=context.source,
+                        plan_id=plan.plan_id,
+                        confirmation_id=plan.confirmation_id,
+                        now=111,
+                    )
+
+            applying = context.service.status(receipt.workflow_id, now=250)
+            self.assertEqual(applying.status, "applying")
+            recovered = context.service.apply_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                now=250,
+            )
+            repeated = context.service.apply_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                now=251,
+            )
+
+            self.assertEqual(recovered.status, "expired")
+            self.assertEqual(recovered.code, "recovered_expired")
+            self.assertTrue(recovered.idempotent_replay)
+            self.assertEqual(repeated, recovered)
+            self.assertEqual((context.source / "app.txt").read_text(), "source\n")
+
+    def test_expired_applying_source_state_resets_without_reusing_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            plan = context.service.plan_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                idempotency_key=RESUME_KEY,
+                attestation_envelopes=(context.envelope(receipt.binding),),
+                now=110,
+            )
+
+            with patch(
+                "local_moe.assistant_bridge_two_phase.apply_changeset",
+                side_effect=RuntimeError("simulated pre-journal crash"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "pre-journal"):
+                    context.service.apply_resume(
+                        receipt.workflow_id,
+                        workspace=context.source,
+                        plan_id=plan.plan_id,
+                        confirmation_id=plan.confirmation_id,
+                        now=111,
+                    )
+
+            recovered = context.service.apply_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                now=250,
+            )
+
+            self.assertEqual(recovered.status, "expired")
+            self.assertEqual(recovered.code, "recovered_expired")
+            self.assertEqual((context.source / "app.txt").read_text(), "source\n")
+
     def test_consumed_confirmation_without_a_journal_requires_fresh_authority(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
@@ -309,6 +398,59 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(recovered.status, "applied")
             self.assertEqual(recovered.code, "applied_recovered")
             self.assertTrue(recovered.idempotent_replay)
+
+    def test_post_commit_crash_finalizes_and_replays_after_all_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            plan = context.service.plan_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                idempotency_key=RESUME_KEY,
+                attestation_envelopes=(context.envelope(receipt.binding),),
+                now=110,
+            )
+
+            with patch.object(
+                context.service,
+                "_finalize_applied",
+                side_effect=RuntimeError("simulated post-commit crash"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "post-commit"):
+                    context.service.apply_resume(
+                        receipt.workflow_id,
+                        workspace=context.source,
+                        plan_id=plan.plan_id,
+                        confirmation_id=plan.confirmation_id,
+                        now=111,
+                    )
+            self.assertEqual((context.source / "app.txt").read_text(), "candidate\n")
+            self.assertEqual(
+                context.service.status(receipt.workflow_id, now=250).status,
+                "applying",
+            )
+
+            finalized = context.service.apply_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                now=250,
+            )
+            replayed = context.service.apply_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                plan_id=plan.plan_id,
+                confirmation_id=plan.confirmation_id,
+                now=251,
+            )
+
+            self.assertEqual(finalized.status, "applied")
+            self.assertEqual(finalized.code, "applied_recovered")
+            self.assertTrue(finalized.idempotent_replay)
+            self.assertEqual(replayed.status, "applied")
+            self.assertEqual(replayed.code, "already_applied")
+            self.assertEqual(replayed.transaction_id, finalized.transaction_id)
 
     def test_another_workspace_root_cannot_use_a_valid_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

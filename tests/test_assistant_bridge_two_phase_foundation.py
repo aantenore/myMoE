@@ -670,6 +670,11 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 binding_sha256=plan.binding_sha256,
                 now=112,
             )
+            self.assertEqual(
+                store.get_workflow(binding.workflow_id, now=250).status,
+                "applying",
+            )
+            self.assertEqual(store.list_workflows()[0].status, "applying")
             first, first_replay = store.reset_after_recovery(
                 binding.workflow_id,
                 transaction_id=applying.apply_transaction_id,

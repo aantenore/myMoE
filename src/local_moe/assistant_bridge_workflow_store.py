@@ -354,6 +354,8 @@ class SQLiteWorkflowStore:
                 connection, workflow_id, active_at=current
             )
             self._check_clock(record, current)
+            if record.status == "applying":
+                return record
             if record.status not in {"applied", "conflicted", "failed", "expired"}:
                 if current > record.binding.expires_at:
                     self._transition(
@@ -388,6 +390,7 @@ class SQLiteWorkflowStore:
                 record = self._record(connection, row, active_at=current)
                 self._check_clock(record, current)
                 if record.status not in {
+                    "applying",
                     "applied",
                     "conflicted",
                     "failed",
@@ -943,21 +946,30 @@ class SQLiteWorkflowStore:
                 "(transaction_id, workflow_id, recovered_at) VALUES (?, ?, ?)",
                 (transaction_id, workflow_id, current),
             )
+            recovered_status = _recovered_status(record, current)
             connection.execute(
                 """
                 UPDATE workflows
-                SET status = 'ready', apply_transaction_id = NULL,
+                SET status = ?, apply_transaction_id = NULL,
                     updated_at = ?, last_wall_time = ?
                 WHERE workflow_id = ?
                 """,
-                (current, current, workflow_id),
+                (
+                    recovered_status,
+                    current,
+                    current,
+                    workflow_id,
+                ),
             )
             self._append_event(
                 connection,
                 workflow_id,
                 event_type="apply_recovered",
                 event_key=f"recovered:{transaction_id}",
-                payload={"transactionId": transaction_id},
+                payload={
+                    "transactionId": transaction_id,
+                    "status": recovered_status,
+                },
                 now=current,
             )
             return self._selected_record(
@@ -1497,6 +1509,19 @@ def _resume_transaction_id(
             "authority": "workspace-transaction/v1",
         }
     )
+
+
+def _recovered_status(record: WorkflowRecord, now: float) -> str:
+    if now > record.binding.expires_at:
+        return "expired"
+    if record.quorum_satisfied_at(now):
+        return "ready"
+    if any(
+        item.issued_at <= now <= item.expires_at
+        for item in record.attestations
+    ):
+        return "attested"
+    return "staged"
 
 
 def _validate_persisted_attestation_artifacts(
