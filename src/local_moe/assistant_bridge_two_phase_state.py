@@ -13,7 +13,12 @@ from .assistant_bridge_integrity import sha256_bytes
 
 TWO_PHASE_CONFIG_SCHEMA_VERSION = "1.0"
 _MAX_CONFIG_BYTES = 1024 * 1024
-_READ_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+_READ_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_BINARY", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
 
 
 class TwoPhaseConfigError(ValueError):

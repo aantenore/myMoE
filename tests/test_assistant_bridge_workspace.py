@@ -15,6 +15,7 @@ from unittest import mock
 from uuid import uuid4
 
 import local_moe.assistant_bridge_workspace as workspace_module
+import local_moe.assistant_bridge_process as process_module
 from local_moe.assistant_bridge_runtime import fingerprint_environment
 from local_moe.assistant_bridge_workspace import (
     GitIdentity,
@@ -35,6 +36,109 @@ from local_moe.assistant_bridge_workspace import (
 
 
 class AssistantBridgeWorkspaceTests(unittest.TestCase):
+    def test_raw_workspace_artifacts_request_binary_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "artifact.bin"
+            value = b"first\r\nsecond\nthird\x1atail\r\n"
+            real_open = os.open
+            real_binary = getattr(os, "O_BINARY", 0)
+            binary_sentinel = 1 << 29
+            seen: list[int] = []
+
+            def binary_open(
+                path: object,
+                flags: int,
+                *args: object,
+                **kwargs: object,
+            ) -> int:
+                seen.append(flags)
+                portable_flags = (flags & ~binary_sentinel) | real_binary
+                return real_open(path, portable_flags, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    workspace_module.os,
+                    "O_BINARY",
+                    binary_sentinel,
+                    create=True,
+                ),
+                mock.patch.object(
+                    workspace_module.os,
+                    "open",
+                    side_effect=binary_open,
+                ),
+                mock.patch.object(workspace_module, "_fsync_directory"),
+            ):
+                workspace_module._durable_write_new(target, value, 0o600)
+
+            self.assertEqual(target.read_bytes(), value)
+            self.assertTrue(seen)
+            self.assertTrue(all(flags & binary_sentinel for flags in seen))
+
+    def test_windows_pid_probe_never_uses_os_kill(self) -> None:
+        with (
+            mock.patch.object(process_module.os, "name", "nt"),
+            mock.patch.object(
+                process_module,
+                "_windows_process_is_alive",
+                side_effect=(False, True),
+            ) as windows_probe,
+            mock.patch.object(process_module.os, "kill") as kill,
+        ):
+            self.assertFalse(process_module.process_is_alive(999_999_999))
+            self.assertTrue(process_module.process_is_alive(os.getpid()))
+
+        self.assertEqual(windows_probe.call_count, 2)
+        kill.assert_not_called()
+
+    def test_windows_readonly_materialization_uses_the_original_write_handle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "readonly.bin"
+            value = b"first\r\nsecond\n"
+            events: list[str] = []
+            real_chmod = Path.chmod
+            real_fsync = workspace_module.os.fsync
+
+            def observed_chmod(path: Path, mode: int) -> None:
+                events.append("chmod")
+                real_chmod(path, mode)
+
+            def observed_fsync(descriptor: int) -> None:
+                events.append("fsync")
+                real_fsync(descriptor)
+
+            try:
+                with (
+                    mock.patch.object(workspace_module.os, "name", "nt"),
+                    mock.patch.object(
+                        workspace_module.os,
+                        "fchmod",
+                        None,
+                        create=True,
+                    ),
+                    mock.patch.object(Path, "chmod", new=observed_chmod),
+                    mock.patch.object(
+                        workspace_module.os,
+                        "fsync",
+                        side_effect=observed_fsync,
+                    ),
+                    mock.patch.object(workspace_module, "_fsync_directory"),
+                    mock.patch.object(
+                        workspace_module,
+                        "_windows_flush_path",
+                    ) as reopen_flush,
+                ):
+                    workspace_module._durable_write_new(target, value, 0o444)
+
+                self.assertEqual(target.read_bytes(), value)
+                reopen_flush.assert_not_called()
+                self.assertLess(events.index("chmod"), events.index("fsync"))
+            finally:
+                if target.exists():
+                    target.chmod(0o600)
+
     def test_deleted_candidate_restore_is_adopted_after_identity_crash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"
@@ -1898,17 +2002,22 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             with materialize_workspace(snapshot, policy) as materialized:
                 candidate = snapshot_materialized(materialized.root, policy)
                 changes = build_changeset(materialized.baseline_files, candidate)
-                (root / "tracked.txt").chmod(0o700)
-                with self.assertRaisesRegex(WorkspaceSecurityError, "changed"):
-                    apply_changeset(
-                        source_snapshot=snapshot,
-                        candidate_root=materialized.root,
-                        candidate_files=candidate,
-                        changes=changes,
-                        policy=policy,
-                        state_dir=Path(tmp) / "state",
-                        transaction_id=uuid4().hex,
-                    )
+                target = root / "tracked.txt"
+                target.chmod(0o444 if os.name == "nt" else 0o700)
+                try:
+                    with self.assertRaisesRegex(WorkspaceSecurityError, "changed"):
+                        apply_changeset(
+                            source_snapshot=snapshot,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=Path(tmp) / "state",
+                            transaction_id=uuid4().hex,
+                        )
+                finally:
+                    if os.name == "nt":
+                        target.chmod(0o600)
 
     def test_unicode_normalization_collision_is_rejected(self) -> None:
         with self.assertRaisesRegex(WorkspaceSecurityError, "collision"):
@@ -1986,19 +2095,21 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             backups = transaction / "backups"
             backups.mkdir(parents=True)
             (backups / "00000000.bin").write_bytes(before_data)
+            before_mode = stat.S_IMODE((backups / "00000000.bin").stat().st_mode)
+            after_mode = stat.S_IMODE(target.stat().st_mode)
             before = WorkspaceFile(
                 "tracked.txt",
                 "file",
                 hashlib.sha256(before_data).hexdigest(),
                 len(before_data),
-                0o644,
+                before_mode,
             )
             after = WorkspaceFile(
                 "tracked.txt",
                 "file",
                 hashlib.sha256(after_data).hexdigest(),
                 len(after_data),
-                0o644,
+                after_mode,
             )
             installed_identity = {
                 "device_id": int(target.stat().st_dev),
@@ -2056,19 +2167,21 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             (backups / "00000000.bin").write_bytes(before_data)
             owner = transaction / "owned-install.bin"
             owner.write_bytes(after_data)
+            before_mode = stat.S_IMODE((backups / "00000000.bin").stat().st_mode)
+            after_mode = stat.S_IMODE(target.stat().st_mode)
             before = WorkspaceFile(
                 "tracked.txt",
                 "file",
                 hashlib.sha256(before_data).hexdigest(),
                 len(before_data),
-                0o644,
+                before_mode,
             )
             after = WorkspaceFile(
                 "tracked.txt",
                 "file",
                 hashlib.sha256(after_data).hexdigest(),
                 len(after_data),
-                0o644,
+                after_mode,
             )
             journal = transaction / "journal.json"
             journal.write_text(

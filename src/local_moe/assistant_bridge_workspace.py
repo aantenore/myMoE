@@ -30,6 +30,7 @@ from .assistant_bridge_runtime import (
     execute_process,
     resolve_executable,
 )
+from .assistant_bridge_process import process_is_alive
 
 
 class WorkspaceSecurityError(ValueError):
@@ -71,6 +72,7 @@ _ROLLBACK_PHASES = (
 )
 _SECURE_OPEN_FLAGS = (
     os.O_RDONLY
+    | getattr(os, "O_BINARY", 0)
     | getattr(os, "O_CLOEXEC", 0)
     | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_NOFOLLOW", 0)
@@ -1254,15 +1256,7 @@ def _ensure_cleanup_marker(
     descriptor: int | None = None
     temp_identity: dict[str, int] | None = None
     try:
-        descriptor = os.open(
-            temp,
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
+        descriptor = _open_binary_new(temp, 0o600)
         metadata = os.fstat(descriptor)
         if _is_link_or_reparse(metadata) or not stat.S_ISREG(metadata.st_mode):
             raise WorkspaceSecurityError(
@@ -1766,15 +1760,7 @@ def _create_journaled_artifact(
     before_identity_fault: Callable[[], None],
     during_write_fault: Callable[[], None],
 ) -> dict[str, int]:
-    descriptor = os.open(
-        path,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
+    descriptor = _open_binary_new(path, 0o600)
     try:
         metadata = os.fstat(descriptor)
         if _is_link_or_reparse(metadata) or not stat.S_ISREG(metadata.st_mode):
@@ -3509,7 +3495,7 @@ def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
             pid = int(raw.get("pid", -1))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
-        if age <= ttl_seconds or _pid_is_alive(pid):
+        if age <= ttl_seconds or process_is_alive(pid):
             raise WorkspaceTransactionBusyError(
                 "Workspace transaction lock is busy."
             )
@@ -3539,18 +3525,6 @@ def _release_transaction_lock(path: Path) -> None:
         _fsync_directory(path.parent)
     except OSError:
         pass
-
-
-def _pid_is_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _entry_matches(path: Path, expected: WorkspaceFile | None) -> bool:
@@ -3831,21 +3805,36 @@ def _entry_exists(path: Path) -> bool:
 
 
 def _durable_write_new(path: Path, data: bytes, mode: int) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    descriptor = _open_binary_new(path, mode)
+    fchmod = getattr(os, "fchmod", None)
     try:
+        identity = _identity_from_metadata(os.fstat(descriptor))
         offset = 0
         while offset < len(data):
             offset += os.write(descriptor, data[offset:])
-        if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, mode)
+        if callable(fchmod):
+            fchmod(descriptor, mode)
+        else:
+            if os.name == "nt" and _regular_file_identity(path) != identity:
+                raise WorkspaceSecurityError(
+                    "Workspace file identity changed before mode application."
+                )
+            path.chmod(mode)
+            if os.name == "nt" and _regular_file_identity(path) != identity:
+                raise WorkspaceSecurityError(
+                    "Workspace file identity changed during mode application."
+                )
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    if not hasattr(os, "fchmod"):
-        path.chmod(mode)
-        if os.name == "nt":
-            _windows_flush_path(path, directory=False)
     _fsync_directory(path.parent)
+
+
+def _open_binary_new(path: Path, mode: int) -> int:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags, mode)
 
 
 def _fsync_directory(path: Path) -> None:

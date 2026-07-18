@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import hashlib
 import json
 import os
@@ -36,6 +37,7 @@ _SOURCE_FIELDS = {
 }
 _READ_FLAGS = (
     os.O_RDONLY
+    | getattr(os, "O_BINARY", 0)
     | getattr(os, "O_CLOEXEC", 0)
     | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_NOFOLLOW", 0)
@@ -175,6 +177,7 @@ class ContentAddressedStore:
             return descriptor
         temporary = target.parent / f".{descriptor.sha256}.{secrets.token_hex(16)}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_BINARY", 0)
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor_fd = -1
         try:
@@ -441,6 +444,7 @@ class ContentAddressedStore:
                         "Candidate materialization escaped its root."
                     )
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_BINARY", 0)
                 flags |= getattr(os, "O_CLOEXEC", 0) | getattr(
                     os, "O_NOFOLLOW", 0
                 )
@@ -865,7 +869,15 @@ def _write_all(descriptor: int, value: bytes) -> None:
 def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    try:
+        descriptor = os.open(path, flags)
+    except PermissionError as exc:
+        # The Windows CRT rejects directory descriptors with EACCES. File data
+        # is already fsynced and publication uses an atomic link, so only this
+        # platform-specific unsupported operation may be omitted.
+        if os.name == "nt" and exc.errno == errno.EACCES:
+            return
+        raise
     try:
         os.fsync(descriptor)
     finally:

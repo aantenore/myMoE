@@ -16,6 +16,8 @@ import time
 from typing import Callable, Iterator
 from uuid import uuid4
 
+from .assistant_bridge_process import process_is_alive
+
 
 LEDGER_SCHEMA_VERSION = "2.2"
 _LEGACY_SCHEMA_VERSIONS = frozenset({"2.0", "2.1"})
@@ -893,7 +895,7 @@ def _recover_stale_lock(
         pid = int(raw.get("pid", -1))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
-    if _pid_is_alive(pid):
+    if process_is_alive(pid):
         return False
     stale = lock.with_name(f"{lock.name}.stale-{uuid4().hex}")
     try:
@@ -901,18 +903,6 @@ def _recover_stale_lock(
         shutil.rmtree(stale)
     except OSError:
         return False
-    return True
-
-
-def _pid_is_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
     return True
 
 

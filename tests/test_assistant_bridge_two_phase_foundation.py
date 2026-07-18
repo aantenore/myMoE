@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
+import errno
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,8 @@ from local_moe.assistant_bridge_workflow_store import (
     WorkflowRecord,
     WorkflowStoreError,
 )
+from local_moe import assistant_bridge_cas as cas_module
+from local_moe import assistant_bridge_two_phase_state as two_phase_state
 from local_moe import assistant_bridge_workflow_store as workflow_store
 
 
@@ -75,6 +78,120 @@ class _DelegatingEvidenceStore:
 
 
 class TwoPhaseFoundationTests(unittest.TestCase):
+    def test_binary_artifact_descriptors_preserve_exact_bytes(self) -> None:
+        real_open = os.open
+        real_binary = getattr(os, "O_BINARY", 0)
+        value = b"first\r\nsecond\nthird\x1atail\r\nfourth\nfifth\r\n"
+        seen: list[int] = []
+
+        def binary_open(
+            path: object,
+            flags: int,
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            seen.append(flags)
+            return real_open(path, flags, *args, **kwargs)
+
+        def assert_binary_flags() -> None:
+            self.assertTrue(seen)
+            if real_binary:
+                self.assertTrue(all(flags & real_binary for flags in seen))
+            seen.clear()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                mock.patch.object(cas_module.os, "open", side_effect=binary_open),
+                mock.patch.object(cas_module, "_fsync_directory"),
+            ):
+                store = ContentAddressedStore(root / "cas")
+                descriptor = store.put_bytes(
+                    value,
+                    media_type="application/octet-stream",
+                )
+                self.assertEqual(store.get_bytes(descriptor), value)
+            assert_binary_flags()
+
+            secret = value[:32]
+            with (
+                mock.patch.object(
+                    workflow_store.os,
+                    "open",
+                    side_effect=binary_open,
+                ),
+                mock.patch.object(workflow_store, "_fsync_directory"),
+                mock.patch.object(
+                    workflow_store.os,
+                    "urandom",
+                    return_value=secret,
+                ),
+            ):
+                secret_path = root / "state.key"
+                self.assertEqual(
+                    workflow_store._load_or_create_secret(secret_path),
+                    secret,
+                )
+                self.assertEqual(
+                    workflow_store._load_existing_secret(secret_path),
+                    secret,
+                )
+            assert_binary_flags()
+
+            config = root / "config.bin"
+            config.write_bytes(value)
+            with mock.patch.object(
+                two_phase_state.os,
+                "open",
+                side_effect=binary_open,
+            ):
+                self.assertEqual(
+                    two_phase_state.read_bounded_regular_file(
+                        config,
+                        max_bytes=len(value),
+                        label="test configuration",
+                    ),
+                    value,
+                )
+            assert_binary_flags()
+
+    def test_windows_directory_fsync_skips_only_crt_eacces(self) -> None:
+        path = Path("durability-directory")
+        for module in (cas_module, workflow_store):
+            with self.subTest(module=module.__name__):
+                with (
+                    mock.patch.object(module.os, "name", "nt"),
+                    mock.patch.object(
+                        module.os,
+                        "open",
+                        side_effect=PermissionError(
+                            errno.EACCES,
+                            "directory descriptors are unsupported",
+                        ),
+                    ),
+                ):
+                    module._fsync_directory(path)
+                with (
+                    mock.patch.object(module.os, "name", "nt"),
+                    mock.patch.object(
+                        module.os,
+                        "open",
+                        side_effect=PermissionError(errno.EPERM, "denied"),
+                    ),
+                    self.assertRaises(PermissionError),
+                ):
+                    module._fsync_directory(path)
+                with (
+                    mock.patch.object(module.os, "name", "posix"),
+                    mock.patch.object(
+                        module.os,
+                        "open",
+                        side_effect=PermissionError(errno.EACCES, "denied"),
+                    ),
+                    self.assertRaises(PermissionError),
+                ):
+                    module._fsync_directory(path)
+
     def test_explicit_database_path_never_resolves_default_app_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "custom" / "workflows.sqlite3"

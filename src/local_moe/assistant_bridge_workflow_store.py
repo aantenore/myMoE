@@ -4,6 +4,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 import base64
 import binascii
+import errno
 import hashlib
 import hmac
 import json
@@ -47,6 +48,7 @@ _SECRET_BYTES = 32
 _MAX_ATTESTATION_ARTIFACT_BYTES = 8 * 1024 * 1024
 _READ_FLAGS = (
     os.O_RDONLY
+    | getattr(os, "O_BINARY", 0)
     | getattr(os, "O_CLOEXEC", 0)
     | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_NOFOLLOW", 0)
@@ -2530,6 +2532,7 @@ def _load_or_create_secret(path: Path) -> bytes:
         descriptor = os.open(path, flags)
     except FileNotFoundError:
         create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        create_flags |= getattr(os, "O_BINARY", 0)
         create_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         value = os.urandom(_SECRET_BYTES)
         try:
@@ -2662,7 +2665,15 @@ def _wall_time(value: float | None) -> float:
 def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    try:
+        descriptor = os.open(path, flags)
+    except PermissionError as exc:
+        # The Windows CRT cannot open directory descriptors for fsync. The
+        # secret itself is fsynced before this point and is created O_EXCL, so
+        # suppress only the platform's specific unsupported EACCES result.
+        if os.name == "nt" and exc.errno == errno.EACCES:
+            return
+        raise
     try:
         os.fsync(descriptor)
     finally:
