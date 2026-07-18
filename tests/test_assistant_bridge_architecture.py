@@ -78,6 +78,16 @@ SUPPORTED_FACADE_API = frozenset(
 # through the facade. Future modules may own the implementation, but the facade must
 # continue to expose the same objects until a deliberate breaking release.
 COMPATIBILITY_SEAM_REEXPORTS: dict[str, tuple[str, ...]] = {
+    "local_moe.assistant_bridge_resources": (
+        "VerifierResourceCapabilities",
+        "VerifierResourceEnforcementReport",
+        "VerifierResourceError",
+        "VerifierResourcePlan",
+        "VerifierResourcePolicy",
+        "build_verifier_resource_enforcement_report",
+        "build_verifier_resource_plan",
+        "verifier_resource_capabilities",
+    ),
     "local_moe.assistant_bridge_ledger": (
         "BridgeLedgerError",
         "BridgeStateLedger",

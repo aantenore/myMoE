@@ -233,6 +233,50 @@ one. An unsupported plan reports no active workspace, runtime, system-root, or
 temporary-storage guarantees; policy intent is not presented as a capability.
 The trusted Git builtin remains a separate fixed boundary.
 
+Command-verifier resource governance is a second boundary around that sandbox,
+not a substitute for it. The confirmed `BoundVerifierPlan` binds four distinct
+artifacts: the configured ceilings and minimum accepted strengths, the
+host-observed capability, the exact wrapper plan, and the post-run enforcement
+report. A missing required strength blocks the route before provider or verifier
+launch. The report cannot be compliant unless every configured minimum is still
+met; output truncation, observed-process cleanup, and workspace growth remain
+separate evidence instead of being relabelled as kernel controls.
+
+The backends intentionally make different claims:
+
+- macOS uses the re-attested current Python runtime as a fixed inline
+  `setrlimit` supervisor. `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE` are
+  inherited hard limits per process. They are not a tree-wide CPU quota,
+  memory ceiling, process-count ceiling, or filesystem quota.
+- Linux promotes CPU quota, memory, and task count to `kernel_hard` only when a
+  fixed, OS-owned `/usr/bin/systemd-run` can create a user cgroup-v2 scope and a
+  bounded probe reads back effective `cpu.max`, `memory.max`, and `pids.max`
+  values inside that scope. The probe must also demonstrate synchronous exit
+  status propagation. Its `XDG_RUNTIME_DIR` and optional D-Bus address are
+  explicit, privately bound launch inputs. The real scope uses
+  `KillMode=control-group`, a `RuntimeMaxSec` backstop bound to the verifier
+  timeout, `--pipe`, and `--collect`; per-process CPU time, file size, and open
+  files still come from the inline `setrlimit` supervisor. If any probe or
+  launcher attestation fails, Linux falls back to those three per-process
+  limits and reports the cgroup controls as unsupported.
+- Windows Job Object APIs are useful future building blocks, but API presence
+  alone is not an executable capability. Until a Job Object launcher adapter
+  and an independent command-verifier filesystem/network sandbox are both
+  implemented and attested, Windows reports those controls as unsupported and
+  selected command-verifier routes fail closed.
+
+Workspace-growth accounting measures regular-file bytes without following file
+or directory links; it is post-run detection, never an active quota.
+Likewise, bounded stdout/stderr capture and observed-process-tree cleanup are
+supervised runtime checks with `hard_containment=false`. Every public policy,
+capability, plan, and report therefore states
+`complete_resource_containment=false`; low-CPU orphan survival, filesystem
+quota enforcement, same-user races, and kernel/runtime defects are not hidden
+behind a stronger label. The default configuration requires only the portable
+per-process CPU-time, file-size, and descriptor limits plus post-run workspace
+growth accounting; operators can require stronger controls per resource, which
+then fail closed on hosts that cannot prove them.
+
 Python project verifiers can declare the typed `python_runner: unittest`
 contract plus safe relative `workspace_python_paths`. The bridge resolves the
 standard-library runner strictly inside declared runtime roots, binds a bounded
@@ -278,7 +322,7 @@ identity-checked, removed after every run, and cleanup failures fail closed.
 - a nonempty failure message cannot satisfy completion;
 - a failing verifier produces a bounded redacted capsule;
 - task text that resembles shell syntax remains stdin data, not an executable
-  argument;
+argument;
 - a missing Codex binary fails closed;
 - task, receipt, prompt, evidence, runtime override, and confirmation hashes are
   collision-resistant bindings;

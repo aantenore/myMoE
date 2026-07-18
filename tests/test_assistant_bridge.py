@@ -62,6 +62,66 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertEqual(evidence[0].kind, "external")
         self.assertEqual(evidence[0].verifier_spec_sha256, EXTERNAL_SPEC_SHA256)
 
+    def test_resource_policy_is_loaded_and_bound_into_command_verifier_plans(self) -> None:
+        policy = self.config.verifier_resources
+        self.assertTrue(policy.required)
+        self.assertEqual(policy.cpu_time_seconds, 900)
+        self.assertEqual(policy.memory_bytes, 2 * 1024 * 1024 * 1024)
+        self.assertEqual(policy.required_strengths["memory"], "unsupported")
+        isolation = assistant_bridge_module.verifier_isolation_capability(
+            self.config.verifier_isolation
+        )
+        if not isolation.supported:
+            self.skipTest(isolation.reason)
+
+        spec = next(
+            item for item in self.config.command_verifiers if item.kind == "command"
+        )
+        plan = assistant_bridge_module._build_verifier_plan(
+            spec,
+            workspace=ROOT,
+            runtime_policy=self.config.runtime,
+            isolation_policy=self.config.verifier_isolation,
+            resource_policy=policy,
+        )
+
+        self.assertIsNotNone(plan.resources)
+        assert plan.resources is not None
+        self.assertTrue(plan.resources.runnable)
+        self.assertEqual(plan.resources.policy, policy)
+        self.assertEqual(
+            plan.resources.wall_time_milliseconds,
+            spec.timeout_seconds * 1000,
+        )
+        self.assertFalse(plan.payload()["resources"]["complete_resource_containment"])
+
+    def test_resource_policy_rejects_unknown_and_incomplete_strength_contracts(self) -> None:
+        for mutate, message in (
+            (
+                lambda raw: raw["verification"]["resources"].__setitem__(
+                    "unknown_control", 1
+                ),
+                "Unknown verification.resources",
+            ),
+            (
+                lambda raw: raw["verification"]["resources"].__setitem__(
+                    "required_strengths", {"cpu_time": "process_hard"}
+                ),
+                "declare every resource control",
+            ),
+        ):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
+                raw = json.loads(
+                    (ROOT / "configs" / "assistant-bridge.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                mutate(raw)
+                path = Path(tmp) / "assistant-bridge.json"
+                path.write_text(json.dumps(raw), encoding="utf-8")
+                with self.assertRaisesRegex(AssistantBridgeError, message):
+                    load_assistant_bridge_config(path)
+
     def test_task_and_receipt_ids_bind_the_complete_contract(self) -> None:
         first = build_assistant_task(
             "Preserve behavior.",
@@ -703,7 +763,7 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertTrue(execute.call_args.kwargs["policy"].require_launcher_chain)
         self.assertIsNotNone(execute.call_args.kwargs["launcher_chain"])
 
-    def test_verifier_rebuilds_exact_chain_in_disposable_workspace(self) -> None:
+    def test_verifier_rebuilds_exact_resource_chain_in_disposable_workspace(self) -> None:
         capability = assistant_bridge_module.verifier_isolation_capability(
             self.config.verifier_isolation
         )
@@ -742,27 +802,25 @@ class AssistantBridgeContractTests(unittest.TestCase):
         current = execute.call_args.kwargs["launcher_chain"]
         self.assertTrue(evidence.passed)
         self.assertEqual(current.cwd, str(roots[1].resolve()))
-        self.assertIsNotNone(plan.sandbox_launcher_chain)
-        assert plan.sandbox_launcher_chain is not None
-        self.assertIsNotNone(plan.isolation)
-        assert plan.isolation is not None
+        self.assertIsNotNone(plan.resources)
+        assert plan.resources is not None
+        self.assertIsNotNone(plan.resources.launcher_chain)
+        assert plan.resources.launcher_chain is not None
         self.assertNotEqual(
             current.fingerprint,
-            plan.sandbox_launcher_chain.fingerprint,
+            plan.resources.launcher_chain.fingerprint,
         )
         self.assertEqual(
-            assistant_bridge_module._sandbox_launcher_authority_sha256(
-                current,
-                isolation=plan.isolation,
-                executable=execute.call_args.args[0],
-                workspace=roots[1],
-                output_path="",
-                environment=execute.call_args.kwargs["env"],
-                ephemeral_workspace=True,
-                ephemeral_environment_keys=("HOME", "TEMP", "TMP", "TMPDIR"),
-            ),
-            plan.sandbox_launcher_authority_sha256,
+            current.argv,
+            execute.call_args.args[1],
         )
+        self.assertEqual(
+            current.environment.sha256,
+            assistant_bridge_runtime.fingerprint_environment(
+                execute.call_args.kwargs["env"]
+            ).sha256,
+        )
+        self.assertEqual(plan.resources.wall_time_milliseconds, 10_000)
 
     def test_verifier_propagates_unverified_process_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

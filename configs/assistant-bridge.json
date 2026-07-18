@@ -106,6 +106,26 @@
       "macos_backend": "/usr/bin/sandbox-exec",
       "linux_backend": "/usr/bin/bwrap"
     },
+    "resources": {
+      "required": true,
+      "cpu_time_seconds": 900,
+      "cpu_quota_percent": 200,
+      "file_size_bytes": 67108864,
+      "open_files": 256,
+      "memory_bytes": 2147483648,
+      "processes": 256,
+      "workspace_growth_bytes": 268435456,
+      "linux_backend": "/usr/bin/systemd-run",
+      "required_strengths": {
+        "cpu_time": "process_hard",
+        "cpu_quota": "unsupported",
+        "file_size": "process_hard",
+        "open_files": "process_hard",
+        "memory": "unsupported",
+        "processes": "unsupported",
+        "workspace_growth": "post_run"
+      }
+    },
     "output_checks": [
       {
         "id": "assistant-output-nonempty",

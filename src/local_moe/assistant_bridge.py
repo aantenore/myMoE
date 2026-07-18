@@ -45,6 +45,16 @@ from .assistant_bridge_runtime import (
     runtime_capabilities,
     validate_environment_name,
 )
+from .assistant_bridge_resources import (
+    VerifierResourceCapabilities,
+    VerifierResourceEnforcementReport,
+    VerifierResourceError,
+    VerifierResourcePlan,
+    VerifierResourcePolicy,
+    build_verifier_resource_enforcement_report,
+    build_verifier_resource_plan,
+    verifier_resource_capabilities,
+)
 from .assistant_bridge_secrets import (
     ResidualAssuranceUnavailableError,
     SecretRedactionPolicy,
@@ -1132,6 +1142,7 @@ class AssistantBridgeConfig:
     independent_tools: tuple[str, ...]
     independent_risks: tuple[str, ...]
     verifier_isolation: VerifierIsolationPolicy
+    verifier_resources: VerifierResourcePolicy
     capsule: CapsulePolicy
     runtime: BridgeRuntimePolicy
     state: BridgeStatePolicy
@@ -1323,6 +1334,7 @@ class BoundVerifierPlan:
     sandbox_launcher_chain: LauncherChainIdentity | None = field(repr=False)
     sandbox_launcher_authority_sha256: str
     sandbox_launcher_artifact_sha256: tuple[str, ...]
+    resources: VerifierResourcePlan | None = field(repr=False)
     plan_sha256: str
     runtime_policy: BridgeRuntimePolicy = field(repr=False)
 
@@ -1369,6 +1381,7 @@ class BoundVerifierPlan:
             "sandbox_launcher_artifact_sha256": list(
                 self.sandbox_launcher_artifact_sha256
             ),
+            "resources": None if self.resources is None else self.resources.payload(),
             "execution_boundary": self.spec.execution_boundary,
             "network_policy": self.spec.network_policy,
             "runtime_policy": self.runtime_policy.payload(),
@@ -1713,6 +1726,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "independent_required_for",
             "isolation",
             "output_checks",
+            "resources",
         },
     )
     isolation_raw = _as_object(
@@ -1740,6 +1754,83 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             ),
         )
     except VerifierIsolationError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    resources_raw = _as_object(
+        verification_raw.get("resources", {}),
+        "verification.resources",
+    )
+    _reject_unknown(
+        "verification.resources",
+        resources_raw,
+        {
+            "cpu_quota_percent",
+            "cpu_time_seconds",
+            "file_size_bytes",
+            "linux_backend",
+            "memory_bytes",
+            "open_files",
+            "processes",
+            "required",
+            "required_strengths",
+            "workspace_growth_bytes",
+        },
+    )
+    required_strengths_raw = _as_object(
+        resources_raw.get(
+            "required_strengths",
+            dict(VerifierResourcePolicy().required_strengths),
+        ),
+        "verification.resources.required_strengths",
+    )
+    try:
+        verifier_resources = VerifierResourcePolicy(
+            required=_bool_value(
+                resources_raw.get("required", True),
+                "verification.resources.required",
+            ),
+            cpu_time_seconds=_int_value(
+                resources_raw.get("cpu_time_seconds", 900),
+                "verification.resources.cpu_time_seconds",
+            ),
+            cpu_quota_percent=_int_value(
+                resources_raw.get("cpu_quota_percent", 200),
+                "verification.resources.cpu_quota_percent",
+            ),
+            file_size_bytes=_int_value(
+                resources_raw.get("file_size_bytes", 64 * 1024 * 1024),
+                "verification.resources.file_size_bytes",
+            ),
+            open_files=_int_value(
+                resources_raw.get("open_files", 256),
+                "verification.resources.open_files",
+            ),
+            memory_bytes=_int_value(
+                resources_raw.get("memory_bytes", 2 * 1024 * 1024 * 1024),
+                "verification.resources.memory_bytes",
+            ),
+            processes=_int_value(
+                resources_raw.get("processes", 256),
+                "verification.resources.processes",
+            ),
+            workspace_growth_bytes=_int_value(
+                resources_raw.get(
+                    "workspace_growth_bytes", 256 * 1024 * 1024
+                ),
+                "verification.resources.workspace_growth_bytes",
+            ),
+            required_strengths={
+                str(name): _string_value(
+                    value,
+                    f"verification.resources.required_strengths.{name}",
+                )
+                for name, value in required_strengths_raw.items()
+            },
+            linux_backend=_string_value(
+                resources_raw.get("linux_backend", "/usr/bin/systemd-run"),
+                "verification.resources.linux_backend",
+            ),
+        )
+    except VerifierResourceError as exc:
         raise AssistantBridgeError(str(exc)) from None
     independent_raw = _as_object(
         verification_raw.get("independent_required_for", {}),
@@ -1975,6 +2066,10 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
                 "verifier_isolation_capability": verifier_isolation_capability(
                     verifier_isolation
                 ).payload(),
+                "verifier_resource_policy": verifier_resources.payload(),
+                "verifier_resource_capabilities": verifier_resource_capabilities(
+                    verifier_resources
+                ).payload(),
                 "secret_assurance": {
                     "require_residual_assurance": _bool_value(
                         secret_raw.get("require_residual_assurance", True),
@@ -2017,6 +2112,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "verification independent risks",
         ),
         verifier_isolation=verifier_isolation,
+        verifier_resources=verifier_resources,
         capsule=CapsulePolicy(
             max_chars=_int_value(
                 capsule_raw.get("max_chars", 8000), "capsule.max_chars"
@@ -3300,6 +3396,7 @@ class AssistantBridgeRunner:
                 workspace=workspace,
                 runtime_policy=self.config.runtime,
                 isolation_policy=self.config.verifier_isolation,
+                resource_policy=self.config.verifier_resources,
             )
             for spec in selected_verifiers
         )
@@ -3315,6 +3412,16 @@ class AssistantBridgeRunner:
                 receipt,
                 route="blocked",
                 rationale_code="verifier_isolation_unavailable",
+            )
+        if any(
+            plan.spec.kind == "command"
+            and (plan.resources is None or not plan.resources.runnable)
+            for plan in verifier_plans
+        ):
+            receipt = _receipt_with_route(
+                receipt,
+                route="blocked",
+                rationale_code="verifier_resource_governance_unavailable",
             )
         premium_auth: PremiumAuthAttestation | None = None
         if not two_phase_required and receipt.route in {
@@ -4690,6 +4797,7 @@ def _build_verifier_plan(
     workspace: str | Path,
     runtime_policy: BridgeRuntimePolicy,
     isolation_policy: VerifierIsolationPolicy = VerifierIsolationPolicy(),
+    resource_policy: VerifierResourcePolicy = VerifierResourcePolicy(),
     execution_environment: Mapping[str, str] | None = None,
 ) -> BoundVerifierPlan:
     root = str(Path(workspace).expanduser().resolve())
@@ -4725,6 +4833,7 @@ def _build_verifier_plan(
             sandbox_launcher_chain=None,
             sandbox_launcher_authority_sha256="",
             sandbox_launcher_artifact_sha256=(),
+            resources=None,
             plan_sha256=_sha256_text(_canonical_json(payload)),
             runtime_policy=runtime_policy,
         )
@@ -4861,6 +4970,7 @@ def _build_verifier_plan(
     sandbox_launcher_chain: LauncherChainIdentity | None = None
     sandbox_launcher_authority_sha256 = ""
     sandbox_artifacts: tuple[str, ...] = ()
+    sandbox_executable: ExecutableIdentity | None = None
     if isolation.capability.supported:
         sandbox_executable = isolation.capability.executable
         if sandbox_executable is None:
@@ -4913,6 +5023,40 @@ def _build_verifier_plan(
             workspace=root,
             ephemeral_workspace=True,
         )
+    sandbox_command_binding_sha256 = _sha256_text(
+        _canonical_json(
+            {
+                "isolation_binding_sha256": isolation.binding_sha256,
+                "sandbox_launcher_authority_sha256": (
+                    sandbox_launcher_authority_sha256
+                ),
+                "sandbox_launcher_artifact_sha256": list(sandbox_artifacts),
+            }
+        )
+    )
+    try:
+        resource_capabilities = verifier_resource_capabilities(resource_policy)
+        resources = build_verifier_resource_plan(
+            resource_policy,
+            resource_capabilities,
+            workspace=root,
+            command_executable=sandbox_executable,
+            command_argv=isolation.argv,
+            command_binding_sha256=sandbox_command_binding_sha256,
+            environment=environment,
+            sandbox_ready=bool(
+                isolation.capability.supported
+                and sandbox_executable is not None
+                and sandbox_launcher_chain is not None
+            ),
+            wall_time_seconds=spec.timeout_seconds,
+            command_companions=read_artifacts,
+            command_launcher_chain=sandbox_launcher_chain,
+        )
+    except (VerifierResourceError, OSError, ValueError):
+        raise AssistantBridgeError(
+            f"Verifier {spec.id} resource plan could not be attested."
+        ) from None
     semantic_argv = [
         "<attested-verifier-executable>",
         *(item.replace(root, "<ephemeral-workspace>") for item in argv[1:]),
@@ -4939,6 +5083,7 @@ def _build_verifier_plan(
         "isolation_binding_sha256": isolation.binding_sha256,
         "sandbox_launcher_authority_sha256": sandbox_launcher_authority_sha256,
         "sandbox_launcher_artifact_sha256": list(sandbox_artifacts),
+        "resource_binding_sha256": resources.binding_sha256,
         "runtime_capabilities": runtime_capabilities().payload(),
         "runtime_policy": runtime_policy.payload(),
     }
@@ -4956,6 +5101,7 @@ def _build_verifier_plan(
         sandbox_launcher_chain=sandbox_launcher_chain,
         sandbox_launcher_authority_sha256=sandbox_launcher_authority_sha256,
         sandbox_launcher_artifact_sha256=sandbox_artifacts,
+        resources=resources,
         plan_sha256=_sha256_text(_canonical_json(payload)),
         runtime_policy=runtime_policy,
     )
@@ -5012,11 +5158,16 @@ def _run_bound_verifier(
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} has no bound isolation plan."
         )
+    if plan.resources is None:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} has no bound resource plan."
+        )
     current = _build_verifier_plan(
         plan.spec,
         workspace=verifier_workspace,
         runtime_policy=plan.runtime_policy,
         isolation_policy=plan.isolation.policy,
+        resource_policy=plan.resources.policy,
     )
     if current.plan_sha256 != plan.plan_sha256:
         raise AssistantBridgeError(
@@ -5026,7 +5177,6 @@ def _run_bound_verifier(
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} environment no longer matches the confirmed plan."
         )
-    environment = dict(current.environment)
     if current.isolation is None or not current.isolation.capability.supported:
         return _verifier_evidence(
             plan,
@@ -5044,12 +5194,36 @@ def _run_bound_verifier(
                 ),
             },
         )
+    if current.resources is None or not current.resources.runnable:
+        return _verifier_evidence(
+            plan,
+            task=task,
+            workspace=workspace,
+            passed=False,
+            code="resource_governance_unavailable",
+            observed=0,
+            result_payload={
+                "plan_sha256": plan.plan_sha256,
+                "resources": (
+                    None
+                    if current.resources is None
+                    else current.resources.payload()
+                ),
+            },
+        )
     sandbox_executable = current.isolation.capability.executable
     sandbox_launcher_chain = current.sandbox_launcher_chain
     if sandbox_executable is None or sandbox_launcher_chain is None:
         raise AssistantBridgeError(
             f"Verifier {plan.spec.id} sandbox execution binding is incomplete."
         )
+    resource_executable = current.resources.executable
+    resource_launcher_chain = current.resources.launcher_chain
+    if resource_executable is None or resource_launcher_chain is None:
+        raise AssistantBridgeError(
+            f"Verifier {plan.spec.id} resource execution binding is incomplete."
+        )
+    environment = dict(current.resources.environment)
     internal_temp = Path(current.isolation.internal_temp)
     binding_payload = {
         "plan_sha256": plan.plan_sha256,
@@ -5076,35 +5250,23 @@ def _run_bound_verifier(
         "sandbox_launcher_artifact_sha256": list(
             current.sandbox_launcher_artifact_sha256
         ),
+        "resource_binding_sha256": current.resources.binding_sha256,
+        "resource_executable_fingerprint": resource_executable.fingerprint,
+        "resource_launcher_chain_fingerprint": resource_launcher_chain.fingerprint,
     }
+    outcome = None
     with _verifier_internal_temp(internal_temp, verifier_id=plan.spec.id):
         try:
             outcome = execute_process(
-                sandbox_executable,
-                current.isolation.argv,
+                resource_executable,
+                current.resources.argv,
                 stdin=b"",
                 cwd=verifier_workspace,
                 env=environment,
                 timeout_seconds=plan.spec.timeout_seconds,
                 policy=plan.runtime_policy.process_policy(stdin_limit_bytes=0),
-                launcher_chain=sandbox_launcher_chain,
+                launcher_chain=resource_launcher_chain,
             )
-            passed = outcome.ok
-            code = (
-                "command_passed"
-                if passed
-                else f"command_{_safe_code(outcome.code)}"
-            )
-            result_payload = {
-                **binding_payload,
-                "returncode": outcome.returncode,
-                "stdout_sha256": outcome.stdout_sha256,
-                "stdout_bytes": outcome.stdout_bytes,
-                "stderr_sha256": outcome.stderr_sha256,
-                "stderr_bytes": outcome.stderr_bytes,
-                "cleanup": outcome.cleanup.payload(),
-            }
-            observed = outcome.stdout_bytes + outcome.stderr_bytes
         except ProcessCleanupError:
             raise
         except AssistantBridgeRuntimeError:
@@ -5112,6 +5274,41 @@ def _run_bound_verifier(
             code = "runtime_attestation_failed"
             result_payload = {**binding_payload, "code": code}
             observed = 0
+    if outcome is not None:
+        try:
+            enforcement = build_verifier_resource_enforcement_report(
+                current.resources,
+                workspace=verifier_workspace,
+                stdout_bytes=outcome.stdout_bytes,
+                stderr_bytes=outcome.stderr_bytes,
+                stdout_limit_bytes=plan.runtime_policy.stdout_limit_bytes,
+                stderr_limit_bytes=plan.runtime_policy.stderr_limit_bytes,
+                stdout_truncated=outcome.stdout_truncated,
+                stderr_truncated=outcome.stderr_truncated,
+                cleanup=outcome.cleanup.payload(),
+            )
+        except (VerifierResourceError, OSError, ValueError):
+            raise AssistantBridgeError(
+                f"Verifier {plan.spec.id} resource report could not be attested."
+            ) from None
+        passed = outcome.ok and enforcement.compliant
+        if passed:
+            code = "command_passed"
+        elif outcome.ok:
+            code = "resource_policy_violated"
+        else:
+            code = f"command_{_safe_code(outcome.code)}"
+        result_payload = {
+            **binding_payload,
+            "returncode": outcome.returncode,
+            "stdout_sha256": outcome.stdout_sha256,
+            "stdout_bytes": outcome.stdout_bytes,
+            "stderr_sha256": outcome.stderr_sha256,
+            "stderr_bytes": outcome.stderr_bytes,
+            "cleanup": outcome.cleanup.payload(),
+            "resource_enforcement": enforcement.payload(),
+        }
+        observed = outcome.stdout_bytes + outcome.stderr_bytes
     return _verifier_evidence(
         plan,
         task=task,
