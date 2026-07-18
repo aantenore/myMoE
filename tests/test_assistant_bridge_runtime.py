@@ -1300,6 +1300,43 @@ class AssistantBridgeRuntimeProcessTests(unittest.TestCase):
         self.assertEqual(result.code, "io_failed")
         self.assertFalse(result.ok)
 
+    def test_late_stdout_overflow_overrides_completed_taxonomy(self) -> None:
+        def delayed_reader(
+            stream: object,
+            state: object,
+            wake: object,
+        ) -> None:
+            chunk = b""
+            if stream is not None:
+                chunk = stream.read()  # type: ignore[attr-defined]
+            time.sleep(0.08)
+            if chunk:
+                state.update(chunk)  # type: ignore[attr-defined]
+            state.finish()  # type: ignore[attr-defined]
+            wake.set()  # type: ignore[attr-defined]
+
+        with patch.object(
+            bridge_runtime,
+            "_read_pipe",
+            side_effect=delayed_reader,
+        ):
+            result = execute_process(
+                self.python,
+                ("-c", "import sys; sys.stdout.buffer.write(b'x' * 8192)"),
+                timeout_seconds=1.0,
+                policy=ProcessExecutionPolicy(
+                    stdout_limit_bytes=1024,
+                    pipe_settle_seconds=0.01,
+                ),
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.code, "stdout_limit_exceeded")
+        self.assertEqual(len(result.stdout), 1024)
+        self.assertGreater(result.stdout_bytes, 1024)
+        self.assertTrue(result.stdout_truncated)
+        self.assertFalse(result.ok)
+
     def test_partial_stdin_write_failure_is_never_completed(self) -> None:
         def fail_writer(
             stream: object,

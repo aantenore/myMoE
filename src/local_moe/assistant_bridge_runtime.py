@@ -1263,14 +1263,22 @@ def execute_process(
     assert stdout_state is not None
     assert stderr_state is not None
     assert stdin_state is not None
-    if terminal in {"completed", "nonzero_exit"} and (
-        stdout_state.failed
-        or stderr_state.failed
-        or not stdout_state.reached_eof
-        or not stderr_state.reached_eof
-        or not stdin_state.complete
-    ):
-        terminal = "io_failed"
+    if terminal in {"completed", "nonzero_exit"}:
+        # A short-lived process can exit before a contended reader observes all
+        # buffered bytes. Cleanup joins the readers, so classify their final
+        # state here as well as in the live polling loop.
+        if stdout_state.overflowed:
+            terminal = "stdout_limit_exceeded"
+        elif stderr_state.overflowed:
+            terminal = "stderr_limit_exceeded"
+        elif (
+            stdout_state.failed
+            or stderr_state.failed
+            or not stdout_state.reached_eof
+            or not stderr_state.reached_eof
+            or not stdin_state.complete
+        ):
+            terminal = "io_failed"
 
     stdout = stdout_state.snapshot()
     stderr = stderr_state.snapshot()
