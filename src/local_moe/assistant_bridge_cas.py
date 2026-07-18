@@ -32,12 +32,17 @@ _SOURCE_FIELDS = {
 _READ_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_NOFOLLOW", 0)
 )
 
 
 class ContentAddressedStoreError(ValueError):
     """Raised when immutable candidate content cannot be trusted."""
+
+
+class ContentAddressedStoreUninitializedError(ContentAddressedStoreError):
+    """Raised when a read-only CAS has not been initialized yet."""
 
 
 def _safe_relative_path(value: str) -> str:
@@ -105,12 +110,18 @@ class ContentAddressedStore:
         if not isinstance(create_if_missing, bool):
             raise ContentAddressedStoreError("CAS creation policy is invalid.")
         raw = Path(root).expanduser()
-        if raw.exists() and raw.is_symlink():
+        if raw.is_symlink():
             raise ContentAddressedStoreError("CAS root cannot be a symbolic link.")
         try:
             if create_if_missing:
                 raw.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.root = raw.resolve(strict=True)
+        except FileNotFoundError as exc:
+            if not create_if_missing:
+                raise ContentAddressedStoreUninitializedError(
+                    "CAS root is unavailable."
+                ) from exc
+            raise ContentAddressedStoreError("CAS root is unavailable.") from exc
         except OSError as exc:
             raise ContentAddressedStoreError("CAS root is unavailable.") from exc
         if not self.root.is_dir():
@@ -121,14 +132,18 @@ class ContentAddressedStore:
         elif create_if_missing:
             objects.mkdir(mode=0o700)
         else:
-            raise ContentAddressedStoreError("CAS object store is unavailable.")
+            raise ContentAddressedStoreUninitializedError(
+                "CAS object store is unavailable."
+            )
         self._objects = objects / "sha256"
         if self._objects.exists():
             self._validate_internal_directory(self._objects)
         elif create_if_missing:
             self._objects.mkdir(mode=0o700)
         else:
-            raise ContentAddressedStoreError("CAS object store is unavailable.")
+            raise ContentAddressedStoreUninitializedError(
+                "CAS object store is unavailable."
+            )
         self._validate_internal_directory(self._objects)
 
     def put_bytes(self, value: bytes, *, media_type: str) -> ArtifactDescriptor:
@@ -321,6 +336,72 @@ class ContentAddressedStore:
         self,
         manifest_descriptor: ArtifactDescriptor,
     ) -> Iterator[Path]:
+        _, _, validated_files = self._validated_candidate_descriptors(
+            manifest_descriptor,
+            expected_changeset=None,
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="mymoe-cas-candidate-"
+        ) as temporary:
+            root = Path(temporary).resolve(strict=True)
+            for raw, descriptor in validated_files:
+                path = str(raw["path"])
+                if descriptor is None:
+                    continue
+                value = self.get_bytes(descriptor)
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if not target.parent.resolve(strict=True).is_relative_to(root):
+                    raise ContentAddressedStoreError(
+                        "Candidate materialization escaped its root."
+                    )
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_CLOEXEC", 0) | getattr(
+                    os, "O_NOFOLLOW", 0
+                )
+                descriptor_fd = os.open(target, flags, int(raw["mode"]))
+                try:
+                    _write_all(descriptor_fd, value)
+                    os.fsync(descriptor_fd)
+                finally:
+                    os.close(descriptor_fd)
+            yield root
+
+    def validate_candidate_closure(
+        self,
+        manifest_descriptor: ArtifactDescriptor,
+        changeset_descriptor: ArtifactDescriptor,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Read and hash every artifact in a candidate without materializing it."""
+
+        manifest, changeset, validated_files = (
+            self._validated_candidate_descriptors(
+                manifest_descriptor,
+                expected_changeset=changeset_descriptor,
+            )
+        )
+        for _, descriptor in validated_files:
+            if descriptor is not None:
+                self.get_bytes(descriptor)
+        return manifest, changeset
+
+    def _validated_candidate_descriptors(
+        self,
+        manifest_descriptor: ArtifactDescriptor,
+        *,
+        expected_changeset: ArtifactDescriptor | None,
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+        list[tuple[dict[str, object], ArtifactDescriptor | None]],
+    ]:
+        if (
+            manifest_descriptor.media_type
+            != "application/vnd.mymoe.workspace-manifest+json"
+        ):
+            raise ContentAddressedStoreError(
+                "Candidate manifest media type is invalid."
+            )
         manifest = self.get_json(manifest_descriptor)
         if set(manifest) != {
             "schemaVersion",
@@ -330,7 +411,10 @@ class ContentAddressedStore:
             "changeset",
         } or manifest.get("schemaVersion") != CAS_SCHEMA_VERSION:
             raise ContentAddressedStoreError("Candidate manifest schema is unsupported.")
-        require_sha256(str(manifest.get("sourceFingerprint", "")), "source_fingerprint")
+        require_sha256(
+            str(manifest.get("sourceFingerprint", "")),
+            "source_fingerprint",
+        )
         raw_source = manifest.get("source")
         if not isinstance(raw_source, Mapping):
             raise ContentAddressedStoreError("Candidate source identity is invalid.")
@@ -345,56 +429,54 @@ class ContentAddressedStore:
             changeset_descriptor = ArtifactDescriptor.from_payload(raw_changeset)
         except TwoPhaseContractError as exc:
             raise ContentAddressedStoreError(str(exc)) from exc
-        if changeset_descriptor.media_type != "application/vnd.mymoe.changeset+json":
+        if (
+            changeset_descriptor.media_type
+            != "application/vnd.mymoe.changeset+json"
+        ):
             raise ContentAddressedStoreError("Candidate changeset media type is invalid.")
+        if (
+            expected_changeset is not None
+            and changeset_descriptor != expected_changeset
+        ):
+            raise ContentAddressedStoreError(
+                "Candidate manifest does not bind the requested changeset."
+            )
         files = manifest.get("files")
         if not isinstance(files, list):
             raise ContentAddressedStoreError("Candidate manifest files are invalid.")
         normalized = _validated_manifest_records(files)
+        changeset = self.get_json(changeset_descriptor)
         _validate_stored_changeset(
-            self.get_json(changeset_descriptor),
+            changeset,
             source_fingerprint=str(manifest["sourceFingerprint"]),
             files=normalized,
         )
-        with tempfile.TemporaryDirectory(prefix="mymoe-cas-candidate-") as temporary:
-            root = Path(temporary).resolve(strict=True)
-            for raw in normalized:
-                path = str(raw["path"])
-                if raw["kind"] == "missing":
-                    continue
-                descriptor_raw = raw["content"]
-                if not isinstance(descriptor_raw, Mapping):
-                    raise ContentAddressedStoreError(
-                        "Candidate content descriptor is missing."
-                    )
-                try:
-                    descriptor = ArtifactDescriptor.from_payload(descriptor_raw)
-                except TwoPhaseContractError as exc:
-                    raise ContentAddressedStoreError(str(exc)) from exc
-                if (
-                    descriptor.media_type != "application/octet-stream"
-                    or descriptor.sha256 != raw["sha256"]
-                    or descriptor.size_bytes != raw["size"]
-                ):
-                    raise ContentAddressedStoreError(
-                        "Candidate content descriptor is incoherent."
-                    )
-                value = self.get_bytes(descriptor)
-                target = root / path
-                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                if not target.parent.resolve(strict=True).is_relative_to(root):
-                    raise ContentAddressedStoreError(
-                        "Candidate materialization escaped its root."
-                    )
-                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                descriptor_fd = os.open(target, flags, int(raw["mode"]))
-                try:
-                    _write_all(descriptor_fd, value)
-                    os.fsync(descriptor_fd)
-                finally:
-                    os.close(descriptor_fd)
-            yield root
+        validated_files: list[
+            tuple[dict[str, object], ArtifactDescriptor | None]
+        ] = []
+        for raw in normalized:
+            if raw["kind"] == "missing":
+                validated_files.append((raw, None))
+                continue
+            descriptor_raw = raw["content"]
+            if not isinstance(descriptor_raw, Mapping):
+                raise ContentAddressedStoreError(
+                    "Candidate content descriptor is missing."
+                )
+            try:
+                descriptor = ArtifactDescriptor.from_payload(descriptor_raw)
+            except TwoPhaseContractError as exc:
+                raise ContentAddressedStoreError(str(exc)) from exc
+            if (
+                descriptor.media_type != "application/octet-stream"
+                or descriptor.sha256 != raw["sha256"]
+                or descriptor.size_bytes != raw["size"]
+            ):
+                raise ContentAddressedStoreError(
+                    "Candidate content descriptor is incoherent."
+                )
+            validated_files.append((raw, descriptor))
+        return manifest, changeset, validated_files
 
     def load_candidate(
         self,
@@ -403,17 +485,10 @@ class ContentAddressedStore:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Return fully validated immutable-artifact payload copies."""
 
-        manifest = self.get_json(manifest_descriptor)
-        if manifest.get("changeset") != changeset_descriptor.payload():
-            raise ContentAddressedStoreError(
-                "Candidate manifest does not bind the requested changeset."
-            )
-        # Materialization performs the complete manifest/changeset coherence
-        # validation without exposing any content before those checks pass.
-        with self.materialize_candidate(manifest_descriptor):
-            pass
-        changeset = self.get_json(changeset_descriptor)
-        return manifest, changeset
+        return self.validate_candidate_closure(
+            manifest_descriptor,
+            changeset_descriptor,
+        )
 
     def _object_path(self, digest: str, *, create_parent: bool) -> Path:
         require_sha256(digest, "CAS digest")

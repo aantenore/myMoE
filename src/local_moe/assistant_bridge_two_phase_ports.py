@@ -39,6 +39,12 @@ class CandidateStore(Protocol):
         changeset_descriptor: ArtifactDescriptor,
     ) -> tuple[dict[str, Any], dict[str, Any]]: ...
 
+    def validate_candidate_closure(
+        self,
+        manifest_descriptor: ArtifactDescriptor,
+        changeset_descriptor: ArtifactDescriptor,
+    ) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
     def materialize_candidate(
         self, manifest_descriptor: ArtifactDescriptor
     ) -> ContextManager[Path]: ...

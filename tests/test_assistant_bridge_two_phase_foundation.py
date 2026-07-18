@@ -35,6 +35,10 @@ from local_moe.assistant_bridge_two_phase_contracts import (
     VerificationPolicy,
     VerifierRequirement,
 )
+from local_moe.assistant_bridge_two_phase_status import (
+    TwoPhaseStatusError,
+    TwoPhaseStatusReader,
+)
 from local_moe.assistant_bridge_workflow_store import (
     SQLiteWorkflowStore,
     WorkflowRecord,
@@ -160,6 +164,15 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             self.assertNotIn("candidateFingerprint", manifest_payload)
             self.assertEqual(manifest_payload["changeset"], changeset.payload())
             self.assertEqual(changeset_payload["changes"][0]["after"], after)
+            with mock.patch(
+                "local_moe.assistant_bridge_cas.tempfile.TemporaryDirectory"
+            ) as temporary_directory:
+                validated_manifest, validated_changeset = (
+                    store.validate_candidate_closure(manifest, changeset)
+                )
+            temporary_directory.assert_not_called()
+            self.assertEqual(validated_manifest, manifest_payload)
+            self.assertEqual(validated_changeset, changeset_payload)
             with store.materialize_candidate(manifest) as materialized:
                 self.assertEqual(
                     (materialized / "src" / "module.py").read_bytes(),
@@ -488,6 +501,77 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowStoreError, "identity changed"):
                 store.get_workflow(binding.workflow_id, now=102)
             self.assertIsNotNone(private_key)
+
+    def test_workflow_record_rejects_non_finite_negative_or_unordered_times(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state.sqlite3")
+            _, requirement = _verifier("verifier-a")
+            binding, challenge = _binding(
+                root / "binding",
+                store,
+                VerificationPolicy("policy-v1", 1, (requirement,)),
+            )
+            record, _ = store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+
+            invalid_times = (
+                {"created_at": -1},
+                {"updated_at": float("inf")},
+                {"last_wall_time": float("nan")},
+                {"created_at": 101},
+                {"updated_at": 102, "last_wall_time": 101},
+            )
+            for values in invalid_times:
+                with self.subTest(values=values):
+                    with self.assertRaises(WorkflowStoreError):
+                        replace(record, **values)
+
+    def test_applying_status_requires_candidate_closure_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state.sqlite3")
+            _, requirement = _verifier("verifier-a")
+            binding, challenge = _binding(
+                root / "binding",
+                store,
+                VerificationPolicy("policy-v1", 1, (requirement,)),
+            )
+            record, _ = store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            applying = replace(
+                record,
+                status="applying",
+                apply_transaction_id=DIGEST_A,
+            )
+            read_store = mock.Mock()
+            read_store.read_workflow.return_value = applying
+            candidate_cas = mock.Mock()
+            candidate_cas.validate_candidate_closure.side_effect = (
+                ContentAddressedStoreError("candidate unavailable")
+            )
+            reader = TwoPhaseStatusReader(read_store, candidate_cas)
+
+            with self.assertRaises(TwoPhaseStatusError) as caught:
+                reader.status(binding.workflow_id, now=101)
+
+            self.assertEqual(caught.exception.code, "artifact_invalid")
+            candidate_cas.validate_candidate_closure.assert_called_once_with(
+                binding.manifest,
+                binding.changeset,
+            )
 
     def test_resume_is_idempotent_and_persists_transaction_before_apply(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

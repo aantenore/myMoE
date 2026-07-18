@@ -38,13 +38,32 @@ WORKFLOW_STORE_SCHEMA_VERSION = "2.0"
 _ENVELOPE_MEDIA_TYPE = "application/vnd.dsse.envelope+json"
 _STATEMENT_MEDIA_TYPE = "application/vnd.in-toto+json"
 _SECRET_BYTES = 32
-_READ_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-    os, "O_NOFOLLOW", 0
+_READ_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
 )
 
 
 class WorkflowStoreError(ValueError):
     """Raised when durable two-phase workflow state cannot be trusted."""
+
+
+class WorkflowStoreUninitializedError(WorkflowStoreError):
+    """Raised when durable workflow state has not been initialized yet."""
+
+
+class WorkflowNotFoundError(WorkflowStoreError):
+    """Raised when a requested workflow does not exist."""
+
+
+class WorkflowClockConflictError(WorkflowStoreError):
+    """Raised when workflow time moves behind its durable watermark."""
+
+
+class WorkflowArtifactError(WorkflowStoreError):
+    """Raised when durable workflow evidence cannot be validated."""
 
 
 @dataclass(frozen=True)
@@ -141,6 +160,14 @@ class WorkflowRecord:
             or not 0 <= self.active_attestation_count <= len(ordered)
         ):
             raise WorkflowStoreError("Active attestation count is invalid.")
+        created = _wall_time(self.created_at)
+        updated = _wall_time(self.updated_at)
+        last_wall = _wall_time(self.last_wall_time)
+        if not created <= updated <= last_wall:
+            raise WorkflowStoreError("Workflow timestamps are out of order.")
+        object.__setattr__(self, "created_at", created)
+        object.__setattr__(self, "updated_at", updated)
+        object.__setattr__(self, "last_wall_time", last_wall)
 
     @property
     def quorum_satisfied(self) -> bool:
@@ -393,7 +420,7 @@ class SQLiteWorkflowStore:
                     "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
                 ).fetchone()
                 if row is None:
-                    raise WorkflowStoreError("Workflow was not found.")
+                    raise WorkflowNotFoundError("Workflow was not found.")
                 record = self._record(connection, row, active_at=current)
                 self._check_clock(record, current)
             finally:
@@ -792,7 +819,7 @@ class SQLiteWorkflowStore:
         try:
             envelope = self.evidence_cas.get_bytes(attestation.envelope)
         except (OSError, ValueError) as exc:
-            raise WorkflowStoreError(str(exc)) from exc
+            raise WorkflowArtifactError(str(exc)) from exc
         if sha256_bytes(envelope) != attestation.evidence_sha256:
             raise WorkflowStoreError(
                 "Persisted attestation envelope binding is invalid."
@@ -1084,7 +1111,7 @@ class SQLiteWorkflowStore:
         expected = self._database_identity
         if expected is not None and _database_identity(self.path) != expected:
             raise WorkflowStoreError("Workflow database identity changed.")
-        read_snapshot: tuple[int, int, int, int] | None = None
+        read_snapshot: tuple[int, int, int, int, int] | None = None
         target: str | Path = self.path
         if self._read_only:
             _require_no_database_sidecars(self.path)
@@ -1258,16 +1285,11 @@ class SQLiteWorkflowStore:
 
     def _validate_existing_schema(self, connection: sqlite3.Connection) -> None:
         try:
-            row = connection.execute(
-                "SELECT value FROM store_meta WHERE key = 'schema_version'"
-            ).fetchone()
             rows = connection.execute(
                 "SELECT name FROM sqlite_schema WHERE type = 'table'"
             ).fetchall()
         except sqlite3.Error as exc:
             raise WorkflowStoreError("Workflow store schema is unavailable.") from exc
-        if row is None or str(row["value"]) != WORKFLOW_STORE_SCHEMA_VERSION:
-            raise WorkflowStoreError("Workflow store schema is unavailable.")
         required = {
             "apply_recoveries",
             "resume_confirmations",
@@ -1277,7 +1299,21 @@ class SQLiteWorkflowStore:
             "workflows",
         }
         available = {str(item["name"]) for item in rows}
+        if not required.intersection(available):
+            raise WorkflowStoreUninitializedError(
+                "Workflow store schema is unavailable."
+            )
         if not required.issubset(available):
+            raise WorkflowStoreError("Workflow store schema is unavailable.")
+        try:
+            row = connection.execute(
+                "SELECT value FROM store_meta WHERE key = 'schema_version'"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkflowStoreError("Workflow store schema is unavailable.") from exc
+        if row is None:
+            raise WorkflowStoreError("Workflow store schema is unavailable.")
+        if str(row["value"]) != WORKFLOW_STORE_SCHEMA_VERSION:
             raise WorkflowStoreError("Workflow store schema is unavailable.")
 
     def _selected_record(
@@ -1291,7 +1327,7 @@ class SQLiteWorkflowStore:
             "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
         ).fetchone()
         if row is None:
-            raise WorkflowStoreError("Workflow was not found.")
+            raise WorkflowNotFoundError("Workflow was not found.")
         return self._record(connection, row, active_at=active_at)
 
     def _record(
@@ -1410,13 +1446,16 @@ class SQLiteWorkflowStore:
             envelope_bytes = self.evidence_cas.get_bytes(envelope_descriptor)
             statement_bytes = self.evidence_cas.get_bytes(statement_descriptor)
         except ContentAddressedStoreError as exc:
-            raise WorkflowStoreError(str(exc)) from exc
-        _validate_persisted_attestation_artifacts(
-            envelope_bytes,
-            statement_bytes,
-            binding=binding,
-            expected=expected,
-        )
+            raise WorkflowArtifactError(str(exc)) from exc
+        try:
+            _validate_persisted_attestation_artifacts(
+                envelope_bytes,
+                statement_bytes,
+                binding=binding,
+                expected=expected,
+            )
+        except WorkflowStoreError as exc:
+            raise WorkflowArtifactError(str(exc)) from exc
         return RecordedAttestation(
             verifier_id=expected["verifierId"],
             adapter_id=expected["adapterId"],
@@ -1456,7 +1495,9 @@ class SQLiteWorkflowStore:
 
     def _check_clock(self, record: WorkflowRecord, now: float) -> None:
         if now < record.last_wall_time:
-            raise WorkflowStoreError("Clock rollback detected for workflow.")
+            raise WorkflowClockConflictError(
+                "Clock rollback detected for workflow."
+            )
 
     def _check_live(self, record: WorkflowRecord, now: float) -> None:
         self._check_clock(record, now)
@@ -1717,6 +1758,10 @@ def _prepare_existing_database_path(value: Path) -> Path:
         raise WorkflowStoreError("Workflow database is unavailable.")
     try:
         resolved = raw.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise WorkflowStoreUninitializedError(
+            "Workflow database is unavailable."
+        ) from exc
     except (OSError, RuntimeError) as exc:
         raise WorkflowStoreError("Workflow database is unavailable.") from exc
     _validate_database_file(resolved)
@@ -1728,13 +1773,14 @@ def _database_identity(path: Path) -> tuple[int, int]:
     return int(state.st_dev), int(state.st_ino)
 
 
-def _database_read_snapshot(path: Path) -> tuple[int, int, int, int]:
+def _database_read_snapshot(path: Path) -> tuple[int, int, int, int, int]:
     state = _validate_database_file(path)
     return (
         int(state.st_dev),
         int(state.st_ino),
         int(state.st_size),
         int(state.st_mtime_ns),
+        int(state.st_ctime_ns),
     )
 
 
@@ -1819,28 +1865,72 @@ def _load_or_create_secret(path: Path) -> bytes:
 
 
 def _load_existing_secret(path: Path) -> bytes:
+    raw = Path(os.path.abspath(os.fspath(path.expanduser())))
     try:
-        descriptor = os.open(path, _READ_FLAGS)
+        before = raw.lstat()
+    except FileNotFoundError as exc:
+        raise WorkflowStoreUninitializedError(
+            "Workflow state secret is unavailable."
+        ) from exc
     except OSError as exc:
         raise WorkflowStoreError("Workflow state secret is unavailable.") from exc
-    return _read_secret_descriptor(descriptor)
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise WorkflowStoreError("Workflow state secret is not a regular file.")
+    try:
+        descriptor = os.open(raw, _READ_FLAGS)
+    except FileNotFoundError as exc:
+        raise WorkflowStoreUninitializedError(
+            "Workflow state secret is unavailable."
+        ) from exc
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow state secret is unavailable.") from exc
+    return _read_secret_descriptor(descriptor, expected=before)
 
 
-def _read_secret_descriptor(descriptor: int) -> bytes:
+def _read_secret_descriptor(
+    descriptor: int,
+    *,
+    expected: os.stat_result | None = None,
+) -> bytes:
     try:
         before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or (
-            os.name == "posix" and stat.S_IMODE(before.st_mode) & 0o077
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (
+                expected is not None
+                and (before.st_dev, before.st_ino)
+                != (expected.st_dev, expected.st_ino)
+            )
+            or (os.name == "posix" and stat.S_IMODE(before.st_mode) & 0o077)
         ):
             raise WorkflowStoreError("Workflow state secret is not private.")
         value = os.read(descriptor, _SECRET_BYTES + 1)
         after = os.fstat(descriptor)
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow state secret is unavailable.") from exc
     finally:
         os.close(descriptor)
     if (
         len(value) != _SECRET_BYTES
-        or (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size)
-        != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)
+        or (
+            before.st_dev,
+            before.st_ino,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_size,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_size,
+        )
+        or (
+            expected is not None
+            and (after.st_dev, after.st_ino)
+            != (expected.st_dev, expected.st_ino)
+        )
     ):
         raise WorkflowStoreError("Workflow state secret identity is invalid.")
     return value

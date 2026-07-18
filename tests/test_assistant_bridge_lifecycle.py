@@ -11,15 +11,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from local_moe import assistant_bridge_workflow_store as workflow_store
 from local_moe.assistant_bridge_attestation import (
     ED25519_DSSE_ADAPTER_ID,
     create_ed25519_dsse_envelope,
 )
 from local_moe.assistant_bridge_integrity import sha256_bytes
+from local_moe.assistant_bridge_cas import ContentAddressedStore
 from local_moe.assistant_bridge_lifecycle import (
     GeneratedCandidate,
     TwoPhaseLifecycleError,
@@ -68,6 +71,10 @@ def _filesystem_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
             )
         )
     return tuple(entries)
+
+
+def _cas_object_path(cas: ContentAddressedStore, digest: str) -> Path:
+    return cas.root / "objects" / "sha256" / digest[:2] / digest[2:]
 
 
 class TwoPhaseConfigurationTests(unittest.TestCase):
@@ -523,7 +530,10 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
         self,
     ) -> None:
         for missing in ("cas", "database", "key", "schema"):
-            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(missing=missing),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 fixture = _Fixture(Path(temporary))
                 fixture.lifecycle(_CandidateGenerator(fixture.source))
                 state = load_two_phase_state_config(fixture.config_path)
@@ -541,10 +551,218 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
                         state.database_path.chmod(0o600)
                 before = _filesystem_snapshot(fixture.root)
 
-                with self.assertRaisesRegex(TwoPhaseStatusError, "unavailable"):
+                with self.assertRaises(TwoPhaseStatusError) as caught:
                     build_two_phase_status_reader(state)
 
+                self.assertEqual(caught.exception.code, "state_uninitialized")
+                self.assertNotIn(str(fixture.root), str(caught.exception))
                 self.assertEqual(_filesystem_snapshot(fixture.root), before)
+
+    def test_status_reader_reports_typed_redacted_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            reader = build_two_phase_status_reader(state)
+
+            for workflow_id, now, code in (
+                ("wf-missing", 101, "workflow_not_found"),
+                (receipt.workflow_id, 99, "clock_conflict"),
+            ):
+                with self.subTest(code=code):
+                    with self.assertRaises(TwoPhaseStatusError) as caught:
+                        reader.status(workflow_id, now=now)
+                    self.assertEqual(caught.exception.code, code)
+                    self.assertNotIn(str(state.database_path), str(caught.exception))
+
+            with mock.patch.object(
+                reader.store,
+                "read_workflow",
+                side_effect=RuntimeError(f"internal path: {fixture.root}"),
+            ):
+                with self.assertRaises(TwoPhaseStatusError) as caught:
+                    reader.status(receipt.workflow_id, now=101)
+            self.assertEqual(caught.exception.code, "status_runtime_failed")
+            self.assertNotIn(str(fixture.root), str(caught.exception))
+
+    def test_status_reader_classifies_partial_schema_as_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            fixture.lifecycle(_CandidateGenerator(fixture.source))
+            state = load_two_phase_state_config(fixture.config_path)
+            with sqlite3.connect(state.database_path) as connection:
+                connection.execute("DROP TABLE workflow_events")
+
+            with self.assertRaises(TwoPhaseStatusError) as caught:
+                build_two_phase_status_reader(state)
+
+            self.assertEqual(caught.exception.code, "state_invalid")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs unavailable")
+    def test_status_reader_rejects_fifo_secret_before_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            fixture.lifecycle(_CandidateGenerator(fixture.source))
+            state = load_two_phase_state_config(fixture.config_path)
+            key = state.database_path.with_suffix(".key")
+            key.unlink()
+            os.mkfifo(key, mode=0o600)
+            before = _filesystem_snapshot(fixture.root)
+
+            with mock.patch(
+                "local_moe.assistant_bridge_workflow_store.os.open",
+                wraps=os.open,
+            ) as opened:
+                with self.assertRaises(TwoPhaseStatusError) as caught:
+                    build_two_phase_status_reader(state)
+
+            self.assertEqual(caught.exception.code, "state_invalid")
+            opened.assert_not_called()
+            self.assertEqual(_filesystem_snapshot(fixture.root), before)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs unavailable")
+    def test_secret_open_is_nonblocking_if_file_identity_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            secret = root / "state.key"
+            secret.write_bytes(b"s" * 32)
+            fifo = root / "replacement"
+            os.mkfifo(fifo, mode=0o600)
+            fifo_descriptor = os.open(
+                fifo,
+                os.O_RDONLY | getattr(os, "O_NONBLOCK", 0),
+            )
+
+            with mock.patch.object(
+                workflow_store.os,
+                "open",
+                return_value=fifo_descriptor,
+            ) as opened:
+                with self.assertRaisesRegex(
+                    workflow_store.WorkflowStoreError,
+                    "private",
+                ):
+                    workflow_store._load_existing_secret(secret)
+
+            flags = int(opened.call_args.args[1])
+            self.assertTrue(flags & getattr(os, "O_NONBLOCK", 0))
+            if hasattr(os, "O_NOFOLLOW"):
+                self.assertTrue(flags & os.O_NOFOLLOW)
+
+    def test_status_reader_validates_complete_live_candidate_closure(self) -> None:
+        for failure in ("missing-manifest", "corrupt-content"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                fixture = _Fixture(Path(temporary))
+                lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+                receipt = lifecycle.stage(
+                    "change-app",
+                    source_workspace=fixture.source,
+                    task_fingerprint=TASK_SHA256,
+                    expected_source_fingerprint=fixture.source_fingerprint,
+                    expected_config_sha256=lifecycle.effective_config_sha256,
+                    idempotency_key=STAGE_KEY,
+                    now=100,
+                )
+                state = load_two_phase_state_config(fixture.config_path)
+                cas = ContentAddressedStore(
+                    state.cas_path,
+                    create_if_missing=False,
+                )
+                if failure == "missing-manifest":
+                    target = _cas_object_path(cas, receipt.binding.manifest.sha256)
+                    target.unlink()
+                else:
+                    manifest = cas.get_json(receipt.binding.manifest)
+                    file_record = next(
+                        item for item in manifest["files"] if item["kind"] == "file"
+                    )
+                    content = file_record["content"]
+                    target = _cas_object_path(cas, content["digest"]["sha256"])
+                    target.write_bytes(b"\x00" * int(content["sizeBytes"]))
+                before = _filesystem_snapshot(fixture.root / "state")
+                reader = build_two_phase_status_reader(state)
+
+                with mock.patch(
+                    "local_moe.assistant_bridge_cas.tempfile.TemporaryDirectory"
+                ) as materialized:
+                    with self.assertRaises(TwoPhaseStatusError) as caught:
+                        reader.status(receipt.workflow_id, now=101)
+
+                self.assertEqual(caught.exception.code, "artifact_invalid")
+                materialized.assert_not_called()
+                self.assertEqual(
+                    _filesystem_snapshot(fixture.root / "state"),
+                    before,
+                )
+
+    def test_terminal_status_does_not_require_retained_candidate_artifacts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            cas = ContentAddressedStore(state.cas_path, create_if_missing=False)
+            _cas_object_path(cas, receipt.binding.manifest.sha256).unlink()
+            before = _filesystem_snapshot(fixture.root / "state")
+
+            record = build_two_phase_status_reader(state).status(
+                receipt.workflow_id,
+                now=301,
+            )
+
+            self.assertEqual(record.status, "expired")
+            self.assertEqual(_filesystem_snapshot(fixture.root / "state"), before)
+
+    def test_status_reader_detects_database_ctime_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            reader = build_two_phase_status_reader(state)
+
+            snapshot = workflow_store._database_read_snapshot(state.database_path)
+            self.assertEqual(len(snapshot), 5)
+            changed_ctime = (*snapshot[:-1], snapshot[-1] + 1)
+            with mock.patch.object(
+                workflow_store,
+                "_database_read_snapshot",
+                side_effect=(snapshot, changed_ctime),
+            ):
+                with self.assertRaises(TwoPhaseStatusError) as caught:
+                    reader.status(receipt.workflow_id, now=101)
+
+            self.assertEqual(caught.exception.code, "state_invalid")
 
     def test_status_reader_derives_expiry_without_mutating_existing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
