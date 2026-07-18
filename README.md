@@ -120,7 +120,8 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 
 The design is configurable, but not infinitely dynamic. OpenAI-compatible
 experts can be exchanged through configuration alone. A new provider protocol
-still requires a provider adapter and factory registration. A new built-in tool
+still requires a full-lifecycle provider adapter and explicit registry
+composition. A new built-in tool
 requires a strict schema and an explicit runner implementation, and executable
 cron actions remain deliberately allowlisted. Trusted MCP configuration can
 name a process command, but the default is disabled and launching it still

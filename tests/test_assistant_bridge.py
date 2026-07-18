@@ -20,11 +20,13 @@ from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
     GitIdentity,
+    ProviderAdapterRegistry,
     VerificationEvidence,
     attest_workspace,
     build_assistant_task,
     build_codex_command_plan,
     build_escalation_capsule,
+    default_provider_adapter_registry,
     execute_codex_command,
     load_assistant_bridge_config,
     load_assistant_task,
@@ -408,6 +410,43 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertEqual(plan.sandbox, "read-only")
         self.assertIn("sandbox_workspace_write.network_access=false", plan.argv)
 
+    def test_command_plan_binds_adapter_and_ephemeral_environment_contract(
+        self,
+    ) -> None:
+        baseline = build_codex_command_plan(
+            self.config.local,
+            prompt="bounded",
+            workspace=ROOT,
+        )
+        with (
+            patch.object(
+                assistant_bridge_module,
+                "_CODEX_ADAPTER_ID",
+                "alternate_cli",
+            ),
+            patch.object(
+                assistant_bridge_module,
+                "_CODEX_EPHEMERAL_ENVIRONMENT_KEYS",
+                ("ALTERNATE_HOME",),
+            ),
+        ):
+            alternate = build_codex_command_plan(
+                replace(self.config.local, adapter="alternate_cli"),
+                prompt="bounded",
+                workspace=ROOT,
+            )
+
+        self.assertEqual(baseline.adapter_id, "codex_cli")
+        self.assertEqual(
+            baseline.ephemeral_environment_keys,
+            ("CODEX_HOME", "HOME"),
+        )
+        self.assertNotEqual(baseline.command_sha256, alternate.command_sha256)
+        self.assertNotEqual(
+            assistant_bridge_module._command_authority_sha256(baseline),
+            assistant_bridge_module._command_authority_sha256(alternate),
+        )
+
     def test_command_plan_payload_hides_executable_path_and_version_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             secret = "private-version-material"
@@ -777,7 +816,7 @@ class AssistantBridgeContractTests(unittest.TestCase):
             with self.assertRaisesRegex(AssistantBridgeError, "Unknown provider"):
                 load_assistant_bridge_config(path)
 
-    def test_dangerous_extra_args_are_rejected(self) -> None:
+    def test_codex_adapter_rejects_unreviewed_extra_args(self) -> None:
         for value in (
             "--dangerously-bypass-approvals-and-sandbox",
             "-moverride",
@@ -787,7 +826,11 @@ class AssistantBridgeContractTests(unittest.TestCase):
                 self.subTest(value=value),
                 self.assertRaisesRegex(AssistantBridgeError, "authority"),
             ):
-                replace(self.config.local, extra_args=(value,))
+                build_codex_command_plan(
+                    replace(self.config.local, extra_args=(value,)),
+                    prompt="bounded",
+                    workspace=ROOT,
+                )
 
     def test_check_contract_rejects_vacuous_or_unknown_shapes(self) -> None:
         for check in (
@@ -1685,6 +1728,31 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         )
         self.assertEqual(quality["route_receipt"]["route"], "blocked")
 
+    def test_injected_registry_dispatches_the_complete_provider_lifecycle(
+        self,
+    ) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            delegate = default_provider_adapter_registry().require("codex_cli")
+            recording = _RecordingProviderAdapter(delegate)
+            fixture.runner = AssistantBridgeRunner.with_provider_adapters(
+                fixture.config,
+                adapter_registry=ProviderAdapterRegistry((recording,)),
+                state_ledger=fixture.runner.state_ledger,
+            )
+
+            local = fixture.run(build_assistant_task("Stay local.", profile="offline"))
+            premium = fixture.run(
+                build_assistant_task("Use premium.", profile="quality")
+            )
+
+        self.assertEqual(local.status, "completed")
+        self.assertEqual(premium.status, "completed")
+        self.assertGreaterEqual(recording.calls["validate_provider"], 2)
+        self.assertGreaterEqual(recording.calls["runtime_descriptor"], 4)
+        self.assertEqual(recording.calls["build_command_plan"], 6)
+        self.assertEqual(recording.calls["attest_remote_binding"], 2)
+        self.assertEqual(recording.calls["execute_command"], 2)
+
     def test_unknown_task_verifier_is_rejected_before_launch(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
             task = build_assistant_task(
@@ -2535,6 +2603,40 @@ class _FakeBridgeFixture:
             include_diff=include_diff,
             capsule_out=capsule_out,
         )
+
+
+class _RecordingProviderAdapter:
+    def __init__(self, delegate) -> None:
+        self.delegate = delegate
+        self.adapter_id = delegate.adapter_id
+        self.ephemeral_environment_keys = delegate.ephemeral_environment_keys
+        self.calls = {
+            "validate_provider": 0,
+            "runtime_descriptor": 0,
+            "build_command_plan": 0,
+            "attest_remote_binding": 0,
+            "execute_command": 0,
+        }
+
+    def validate_provider(self, provider) -> None:
+        self.calls["validate_provider"] += 1
+        self.delegate.validate_provider(provider)
+
+    def runtime_descriptor(self, provider, task, **kwargs):
+        self.calls["runtime_descriptor"] += 1
+        return self.delegate.runtime_descriptor(provider, task, **kwargs)
+
+    def build_command_plan(self, provider, **kwargs):
+        self.calls["build_command_plan"] += 1
+        return self.delegate.build_command_plan(provider, **kwargs)
+
+    def attest_remote_binding(self, provider):
+        self.calls["attest_remote_binding"] += 1
+        return self.delegate.attest_remote_binding(provider)
+
+    def execute_command(self, provider, plan, **kwargs):
+        self.calls["execute_command"] += 1
+        return self.delegate.execute_command(provider, plan, **kwargs)
 
 
 @contextmanager

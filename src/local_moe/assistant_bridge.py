@@ -15,9 +15,13 @@ import sys
 import sysconfig
 import tempfile
 from types import MappingProxyType
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence
 
 from . import assistant_bridge_workspace as _workspace_security
+from .assistant_bridge_provider_registry import (
+    ProviderAdapterRegistry,
+    ProviderAdapterRegistryError,
+)
 from .deterministic_evaluator import (
     QualityBenchmarkError,
     evaluate_check,
@@ -108,6 +112,8 @@ _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_GIT_BYTES = 16 * 1024 * 1024
 _MAX_STREAM_BYTES = 2 * 1024 * 1024
 _MAX_FINAL_BYTES = 1024 * 1024
+_CODEX_ADAPTER_ID = "codex_cli"
+_CODEX_EPHEMERAL_ENVIRONMENT_KEYS = ("CODEX_HOME", "HOME")
 _PYTHON_UNITTEST_BOOTSTRAP = r"""
 import hashlib
 import json
@@ -394,9 +400,9 @@ class ProviderSpec:
             )
         if self.mode not in {"local", "premium"}:
             raise AssistantBridgeError("Provider mode must be local or premium.")
-        if self.adapter != "codex_cli":
+        if _SAFE_ID.fullmatch(self.adapter) is None:
             raise AssistantBridgeError(
-                f"Provider {self.id} uses unsupported adapter {self.adapter!r}."
+                f"Provider {self.id} adapter must contain safe identifier characters."
             )
         if self.execution_scope not in {"device_only", "remote"}:
             raise AssistantBridgeError(
@@ -423,15 +429,6 @@ class ProviderSpec:
         if RISK_LEVELS[self.max_risk] > RISK_LEVELS["write_local"]:
             raise AssistantBridgeError(
                 f"Provider {self.id} cannot receive authority above write_local."
-            )
-        if self.mode == "local" and self.local_provider not in {"lmstudio", "ollama"}:
-            raise AssistantBridgeError(
-                f"Local provider {self.id} must choose local_provider=ollama or lmstudio."
-            )
-        if self.codex_profile:
-            raise AssistantBridgeError(
-                f"Provider {self.id} codex_profile is incompatible with isolated execution; "
-                "use a trusted executable adapter instead."
             )
         if not self.model.strip():
             raise AssistantBridgeError(
@@ -476,7 +473,6 @@ class ProviderSpec:
             raise AssistantBridgeError(
                 f"Provider {self.id} launcher_companions contains duplicates."
             )
-        _validate_safe_extra_args(self.extra_args, provider_id=self.id)
         if len(set(self.environment_allowlist)) != len(self.environment_allowlist):
             raise AssistantBridgeError(
                 f"Provider {self.id} environment_allowlist contains duplicates."
@@ -1258,6 +1254,7 @@ class RouteDecisionReceipt:
 @dataclass(frozen=True)
 class CommandPlan:
     provider_id: str
+    adapter_id: str
     mode: str
     argv: tuple[str, ...] = field(repr=False)
     stdin_sha256: str
@@ -1271,6 +1268,7 @@ class CommandPlan:
     model: str
     local_provider: str
     environment_allowlist: tuple[str, ...]
+    ephemeral_environment_keys: tuple[str, ...]
     executable_identity: ExecutableIdentity = field(repr=False)
     environment_sha256: str
     runtime: Mapping[str, object]
@@ -1286,13 +1284,34 @@ class CommandPlan:
             self, "environment_allowlist", tuple(self.environment_allowlist)
         )
         object.__setattr__(
+            self,
+            "ephemeral_environment_keys",
+            tuple(self.ephemeral_environment_keys),
+        )
+        object.__setattr__(
             self, "launcher_artifact_sha256", tuple(self.launcher_artifact_sha256)
         )
         object.__setattr__(self, "runtime", _deep_freeze(self.runtime))
+        if _SAFE_ID.fullmatch(self.adapter_id) is None:
+            raise AssistantBridgeError(
+                "Command plan adapter_id must contain safe identifier characters."
+            )
+        if len(set(self.ephemeral_environment_keys)) != len(
+            self.ephemeral_environment_keys
+        ):
+            raise AssistantBridgeError(
+                "Command plan ephemeral environment keys contain duplicates."
+            )
+        for name in self.ephemeral_environment_keys:
+            if _SAFE_ENV.fullmatch(name) is None:
+                raise AssistantBridgeError(
+                    "Command plan ephemeral environment key is invalid."
+                )
 
     def payload(self) -> dict[str, object]:
         return {
             "provider_id": self.provider_id,
+            "adapter_id": self.adapter_id,
             "mode": self.mode,
             "argv_sha256": _sha256_text(_canonical_json(list(self.argv))),
             "argv_shape": _redacted_argv_shape(self.argv),
@@ -1313,6 +1332,7 @@ class CommandPlan:
             "model": self.model,
             "local_provider": self.local_provider or None,
             "environment_keys": list(self.environment_allowlist),
+            "ephemeral_environment_keys": list(self.ephemeral_environment_keys),
             "executable": _public_executable_payload(self.executable_identity),
             "environment_sha256": self.environment_sha256,
             "runtime": _deep_thaw(self.runtime),
@@ -1444,6 +1464,59 @@ class PremiumAuthAttestation:
             "sha256": self.sha256,
             "size_bytes": self.size_bytes,
         }
+
+
+class ProviderAuthorityBinding(Protocol):
+    """Metadata-only provider authority bound to a confirmed execution."""
+
+    def binding_payload(self) -> Mapping[str, object]: ...
+
+
+class ProviderAdapter(Protocol):
+    """Complete provider lifecycle owned by one explicitly registered adapter."""
+
+    adapter_id: str
+    ephemeral_environment_keys: tuple[str, ...]
+
+    def validate_provider(self, provider: ProviderSpec) -> None: ...
+
+    def runtime_descriptor(
+        self,
+        provider: ProviderSpec,
+        task: AssistantTaskEnvelope,
+        *,
+        local_provider_override: str | None = None,
+    ) -> Mapping[str, object]: ...
+
+    def build_command_plan(
+        self,
+        provider: ProviderSpec,
+        *,
+        prompt: str,
+        workspace: str | Path,
+        demand: CapabilityDemand | None = None,
+        output_path: str | Path | None = None,
+        local_provider_override: str | None = None,
+        workspace_access: str | None = None,
+        runtime_policy: BridgeRuntimePolicy | None = None,
+        ephemeral_workspace: bool = False,
+    ) -> CommandPlan: ...
+
+    def attest_remote_binding(
+        self,
+        provider: ProviderSpec,
+    ) -> ProviderAuthorityBinding: ...
+
+    def execute_command(
+        self,
+        provider: ProviderSpec,
+        plan: CommandPlan,
+        *,
+        prompt: str,
+        output_path: str | Path,
+        remote_binding: ProviderAuthorityBinding | None = None,
+        reserve_launch: Callable[[], ProcessLaunchPermit | None] | None = None,
+    ) -> CommandResult: ...
 
 
 @dataclass(frozen=True)
@@ -2210,6 +2283,30 @@ def plan_assistant_route(
     local_provider_override: str | None = None,
     workspace_snapshot: WorkspaceSnapshot | None = None,
 ) -> RouteDecisionReceipt:
+    return _plan_assistant_route(
+        task,
+        config,
+        workspace=workspace,
+        local_provider_override=local_provider_override,
+        workspace_snapshot=workspace_snapshot,
+        adapter_registry=_DEFAULT_PROVIDER_ADAPTERS,
+    )
+
+
+def _plan_assistant_route(
+    task: AssistantTaskEnvelope,
+    config: AssistantBridgeConfig,
+    *,
+    workspace: str | Path,
+    local_provider_override: str | None,
+    workspace_snapshot: WorkspaceSnapshot | None,
+    adapter_registry: ProviderAdapterRegistry[ProviderAdapter],
+) -> RouteDecisionReceipt:
+    local_adapter = _registered_provider_adapter(adapter_registry, config.local)
+    premium_adapter = _registered_provider_adapter(
+        adapter_registry,
+        config.premium,
+    )
     if workspace_snapshot is None:
         try:
             workspace_snapshot = snapshot_workspace(workspace, config.workspace.scope)
@@ -2295,12 +2392,17 @@ def plan_assistant_route(
         ),
         "premium": ("capsule", "premium", "verify"),
     }[route]
-    local_runtime = _provider_runtime_attestation(
+    local_runtime = _attested_provider_runtime_descriptor(
+        local_adapter,
         config.local,
         task,
         local_provider_override=local_provider_override,
     )
-    premium_runtime = _provider_runtime_attestation(config.premium, task)
+    premium_runtime = _attested_provider_runtime_descriptor(
+        premium_adapter,
+        config.premium,
+        task,
+    )
     base_payload = {
         "schema_version": BRIDGE_SCHEMA_VERSION,
         "contract": "RouteDecisionReceipt",
@@ -2523,6 +2625,7 @@ def build_codex_command_plan(
     runtime_policy: BridgeRuntimePolicy | None = None,
     ephemeral_workspace: bool = False,
 ) -> CommandPlan:
+    _validate_codex_provider(provider)
     demand = demand or CapabilityDemand()
     selected_runtime_policy = runtime_policy or BridgeRuntimePolicy()
     resolved_workspace = str(Path(workspace).expanduser().resolve())
@@ -2612,7 +2715,7 @@ def build_codex_command_plan(
         output_path=resolved_output,
         environment=planning_environment,
         ephemeral_workspace=effective_ephemeral_workspace,
-        ephemeral_environment_keys=("CODEX_HOME", "HOME"),
+        ephemeral_environment_keys=_CODEX_EPHEMERAL_ENVIRONMENT_KEYS,
     )
     launcher_artifacts = _launcher_artifact_authority_digests(
         launcher_chain,
@@ -2625,6 +2728,7 @@ def build_codex_command_plan(
     )
     command_payload = {
         "provider_id": provider.id,
+        "adapter_id": _CODEX_ADAPTER_ID,
         "mode": provider.mode,
         "argv": list(semantic_argv),
         "stdin_sha256": _sha256_text(prompt),
@@ -2639,6 +2743,7 @@ def build_codex_command_plan(
         "model": provider.model,
         "local_provider": selected_local,
         "environment_keys": list(provider.environment_allowlist),
+        "ephemeral_environment_keys": list(_CODEX_EPHEMERAL_ENVIRONMENT_KEYS),
         "environment_sha256": executable_identity.resolution_environment.sha256,
         "executable": executable_identity.binding_payload(),
         "runtime": runtime,
@@ -2648,6 +2753,7 @@ def build_codex_command_plan(
     }
     return CommandPlan(
         provider_id=provider.id,
+        adapter_id=_CODEX_ADAPTER_ID,
         mode=provider.mode,
         argv=tuple(argv),
         stdin_sha256=_sha256_text(prompt),
@@ -2661,6 +2767,7 @@ def build_codex_command_plan(
         model=provider.model,
         local_provider=selected_local,
         environment_allowlist=provider.environment_allowlist,
+        ephemeral_environment_keys=_CODEX_EPHEMERAL_ENVIRONMENT_KEYS,
         executable_identity=executable_identity,
         environment_sha256=executable_identity.resolution_environment.sha256,
         runtime=runtime,
@@ -2722,6 +2829,13 @@ def execute_codex_command(
     environment_overrides: Mapping[str, str] | None = None,
     reserve_launch: Callable[[], ProcessLaunchPermit | None] | None = None,
 ) -> CommandResult:
+    if (
+        plan.adapter_id != _CODEX_ADAPTER_ID
+        or plan.ephemeral_environment_keys != _CODEX_EPHEMERAL_ENVIRONMENT_KEYS
+    ):
+        raise AssistantBridgeError(
+            "Codex execution requires a matching codex_cli command plan."
+        )
     if _sha256_text(prompt) != plan.stdin_sha256 or len(prompt) != plan.stdin_chars:
         raise AssistantBridgeError(
             "Execution prompt does not match the inspected command plan."
@@ -2756,7 +2870,7 @@ def execute_codex_command(
             output_path=resolved_output,
             environment=env,
             ephemeral_workspace=plan.ephemeral_workspace,
-            ephemeral_environment_keys=("CODEX_HOME", "HOME"),
+            ephemeral_environment_keys=plan.ephemeral_environment_keys,
         )
         if launcher_authority_sha256 != plan.launcher_authority_sha256:
             raise AssistantBridgeRuntimeError(
@@ -3279,6 +3393,178 @@ def build_escalation_capsule(
     return capsule
 
 
+class _CodexCliProviderAdapter:
+    """Built-in Codex CLI lifecycle; all provider-specific state stays here."""
+
+    __slots__ = ()
+
+    adapter_id = _CODEX_ADAPTER_ID
+    ephemeral_environment_keys = _CODEX_EPHEMERAL_ENVIRONMENT_KEYS
+
+    def validate_provider(self, provider: ProviderSpec) -> None:
+        _validate_codex_provider(provider)
+
+    def runtime_descriptor(
+        self,
+        provider: ProviderSpec,
+        task: AssistantTaskEnvelope,
+        *,
+        local_provider_override: str | None = None,
+    ) -> Mapping[str, object]:
+        self.validate_provider(provider)
+        return _codex_provider_runtime_descriptor(
+            provider,
+            task,
+            local_provider_override=local_provider_override,
+        )
+
+    def build_command_plan(
+        self,
+        provider: ProviderSpec,
+        *,
+        prompt: str,
+        workspace: str | Path,
+        demand: CapabilityDemand | None = None,
+        output_path: str | Path | None = None,
+        local_provider_override: str | None = None,
+        workspace_access: str | None = None,
+        runtime_policy: BridgeRuntimePolicy | None = None,
+        ephemeral_workspace: bool = False,
+    ) -> CommandPlan:
+        self.validate_provider(provider)
+        return build_codex_command_plan(
+            provider,
+            prompt=prompt,
+            workspace=workspace,
+            demand=demand,
+            output_path=output_path,
+            local_provider_override=local_provider_override,
+            workspace_access=workspace_access,
+            runtime_policy=runtime_policy,
+            ephemeral_workspace=ephemeral_workspace,
+        )
+
+    def attest_remote_binding(
+        self,
+        provider: ProviderSpec,
+    ) -> ProviderAuthorityBinding:
+        self.validate_provider(provider)
+        if provider.mode != "premium":
+            raise AssistantBridgeError(
+                "Remote authority binding requires a premium provider."
+            )
+        return _attest_premium_auth()
+
+    def execute_command(
+        self,
+        provider: ProviderSpec,
+        plan: CommandPlan,
+        *,
+        prompt: str,
+        output_path: str | Path,
+        remote_binding: ProviderAuthorityBinding | None = None,
+        reserve_launch: Callable[[], ProcessLaunchPermit | None] | None = None,
+    ) -> CommandResult:
+        self.validate_provider(provider)
+        if (
+            plan.provider_id != provider.id
+            or plan.mode != provider.mode
+            or plan.adapter_id != self.adapter_id
+            or plan.ephemeral_environment_keys != self.ephemeral_environment_keys
+        ):
+            raise AssistantBridgeError(
+                "Provider adapter does not match the confirmed command plan."
+            )
+        if provider.mode == "local":
+            if remote_binding is not None:
+                raise AssistantBridgeError(
+                    "Local provider execution cannot receive a remote binding."
+                )
+            with _isolated_codex_home(copy_auth=False) as codex_home:
+                return execute_codex_command(
+                    plan,
+                    prompt=prompt,
+                    output_path=output_path,
+                    timeout_seconds=provider.timeout_seconds,
+                    environment_overrides={
+                        "CODEX_HOME": str(codex_home),
+                        "HOME": str(codex_home),
+                    },
+                    reserve_launch=reserve_launch,
+                )
+        if not isinstance(remote_binding, PremiumAuthAttestation):
+            raise AssistantBridgeError(
+                "Premium authentication was not bound to the provider plan."
+            )
+        with _isolated_codex_home(
+            copy_auth=True,
+            expected_auth=remote_binding,
+        ) as codex_home:
+            staged_auth = _attest_staged_premium_auth(
+                Path(codex_home) / "auth.json",
+                expected=remote_binding,
+            )
+
+            def verify_and_reserve() -> ProcessLaunchPermit | None:
+                _verify_staged_premium_auth(
+                    staged_auth,
+                    expected=remote_binding,
+                )
+                if reserve_launch is None:
+                    return None
+                return reserve_launch()
+
+            return execute_codex_command(
+                plan,
+                prompt=prompt,
+                output_path=output_path,
+                timeout_seconds=provider.timeout_seconds,
+                environment_overrides={
+                    "CODEX_HOME": str(codex_home),
+                    "HOME": str(codex_home),
+                },
+                reserve_launch=verify_and_reserve,
+            )
+
+
+_DEFAULT_PROVIDER_ADAPTERS: ProviderAdapterRegistry[ProviderAdapter] = (
+    ProviderAdapterRegistry((_CodexCliProviderAdapter(),))
+)
+
+
+def default_provider_adapter_registry() -> ProviderAdapterRegistry[ProviderAdapter]:
+    """Return the immutable built-in provider adapter composition."""
+
+    return _DEFAULT_PROVIDER_ADAPTERS
+
+
+def _registered_provider_adapter(
+    registry: ProviderAdapterRegistry[ProviderAdapter],
+    provider: ProviderSpec,
+) -> ProviderAdapter:
+    try:
+        adapter = registry.require(provider.adapter)
+    except ProviderAdapterRegistryError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    adapter.validate_provider(provider)
+    if adapter.adapter_id != provider.adapter:
+        raise AssistantBridgeError(
+            "Registered provider adapter identity does not match configuration."
+        )
+    if len(set(adapter.ephemeral_environment_keys)) != len(
+        adapter.ephemeral_environment_keys
+    ):
+        raise AssistantBridgeError(
+            "Provider adapter ephemeral environment keys contain duplicates."
+        )
+    for name in adapter.ephemeral_environment_keys:
+        if _SAFE_ENV.fullmatch(name) is None:
+            raise AssistantBridgeError(
+                "Provider adapter ephemeral environment key is invalid."
+            )
+    return adapter
+
+
 @dataclass(frozen=True)
 class _PreparedExecution:
     receipt: RouteDecisionReceipt
@@ -3288,7 +3574,7 @@ class _PreparedExecution:
     commands: tuple[CommandPlan, ...] = field(repr=False)
     verifier_plans: tuple[BoundVerifierPlan, ...] = field(repr=False)
     confirmation_binding_sha256: str
-    premium_auth: PremiumAuthAttestation | None = field(repr=False)
+    remote_binding: ProviderAuthorityBinding | None = field(repr=False)
 
 
 class AssistantBridgeRunner:
@@ -3298,8 +3584,49 @@ class AssistantBridgeRunner:
         *,
         state_ledger: BridgeStateLedger | None = None,
     ) -> None:
+        self._initialize(
+            config,
+            adapter_registry=_DEFAULT_PROVIDER_ADAPTERS,
+            state_ledger=state_ledger,
+        )
+
+    @classmethod
+    def with_provider_adapters(
+        cls,
+        config: AssistantBridgeConfig,
+        *,
+        adapter_registry: ProviderAdapterRegistry[ProviderAdapter],
+        state_ledger: BridgeStateLedger | None = None,
+    ) -> AssistantBridgeRunner:
+        """Compose a runner with one explicit immutable adapter registry."""
+
+        runner = cls.__new__(cls)
+        runner._initialize(
+            config,
+            adapter_registry=adapter_registry,
+            state_ledger=state_ledger,
+        )
+        return runner
+
+    def _initialize(
+        self,
+        config: AssistantBridgeConfig,
+        *,
+        adapter_registry: ProviderAdapterRegistry[ProviderAdapter],
+        state_ledger: BridgeStateLedger | None,
+    ) -> None:
+        if not isinstance(adapter_registry, ProviderAdapterRegistry):
+            raise AssistantBridgeError(
+                "Provider adapter registry has an unsupported type."
+            )
+        _registered_provider_adapter(adapter_registry, config.local)
+        _registered_provider_adapter(adapter_registry, config.premium)
         self.config = config
         self.state_ledger = state_ledger or config.state.ledger()
+        self._adapter_registry = adapter_registry
+
+    def _provider_adapter(self, provider: ProviderSpec) -> ProviderAdapter:
+        return _registered_provider_adapter(self._adapter_registry, provider)
 
     def plan(
         self,
@@ -3387,12 +3714,13 @@ class AssistantBridgeRunner:
             source_snapshot = snapshot_workspace(workspace, self.config.workspace.scope)
         except WorkspaceSecurityError as exc:
             raise AssistantBridgeError(str(exc)) from None
-        receipt = plan_assistant_route(
+        receipt = _plan_assistant_route(
             task,
             self.config,
             workspace=workspace,
             local_provider_override=local_provider_override,
             workspace_snapshot=source_snapshot,
+            adapter_registry=self._adapter_registry,
         )
         two_phase_required = _requires_independent_evidence(
             task.capability_demand,
@@ -3447,13 +3775,15 @@ class AssistantBridgeRunner:
                 route="blocked",
                 rationale_code="verifier_resource_governance_unavailable",
             )
-        premium_auth: PremiumAuthAttestation | None = None
+        remote_binding: ProviderAuthorityBinding | None = None
         if not two_phase_required and receipt.route in {
             "local_then_verify",
             "premium",
         }:
             try:
-                premium_auth = _attest_premium_auth()
+                remote_binding = self._provider_adapter(
+                    self.config.premium
+                ).attest_remote_binding(self.config.premium)
             except AssistantBridgeError:
                 if receipt.route == "local_then_verify" and not receipt.local_gaps:
                     receipt = _receipt_with_route(
@@ -3478,8 +3808,9 @@ class AssistantBridgeRunner:
             "local_then_verify",
         }:
             local_prompt = build_local_prompt(task)
+            local_adapter = self._provider_adapter(self.config.local)
             commands.append(
-                build_codex_command_plan(
+                local_adapter.build_command_plan(
                     self.config.local,
                     prompt=local_prompt,
                     workspace=workspace,
@@ -3516,8 +3847,10 @@ class AssistantBridgeRunner:
                 diff_evidence=preview_diff,
             )
             premium_prompt = build_premium_prompt(preview_capsule)
+            premium_adapter = self._provider_adapter(self.config.premium)
             commands.append(
                 _premium_preview_plan(
+                    premium_adapter,
                     self.config.premium,
                     task,
                     premium_prompt,
@@ -3527,8 +3860,10 @@ class AssistantBridgeRunner:
                 )
             )
         elif not two_phase_required and receipt.route == "local_then_verify":
+            premium_adapter = self._provider_adapter(self.config.premium)
             commands.append(
                 _premium_preview_plan(
+                    premium_adapter,
                     self.config.premium,
                     task,
                     "<dynamic-capsule-bound-at-runtime>",
@@ -3545,7 +3880,7 @@ class AssistantBridgeRunner:
             verifier_plans=verifier_plans,
             source_snapshot=source_snapshot,
             config=self.config,
-            premium_auth=premium_auth,
+            remote_binding=remote_binding,
             workspace_write_capability=write_capability,
         )
         return _PreparedExecution(
@@ -3558,7 +3893,7 @@ class AssistantBridgeRunner:
             confirmation_binding_sha256=_confirmation_binding_sha256(
                 receipt, execution_binding
             ),
-            premium_auth=premium_auth,
+            remote_binding=remote_binding,
         )
 
     def _validate_verifier_selection(self, task: AssistantTaskEnvelope) -> None:
@@ -3749,7 +4084,8 @@ class AssistantBridgeRunner:
         prompt = build_local_prompt(task)
         with tempfile.TemporaryDirectory(prefix="mymoe-assistant-output-") as tmp:
             output_path = Path(tmp) / "local-final.txt"
-            plan = build_codex_command_plan(
+            adapter = self._provider_adapter(self.config.local)
+            plan = adapter.build_command_plan(
                 self.config.local,
                 prompt=prompt,
                 workspace=candidate.root,
@@ -3769,17 +4105,12 @@ class AssistantBridgeRunner:
                 raise AssistantBridgeError(
                     "Local command no longer matches the confirmed plan."
                 )
-            with _isolated_codex_home(copy_auth=False) as codex_home:
-                return execute_codex_command(
-                    plan,
-                    prompt=prompt,
-                    output_path=output_path,
-                    timeout_seconds=self.config.local.timeout_seconds,
-                    environment_overrides={
-                        "CODEX_HOME": str(codex_home),
-                        "HOME": str(codex_home),
-                    },
-                )
+            return adapter.execute_command(
+                self.config.local,
+                plan,
+                prompt=prompt,
+                output_path=output_path,
+            )
 
     def _execute_premium_candidate(
         self,
@@ -3892,9 +4223,9 @@ class AssistantBridgeRunner:
         *,
         expected_plan: CommandPlan | None,
     ) -> tuple[CommandResult, bool]:
-        if prepared.premium_auth is None:
+        if prepared.remote_binding is None:
             raise AssistantBridgeError(
-                "Premium authentication was not bound to the plan."
+                "Premium provider authority was not bound to the plan."
             )
         prompt = build_premium_prompt(capsule)
         with (
@@ -3912,7 +4243,8 @@ class AssistantBridgeRunner:
                 task.capability_demand,
                 allow_remote_workspace=task.allow_remote_workspace,
             )
-            plan = build_codex_command_plan(
+            adapter = self._provider_adapter(self.config.premium)
+            plan = adapter.build_command_plan(
                 self.config.premium,
                 prompt=prompt,
                 workspace=premium_workspace,
@@ -3934,63 +4266,48 @@ class AssistantBridgeRunner:
                     raise AssistantBridgeError(
                         "Premium command no longer matches the confirmed plan."
                     )
-            with _isolated_codex_home(
-                copy_auth=True,
-                expected_auth=prepared.premium_auth,
-            ) as codex_home:
-                staged_auth = _attest_staged_premium_auth(
-                    Path(codex_home) / "auth.json",
-                    expected=prepared.premium_auth,
+            premium_accounted = False
+            authorization_requested = False
+
+            def reserve_premium_launch() -> ProcessLaunchPermit | None:
+                nonlocal authorization_requested, premium_accounted
+                if authorization_requested:
+                    raise AssistantBridgeError(
+                        "Premium launch authorization was requested more than once."
+                    )
+                authorization_requested = True
+                lease = self._reserve_budget(task, prepared)
+                if lease is None:
+                    return None
+                premium_accounted = True
+
+                def commit() -> None:
+                    self._commit_budget(lease)
+
+                def release_after_popen_failure() -> None:
+                    nonlocal premium_accounted
+                    self._release_budget_after_popen_failure(lease)
+                    premium_accounted = False
+
+                return ProcessLaunchPermit(
+                    commit_after_popen=commit,
+                    release_after_popen_failure=release_after_popen_failure,
                 )
-                premium_accounted = False
-                authorization_requested = False
 
-                def reserve_premium_launch() -> ProcessLaunchPermit | None:
-                    nonlocal authorization_requested, premium_accounted
-                    if authorization_requested:
-                        raise AssistantBridgeError(
-                            "Premium launch authorization was requested more than once."
-                        )
-                    authorization_requested = True
-                    _verify_staged_premium_auth(
-                        staged_auth,
-                        expected=prepared.premium_auth,
-                    )
-                    lease = self._reserve_budget(task, prepared)
-                    if lease is None:
-                        return None
-                    premium_accounted = True
-
-                    def commit() -> None:
-                        self._commit_budget(lease)
-
-                    def release_after_popen_failure() -> None:
-                        nonlocal premium_accounted
-                        self._release_budget_after_popen_failure(lease)
-                        premium_accounted = False
-
-                    return ProcessLaunchPermit(
-                        commit_after_popen=commit,
-                        release_after_popen_failure=release_after_popen_failure,
-                    )
-
-                result = execute_codex_command(
-                    plan,
-                    prompt=prompt,
-                    output_path=output_path,
-                    timeout_seconds=self.config.premium.timeout_seconds,
-                    environment_overrides={
-                        "CODEX_HOME": str(codex_home),
-                        "HOME": str(codex_home),
-                    },
-                    reserve_launch=reserve_premium_launch,
+            result = adapter.execute_command(
+                self.config.premium,
+                plan,
+                prompt=prompt,
+                output_path=output_path,
+                remote_binding=prepared.remote_binding,
+                reserve_launch=reserve_premium_launch,
+            )
+            if result.code == "launch_not_authorized":
+                result = replace(
+                    result,
+                    code="durable_premium_budget_exhausted",
                 )
-                if result.code == "launch_not_authorized":
-                    result = replace(
-                        result,
-                        code="durable_premium_budget_exhausted",
-                    )
-                return result, premium_accounted
+            return result, premium_accounted
 
     def _verify_candidate(
         self,
@@ -4683,7 +5000,64 @@ def _verification_checks(raw: object) -> tuple[Mapping[str, Any], ...]:
     return tuple(dict(check) for check in checks)
 
 
-def _provider_runtime_attestation(
+def _attested_provider_runtime_descriptor(
+    adapter: ProviderAdapter,
+    provider: ProviderSpec,
+    task: AssistantTaskEnvelope,
+    *,
+    local_provider_override: str | None = None,
+) -> dict[str, object]:
+    adapter.validate_provider(provider)
+    raw = adapter.runtime_descriptor(
+        provider,
+        task,
+        local_provider_override=local_provider_override,
+    )
+    if not isinstance(raw, Mapping):
+        raise AssistantBridgeError(
+            "Provider adapter runtime descriptor must be a mapping."
+        )
+    runtime = dict(raw)
+    expected_identity = {
+        "provider_id": provider.id,
+        "adapter": provider.adapter,
+        "execution_scope": provider.execution_scope,
+        "model": provider.model,
+        "environment_keys": list(provider.environment_allowlist),
+        "ephemeral_environment_keys": list(adapter.ephemeral_environment_keys),
+    }
+    if any(runtime.get(name) != value for name, value in expected_identity.items()):
+        raise AssistantBridgeError(
+            "Provider adapter runtime descriptor identity is invalid."
+        )
+    for name in ("workspace_access", "sandbox"):
+        if not isinstance(runtime.get(name), str):
+            raise AssistantBridgeError(
+                "Provider adapter runtime descriptor is incomplete."
+            )
+    for name in (
+        "agent_tool_network_access",
+        "web_search_materialized",
+        "user_config_ignored",
+        "rules_ignored",
+    ):
+        if not isinstance(runtime.get(name), bool):
+            raise AssistantBridgeError(
+                "Provider adapter runtime descriptor is incomplete."
+            )
+    declared_sha256 = runtime.get("runtime_sha256")
+    unsigned = dict(runtime)
+    unsigned.pop("runtime_sha256", None)
+    if not isinstance(declared_sha256, str) or declared_sha256 != _sha256_text(
+        _canonical_json(unsigned)
+    ):
+        raise AssistantBridgeError(
+            "Provider adapter runtime descriptor digest is invalid."
+        )
+    return runtime
+
+
+def _codex_provider_runtime_descriptor(
     provider: ProviderSpec,
     task: AssistantTaskEnvelope,
     *,
@@ -4727,6 +5101,7 @@ def _provider_runtime_attestation(
         "user_config_ignored": True,
         "rules_ignored": True,
         "environment_keys": list(provider.environment_allowlist),
+        "ephemeral_environment_keys": list(_CODEX_EPHEMERAL_ENVIRONMENT_KEYS),
     }
     runtime["runtime_sha256"] = _sha256_text(_canonical_json(runtime))
     return runtime
@@ -6217,6 +6592,7 @@ def _disposable_verifier_workspace(
 
 
 def _premium_preview_plan(
+    adapter: ProviderAdapter,
     provider: ProviderSpec,
     task: AssistantTaskEnvelope,
     prompt: str,
@@ -6231,7 +6607,7 @@ def _premium_preview_plan(
         if access == "capsule_only"
         else Path(workspace).expanduser().resolve()
     )
-    return build_codex_command_plan(
+    return adapter.build_command_plan(
         provider,
         prompt=prompt,
         workspace=preview_workspace,
@@ -6267,6 +6643,28 @@ def _untracked_manifest(
             }
         )
     return _canonical_json(records).encode("utf-8")
+
+
+def _validate_codex_provider(provider: ProviderSpec) -> None:
+    if provider.adapter != _CODEX_ADAPTER_ID:
+        raise AssistantBridgeError(
+            f"Codex adapter cannot execute provider {provider.id!r} "
+            f"configured for {provider.adapter!r}."
+        )
+    if provider.mode == "local" and provider.local_provider not in {
+        "lmstudio",
+        "ollama",
+    }:
+        raise AssistantBridgeError(
+            f"Local provider {provider.id} must choose "
+            "local_provider=ollama or lmstudio."
+        )
+    if provider.codex_profile:
+        raise AssistantBridgeError(
+            f"Provider {provider.id} codex_profile is incompatible with "
+            "isolated execution; use a trusted executable adapter instead."
+        )
+    _validate_safe_extra_args(provider.extra_args, provider_id=provider.id)
 
 
 def _validate_safe_extra_args(values: Sequence[str], *, provider_id: str) -> None:
@@ -6582,6 +6980,23 @@ def _preview_output_path(label: str) -> Path:
     return Path(tempfile.gettempdir()).resolve() / f"mymoe-assistant-{label}-preview"
 
 
+def _provider_authority_binding_payload(
+    binding: ProviderAuthorityBinding,
+) -> dict[str, object]:
+    raw = binding.binding_payload()
+    if not isinstance(raw, Mapping):
+        raise AssistantBridgeError(
+            "Provider authority binding payload must be a mapping."
+        )
+    payload = dict(raw)
+    encoded = _canonical_json(payload)
+    if len(encoded.encode("utf-8")) > _MAX_JSON_BYTES:
+        raise AssistantBridgeError(
+            "Provider authority binding payload exceeds its size limit."
+        )
+    return payload
+
+
 def _execution_binding(
     *,
     external_evidence: Sequence[VerificationEvidence],
@@ -6591,7 +7006,7 @@ def _execution_binding(
     verifier_plans: Sequence[BoundVerifierPlan],
     source_snapshot: WorkspaceSnapshot,
     config: AssistantBridgeConfig,
-    premium_auth: PremiumAuthAttestation | None,
+    remote_binding: ProviderAuthorityBinding | None,
     workspace_write_capability: WorkspaceWriteCapability,
 ) -> dict[str, object]:
     evidence_payload = [item.payload() for item in external_evidence]
@@ -6617,13 +7032,19 @@ def _execution_binding(
         "workspace_write_capability": workspace_write_capability.payload(),
         "runtime_policy": config.runtime.payload(),
         "runtime_capabilities": runtime_capabilities().payload(),
-        "premium_auth": (
-            premium_auth.binding_payload() if premium_auth is not None else None
+        "provider_authority_binding": (
+            _provider_authority_binding_payload(remote_binding)
+            if remote_binding is not None
+            else None
         ),
-        "ephemeral_environment_overrides": {
-            "CODEX_HOME": "isolated-runtime-placeholder",
-            "HOME": "isolated-runtime-placeholder",
-        },
+        "ephemeral_environment_keys": [
+            {
+                "provider_id": item.provider_id,
+                "adapter_id": item.adapter_id,
+                "keys": list(item.ephemeral_environment_keys),
+            }
+            for item in commands
+        ],
     }
 
 
@@ -6636,6 +7057,7 @@ def _command_authority_sha256(plan: CommandPlan) -> str:
         _canonical_json(
             {
                 "provider_id": plan.provider_id,
+                "adapter_id": plan.adapter_id,
                 "mode": plan.mode,
                 "argv": list(semantic_argv),
                 "sandbox": plan.sandbox,
@@ -6644,6 +7066,7 @@ def _command_authority_sha256(plan: CommandPlan) -> str:
                 "model": plan.model,
                 "local_provider": plan.local_provider,
                 "environment_sha256": plan.environment_sha256,
+                "ephemeral_environment_keys": list(plan.ephemeral_environment_keys),
                 "executable_fingerprint": plan.executable_identity.fingerprint,
                 "runtime": _deep_thaw(plan.runtime),
                 "runtime_policy": plan.runtime_policy.payload(),

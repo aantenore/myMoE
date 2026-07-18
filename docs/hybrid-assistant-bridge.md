@@ -207,6 +207,17 @@ A trusted executable plus launcher prefix can integrate an existing gateway;
 that adapter remains part of the trusted computing base, while the task,
 receipt, evidence, budget, and capsule contracts remain unchanged.
 
+Provider composition is explicit and immutable per runner. The built-in
+`ProviderAdapterRegistry` contains only `codex_cli`. An adapter owns its complete
+lifecycle: configuration validation, receipt runtime descriptor, command plan,
+remote authority binding, isolated execution environment, and process launch.
+The adapter id and its ephemeral environment-key contract are included in the
+command, authority, and confirmation bindings. A safe but unregistered adapter
+id can be represented in configuration, but the default runner rejects it
+before issuing a confirmation or building a command. Adding a future adapter
+therefore requires an implementation and explicit registry composition; an
+executable substitution alone is not treated as a new provider contract.
+
 The shipped verifier rejects known failure language, runs configured mechanical
 commands for code/tool/write tasks, and accepts strict external evidence.
 External evidence must match a configured verifier id and spec digest and must

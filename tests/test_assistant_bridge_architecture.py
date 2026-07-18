@@ -51,6 +51,10 @@ SUPPORTED_FACADE_API = frozenset(
         "GitIdentity",
         "PremiumAuthAttestation",
         "ProfilePolicy",
+        "ProviderAdapter",
+        "ProviderAdapterRegistry",
+        "ProviderAdapterRegistryError",
+        "ProviderAuthorityBinding",
         "ProviderSpec",
         "RouteDecisionReceipt",
         "StagedPremiumAuthAttestation",
@@ -65,6 +69,7 @@ SUPPORTED_FACADE_API = frozenset(
         "collect_git_diff",
         "collect_git_evidence",
         "execute_codex_command",
+        "default_provider_adapter_registry",
         "load_assistant_bridge_config",
         "load_assistant_task",
         "load_verification_evidence",
@@ -79,6 +84,10 @@ SUPPORTED_FACADE_API = frozenset(
 # through the facade. Future modules may own the implementation, but the facade must
 # continue to expose the same objects until a deliberate breaking release.
 COMPATIBILITY_SEAM_REEXPORTS: dict[str, tuple[str, ...]] = {
+    "local_moe.assistant_bridge_provider_registry": (
+        "ProviderAdapterRegistry",
+        "ProviderAdapterRegistryError",
+    ),
     "local_moe.assistant_bridge_resources": (
         "VerifierResourceCapabilities",
         "VerifierResourceEnforcementReport",
@@ -184,6 +193,9 @@ PUBLIC_CALL_SIGNATURES = {
         "'Callable[[], ProcessLaunchPermit | None] | None' = None) -> "
         "'CommandResult'"
     ),
+    "default_provider_adapter_registry": (
+        "() -> 'ProviderAdapterRegistry[ProviderAdapter]'"
+    ),
     "load_assistant_bridge_config": (
         "(path: 'str | Path') -> 'AssistantBridgeConfig'"
     ),
@@ -227,6 +239,11 @@ RUNNER_METHOD_SIGNATURES = {
         "external_evidence: 'Sequence[VerificationEvidence]' = (), "
         "include_diff: 'bool' = False, capsule_out: 'str | Path | None' = "
         "None) -> 'BridgeRunResult'"
+    ),
+    "with_provider_adapters": (
+        "(config: 'AssistantBridgeConfig', *, adapter_registry: "
+        "'ProviderAdapterRegistry[ProviderAdapter]', state_ledger: "
+        "'BridgeStateLedger | None' = None) -> 'AssistantBridgeRunner'"
     ),
 }
 
