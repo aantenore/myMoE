@@ -2840,11 +2840,7 @@ def verify_command_result(
         evidence.append(item)
 
     if _requires_independent_evidence(task.capability_demand, config) and not any(
-        (
-            (item.kind == "external")
-            or (item.kind == "command" and item.verifier == "command-task")
-        )
-        and item.passed
+        item.kind == "external" and item.passed
         for item in evidence
     ):
         policy_spec = _sha256_text(
@@ -3275,6 +3271,16 @@ class AssistantBridgeRunner:
             local_provider_override=local_provider_override,
             workspace_snapshot=source_snapshot,
         )
+        two_phase_required = _requires_independent_evidence(
+            task.capability_demand,
+            self.config,
+        )
+        if two_phase_required:
+            receipt = _receipt_with_route(
+                receipt,
+                route="blocked",
+                rationale_code="two_phase_required",
+            )
         write_capability = workspace_write_capability()
         if (
             task.capability_demand.risk_class == "write_local"
@@ -3285,7 +3291,9 @@ class AssistantBridgeRunner:
                 route="blocked",
                 rationale_code="workspace_write_capability_unavailable",
             )
-        selected_verifiers = self._selected_verifiers(task)
+        selected_verifiers = (
+            () if two_phase_required else self._selected_verifiers(task)
+        )
         verifier_plans = tuple(
             _build_verifier_plan(
                 spec,
@@ -3309,7 +3317,10 @@ class AssistantBridgeRunner:
                 rationale_code="verifier_isolation_unavailable",
             )
         premium_auth: PremiumAuthAttestation | None = None
-        if receipt.route in {"local_then_verify", "premium"}:
+        if not two_phase_required and receipt.route in {
+            "local_then_verify",
+            "premium",
+        }:
             try:
                 premium_auth = _attest_premium_auth()
             except AssistantBridgeError:
@@ -3331,7 +3342,10 @@ class AssistantBridgeRunner:
             receipt.workspace,
         )
         commands: list[CommandPlan] = []
-        if receipt.route in {"local", "local_then_verify"}:
+        if not two_phase_required and receipt.route in {
+            "local",
+            "local_then_verify",
+        }:
             local_prompt = build_local_prompt(task)
             commands.append(
                 build_codex_command_plan(
@@ -3346,7 +3360,7 @@ class AssistantBridgeRunner:
                     ephemeral_workspace=True,
                 )
             )
-        if receipt.route == "premium":
+        if not two_phase_required and receipt.route == "premium":
             try:
                 with materialize_workspace(
                     source_snapshot, self.config.workspace.scope
@@ -3381,7 +3395,7 @@ class AssistantBridgeRunner:
                     runtime_policy=self.config.runtime,
                 )
             )
-        elif receipt.route == "local_then_verify":
+        elif not two_phase_required and receipt.route == "local_then_verify":
             commands.append(
                 _premium_preview_plan(
                     self.config.premium,
@@ -3910,21 +3924,14 @@ class AssistantBridgeRunner:
             )
             return tuple(result)
         if task.capability_demand.risk_class == "write_local":
-            task_verified = any(
-                item.kind == "command"
-                and item.verifier == "command-task"
-                and item.passed
-                for item in result
-            )
-            if not task_verified:
-                result.append(
-                    self._policy_evidence(
-                        task,
-                        workspace,
-                        code="verification_required",
-                        artifact="task-verifier",
-                    )
+            result.append(
+                self._policy_evidence(
+                    task,
+                    workspace,
+                    code="two_phase_required",
+                    artifact="independent-attestation",
                 )
+            )
             if change_count == 0 and not task.no_change_expected:
                 result.append(
                     self._policy_evidence(
@@ -3981,6 +3988,10 @@ class AssistantBridgeRunner:
         if task.capability_demand.risk_class != "write_local":
             raise AssistantBridgeError(
                 "A non-write task cannot apply candidate workspace changes."
+            )
+        if _requires_independent_evidence(task.capability_demand, self.config):
+            raise AssistantBridgeError(
+                "Independent tasks must use the two-phase resume path."
             )
         apply_changeset(
             source_snapshot=prepared.source_snapshot,

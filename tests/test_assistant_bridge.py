@@ -1273,7 +1273,7 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         )
         self.assertEqual(invocations, [])
 
-    def test_write_local_candidate_is_verified_then_applied_to_source(self) -> None:
+    def test_legacy_run_blocks_independent_write_before_provider(self) -> None:
         with (
             _fake_bridge() as fixture,
             _fake_environment(
@@ -1289,11 +1289,56 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
                 risk_class="write_local",
                 required_verifier_ids=("fixture-task-verifier",),
             )
-            result = fixture.run(task)
+            plan = fixture.runner.plan(task, workspace=fixture.root)
+            result = fixture.runner.run(
+                task,
+                workspace=fixture.root,
+                confirmation=str(plan["confirmation_id"]),
+            )
             source = (fixture.root / "tracked.txt").read_text(encoding="utf-8")
+            invocations = _read_jsonl(fixture.log)
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(source, "verified-candidate\n")
+        self.assertEqual(plan["route_receipt"]["route"], "blocked")
+        self.assertIn(
+            "two_phase_required",
+            plan["route_receipt"]["rationale_codes"],
+        )
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(source, "initial\n")
+        self.assertEqual(invocations, [])
+
+    def test_candidate_command_task_has_no_apply_authority(self) -> None:
+        with _fake_bridge() as fixture:
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="offline",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                required_verifier_ids=("fixture-task-verifier",),
+            )
+            workspace = attest_workspace(fixture.root)
+            candidate_evidence = VerificationEvidence(
+                id="fixture-task-verifier",
+                verifier="command-task",
+                kind="command",
+                passed=True,
+                code="command_passed",
+                artifact_sha256="a" * 64,
+                task_fingerprint=task.task_fingerprint,
+                workspace_fingerprint=workspace.fingerprint,
+                verifier_spec_sha256="b" * 64,
+            )
+
+            evidence = fixture.runner._enforce_completion_contract(
+                task,
+                (candidate_evidence,),
+                workspace,
+                change_count=1,
+            )
+
+        self.assertTrue(
+            any(item.code == "two_phase_required" for item in evidence)
+        )
 
     def test_failed_task_verifier_never_applies_candidate(self) -> None:
         with (
