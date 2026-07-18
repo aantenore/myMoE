@@ -69,9 +69,19 @@ generates with the configured Qwen and Gemma MLX servers.
 
 Optional extras:
 
+- `.[assistant-bridge]`: installs the dependencies required by the Hybrid
+  Assistant Bridge CLI and its two-phase lifecycle commands.
 - `.[gguf]`: installs the Python-side downloader dependencies for llama.cpp/GGUF profiles. The `llama-server` binary is still installed from llama.cpp releases.
 - `.[mlx-current]`: tracks the latest `mlx-lm` stack for experiments.
 - `.[mlx-vlm]`: installs `mlx-vlm` for future multimodal server experiments. Do not use it as the default Gemma E4B path until the upstream compatibility issue is resolved.
+
+Install the Assistant Bridge extra before running its CLI examples. Use the
+locked dependency graph with uv, or install the same project extra with pip:
+
+```bash
+uv sync --locked --extra assistant-bridge
+pip install '.[assistant-bridge]'
+```
 
 Or let the bootstrap script run the safe install commands:
 

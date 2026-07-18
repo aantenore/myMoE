@@ -150,6 +150,15 @@ private wire protocol.
 
 ## CLI usage
 
+Install the Assistant Bridge optional dependencies before running the examples.
+Use the locked dependency graph with uv, or install the same project extra with
+pip:
+
+```bash
+uv sync --locked --extra assistant-bridge
+pip install '.[assistant-bridge]'
+```
+
 Planning is the default and does not launch Codex. The output contains a
 metadata-only `RouteDecisionReceipt`, a redacted argv shape, and a
 `confirmation_id`. The task remains stdin data and is represented only by a

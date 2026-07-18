@@ -49,6 +49,102 @@ STAGE_KEY = "stage-cli-idempotency-00000001"
 
 
 class AssistantBridgeLifecycleCliTests(unittest.TestCase):
+    def test_lifecycle_missing_optional_extra_dependency_is_redacted(self) -> None:
+        from local_moe.cli import _run_assistant_lifecycle_mode
+
+        modules = (
+            "cryptography",
+            "detect_secrets",
+            "platformdirs",
+            "psutil",
+            "rfc8785",
+        )
+        for module in modules:
+            with self.subTest(module=module):
+                private_path = f"/private/site-packages/{module}.py"
+                missing = ModuleNotFoundError(
+                    f"No module named {module!r}",
+                    name=module,
+                    path=private_path,
+                )
+                error_output = StringIO()
+                with (
+                    patch(
+                        "local_moe.cli.run_lifecycle_cli",
+                        side_effect=missing,
+                    ),
+                    redirect_stderr(error_output),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    _run_assistant_lifecycle_mode(
+                        _stage_args(),
+                        app_config=object(),
+                    )
+
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(
+                    json.loads(error_output.getvalue()),
+                    {
+                        "schemaVersion": "1.0",
+                        "mode": "assistant_bridge_stage",
+                        "status": "error",
+                        "error": {
+                            "code": "assistant_bridge_dependency_missing",
+                        },
+                    },
+                )
+                self.assertNotIn(module, error_output.getvalue())
+                self.assertNotIn(private_path, error_output.getvalue())
+
+    def test_lifecycle_does_not_reclassify_other_import_failures(self) -> None:
+        from local_moe.cli import _run_assistant_lifecycle_mode
+
+        private_path = "/private/site-packages/private_bridge_plugin.py"
+        cases = (
+            ModuleNotFoundError(
+                "No module named 'private_bridge_plugin'",
+                name="private_bridge_plugin",
+                path=private_path,
+            ),
+            ModuleNotFoundError(
+                "No module named 'cryptography.hazmat'",
+                name="cryptography.hazmat",
+                path=private_path,
+            ),
+            ImportError(
+                "broken cryptography binary",
+                name="cryptography",
+                path=private_path,
+            ),
+        )
+        for error in cases:
+            with self.subTest(
+                error_type=type(error).__name__,
+                module=getattr(error, "name", None),
+            ):
+                error_output = StringIO()
+                with (
+                    patch(
+                        "local_moe.cli.run_lifecycle_cli",
+                        side_effect=error,
+                    ),
+                    redirect_stderr(error_output),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    _run_assistant_lifecycle_mode(
+                        _stage_args(),
+                        app_config=object(),
+                    )
+
+                self.assertEqual(raised.exception.code, 4)
+                self.assertEqual(
+                    json.loads(error_output.getvalue())["error"]["code"],
+                    "unexpected_runtime_failure",
+                )
+                self.assertNotIn("private_bridge_plugin", error_output.getvalue())
+                self.assertNotIn("cryptography", error_output.getvalue())
+                self.assertNotIn(private_path, error_output.getvalue())
+
     def test_lifecycle_invocation_errors_are_canonical_and_redacted(self) -> None:
         private_task = "private lifecycle task"
         private_workspace = "/private/lifecycle/workspace"

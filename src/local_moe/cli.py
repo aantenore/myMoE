@@ -77,6 +77,17 @@ if TYPE_CHECKING:
     from .assistant_bridge import AssistantTaskEnvelope, BridgeRunResult
 
 
+_ASSISTANT_BRIDGE_EXTRA_MODULES = frozenset(
+    {
+        "cryptography",
+        "detect_secrets",
+        "platformdirs",
+        "psutil",
+        "rfc8785",
+    }
+)
+
+
 class _MymoeArgumentParser(argparse.ArgumentParser):
     """Preserve legacy errors while redacting lifecycle invocation failures."""
 
@@ -1414,6 +1425,20 @@ def _run_assistant_lifecycle_mode(
     except AssistantBridgeCliError as exc:
         print(assistant_bridge_canonical_json(exc.payload()), file=sys.stderr)
         raise SystemExit(exc.exit_code) from None
+    except ModuleNotFoundError as exc:
+        missing_module = exc.name or ""
+        is_bridge_dependency = missing_module in _ASSISTANT_BRIDGE_EXTRA_MODULES
+        failure = AssistantBridgeCliError(
+            mode=mode,
+            code=(
+                "assistant_bridge_dependency_missing"
+                if is_bridge_dependency
+                else "unexpected_runtime_failure"
+            ),
+            exit_code=2 if is_bridge_dependency else 4,
+        )
+        print(assistant_bridge_canonical_json(failure.payload()), file=sys.stderr)
+        raise SystemExit(failure.exit_code) from None
     except Exception:
         failure = AssistantBridgeCliError(
             mode=mode,
