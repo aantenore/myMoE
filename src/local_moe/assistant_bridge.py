@@ -15,7 +15,7 @@ import sys
 import sysconfig
 import tempfile
 from types import MappingProxyType
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, Protocol, Sequence
 
 from . import assistant_bridge_workspace as _workspace_security
 from .assistant_bridge_provider_registry import (
@@ -93,6 +93,10 @@ from .assistant_bridge_workspace import (
 )
 
 
+if TYPE_CHECKING:
+    from .assistant_bridge_lifecycle import GeneratedCandidate
+
+
 BRIDGE_SCHEMA_VERSION = "2.0"
 ROUTES = {"blocked", "local", "local_then_verify", "premium"}
 PROFILES = {"balanced", "economy", "offline", "privacy", "quality"}
@@ -114,6 +118,9 @@ _MAX_STREAM_BYTES = 2 * 1024 * 1024
 _MAX_FINAL_BYTES = 1024 * 1024
 _CODEX_ADAPTER_ID = "codex_cli"
 _CODEX_EPHEMERAL_ENVIRONMENT_KEYS = ("CODEX_HOME", "HOME")
+_DIRECT_APPLY_INTENT = "direct_apply"
+_CANDIDATE_GENERATION_INTENT = "candidate_generation"
+_EXECUTION_INTENTS = {_DIRECT_APPLY_INTENT, _CANDIDATE_GENERATION_INTENT}
 _PYTHON_UNITTEST_BOOTSTRAP = r"""
 import hashlib
 import json
@@ -1476,6 +1483,7 @@ class ProviderAdapter(Protocol):
     """Complete provider lifecycle owned by one explicitly registered adapter."""
 
     adapter_id: str
+    configuration_sha256: str
     ephemeral_environment_keys: tuple[str, ...]
 
     def validate_provider(self, provider: ProviderSpec) -> None: ...
@@ -1671,6 +1679,37 @@ class BridgeRunResult:
                 "characters": len(self.final_output),
             },
         }
+
+
+@dataclass(frozen=True)
+class CandidateGenerationRequest:
+    """Opaque execution request consumed by the two-phase lifecycle port."""
+
+    task: AssistantTaskEnvelope
+    confirmation: str = field(repr=False)
+    local_provider_override: str | None = None
+    external_evidence: tuple[VerificationEvidence, ...] = field(default=(), repr=False)
+    include_diff: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.confirmation, str)
+            or not self.confirmation
+            or len(self.confirmation) > 4096
+            or "\x00" in self.confirmation
+        ):
+            raise AssistantBridgeError("Candidate generation confirmation is invalid.")
+        if self.local_provider_override not in {None, "lmstudio", "ollama"}:
+            raise AssistantBridgeError(
+                "Local provider override must be ollama or lmstudio."
+            )
+        if not isinstance(self.include_diff, bool):
+            raise AssistantBridgeError("include_diff must be boolean.")
+        object.__setattr__(
+            self,
+            "external_evidence",
+            tuple(self.external_evidence),
+        )
 
 
 def load_assistant_task(path: str | Path) -> AssistantTaskEnvelope:
@@ -3401,6 +3440,20 @@ class _CodexCliProviderAdapter:
     adapter_id = _CODEX_ADAPTER_ID
     ephemeral_environment_keys = _CODEX_EPHEMERAL_ENVIRONMENT_KEYS
 
+    @property
+    def configuration_sha256(self) -> str:
+        return _sha256_text(
+            _canonical_json(
+                {
+                    "contract": "codex-cli-provider-adapter/v1",
+                    "adapter_id": self.adapter_id,
+                    "ephemeral_environment_keys": list(
+                        self.ephemeral_environment_keys
+                    ),
+                }
+            )
+        )
+
     def validate_provider(self, provider: ProviderSpec) -> None:
         _validate_codex_provider(provider)
 
@@ -3567,6 +3620,8 @@ def _registered_provider_adapter(
 
 @dataclass(frozen=True)
 class _PreparedExecution:
+    execution_intent: str
+    expected_lifecycle_config_sha256: str | None
     receipt: RouteDecisionReceipt
     source_snapshot: WorkspaceSnapshot = field(repr=False)
     workspace_write_capability: WorkspaceWriteCapability
@@ -3627,6 +3682,11 @@ class AssistantBridgeRunner:
 
     def _provider_adapter(self, provider: ProviderSpec) -> ProviderAdapter:
         return _registered_provider_adapter(self._adapter_registry, provider)
+
+    def candidate_generator(self) -> AssistantBridgeCandidateGenerator:
+        """Return a least-authority generator bound to this runner composition."""
+
+        return AssistantBridgeCandidateGenerator(self)
 
     def plan(
         self,
@@ -3708,7 +3768,25 @@ class AssistantBridgeRunner:
         external_evidence: Sequence[VerificationEvidence],
         include_diff: bool,
         capsule_out: str | Path | None,
+        execution_intent: str = _DIRECT_APPLY_INTENT,
+        expected_lifecycle_config_sha256: str | None = None,
     ) -> _PreparedExecution:
+        if execution_intent not in _EXECUTION_INTENTS:
+            raise AssistantBridgeError("Assistant execution intent is invalid.")
+        candidate_generation = execution_intent == _CANDIDATE_GENERATION_INTENT
+        if candidate_generation:
+            if expected_lifecycle_config_sha256 is None:
+                raise AssistantBridgeError(
+                    "Candidate generation requires a lifecycle configuration digest."
+                )
+            _require_sha256(
+                expected_lifecycle_config_sha256,
+                "candidate lifecycle configuration",
+            )
+        elif expected_lifecycle_config_sha256 is not None:
+            raise AssistantBridgeError(
+                "Direct execution cannot bind a candidate lifecycle configuration."
+            )
         self._validate_verifier_selection(task)
         try:
             source_snapshot = snapshot_workspace(workspace, self.config.workspace.scope)
@@ -3726,7 +3804,7 @@ class AssistantBridgeRunner:
             task.capability_demand,
             self.config,
         )
-        if two_phase_required:
+        if two_phase_required and not candidate_generation:
             receipt = _receipt_with_route(
                 receipt,
                 route="blocked",
@@ -3743,7 +3821,9 @@ class AssistantBridgeRunner:
                 rationale_code="workspace_write_capability_unavailable",
             )
         selected_verifiers = (
-            () if two_phase_required else self._selected_verifiers(task)
+            self._selected_verifiers(task)
+            if candidate_generation or not two_phase_required
+            else ()
         )
         verifier_plans = _build_verifier_plan_batch(
             selected_verifiers,
@@ -3776,7 +3856,7 @@ class AssistantBridgeRunner:
                 rationale_code="verifier_resource_governance_unavailable",
             )
         remote_binding: ProviderAuthorityBinding | None = None
-        if not two_phase_required and receipt.route in {
+        if (candidate_generation or not two_phase_required) and receipt.route in {
             "local_then_verify",
             "premium",
         }:
@@ -3803,7 +3883,7 @@ class AssistantBridgeRunner:
             receipt.workspace,
         )
         commands: list[CommandPlan] = []
-        if not two_phase_required and receipt.route in {
+        if (candidate_generation or not two_phase_required) and receipt.route in {
             "local",
             "local_then_verify",
         }:
@@ -3822,7 +3902,9 @@ class AssistantBridgeRunner:
                     ephemeral_workspace=True,
                 )
             )
-        if not two_phase_required and receipt.route == "premium":
+        if (
+            candidate_generation or not two_phase_required
+        ) and receipt.route == "premium":
             try:
                 with materialize_workspace(
                     source_snapshot, self.config.workspace.scope
@@ -3859,7 +3941,9 @@ class AssistantBridgeRunner:
                     runtime_policy=self.config.runtime,
                 )
             )
-        elif not two_phase_required and receipt.route == "local_then_verify":
+        elif (
+            candidate_generation or not two_phase_required
+        ) and receipt.route == "local_then_verify":
             premium_adapter = self._provider_adapter(self.config.premium)
             commands.append(
                 _premium_preview_plan(
@@ -3873,6 +3957,8 @@ class AssistantBridgeRunner:
                 )
             )
         execution_binding = _execution_binding(
+            execution_intent=execution_intent,
+            expected_lifecycle_config_sha256=expected_lifecycle_config_sha256,
             external_evidence=bound_external,
             include_diff=include_diff,
             capsule_out=capsule_out,
@@ -3884,6 +3970,8 @@ class AssistantBridgeRunner:
             workspace_write_capability=write_capability,
         )
         return _PreparedExecution(
+            execution_intent=execution_intent,
+            expected_lifecycle_config_sha256=expected_lifecycle_config_sha256,
             receipt=receipt,
             source_snapshot=source_snapshot,
             workspace_write_capability=write_capability,
@@ -4073,6 +4161,131 @@ class AssistantBridgeRunner:
         except WorkspaceSecurityError as exc:
             raise AssistantBridgeError(str(exc)) from None
 
+    def _generate_candidate_result(
+        self,
+        task: AssistantTaskEnvelope,
+        prepared: _PreparedExecution,
+        candidate: MaterializedWorkspace,
+        *,
+        local_provider_override: str | None,
+        include_diff: bool,
+    ) -> BridgeRunResult:
+        """Execute providers in a disposable workspace without apply authority."""
+
+        receipt = prepared.receipt
+        if receipt.route == "premium":
+            return self._execute_premium_candidate(
+                task,
+                prepared,
+                candidate,
+                transaction_id="",
+                include_diff=include_diff,
+                capsule_out=None,
+                prior_commands=(),
+                prior_evidence=prepared.prior_evidence,
+                failure_codes=(
+                    "policy_selected_premium",
+                    *(item.code for item in prepared.prior_evidence if not item.passed),
+                ),
+                expected_plan=prepared.commands[0],
+                apply_candidate=False,
+            )
+
+        local_result = self._execute_local_candidate(
+            task,
+            prepared,
+            candidate,
+            local_provider_override=local_provider_override,
+        )
+        local_evidence, _, _ = self._verify_candidate(
+            task,
+            candidate,
+            local_result,
+            prepared.verifier_plans,
+            include_independent_gate=False,
+        )
+        prior_failed = tuple(
+            item for item in prepared.prior_evidence if not item.passed
+        )
+        if local_result.status == "blocked":
+            return BridgeRunResult(
+                status="blocked",
+                code="local_runtime_unavailable",
+                receipt=receipt,
+                prior_verification=prepared.prior_evidence,
+                verification=local_evidence,
+                commands=(local_result,),
+                final_provider=self.config.local.id,
+            )
+        mutation_forbidden = any(
+            item.code == "workspace_mutation_forbidden" for item in local_evidence
+        )
+        local_quality_passed = (
+            local_result.status == "completed"
+            and _all_passed(local_evidence)
+            and not prior_failed
+        )
+        if mutation_forbidden:
+            return BridgeRunResult(
+                status="failed",
+                code="workspace_authority_violated",
+                receipt=receipt,
+                prior_verification=prepared.prior_evidence,
+                verification=local_evidence,
+                commands=(local_result,),
+                final_provider=self.config.local.id,
+            )
+        if local_quality_passed:
+            return BridgeRunResult(
+                status="completed",
+                code="local_candidate_generated",
+                receipt=receipt,
+                prior_verification=prepared.prior_evidence,
+                verification=local_evidence,
+                commands=(local_result,),
+                final_provider=self.config.local.id,
+                final_output=local_result.output,
+            )
+        if receipt.route == "local":
+            if local_result.status != "completed":
+                status, code = "failed", "local_runtime_failed"
+            elif _candidate_scope_invalid(local_evidence):
+                status, code = "failed", "candidate_scope_invalid"
+            else:
+                status, code = (
+                    "completed",
+                    "local_candidate_generated_with_quality_findings",
+                )
+            return BridgeRunResult(
+                status=status,
+                code=code,
+                receipt=receipt,
+                prior_verification=prepared.prior_evidence,
+                verification=local_evidence,
+                commands=(local_result,),
+                final_provider=self.config.local.id,
+                final_output=local_result.output,
+            )
+        return self._execute_premium_candidate(
+            task,
+            prepared,
+            candidate,
+            transaction_id="",
+            include_diff=include_diff,
+            capsule_out=None,
+            prior_commands=(local_result,),
+            prior_evidence=(*prepared.prior_evidence, *local_evidence),
+            failure_codes=tuple(
+                item.code
+                for item in (*prior_failed, *local_evidence)
+                if not item.passed
+            ),
+            expected_plan=(
+                prepared.commands[1] if len(prepared.commands) > 1 else None
+            ),
+            apply_candidate=False,
+        )
+
     def _execute_local_candidate(
         self,
         task: AssistantTaskEnvelope,
@@ -4125,6 +4338,7 @@ class AssistantBridgeRunner:
         prior_evidence: tuple[VerificationEvidence, ...],
         failure_codes: Sequence[str],
         expected_plan: CommandPlan | None,
+        apply_candidate: bool = True,
     ) -> BridgeRunResult:
         receipt = prepared.receipt
         current_snapshot = snapshot_workspace(
@@ -4186,21 +4400,34 @@ class AssistantBridgeRunner:
             candidate,
             premium_result,
             prepared.verifier_plans,
+            include_independent_gate=apply_candidate,
         )
         if premium_result.status == "blocked":
             status, code = "blocked", "premium_runtime_unavailable"
+        elif apply_candidate:
+            if premium_result.status == "completed" and _all_passed(premium_evidence):
+                self._apply_verified_candidate(
+                    task,
+                    prepared,
+                    candidate,
+                    candidate_files,
+                    changes,
+                    transaction_id=transaction_id,
+                )
+                status, code = "completed", "premium_verification_passed"
+            else:
+                status, code = "failed", "premium_verification_failed"
+        elif premium_result.status != "completed":
+            status, code = "failed", "premium_runtime_failed"
+        elif _candidate_scope_invalid(premium_evidence):
+            status, code = "failed", "candidate_scope_invalid"
         elif _all_passed(premium_evidence):
-            self._apply_verified_candidate(
-                task,
-                prepared,
-                candidate,
-                candidate_files,
-                changes,
-                transaction_id=transaction_id,
-            )
-            status, code = "completed", "premium_verification_passed"
+            status, code = "completed", "premium_candidate_generated"
         else:
-            status, code = "failed", "premium_verification_failed"
+            status, code = (
+                "completed",
+                "premium_candidate_generated_with_quality_findings",
+            )
         return BridgeRunResult(
             status=status,
             code=code,
@@ -4315,6 +4542,8 @@ class AssistantBridgeRunner:
         candidate: MaterializedWorkspace,
         result: CommandResult,
         verifier_plans: Sequence[BoundVerifierPlan],
+        *,
+        include_independent_gate: bool = True,
     ) -> tuple[
         tuple[VerificationEvidence, ...],
         tuple[WorkspaceFile, ...],
@@ -4344,11 +4573,18 @@ class AssistantBridgeRunner:
                 verifier_workspace=verifier_workspace,
                 verifier_plans=verifier_plans,
             )
+        if not include_independent_gate:
+            evidence = tuple(
+                item
+                for item in evidence
+                if item.code != "independent_evidence_missing"
+            )
         evidence = self._enforce_completion_contract(
             task,
             evidence,
             attestation,
             change_count=len(changes),
+            include_independent_gate=include_independent_gate,
         )
         return evidence, candidate_files, changes
 
@@ -4359,6 +4595,7 @@ class AssistantBridgeRunner:
         workspace: WorkspaceAttestation,
         *,
         change_count: int,
+        include_independent_gate: bool = True,
     ) -> tuple[VerificationEvidence, ...]:
         result = list(evidence)
         if task.capability_demand.risk_class != "write_local" and change_count:
@@ -4372,14 +4609,15 @@ class AssistantBridgeRunner:
             )
             return tuple(result)
         if task.capability_demand.risk_class == "write_local":
-            result.append(
-                self._policy_evidence(
-                    task,
-                    workspace,
-                    code="two_phase_required",
-                    artifact="independent-attestation",
+            if include_independent_gate:
+                result.append(
+                    self._policy_evidence(
+                        task,
+                        workspace,
+                        code="two_phase_required",
+                        artifact="independent-attestation",
+                    )
                 )
-            )
             if change_count == 0 and not task.no_change_expected:
                 result.append(
                     self._policy_evidence(
@@ -4506,6 +4744,253 @@ class AssistantBridgeRunner:
             return
         payload = (json.dumps(capsule.payload(), indent=2) + "\n").encode("utf-8")
         _write_capsule_atomic(capsule_out, payload)
+
+
+class AssistantBridgeCandidateGenerator:
+    """Generate a bounded candidate without receiving source apply authority."""
+
+    def __init__(self, runner: AssistantBridgeRunner) -> None:
+        if not isinstance(runner, AssistantBridgeRunner):
+            raise AssistantBridgeError("Candidate generator requires a bridge runner.")
+        self._runner = runner
+
+    @property
+    def configuration_sha256(self) -> str:
+        adapters = []
+        for provider in (self._runner.config.local, self._runner.config.premium):
+            adapter = self._runner._provider_adapter(provider)
+            configuration_sha256 = getattr(adapter, "configuration_sha256", None)
+            if not isinstance(configuration_sha256, str):
+                raise AssistantBridgeError(
+                    f"Provider adapter {adapter.adapter_id!r} has no immutable "
+                    "configuration digest."
+                )
+            _require_sha256(
+                configuration_sha256,
+                f"provider adapter {adapter.adapter_id}",
+            )
+            adapters.append(
+                {
+                    "provider_id": provider.id,
+                    "adapter_id": adapter.adapter_id,
+                    "configuration_sha256": configuration_sha256,
+                    "ephemeral_environment_keys": list(
+                        adapter.ephemeral_environment_keys
+                    ),
+                }
+            )
+        return _sha256_text(
+            _canonical_json(
+                {
+                    "contract": "assistant-bridge-candidate-generator/v1",
+                    "bridge_config_sha256": self._runner.config.source_sha256,
+                    "registry_ids": list(self._runner._adapter_registry.ids),
+                    "adapters": adapters,
+                }
+            )
+        )
+
+    def plan_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        workspace: str | Path,
+        expected_config_sha256: str,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+    ) -> dict[str, object]:
+        _require_sha256(
+            expected_config_sha256,
+            "candidate lifecycle configuration",
+        )
+        generator_config_sha256 = self.configuration_sha256
+        prepared = self._runner._prepare_execution(
+            task,
+            workspace=workspace,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+            capsule_out=None,
+            execution_intent=_CANDIDATE_GENERATION_INTENT,
+            expected_lifecycle_config_sha256=expected_config_sha256,
+        )
+        ticket = None
+        if prepared.receipt.route != "blocked":
+            try:
+                ticket = self._runner.state_ledger.issue_confirmation(
+                    prepared.confirmation_binding_sha256,
+                    ttl_seconds=(self._runner.config.state.confirmation_ttl_seconds),
+                )
+            except BridgeLedgerError as exc:
+                raise AssistantBridgeError(str(exc)) from None
+        return {
+            "schema_version": BRIDGE_SCHEMA_VERSION,
+            "mode": "assistant_bridge_candidate_plan",
+            "execute": False,
+            "route_receipt": prepared.receipt.payload(),
+            "confirmation_id": None if ticket is None else ticket.token,
+            "confirmation": (None if ticket is None else ticket.metadata_payload()),
+            "generator_config_sha256": generator_config_sha256,
+            "lifecycle_config_sha256": expected_config_sha256,
+            "commands": [command.payload() for command in prepared.commands],
+            "verifiers": [item.payload() for item in prepared.verifier_plans],
+            "authority": {
+                "process_execution": (
+                    "blocked"
+                    if ticket is None
+                    else "requires_one_shot_confirmation_ticket"
+                ),
+                "source_workspace": "read_only_snapshot",
+                "candidate_workspace": "temporary_write_only",
+                "source_apply": "forbidden",
+                "external_effects": "forbidden",
+            },
+            "privacy": "metadata_only",
+        }
+
+    @staticmethod
+    def request(
+        task: AssistantTaskEnvelope,
+        *,
+        confirmation: str,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+    ) -> CandidateGenerationRequest:
+        return CandidateGenerationRequest(
+            task=task,
+            confirmation=confirmation,
+            local_provider_override=local_provider_override,
+            external_evidence=tuple(external_evidence),
+            include_diff=include_diff,
+        )
+
+    @contextmanager
+    def generate(
+        self,
+        request: CandidateGenerationRequest,
+        *,
+        source_workspace: str | Path,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+    ) -> Iterator[GeneratedCandidate]:
+        from .assistant_bridge_lifecycle import GeneratedCandidate
+        from .assistant_bridge_two_phase import (
+            candidate_workspace_snapshot_fingerprint,
+        )
+
+        if not isinstance(request, CandidateGenerationRequest):
+            raise AssistantBridgeError(
+                "Candidate generator request has an unsupported type."
+            )
+        _require_sha256(
+            expected_source_fingerprint,
+            "candidate source fingerprint",
+        )
+        _require_sha256(
+            expected_config_sha256,
+            "candidate lifecycle configuration",
+        )
+        prepared = self._runner._prepare_execution(
+            request.task,
+            workspace=source_workspace,
+            local_provider_override=request.local_provider_override,
+            external_evidence=request.external_evidence,
+            include_diff=request.include_diff,
+            capsule_out=None,
+            execution_intent=_CANDIDATE_GENERATION_INTENT,
+            expected_lifecycle_config_sha256=expected_config_sha256,
+        )
+        if prepared.source_snapshot.fingerprint != expected_source_fingerprint:
+            raise AssistantBridgeError(
+                "Source workspace no longer matches the candidate plan."
+            )
+        if prepared.receipt.route == "blocked":
+            raise AssistantBridgeError("Candidate generation route is blocked.")
+        try:
+            self._runner.state_ledger.consume_confirmation(
+                request.confirmation,
+                prepared.confirmation_binding_sha256,
+            )
+        except BridgeLedgerError:
+            raise AssistantBridgeError(
+                "Candidate confirmation is invalid, expired, consumed, or no longer bound."
+            ) from None
+        try:
+            with materialize_workspace(
+                prepared.source_snapshot,
+                self._runner.config.workspace.scope,
+            ) as candidate:
+                result = self._runner._generate_candidate_result(
+                    request.task,
+                    prepared,
+                    candidate,
+                    local_provider_override=request.local_provider_override,
+                    include_diff=request.include_diff,
+                )
+                if result.status != "completed":
+                    raise AssistantBridgeError(
+                        f"Candidate generation did not complete: {result.code}."
+                    )
+                _require_unchanged_source_snapshot(
+                    prepared.source_snapshot,
+                    self._runner.config.workspace.scope,
+                )
+                candidate_fingerprint = candidate_workspace_snapshot_fingerprint(
+                    candidate.root,
+                    self._runner.config.workspace.scope,
+                )
+                generated = GeneratedCandidate(
+                    workspace=candidate.root,
+                    source_fingerprint=prepared.source_snapshot.fingerprint,
+                    candidate_snapshot_fingerprint=candidate_fingerprint,
+                )
+                yield generated
+                _require_unchanged_source_snapshot(
+                    prepared.source_snapshot,
+                    self._runner.config.workspace.scope,
+                )
+                if (
+                    candidate_workspace_snapshot_fingerprint(
+                        candidate.root,
+                        self._runner.config.workspace.scope,
+                    )
+                    != candidate_fingerprint
+                ):
+                    raise AssistantBridgeError(
+                        "Candidate workspace changed after it was evaluated."
+                    )
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+
+    @contextmanager
+    def generate_candidate(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        source_workspace: str | Path,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        confirmation: str,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+    ) -> Iterator[GeneratedCandidate]:
+        request = self.request(
+            task,
+            confirmation=confirmation,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+        )
+        with self.generate(
+            request,
+            source_workspace=source_workspace,
+            expected_source_fingerprint=expected_source_fingerprint,
+            expected_config_sha256=expected_config_sha256,
+        ) as generated:
+            yield generated
 
 
 def _write_capsule_atomic(target: str | Path, payload: bytes) -> None:
@@ -6999,6 +7484,8 @@ def _provider_authority_binding_payload(
 
 def _execution_binding(
     *,
+    execution_intent: str,
+    expected_lifecycle_config_sha256: str | None,
     external_evidence: Sequence[VerificationEvidence],
     include_diff: bool,
     capsule_out: str | Path | None,
@@ -7014,6 +7501,8 @@ def _execution_binding(
         str(Path(capsule_out).expanduser().resolve()) if capsule_out is not None else ""
     )
     return {
+        "execution_intent": execution_intent,
+        "expected_lifecycle_config_sha256": expected_lifecycle_config_sha256,
         "include_diff": include_diff,
         "capsule_out_sha256": (
             _sha256_text(capsule_target) if capsule_target else None
@@ -7140,6 +7629,34 @@ def _redacted_argv_shape(argv: Sequence[str]) -> list[str]:
 
 def _all_passed(evidence: Sequence[VerificationEvidence]) -> bool:
     return bool(evidence) and all(item.passed for item in evidence)
+
+
+def _candidate_scope_invalid(
+    evidence: Sequence[VerificationEvidence],
+) -> bool:
+    return any(
+        item.code in {"workspace_delta_required", "workspace_mutation_forbidden"}
+        for item in evidence
+    )
+
+
+def _require_unchanged_source_snapshot(
+    expected: WorkspaceSnapshot,
+    policy: WorkspaceScopePolicy,
+) -> None:
+    try:
+        current = snapshot_workspace(expected.root, policy)
+    except WorkspaceSecurityError as exc:
+        raise AssistantBridgeError(str(exc)) from None
+    if (
+        current.fingerprint != expected.fingerprint
+        or current.files != expected.files
+        or current.head_sha != expected.head_sha
+        or current.index_sha256 != expected.index_sha256
+    ):
+        raise AssistantBridgeError(
+            "Source workspace changed during candidate generation."
+        )
 
 
 def _safe_code(value: str) -> str:

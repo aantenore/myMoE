@@ -2609,6 +2609,7 @@ class _RecordingProviderAdapter:
     def __init__(self, delegate) -> None:
         self.delegate = delegate
         self.adapter_id = delegate.adapter_id
+        self.configuration_sha256 = delegate.configuration_sha256
         self.ephemeral_environment_keys = delegate.ephemeral_environment_keys
         self.calls = {
             "validate_provider": 0,

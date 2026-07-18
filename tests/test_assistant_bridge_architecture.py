@@ -31,6 +31,7 @@ SUPPORTED_FACADE_API = frozenset(
         "RISK_LEVELS",
         "ROUTES",
         "AssistantBridgeConfig",
+        "AssistantBridgeCandidateGenerator",
         "AssistantBridgeError",
         "AssistantBridgeRunner",
         "AssistantTaskBudget",
@@ -42,6 +43,7 @@ SUPPORTED_FACADE_API = frozenset(
         "BridgeWorkspacePolicy",
         "CapabilityDemand",
         "CapsulePolicy",
+        "CandidateGenerationRequest",
         "CommandPlan",
         "CommandResult",
         "CommandVerifierSpec",
@@ -227,6 +229,7 @@ PUBLIC_CALL_SIGNATURES = {
 }
 
 RUNNER_METHOD_SIGNATURES = {
+    "candidate_generator": ("(self) -> 'AssistantBridgeCandidateGenerator'"),
     "plan": (
         "(self, task: 'AssistantTaskEnvelope', *, workspace: 'str | Path', "
         "local_provider_override: 'str | None' = None, external_evidence: "
