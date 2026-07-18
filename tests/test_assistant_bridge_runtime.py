@@ -784,7 +784,12 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 "Popen",
                 side_effect=replace_after_spawn,
             ):
-                with self.assertRaisesRegex(ProcessLaunchError, "launcher chain"):
+                expected_error = (
+                    (ProcessLaunchError, ProcessCleanupError)
+                    if os.name == "nt"
+                    else ProcessLaunchError
+                )
+                with self.assertRaises(expected_error) as raised:
                     execute_process(
                         identity,
                         (str(entrypoint),),
@@ -793,6 +798,11 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                         launcher_chain=chain,
                         policy=ProcessExecutionPolicy(require_launcher_chain=True),
                     )
+
+            if isinstance(raised.exception, ProcessLaunchError):
+                self.assertIn("launcher chain", str(raised.exception))
+            else:
+                self.assertFalse(raised.exception.details["verified"])
 
             self.assertEqual(len(spawned), 1)
             self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]

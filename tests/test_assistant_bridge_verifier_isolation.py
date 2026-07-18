@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -600,6 +601,7 @@ class VerifierIsolationTests(unittest.TestCase):
             environment={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
         )
 
+    @unittest.skipIf(os.name == "nt", "bubblewrap uses POSIX symlink semantics")
     def test_linux_bubblewrap_omits_artifact_covered_by_venv_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp).resolve()
@@ -627,6 +629,7 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertNotIn(str(launcher), bind_sources)
         self.assertEqual(argv[separator + 1], str(launcher))
 
+    @unittest.skipIf(os.name == "nt", "bubblewrap uses POSIX symlink semantics")
     def test_linux_bubblewrap_mounts_attested_runtime_alias_chain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp).resolve()
@@ -689,6 +692,7 @@ class VerifierIsolationTests(unittest.TestCase):
         )
         self.assertEqual(argv[separator + 1], str(launcher))
 
+    @unittest.skipIf(os.name == "nt", "bubblewrap uses POSIX symlink semantics")
     def test_linux_bubblewrap_does_not_mount_broad_ancestor_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp).resolve()
@@ -744,6 +748,7 @@ class VerifierIsolationTests(unittest.TestCase):
         )
         self.assertEqual(argv[separator + 1], str(launcher))
 
+    @unittest.skipIf(os.name == "nt", "bubblewrap uses POSIX symlink semantics")
     def test_linux_bubblewrap_rejects_alias_mutation_during_attestation(
         self,
     ) -> None:
