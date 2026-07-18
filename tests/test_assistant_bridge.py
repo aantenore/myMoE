@@ -1807,6 +1807,56 @@ class AssistantBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(result.final_provider, "codex-premium")
         self.assertEqual(result.premium_calls_used, 1)
 
+    def test_premium_preview_preserves_external_launcher_under_temp_root(
+        self,
+    ) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task(
+                "Use the quality tier.",
+                profile="quality",
+            )
+            receipt = fixture.runner.inspect_route(task, workspace=fixture.root)
+            launcher = Path(
+                fixture.config.premium.launcher_args[0]
+            ).resolve(strict=True)
+            provider = replace(
+                fixture.config.premium,
+                launcher_args=(str(launcher),),
+                launcher_entrypoint=str(launcher),
+            )
+            adapter = fixture.runner._provider_adapter(provider)
+            prompt = "semantic premium preview"
+            preview = assistant_bridge_module._premium_preview_plan(
+                adapter,
+                provider,
+                task,
+                prompt,
+                receipt,
+                workspace=fixture.root,
+                runtime_policy=fixture.config.runtime,
+            )
+            with tempfile.TemporaryDirectory(
+                prefix="mymoe-capsule-regression-"
+            ) as tmp:
+                actual = adapter.build_command_plan(
+                    provider,
+                    prompt=prompt,
+                    workspace=tmp,
+                    demand=task.capability_demand,
+                    output_path=Path(tmp) / "premium-final.txt",
+                    workspace_access=str(
+                        receipt.premium_runtime["workspace_access"]
+                    ),
+                    runtime_policy=fixture.config.runtime,
+                    ephemeral_workspace=True,
+                )
+
+        self.assertEqual(
+            preview.launcher_authority_sha256,
+            actual.launcher_authority_sha256,
+        )
+        self.assertEqual(preview.command_sha256, actual.command_sha256)
+
     def test_direct_premium_failure_codes_match_the_confirmed_preview(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):
             task = build_assistant_task(

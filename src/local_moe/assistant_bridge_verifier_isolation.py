@@ -417,6 +417,7 @@ def _probe_bubblewrap_backend(
                 cwd=workspace,
                 env=probe_environment,
                 check=False,
+                start_new_session=True,
                 timeout=_BWRAP_PROBE_TIMEOUT_SECONDS,
             )
     except (OSError, subprocess.SubprocessError):
@@ -656,7 +657,6 @@ def _bubblewrap_prefix() -> tuple[str, ...]:
         "--die-with-parent",
         "--unshare-all",
         "--unshare-net",
-        "--new-session",
         "--cap-drop",
         "ALL",
         "--proc",

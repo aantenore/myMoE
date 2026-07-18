@@ -450,8 +450,11 @@ when the confirmed plan is rebuilt, but same-user mutation races and kernel or
 sandbox vulnerabilities are outside this bridge's guarantee. Linux operation
 also depends on the host permitting bubblewrap namespaces; CI installs and runs
 the real backend. macOS and Linux live probes verify that network access and
-reads/writes outside declared roots are denied. Per-verifier temporary homes are
-identity-checked, removed after every run, and cleanup failures fail closed.
+reads outside declared roots are denied, and that writes cannot mutate host
+paths outside the declared writable workspace. Linux can accept writes in its
+private tmpfs namespace; those writes are not host-visible and are discarded
+with the sandbox. Per-verifier temporary homes are identity-checked, removed
+after every run, and cleanup failures fail closed.
 
 ## Acceptance evidence
 

@@ -91,7 +91,7 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertNotEqual(baseline.argv_sha256, granted.argv_sha256)
         self.assertNotEqual(baseline.binding_sha256, granted.binding_sha256)
 
-    def test_live_sandbox_denies_network_and_outside_reads_and_writes(self) -> None:
+    def test_live_sandbox_denies_network_and_host_reads_and_mutations(self) -> None:
         capability = verifier_isolation_capability(
             self.config.verifier_isolation
         )
@@ -121,9 +121,7 @@ class VerifierIsolationTests(unittest.TestCase):
                 "try:\n"
                 "    created.write_text('escape', encoding='utf-8')\n"
                 "except OSError:\n"
-                "    write_blocked = True\n"
-                "else:\n"
-                "    write_blocked = False\n"
+                "    pass\n"
                 "sock = None\n"
                 "try:\n"
                 "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
@@ -140,7 +138,7 @@ class VerifierIsolationTests(unittest.TestCase):
                 "    if sock is not None:\n"
                 "        sock.close()\n"
                 "raise SystemExit(\n"
-                "    0 if all((read_blocked, write_blocked, network_blocked)) else 97\n"
+                "    0 if all((read_blocked, network_blocked)) else 97\n"
                 ")\n",
                 encoding="utf-8",
             )
@@ -531,6 +529,7 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertLess(argv.index("--unshare-all"), separator)
         self.assertLess(argv.index("--unshare-net"), separator)
         self.assertLess(argv.index("--cap-drop"), separator)
+        self.assertNotIn("--new-session", argv[:separator])
         self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
         self.assertEqual(argv[separator + 1 :], ("/usr/bin/true",))
 
@@ -558,6 +557,7 @@ class VerifierIsolationTests(unittest.TestCase):
             self.assertIn("--unshare-all", argv[:separator])
             self.assertIn("--unshare-net", argv[:separator])
             self.assertEqual(argv[separator + 1 :], ["/usr/bin/true"])
+            self.assertIs(run.call_args.kwargs["start_new_session"], True)
 
         with patch.object(
             verifier_isolation.subprocess,
@@ -719,9 +719,12 @@ class VerifierIsolationTests(unittest.TestCase):
             )
             with (
                 patch.object(
-                    assistant_bridge.shutil,
-                    "rmtree",
-                    side_effect=OSError("cleanup failed"),
+                    assistant_bridge,
+                    "_cleanup_verifier_internal_temp",
+                    side_effect=assistant_bridge.AssistantBridgeError(
+                        "Verifier temp-cleanup-probe internal temporary cleanup "
+                        "could not be verified."
+                    ),
                 ),
                 self.assertRaisesRegex(
                     assistant_bridge.AssistantBridgeError,
@@ -767,9 +770,12 @@ class VerifierIsolationTests(unittest.TestCase):
                     side_effect=process_error,
                 ),
                 patch.object(
-                    assistant_bridge.shutil,
-                    "rmtree",
-                    side_effect=OSError("temp cleanup failed"),
+                    assistant_bridge,
+                    "_cleanup_verifier_internal_temp",
+                    side_effect=assistant_bridge.AssistantBridgeError(
+                        "Verifier combined-cleanup-probe internal temporary cleanup "
+                        "could not be verified."
+                    ),
                 ),
                 self.assertRaises(ProcessCleanupError) as caught,
             ):

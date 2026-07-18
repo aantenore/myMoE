@@ -7168,15 +7168,27 @@ def _premium_preview_plan(
     runtime_policy: BridgeRuntimePolicy,
 ) -> CommandPlan:
     access = str(receipt.premium_runtime["workspace_access"])
-    preview_workspace = (
-        _preview_output_path("capsule-workspace").parent
-        if access == "capsule_only"
-        else Path(workspace).expanduser().resolve()
-    )
+    if access == "capsule_only":
+        # A dedicated non-repository directory mirrors the execution capsule.
+        # Using its global parent can accidentally absorb an external launcher
+        # into ephemeral path normalization when both live below that parent.
+        with tempfile.TemporaryDirectory(
+            prefix="mymoe-capsule-preview-"
+        ) as tmp:
+            return adapter.build_command_plan(
+                provider,
+                prompt=prompt,
+                workspace=tmp,
+                demand=task.capability_demand,
+                workspace_access=access,
+                output_path=Path(tmp) / "premium-final.txt",
+                runtime_policy=runtime_policy,
+                ephemeral_workspace=True,
+            )
     return adapter.build_command_plan(
         provider,
         prompt=prompt,
-        workspace=preview_workspace,
+        workspace=Path(workspace).expanduser().resolve(),
         demand=task.capability_demand,
         workspace_access=access,
         output_path=_preview_output_path("premium"),
