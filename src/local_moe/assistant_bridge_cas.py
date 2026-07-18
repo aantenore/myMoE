@@ -96,12 +96,20 @@ def _regular_file_state(path: Path) -> os.stat_result:
 class ContentAddressedStore:
     """Immutable SHA-256 CAS with RFC 8785 structured artifacts."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        create_if_missing: bool = True,
+    ) -> None:
+        if not isinstance(create_if_missing, bool):
+            raise ContentAddressedStoreError("CAS creation policy is invalid.")
         raw = Path(root).expanduser()
         if raw.exists() and raw.is_symlink():
             raise ContentAddressedStoreError("CAS root cannot be a symbolic link.")
         try:
-            raw.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if create_if_missing:
+                raw.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.root = raw.resolve(strict=True)
         except OSError as exc:
             raise ContentAddressedStoreError("CAS root is unavailable.") from exc
@@ -110,13 +118,17 @@ class ContentAddressedStore:
         objects = self.root / "objects"
         if objects.exists():
             self._validate_internal_directory(objects)
-        else:
+        elif create_if_missing:
             objects.mkdir(mode=0o700)
+        else:
+            raise ContentAddressedStoreError("CAS object store is unavailable.")
         self._objects = objects / "sha256"
         if self._objects.exists():
             self._validate_internal_directory(self._objects)
-        else:
+        elif create_if_missing:
             self._objects.mkdir(mode=0o700)
+        else:
+            raise ContentAddressedStoreError("CAS object store is unavailable.")
         self._validate_internal_directory(self._objects)
 
     def put_bytes(self, value: bytes, *, media_type: str) -> ArtifactDescriptor:

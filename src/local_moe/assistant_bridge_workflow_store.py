@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 import binascii
 import hashlib
@@ -225,8 +225,20 @@ class SQLiteWorkflowStore:
         *,
         evidence_cas: EvidenceStore | None = None,
         timeout: float = 5.0,
+        read_only: bool = False,
     ) -> None:
-        if path is None:
+        if not isinstance(read_only, bool):
+            raise WorkflowStoreError("Workflow store access mode is invalid.")
+        if read_only and path is None:
+            raise WorkflowStoreError(
+                "Read-only workflow status requires an explicit database path."
+            )
+        self._read_only = read_only
+        if read_only:
+            assert path is not None
+            self.path = _prepare_existing_database_path(Path(path))
+            cas_root = self.path.parent / "cas"
+        elif path is None:
             defaults = default_workflow_state_paths()
             self.path = _prepare_database_path(defaults.database)
             cas_root = defaults.cas_root
@@ -235,7 +247,10 @@ class SQLiteWorkflowStore:
             cas_root = self.path.parent / "cas"
         try:
             self.evidence_cas = (
-                ContentAddressedStore(cas_root)
+                ContentAddressedStore(
+                    cas_root,
+                    create_if_missing=not read_only,
+                )
                 if evidence_cas is None
                 else evidence_cas
             )
@@ -245,7 +260,16 @@ class SQLiteWorkflowStore:
             raise WorkflowStoreError("SQLite workflow timeout is outside safe bounds.")
         self.timeout = timeout
         self._database_identity: tuple[int, int] | None = None
-        self._secret = _load_or_create_secret(self.path.with_suffix(".key"))
+        self._secret = (
+            _load_existing_secret(self.path.with_suffix(".key"))
+            if read_only
+            else _load_or_create_secret(self.path.with_suffix(".key"))
+        )
+        if read_only:
+            self._database_identity = _database_identity(self.path)
+            with self._connect() as connection:
+                self._validate_existing_schema(connection)
+            return
         with self._connect() as connection:
             self._initialize(connection)
         try:
@@ -349,6 +373,42 @@ class SQLiteWorkflowStore:
         if record is None:
             raise WorkflowStoreError("Workflow was not found.")
         return record
+
+    def read_workflow(
+        self,
+        workflow_id: str,
+        *,
+        now: float | None = None,
+    ) -> WorkflowRecord:
+        """Return a current status view without persisting derived transitions."""
+
+        if not self._read_only:
+            raise WorkflowStoreError("Read-only workflow access was not configured.")
+        require_safe_id(workflow_id, "workflow_id")
+        current = _wall_time(now)
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            try:
+                row = connection.execute(
+                    "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
+                ).fetchone()
+                if row is None:
+                    raise WorkflowStoreError("Workflow was not found.")
+                record = self._record(connection, row, active_at=current)
+                self._check_clock(record, current)
+            finally:
+                connection.rollback()
+        if record.status in {"applying", "applied", "conflicted", "failed", "expired"}:
+            return record
+        if current > record.binding.expires_at:
+            return replace(record, status="expired")
+        if record.quorum_satisfied:
+            status = "ready"
+        elif record.active_attestation_count:
+            status = "attested"
+        else:
+            status = "staged"
+        return record if status == record.status else replace(record, status=status)
 
     def find_workflow(
         self,
@@ -1024,11 +1084,21 @@ class SQLiteWorkflowStore:
         expected = self._database_identity
         if expected is not None and _database_identity(self.path) != expected:
             raise WorkflowStoreError("Workflow database identity changed.")
-        connection = sqlite3.connect(
-            self.path,
-            timeout=self.timeout,
-            isolation_level=None,
-        )
+        read_snapshot: tuple[int, int, int, int] | None = None
+        target: str | Path = self.path
+        if self._read_only:
+            _require_no_database_sidecars(self.path)
+            read_snapshot = _database_read_snapshot(self.path)
+            target = f"{self.path.as_uri()}?mode=ro&immutable=1"
+        try:
+            connection = sqlite3.connect(
+                target,
+                timeout=self.timeout,
+                isolation_level=None,
+                uri=self._read_only,
+            )
+        except sqlite3.Error as exc:
+            raise WorkflowStoreError("Workflow database is unavailable.") from exc
         connection.row_factory = sqlite3.Row
         try:
             if expected is not None and _database_identity(self.path) != expected:
@@ -1037,20 +1107,47 @@ class SQLiteWorkflowStore:
             connection.execute("PRAGMA trusted_schema = OFF")
             connection.execute("PRAGMA temp_store = MEMORY")
             connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-            journal = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
-            connection.execute("PRAGMA synchronous = FULL")
+            if self._read_only:
+                connection.execute("PRAGMA query_only = ON")
+                query_only = int(connection.execute("PRAGMA query_only").fetchone()[0])
+                journal = ""
+                synchronous = 0
+            else:
+                query_only = 0
+                journal = str(
+                    connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                )
+                connection.execute("PRAGMA synchronous = FULL")
+                synchronous = int(
+                    connection.execute("PRAGMA synchronous").fetchone()[0]
+                )
             foreign_keys = int(connection.execute("PRAGMA foreign_keys").fetchone()[0])
-            synchronous = int(connection.execute("PRAGMA synchronous").fetchone()[0])
-            if journal.lower() != "wal" or foreign_keys != 1 or synchronous != 2:
+            invalid_read = self._read_only and (
+                query_only != 1 or foreign_keys != 1
+            )
+            invalid_write = not self._read_only and (
+                journal.lower() != "wal" or foreign_keys != 1 or synchronous != 2
+            )
+            if invalid_read or invalid_write:
                 raise WorkflowStoreError(
                     "SQLite durability or referential-integrity mode is unavailable."
                 )
             yield connection
+        except sqlite3.Error as exc:
+            raise WorkflowStoreError("Workflow database operation failed.") from exc
         finally:
             connection.close()
+            if read_snapshot is not None:
+                _require_no_database_sidecars(self.path)
+                if _database_read_snapshot(self.path) != read_snapshot:
+                    raise WorkflowStoreError(
+                        "Workflow database changed during read-only status."
+                    )
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        if self._read_only:
+            raise WorkflowStoreError("Read-only workflow status cannot mutate state.")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1158,6 +1255,30 @@ class SQLiteWorkflowStore:
                 "Workflow database permissions are unavailable."
             ) from exc
         _validate_database_file(self.path)
+
+    def _validate_existing_schema(self, connection: sqlite3.Connection) -> None:
+        try:
+            row = connection.execute(
+                "SELECT value FROM store_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            rows = connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkflowStoreError("Workflow store schema is unavailable.") from exc
+        if row is None or str(row["value"]) != WORKFLOW_STORE_SCHEMA_VERSION:
+            raise WorkflowStoreError("Workflow store schema is unavailable.")
+        required = {
+            "apply_recoveries",
+            "resume_confirmations",
+            "store_meta",
+            "workflow_attestations",
+            "workflow_events",
+            "workflows",
+        }
+        available = {str(item["name"]) for item in rows}
+        if not required.issubset(available):
+            raise WorkflowStoreError("Workflow store schema is unavailable.")
 
     def _selected_record(
         self,
@@ -1590,9 +1711,41 @@ def _prepare_database_path(value: Path) -> Path:
     return parent / raw.name
 
 
+def _prepare_existing_database_path(value: Path) -> Path:
+    raw = Path(os.path.abspath(os.fspath(value.expanduser())))
+    if raw.is_symlink():
+        raise WorkflowStoreError("Workflow database is unavailable.")
+    try:
+        resolved = raw.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise WorkflowStoreError("Workflow database is unavailable.") from exc
+    _validate_database_file(resolved)
+    return resolved
+
+
 def _database_identity(path: Path) -> tuple[int, int]:
     state = _validate_database_file(path)
     return int(state.st_dev), int(state.st_ino)
+
+
+def _database_read_snapshot(path: Path) -> tuple[int, int, int, int]:
+    state = _validate_database_file(path)
+    return (
+        int(state.st_dev),
+        int(state.st_ino),
+        int(state.st_size),
+        int(state.st_mtime_ns),
+    )
+
+
+def _require_no_database_sidecars(path: Path) -> None:
+    sidecars = tuple(
+        Path(f"{path}{suffix}") for suffix in ("-journal", "-shm", "-wal")
+    )
+    if any(sidecar.exists() or sidecar.is_symlink() for sidecar in sidecars):
+        raise WorkflowStoreError(
+            "Workflow database has an active journal and is unavailable for read-only status."
+        )
 
 
 def _validate_database_file(path: Path) -> os.stat_result:
@@ -1662,6 +1815,18 @@ def _load_or_create_secret(path: Path) -> bytes:
         return value
     except OSError as exc:
         raise WorkflowStoreError("Workflow state secret is unavailable.") from exc
+    return _read_secret_descriptor(descriptor)
+
+
+def _load_existing_secret(path: Path) -> bytes:
+    try:
+        descriptor = os.open(path, _READ_FLAGS)
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow state secret is unavailable.") from exc
+    return _read_secret_descriptor(descriptor)
+
+
+def _read_secret_descriptor(descriptor: int) -> bytes:
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or (

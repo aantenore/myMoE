@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,7 @@ from local_moe.assistant_bridge_two_phase_state import (
     load_two_phase_state_config,
 )
 from local_moe.assistant_bridge_two_phase_status import (
+    TwoPhaseStatusError,
     build_two_phase_status_reader,
 )
 from local_moe.assistant_bridge_workspace import (
@@ -48,6 +51,23 @@ TASK_SHA256 = "a" * 64
 GENERATOR_CONFIG_SHA256 = "b" * 64
 STAGE_KEY = "stage-lifecycle-operation-00000001"
 RESUME_KEY = "resume-lifecycle-operation-0000001"
+
+
+def _filesystem_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
+    entries: list[tuple[object, ...]] = []
+    for path in sorted(root.rglob("*")):
+        state = path.lstat()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+        entries.append(
+            (
+                path.relative_to(root).as_posix(),
+                state.st_mode,
+                state.st_size,
+                state.st_mtime_ns,
+                digest,
+            )
+        )
+    return tuple(entries)
 
 
 class TwoPhaseConfigurationTests(unittest.TestCase):
@@ -498,6 +518,55 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
 
             self.assertEqual(record.status, "staged")
             self.assertEqual(record.binding, receipt.binding)
+
+    def test_status_reader_requires_existing_state_without_creating_anything(
+        self,
+    ) -> None:
+        for missing in ("cas", "database", "key", "schema"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                fixture = _Fixture(Path(temporary))
+                fixture.lifecycle(_CandidateGenerator(fixture.source))
+                state = load_two_phase_state_config(fixture.config_path)
+                key = state.database_path.with_suffix(".key")
+                if missing == "cas":
+                    shutil.rmtree(state.cas_path)
+                elif missing == "database":
+                    state.database_path.unlink()
+                elif missing == "key":
+                    key.unlink()
+                else:
+                    state.database_path.unlink()
+                    sqlite3.connect(state.database_path).close()
+                    if os.name == "posix":
+                        state.database_path.chmod(0o600)
+                before = _filesystem_snapshot(fixture.root)
+
+                with self.assertRaisesRegex(TwoPhaseStatusError, "unavailable"):
+                    build_two_phase_status_reader(state)
+
+                self.assertEqual(_filesystem_snapshot(fixture.root), before)
+
+    def test_status_reader_derives_expiry_without_mutating_existing_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            before = _filesystem_snapshot(fixture.root / "state")
+
+            reader = build_two_phase_status_reader(state)
+            record = reader.status(receipt.workflow_id, now=301)
+
+            self.assertEqual(record.status, "expired")
+            self.assertEqual(_filesystem_snapshot(fixture.root / "state"), before)
 
 
 class _CandidateGenerator:

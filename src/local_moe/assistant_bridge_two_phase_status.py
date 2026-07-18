@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from .assistant_bridge_cas import ContentAddressedStore
+from .assistant_bridge_cas import (
+    ContentAddressedStore,
+    ContentAddressedStoreError,
+)
 from .assistant_bridge_two_phase_state import TwoPhaseStateConfig
 from .assistant_bridge_workflow_store import (
     SQLiteWorkflowStore,
@@ -26,7 +29,7 @@ class TwoPhaseStatusReader:
         now: float | None = None,
     ) -> WorkflowRecord:
         try:
-            return self.store.get_workflow(workflow_id, now=now)
+            return self.store.read_workflow(workflow_id, now=now)
         except (ValueError, WorkflowStoreError) as exc:
             raise TwoPhaseStatusError(str(exc)) from exc
 
@@ -34,10 +37,17 @@ class TwoPhaseStatusReader:
 def build_two_phase_status_reader(
     config: TwoPhaseStateConfig,
 ) -> TwoPhaseStatusReader:
-    cas = ContentAddressedStore(config.cas_path)
-    store = SQLiteWorkflowStore(
-        config.database_path,
-        evidence_cas=cas,
-        timeout=config.sqlite_timeout_seconds,
-    )
+    try:
+        cas = ContentAddressedStore(
+            config.cas_path,
+            create_if_missing=False,
+        )
+        store = SQLiteWorkflowStore(
+            config.database_path,
+            evidence_cas=cas,
+            timeout=config.sqlite_timeout_seconds,
+            read_only=True,
+        )
+    except (ContentAddressedStoreError, WorkflowStoreError) as exc:
+        raise TwoPhaseStatusError(str(exc)) from exc
     return TwoPhaseStatusReader(store)
