@@ -180,6 +180,7 @@ class VerifierResourceContractTests(unittest.TestCase):
             "cpu_max": "200000 100000",
             "memory_max": "2147483648",
             "pids_max": "256",
+            "scope_membership": "transient_non_root_scope",
             "verified": True,
         }
         completed = subprocess.CompletedProcess(
@@ -235,6 +236,102 @@ class VerifierResourceContractTests(unittest.TestCase):
             )
 
         self.assertIsNone(digest)
+
+    def test_systemd_probe_rejects_unattested_scope_membership(self) -> None:
+        for membership in ("", "cgroup_root", "non_scope_cgroup"):
+            with self.subTest(membership=membership):
+                readback = {
+                    "cpu_max": "200000 100000",
+                    "memory_max": "2147483648",
+                    "pids_max": "256",
+                    "scope_membership": membership,
+                    "verified": True,
+                }
+                completed = subprocess.CompletedProcess(
+                    args=(),
+                    returncode=resources._SYSTEMD_PROBE_EXIT,
+                    stdout=json.dumps(readback).encode("utf-8"),
+                    stderr=b"",
+                )
+                with mock.patch.object(subprocess, "run", return_value=completed):
+                    digest = resources._probe_systemd_user_scope(
+                        "/usr/bin/systemd-run",
+                        supervisor=_python_identity(),
+                        policy=VerifierResourcePolicy(),
+                        environment={"XDG_RUNTIME_DIR": "/run/user/1000"},
+                    )
+
+                self.assertIsNone(digest)
+
+    def test_systemd_scope_probe_rejects_empty_root_and_non_scope_paths(self) -> None:
+        expected = {
+            "cpu_quota_percent": 200,
+            "memory_bytes": 2 * 1024 * 1024 * 1024,
+            "processes": 256,
+            "runtime_max_milliseconds": 5000,
+            "sentinel_exit": resources._SYSTEMD_PROBE_EXIT,
+        }
+        with tempfile.TemporaryDirectory(prefix="mymoe-cgroup-probe-") as temporary:
+            base = Path(temporary)
+            proc_cgroup = base / "self.cgroup"
+            cgroup_root = base / "cgroup"
+            cgroup_root.mkdir()
+
+            def write_controls(path: Path) -> None:
+                path.mkdir(parents=True, exist_ok=True)
+                path.joinpath("cpu.max").write_text(
+                    "200000 100000", encoding="ascii"
+                )
+                path.joinpath("memory.max").write_text(
+                    "2147483648", encoding="ascii"
+                )
+                path.joinpath("pids.max").write_text("256", encoding="ascii")
+
+            write_controls(cgroup_root)
+            write_controls(cgroup_root / "user.slice" / "plain")
+            scope = cgroup_root / "user.slice" / "run-test.scope"
+            write_controls(scope)
+            source = resources._SYSTEMD_SCOPE_PROBE.replace(
+                'Path("/proc/self/cgroup")', f"Path({str(proc_cgroup)!r})", 1
+            ).replace(
+                'Path("/sys/fs/cgroup")', f"Path({str(cgroup_root)!r})", 1
+            )
+            self.assertNotEqual(source, resources._SYSTEMD_SCOPE_PROBE)
+
+            def run_probe(cgroup_line: str) -> subprocess.CompletedProcess[bytes]:
+                proc_cgroup.write_text(cgroup_line, encoding="ascii")
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        source,
+                        json.dumps(expected, sort_keys=True),
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    check=False,
+                    timeout=5,
+                )
+
+            for label, cgroup_line in (
+                ("empty", ""),
+                ("root", "0::/\n"),
+                ("non_scope", "0::/user.slice/plain\n"),
+            ):
+                with self.subTest(label=label):
+                    completed = run_probe(cgroup_line)
+                    self.assertNotEqual(
+                        completed.returncode, resources._SYSTEMD_PROBE_EXIT
+                    )
+
+            completed = run_probe("0::/user.slice/run-test.scope\n")
+            self.assertEqual(completed.returncode, resources._SYSTEMD_PROBE_EXIT)
+            readback = json.loads(completed.stdout.decode("utf-8"))
+            self.assertEqual(
+                readback["scope_membership"], "transient_non_root_scope"
+            )
+            self.assertNotIn(str(cgroup_root), completed.stdout.decode("utf-8"))
 
     def test_report_keeps_output_cleanup_and_workspace_controls_distinct(self) -> None:
         policy = VerifierResourcePolicy(workspace_growth_bytes=8)
@@ -383,6 +480,68 @@ class VerifierResourceContractTests(unittest.TestCase):
             observed = resources.measure_workspace_bytes(workspace)
 
         self.assertEqual(observed, 3)
+
+    def test_workspace_accounting_fails_closed_when_walk_reports_an_error(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mymoe-resource-") as temporary:
+            def denied_walk(*args, **kwargs):
+                onerror = kwargs.get("onerror")
+                self.assertIsNotNone(onerror)
+                assert onerror is not None
+                onerror(PermissionError("simulated unreadable directory"))
+                return ()
+
+            with mock.patch.object(resources.os, "walk", side_effect=denied_walk):
+                with self.assertRaisesRegex(
+                    resources.VerifierResourceError,
+                    "could not traverse",
+                ):
+                    resources.measure_workspace_bytes(temporary)
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory permissions are required")
+    def test_workspace_accounting_fails_closed_on_unreadable_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mymoe-resource-") as temporary:
+            root = Path(temporary)
+            blocked = root / "blocked"
+            blocked.mkdir()
+            blocked.joinpath("hidden.txt").write_bytes(b"hidden")
+            blocked.chmod(0)
+            try:
+                try:
+                    list(blocked.iterdir())
+                except PermissionError:
+                    pass
+                else:
+                    self.skipTest(
+                        "current identity can traverse mode-000 directories"
+                    )
+                with self.assertRaisesRegex(
+                    resources.VerifierResourceError,
+                    "could not traverse",
+                ):
+                    resources.measure_workspace_bytes(root)
+            finally:
+                blocked.chmod(0o700)
+
+    def test_workspace_accounting_rejects_root_identity_replacement(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mymoe-resource-") as temporary:
+            base = Path(temporary)
+            root = base / "workspace"
+            root.mkdir()
+            root.joinpath("local.txt").write_bytes(b"abc")
+            moved = base / "original-workspace"
+            real_walk = os.walk
+
+            def replacing_walk(*args, **kwargs):
+                yield from real_walk(*args, **kwargs)
+                root.rename(moved)
+                root.mkdir()
+
+            with mock.patch.object(resources.os, "walk", replacing_walk):
+                with self.assertRaisesRegex(
+                    resources.VerifierResourceError,
+                    "root identity changed",
+                ):
+                    resources.measure_workspace_bytes(root)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "requires macOS setrlimit")

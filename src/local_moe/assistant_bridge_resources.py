@@ -702,17 +702,48 @@ def build_verifier_resource_enforcement_report(
 
 
 def measure_workspace_bytes(workspace: str | Path) -> int:
-    """Measure regular-file bytes without following workspace links."""
+    """Measure regular-file bytes and fail closed on traversal or root drift."""
 
-    root = Path(workspace).expanduser().resolve(strict=True)
+    try:
+        root = Path(workspace).expanduser().resolve(strict=True)
+        root_before = root.lstat()
+    except (OSError, RuntimeError) as exc:
+        raise VerifierResourceError(
+            "Workspace resource accounting root is unavailable."
+        ) from exc
+    if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+        raise VerifierResourceError(
+            "Workspace resource accounting root must be a directory."
+        )
+    root_identity = (
+        root_before.st_dev,
+        root_before.st_ino,
+        stat.S_IFMT(root_before.st_mode),
+    )
+
+    def traversal_error(error: OSError) -> None:
+        raise VerifierResourceError(
+            "Workspace resource accounting could not traverse a directory."
+        ) from error
+
     total = 0
-    for directory, directories, files in os.walk(root, topdown=True, followlinks=False):
+    for directory, directories, files in os.walk(
+        root,
+        topdown=True,
+        onerror=traversal_error,
+        followlinks=False,
+    ):
         current = Path(directory)
         directories.sort()
         files.sort()
         traversable: list[str] = []
         for name in directories:
-            metadata = current.joinpath(name).lstat()
+            try:
+                metadata = current.joinpath(name).lstat()
+            except OSError as exc:
+                raise VerifierResourceError(
+                    "Workspace resource accounting could not inspect a directory."
+                ) from exc
             if stat.S_ISLNK(metadata.st_mode):
                 continue
             if not stat.S_ISDIR(metadata.st_mode):
@@ -722,7 +753,12 @@ def measure_workspace_bytes(workspace: str | Path) -> int:
             traversable.append(name)
         directories[:] = traversable
         for name in files:
-            metadata = current.joinpath(name).lstat()
+            try:
+                metadata = current.joinpath(name).lstat()
+            except OSError as exc:
+                raise VerifierResourceError(
+                    "Workspace resource accounting could not inspect a file."
+                ) from exc
             if stat.S_ISLNK(metadata.st_mode):
                 continue
             if not stat.S_ISREG(metadata.st_mode):
@@ -730,6 +766,25 @@ def measure_workspace_bytes(workspace: str | Path) -> int:
                     "Workspace resource accounting accepts regular files only."
                 )
             total += metadata.st_size
+    try:
+        root_after = root.lstat()
+    except OSError as exc:
+        raise VerifierResourceError(
+            "Workspace resource accounting root identity changed."
+        ) from exc
+    if (
+        stat.S_ISLNK(root_after.st_mode)
+        or not stat.S_ISDIR(root_after.st_mode)
+        or (
+            root_after.st_dev,
+            root_after.st_ino,
+            stat.S_IFMT(root_after.st_mode),
+        )
+        != root_identity
+    ):
+        raise VerifierResourceError(
+            "Workspace resource accounting root identity changed."
+        )
     return total
 
 
@@ -1030,12 +1085,15 @@ def _probe_systemd_user_scope(
         "cpu_max",
         "memory_max",
         "pids_max",
+        "scope_membership",
         "verified",
     }:
         return None
+    if readback.get("scope_membership") != "transient_non_root_scope":
+        return None
     return _sha256_json(
         {
-            "contract": "systemd-user-scope-cgroup-v2-readback/v1",
+            "contract": "systemd-user-scope-cgroup-v2-readback/v2",
             "environment_sha256": _sha256_json(dict(environment)),
             "expected": expected,
             "readback": readback,
@@ -1190,17 +1248,26 @@ if set(expected) != {
 }:
     raise SystemExit(90)
 
-line = next(
-    (item for item in Path("/proc/self/cgroup").read_text().splitlines()
-     if item.startswith("0::")),
-    "",
-)
+lines = [
+    item.partition("::")[2]
+    for item in Path("/proc/self/cgroup").read_text().splitlines()
+    if item.startswith("0::")
+]
+if len(lines) != 1 or not lines[0].startswith("/"):
+    raise SystemExit(91)
 root = Path("/sys/fs/cgroup").resolve(strict=True)
-relative = line.partition("::")[2].lstrip("/")
-scope = (root / relative).resolve(strict=True)
+relative = lines[0][1:]
+if not relative:
+    raise SystemExit(91)
+relative_path = Path(relative)
+if relative_path.is_absolute() or ".." in relative_path.parts:
+    raise SystemExit(91)
+scope = (root / relative_path).resolve(strict=True)
 try:
     scope.relative_to(root)
 except ValueError:
+    raise SystemExit(91)
+if scope == root or scope.name == ".scope" or not scope.name.endswith(".scope"):
     raise SystemExit(91)
 
 def read_control(name):
@@ -1235,6 +1302,7 @@ print(json.dumps({
     "cpu_max": cpu_max,
     "memory_max": memory_max,
     "pids_max": pids_max,
+    "scope_membership": "transient_non_root_scope",
     "verified": verified,
 }, ensure_ascii=True, separators=(",", ":"), sort_keys=True), flush=True)
 raise SystemExit(expected["sentinel_exit"] if verified else 93)
