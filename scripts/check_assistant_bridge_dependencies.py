@@ -14,7 +14,7 @@ REQUIRED_MINOR_SERIES = {
     "rfc8785": (0, 1),
 }
 REQUIRED_MAJOR_RANGES = {
-    "cryptography": (46, 48),
+    "cryptography": (46, 49),
     "platformdirs": (4, 5),
 }
 
@@ -119,7 +119,7 @@ def _metadata_range_is_supported(dependency: str, requirement: str) -> bool:
             upper_bound in requirement for upper_bound in ("<7.3", "<8")
         )
     if dependency == "cryptography":
-        return ">=46" in requirement and "<48" in requirement
+        return ">=46" in requirement and "<49" in requirement
     if dependency == "platformdirs":
         return ">=4.3" in requirement and "<5" in requirement
     if dependency == "rfc8785":

@@ -14,7 +14,7 @@ dependencies = []
 
 [project.optional-dependencies]
 assistant-bridge = [
-  "cryptography>=46,<48",
+  "cryptography>=46,<49",
   "detect-secrets>=1.5,<1.6",
   "platformdirs>=4.3,<5",
   "rfc8785>=0.1.4,<0.2",
