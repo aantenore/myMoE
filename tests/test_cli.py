@@ -175,6 +175,7 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(completed.returncode, 2)
+        self.assertEqual(json.loads(completed.stderr)["error"], "scope_blocked")
         self.assertIn("local_model_required", completed.stderr)
         self.assertIn("blocked expert", completed.stderr)
 
@@ -198,6 +199,36 @@ class CliTests(unittest.TestCase):
                     "--prompt",
                     "Keep this private prompt on device.",
                     "--json",
+                ],
+                cwd=ROOT,
+                env=_env(),
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(json.loads(completed.stderr)["error"], "scope_blocked")
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_eval_reports_scope_block_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_temp_openai_config(
+                root,
+                base_url="https://models.example.com/v1",
+            )
+            app_config = _write_temp_app_config(root, config_path)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "local_moe.cli",
+                    "--app-config",
+                    str(app_config),
+                    "--config",
+                    str(config_path),
+                    "--eval",
+                    "experiments/eval_set.jsonl",
                 ],
                 cwd=ROOT,
                 env=_env(),

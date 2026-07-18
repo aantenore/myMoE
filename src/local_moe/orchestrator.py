@@ -82,6 +82,16 @@ class LocalMoE:
     ) -> MoEResponse:
         cid = correlation_id or str(uuid4())
         route = self._router.route(route_prompt or prompt)
+        return self._generate_with_route(prompt, correlation_id=cid, route=route)
+
+    def _generate_with_route(
+        self,
+        prompt: str,
+        *,
+        correlation_id: str,
+        route: RouteDecision,
+    ) -> MoEResponse:
+        cid = correlation_id
         req = GenerationRequest(prompt=prompt, correlation_id=cid)
 
         selected_order = [score.expert_id for score in route.selected]
@@ -134,7 +144,11 @@ class LocalMoE:
         yield MoEStreamEvent(kind="route", route=route)
 
         if self._config.routing.aggregation in {"concat", "compare"}:
-            response = self.generate(prompt, correlation_id=cid, route_prompt=route_prompt)
+            response = self._generate_with_route(
+                prompt,
+                correlation_id=cid,
+                route=route,
+            )
             yield MoEStreamEvent(kind="content", content=response.content)
             yield MoEStreamEvent(kind="final", content=response.content, response=response)
             return

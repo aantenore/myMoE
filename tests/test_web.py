@@ -116,6 +116,34 @@ class WebTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, HTTPStatus.BAD_REQUEST)
         self.assertEqual(payload["error"], "invalid_evaluation_set")
 
+    def test_eval_endpoint_reports_scope_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = _write_remote_moe_config(root)
+            app_config = _write_temp_app_config(root)
+            server = build_server(
+                str(config_path),
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as raised:
+                    _post_json(
+                        base_url + "/api/evaluate",
+                        {"eval_path": "experiments/eval_set.jsonl"},
+                    )
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(raised.exception.code, HTTPStatus.FORBIDDEN)
+        self.assertEqual(payload["error"], "scope_blocked")
+
     def test_serves_runtime_and_extensions(self) -> None:
         server = build_server("tests/fixtures/moe.synthetic.json", port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

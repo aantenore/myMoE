@@ -1145,6 +1145,13 @@ def _make_handler(
                         allowed_roots=(app_config.runtime.evaluation_dir,),
                     )
                     result = evaluate_router(config, cases)
+                except ScopePolicyError as exc:
+                    _send_json(
+                        self,
+                        {"error": exc.reason_code, "message": str(exc)},
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
                 except (PathBoundaryError, OSError, ValueError, json.JSONDecodeError) as exc:
                     _send_json(
                         self,

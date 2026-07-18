@@ -371,7 +371,8 @@ def test_local_agent_endpoint_policy_accepts_loopback_and_rejects_remote() -> No
 
     try:
         validate_local_agent_endpoints(config)
-    except ProviderError as exc:
+    except ScopePolicyError as exc:
+        assert exc.reason_code == "scope_blocked"
         assert "remote-fallback" in str(exc)
         assert "blocked expert" in str(exc)
     else:

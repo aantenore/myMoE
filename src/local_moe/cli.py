@@ -1036,8 +1036,12 @@ def main() -> None:
         return
 
     if args.eval:
-        cases = load_eval_cases(args.eval)
-        print(json.dumps(evaluate_router(config, cases), indent=2))
+        try:
+            cases = load_eval_cases(args.eval)
+            result = evaluate_router(config, cases)
+        except ScopePolicyError as exc:
+            _exit_scope_blocked(exc)
+        print(json.dumps(result, indent=2))
         return
 
     moe = LocalMoE(config)

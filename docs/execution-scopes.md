@@ -121,6 +121,11 @@ Until that contract exists, changing only `max_scope` or declaring
 `direct_local` experts on loopback endpoints and blocks `mesh_llm` and
 `gateway` transports.
 
+Model management keeps endpoint eligibility separate from local process
+ownership: an attested Mesh or gateway endpoint may be probed, but the local
+manager never substitutes or launches a local MLX/llama server for that
+external transport.
+
 ## Premium Boundary
 
 Normal MoE generation does not gain premium access by declaring

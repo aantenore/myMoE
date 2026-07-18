@@ -25,6 +25,9 @@ All notable changes to myMoE are documented in this file.
 - Compaction, agent calls, health checks, model management, and benchmark
   readiness probes now enforce the same execution-scope policy before network
   access.
+- Model management re-attests before each probe and again immediately before a
+  local process start, and never launches a local server command for an
+  attested Mesh or gateway transport.
 
 ### Known limitations
 

@@ -13,7 +13,7 @@ from .agent_types import (
     AgentToolSpec,
 )
 from .config import ExpertConfig, MoEConfig
-from .execution_scope import ExecutionScopeGuard
+from .execution_scope import ExecutionScopeGuard, ScopePolicyError
 from .http_boundary import is_loopback_http_url, open_model_endpoint
 from .providers import ProviderError, _remote_params, strip_reasoning_content
 
@@ -176,7 +176,7 @@ def validate_local_agent_endpoints(config: MoEConfig) -> None:
     )
     if blocked:
         rendered = ", ".join(blocked)
-        raise ProviderError(
+        raise ScopePolicyError(
             "Agent mode requires execution-policy-compliant model endpoints when "
             "the app mode is local_model_required; blocked expert(s): "
             f"{rendered}."

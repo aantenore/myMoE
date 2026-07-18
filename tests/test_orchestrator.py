@@ -105,6 +105,23 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(events[-1].response.correlation_id, "case-stream")
         self.assertEqual(events[-1].response.results[0].correlation_id, "case-stream")
 
+    def test_parallel_stream_reuses_the_emitted_route_decision(self) -> None:
+        raw = load_config("tests/fixtures/moe.synthetic.json")
+        config = type(raw)(
+            routing=type(raw.routing)(
+                top_k=2,
+                fallback_order=raw.routing.fallback_order,
+                aggregation="compare",
+            ),
+            experts=raw.experts,
+            rules=raw.rules,
+        )
+        moe = LocalMoE(config)
+
+        events = list(moe.generate_stream("Design Python architecture."))
+
+        self.assertIs(events[0].route, events[-1].response.route)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,11 @@ from typing import Any, Callable
 
 from .bootstrap import RuntimePlan, build_runtime_plan, endpoint_is_reachable
 from .config import MoEConfig
-from .execution_scope import ExecutionScopeGuard
+from .execution_scope import (
+    ExecutionScopeGuard,
+    ExecutionTarget,
+    ExecutionTransport,
+)
 
 
 ReachabilityChecker = Callable[[str], bool]
@@ -23,8 +27,7 @@ class ModelServerSpec:
     base_url: str
     command: tuple[str, ...]
     log_path: str
-    execution_allowed: bool = True
-    execution_reason: str = ""
+    execution_target: ExecutionTarget | None = None
 
 
 @dataclass(frozen=True)
@@ -76,10 +79,12 @@ class ModelServerManager:
         *,
         reachability_checker: ReachabilityChecker | None = None,
         process_factory: ProcessFactory | None = None,
+        execution_guard: ExecutionScopeGuard | None = None,
     ) -> None:
         self._specs = specs
         self._reachability_checker = reachability_checker or endpoint_is_reachable
         self._process_factory = process_factory or _start_process
+        self._execution_guard = execution_guard or ExecutionScopeGuard()
         self._processes: dict[str, Any] = {}
 
     @classmethod
@@ -94,15 +99,16 @@ class ModelServerManager:
         execution_guard: ExecutionScopeGuard | None = None,
     ) -> "ModelServerManager":
         plan = build_runtime_plan(config, preferred_backends)
+        guard = execution_guard or ExecutionScopeGuard(config.execution_policy)
         return cls(
             build_model_server_specs(
                 config,
                 plan,
                 work_dir=work_dir,
-                execution_guard=execution_guard,
             ),
             reachability_checker=reachability_checker,
             process_factory=process_factory,
+            execution_guard=guard,
         )
 
     def status(self) -> dict[str, object]:
@@ -154,19 +160,29 @@ class ModelServerManager:
 
         results: list[ModelServerStatus] = []
         for spec in selected:
-            if not spec.execution_allowed:
+            execution_allowed, execution_reason = self._execution_decision(spec)
+            if not execution_allowed:
                 results.append(
                     self._status_for_spec(
                         spec,
                         status_override="scope_blocked",
-                        message=spec.execution_reason
+                        message=execution_reason
                         or "Model endpoint is outside the execution policy.",
+                        execution_allowed=False,
+                        execution_reason=execution_reason,
+                        endpoint_reachable=False,
                     )
                 )
                 continue
             current = self._processes.get(spec.expert_id)
             if current is not None and _process_running(current):
-                results.append(self._status_for_spec(spec, message="Model server is already managed."))
+                results.append(
+                    self._status_for_spec(
+                        spec,
+                        message="Model server is already managed.",
+                        execution_allowed=True,
+                    )
+                )
                 continue
             if spec.base_url and self._reachability_checker(spec.base_url):
                 results.append(
@@ -174,28 +190,72 @@ class ModelServerManager:
                         spec,
                         status_override="external_running",
                         message="Endpoint is already reachable; start skipped.",
+                        execution_allowed=True,
+                        endpoint_reachable=True,
+                    )
+                )
+                continue
+            if not _locally_manageable(spec):
+                results.append(
+                    self._status_for_spec(
+                        spec,
+                        status_override="external_unreachable",
+                        message=(
+                            "The attested external transport is unreachable and "
+                            "cannot be started by the local model manager."
+                        ),
+                        execution_allowed=True,
+                        endpoint_reachable=False,
+                    )
+                )
+                continue
+            execution_allowed, execution_reason = self._execution_decision(spec)
+            if not execution_allowed:
+                results.append(
+                    self._status_for_spec(
+                        spec,
+                        status_override="scope_blocked",
+                        message=execution_reason
+                        or "Model endpoint is outside the execution policy.",
+                        execution_allowed=False,
+                        execution_reason=execution_reason,
+                        endpoint_reachable=False,
                     )
                 )
                 continue
             process = self._process_factory(spec.command, Path(spec.log_path))
             self._processes[spec.expert_id] = process
-            results.append(self._status_for_spec(spec, message="Model server started."))
+            results.append(
+                self._status_for_spec(
+                    spec,
+                    message="Model server started.",
+                    execution_allowed=True,
+                )
+            )
 
         all_scope_blocked = bool(results) and all(
             item.status == "scope_blocked" for item in results
+        )
+        all_external_unreachable = bool(results) and all(
+            item.status in {"scope_blocked", "external_unreachable"}
+            for item in results
         )
         status = (
             "scope_blocked"
             if all_scope_blocked
             else (
-                "started"
-                if any(item.status == "managed_running" for item in results)
-                else "skipped"
+                "external_unreachable"
+                if all_external_unreachable
+                else (
+                    "started"
+                    if any(item.status == "managed_running" for item in results)
+                    else "skipped"
+                )
             )
         )
         return ModelServerAction(
             status=status,
-            ok=not all_scope_blocked,
+            ok=not (all_scope_blocked or all_external_unreachable),
             confirmed=True,
             only_first=only_first,
             results=tuple(results),
@@ -239,18 +299,24 @@ class ModelServerManager:
         *,
         status_override: str | None = None,
         message: str = "",
+        execution_allowed: bool | None = None,
+        execution_reason: str = "",
+        endpoint_reachable: bool | None = None,
     ) -> ModelServerStatus:
+        if execution_allowed is None:
+            execution_allowed, execution_reason = self._execution_decision(spec)
         process = self._processes.get(spec.expert_id)
         managed_running = process is not None and _process_running(process)
         pid = int(getattr(process, "pid", 0)) if managed_running else None
-        endpoint_reachable = bool(
-            spec.execution_allowed
-            and spec.base_url
-            and self._reachability_checker(spec.base_url)
-        )
-        if not spec.execution_allowed:
+        if endpoint_reachable is None:
+            endpoint_reachable = bool(
+                execution_allowed
+                and spec.base_url
+                and self._reachability_checker(spec.base_url)
+            )
+        if not execution_allowed:
             status_override = status_override or "scope_blocked"
-            message = message or spec.execution_reason
+            message = message or execution_reason
         status = status_override or _server_status(managed_running, endpoint_reachable)
         return ModelServerStatus(
             expert_id=spec.expert_id,
@@ -266,21 +332,24 @@ class ModelServerManager:
             message=message,
         )
 
+    def _execution_decision(self, spec: ModelServerSpec) -> tuple[bool, str]:
+        if spec.execution_target is None:
+            return True, ""
+        eligibility = self._execution_guard.evaluate(spec.execution_target)
+        return eligibility.allowed, eligibility.detail
+
 
 def build_model_server_specs(
     config: MoEConfig,
     plan: RuntimePlan,
     *,
     work_dir: str | Path,
-    execution_guard: ExecutionScopeGuard | None = None,
 ) -> tuple[ModelServerSpec, ...]:
     work = Path(work_dir)
-    guard = execution_guard or ExecutionScopeGuard(config.execution_policy)
     experts = tuple(expert for expert in config.experts if expert.provider == "openai_compatible")
     specs: list[ModelServerSpec] = []
     for index, expert in enumerate(experts):
         command = plan.model_commands[index] if index < len(plan.model_commands) else ()
-        eligibility = guard.evaluate(expert.execution_target)
         specs.append(
             ModelServerSpec(
                 expert_id=expert.id,
@@ -288,11 +357,17 @@ def build_model_server_specs(
                 base_url=expert.base_url or _base_url_from_command(command),
                 command=command,
                 log_path=str(work / f"model-{index + 1}.log"),
-                execution_allowed=eligibility.allowed,
-                execution_reason=eligibility.detail,
+                execution_target=expert.execution_target,
             )
         )
     return tuple(specs)
+
+
+def _locally_manageable(spec: ModelServerSpec) -> bool:
+    target = spec.execution_target
+    if target is None:
+        return True
+    return target.declaration.transport == ExecutionTransport.DIRECT_LOCAL
 
 
 def model_server_action_payload(action: ModelServerAction) -> dict[str, object]:

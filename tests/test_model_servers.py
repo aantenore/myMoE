@@ -12,6 +12,13 @@ from local_moe.model_servers import (
 )
 from local_moe.bootstrap import build_runtime_plan
 from local_moe.config import parse_config
+from local_moe.execution_scope import (
+    ExecutionAttestation,
+    ExecutionScope,
+    ExecutionScopeGuard,
+    ExecutionTransport,
+    ScopePolicyError,
+)
 
 
 class ModelServerManagerTests(unittest.TestCase):
@@ -134,6 +141,165 @@ class ModelServerManagerTests(unittest.TestCase):
         self.assertEqual(probes, 0)
         self.assertEqual(starts, 0)
 
+    def test_status_and_start_use_fresh_execution_attestation(self) -> None:
+        config = parse_config(
+            {
+                "routing": {"top_k": 1},
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "openai_compatible",
+                        "model": "local-model",
+                        "role": "general",
+                        "base_url": "http://127.0.0.1:8199/v1",
+                    }
+                ],
+                "rules": [],
+            }
+        )
+        attestor = _RevocableAttestor()
+        guard = ExecutionScopeGuard(config.execution_policy, attestor=attestor)
+        probes = 0
+        starts = 0
+
+        def probe(_url: str) -> bool:
+            nonlocal probes
+            probes += 1
+            return False
+
+        def start(_command: tuple[str, ...], _log_path: Path) -> _FakeProcess:
+            nonlocal starts
+            starts += 1
+            return _FakeProcess(pid=9999)
+
+        manager = ModelServerManager.from_config(
+            config,
+            reachability_checker=probe,
+            process_factory=start,
+            execution_guard=guard,
+        )
+        self.assertEqual(attestor.calls, 0)
+
+        first_status = manager.status()
+        self.assertEqual(first_status["servers"][0]["status"], "stopped")
+        self.assertEqual(attestor.calls, 1)
+        self.assertEqual(probes, 1)
+
+        attestor.allowed = False
+        blocked_status = manager.status()
+        blocked_start = manager.start(confirm=True)
+
+        self.assertEqual(blocked_status["servers"][0]["status"], "scope_blocked")
+        self.assertEqual(blocked_start.status, "scope_blocked")
+        self.assertEqual(attestor.calls, 3)
+        self.assertEqual(probes, 1)
+        self.assertEqual(starts, 0)
+
+        attestor.allowed = True
+        recovered_start = manager.start(confirm=True)
+
+        self.assertEqual(recovered_start.status, "started")
+        self.assertEqual(attestor.calls, 5)
+        self.assertEqual(starts, 1)
+
+    def test_start_rechecks_after_probe_before_launching_local_process(self) -> None:
+        config = parse_config(
+            {
+                "routing": {"top_k": 1},
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "openai_compatible",
+                        "model": "local-model",
+                        "role": "general",
+                        "base_url": "http://127.0.0.1:8199/v1",
+                    }
+                ],
+                "rules": [],
+            }
+        )
+        attestor = _RevocableAttestor()
+        guard = ExecutionScopeGuard(config.execution_policy, attestor=attestor)
+        starts = 0
+
+        def probe(_url: str) -> bool:
+            attestor.allowed = False
+            return False
+
+        def start(_command: tuple[str, ...], _log_path: Path) -> _FakeProcess:
+            nonlocal starts
+            starts += 1
+            return _FakeProcess(pid=9999)
+
+        manager = ModelServerManager.from_config(
+            config,
+            reachability_checker=probe,
+            process_factory=start,
+            execution_guard=guard,
+        )
+
+        action = manager.start(confirm=True)
+
+        self.assertEqual(action.status, "scope_blocked")
+        self.assertEqual(attestor.calls, 2)
+        self.assertEqual(starts, 0)
+
+    def test_external_transport_is_probed_but_never_started_locally(self) -> None:
+        config = parse_config(
+            {
+                "execution": {
+                    "max_scope": "private_mesh",
+                    "allowed_scopes": ["device_only", "private_mesh"],
+                },
+                "routing": {"top_k": 1},
+                "experts": [
+                    {
+                        "id": "mesh",
+                        "provider": "openai_compatible",
+                        "model": "mesh-model",
+                        "role": "general",
+                        "base_url": "http://127.0.0.1:8080/v1",
+                        "execution": {
+                            "scope": "private_mesh",
+                            "transport": "mesh_llm",
+                        },
+                    }
+                ],
+                "rules": [],
+            }
+        )
+        guard = ExecutionScopeGuard(
+            config.execution_policy,
+            attestor=_FixedMeshAttestor(),
+        )
+        probes = 0
+        starts = 0
+
+        def probe(_url: str) -> bool:
+            nonlocal probes
+            probes += 1
+            return False
+
+        def start(_command: tuple[str, ...], _log_path: Path) -> _FakeProcess:
+            nonlocal starts
+            starts += 1
+            return _FakeProcess(pid=9999)
+
+        manager = ModelServerManager.from_config(
+            config,
+            reachability_checker=probe,
+            process_factory=start,
+            execution_guard=guard,
+        )
+
+        action = manager.start(confirm=True)
+
+        self.assertEqual(action.status, "external_unreachable")
+        self.assertFalse(action.ok)
+        self.assertEqual(action.results[0].status, "external_unreachable")
+        self.assertEqual(probes, 1)
+        self.assertEqual(starts, 0)
+
     def test_reads_sanitized_model_server_log_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "model-1.log"
@@ -218,6 +384,33 @@ class _FakeProcess:
     def wait(self, timeout: float | None = None) -> int:
         self._running = False
         return 0
+
+
+class _RevocableAttestor:
+    def __init__(self) -> None:
+        self.allowed = True
+        self.calls = 0
+
+    def attest(self, target) -> ExecutionAttestation:
+        self.calls += 1
+        if not self.allowed:
+            raise ScopePolicyError("fresh model-server attestation was revoked.")
+        return ExecutionAttestation(
+            expert_id=target.expert_id,
+            scope=ExecutionScope.DEVICE_ONLY,
+            transport=ExecutionTransport.DIRECT_LOCAL,
+            authority="test",
+        )
+
+
+class _FixedMeshAttestor:
+    def attest(self, target) -> ExecutionAttestation:
+        return ExecutionAttestation(
+            expert_id=target.expert_id,
+            scope=ExecutionScope.PRIVATE_MESH,
+            transport=ExecutionTransport.MESH_LLM,
+            authority="test",
+        )
 
 
 def _spec() -> ModelServerSpec:

@@ -32,13 +32,18 @@ class _EndpointHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"ok")
             return
+        if self.path == "/cross-origin":
+            self.send_response(302)
+            self.send_header("Location", type(self).cross_origin_target)
+            self.end_headers()
+            return
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        if self.path == "/post-redirect":
-            self.send_response(307)
+        if self.path in {"/post-redirect", "/post-redirect-308"}:
+            self.send_response(308 if self.path.endswith("308") else 307)
             self.send_header("Location", "/post-final")
             self.end_headers()
             return
@@ -62,6 +67,12 @@ class _EndpointHandler(BaseHTTPRequestHandler):
 
 class _CrossOriginHandler(BaseHTTPRequestHandler):
     received_bodies: list[bytes] = []
+    received_gets = 0
+
+    def do_GET(self) -> None:
+        type(self).received_gets += 1
+        self.send_response(200)
+        self.end_headers()
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -104,6 +115,7 @@ class HttpBoundaryTests(unittest.TestCase):
         _EndpointHandler.final_bodies = []
         _EndpointHandler.final_gets = 0
         _CrossOriginHandler.received_bodies = []
+        _CrossOriginHandler.received_gets = 0
         _ProxyHandler.requests_seen = 0
 
     def test_allows_same_origin_redirect_and_preserves_post_body(self) -> None:
@@ -143,6 +155,38 @@ class HttpBoundaryTests(unittest.TestCase):
                 open_model_endpoint(http_request, timeout=1)
 
         self.assertEqual(_CrossOriginHandler.received_bodies, [])
+
+    def test_allows_same_origin_308_and_preserves_post_body(self) -> None:
+        with _server(_EndpointHandler) as endpoint:
+            host, port = endpoint.server_address
+            payload = b'{"prompt":"hello-308"}'
+            http_request = request.Request(
+                f"http://{host}:{port}/post-redirect-308",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            with open_model_endpoint(http_request, timeout=1) as response:
+                self.assertEqual(response.read(), b"ok")
+
+        self.assertEqual(_EndpointHandler.final_bodies, [payload])
+
+    def test_rejects_cross_origin_get_redirect_before_target_receives_request(self) -> None:
+        with _server(_CrossOriginHandler) as target, _server(_EndpointHandler) as endpoint:
+            target_host, target_port = target.server_address
+            endpoint_host, endpoint_port = endpoint.server_address
+            _EndpointHandler.cross_origin_target = (
+                f"http://{target_host}:{target_port}/receive"
+            )
+
+            with self.assertRaisesRegex(HttpBoundaryError, "crossed"):
+                open_model_endpoint(
+                    f"http://{endpoint_host}:{endpoint_port}/cross-origin",
+                    timeout=1,
+                )
+
+        self.assertEqual(_CrossOriginHandler.received_gets, 0)
 
     def test_loopback_opener_has_an_empty_proxy_map(self) -> None:
         captured_handlers: list[object] = []
