@@ -55,6 +55,10 @@ rejects stale dependency state. Linux jobs install Bubblewrap before the gate so
 the verifier isolation contract runs against its real OS-backed backend; macOS
 and Windows use their platform-specific capability paths.
 
+The matrix runs once for each pull request and again after changes reach
+`main`. Feature-branch pushes do not start a duplicate matrix alongside the
+pull-request event.
+
 Keep the active copy synchronized after intentionally changing the template:
 
 ```bash
