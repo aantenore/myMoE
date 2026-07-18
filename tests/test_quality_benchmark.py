@@ -162,6 +162,27 @@ class QualityBenchmarkTests(unittest.TestCase):
         self.assertEqual(present["status"], "ready")
         self.assertTrue(present["experts"][0]["model_available"])
 
+    def test_readiness_does_not_probe_endpoint_outside_execution_policy(self) -> None:
+        config = _http_config(model="remote-model")
+        remote = replace(
+            config.experts[0],
+            base_url="https://models.example.test/v1",
+        )
+        config = replace(config, experts=(remote,))
+
+        def unexpected_opener(*_args, **_kwargs):
+            raise AssertionError("blocked endpoint must not be probed")
+
+        result = check_benchmark_readiness(
+            config,
+            timeout_seconds=0.1,
+            model_match="exact",
+            opener=unexpected_opener,
+        )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["experts"][0]["reason_code"], "scope_blocked")
+
     def test_model_snapshot_revision_comes_from_local_huggingface_cache(self) -> None:
         revision = "a" * 40
         with TemporaryDirectory() as tmp:

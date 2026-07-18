@@ -34,6 +34,7 @@ from .deterministic_evaluator import (
     load_benchmark_cases,
 )
 from .http_boundary import open_model_endpoint
+from .execution_scope import ExecutionScopeGuard
 from .orchestrator import LocalMoE
 from .providers import ProviderError
 
@@ -185,14 +186,24 @@ def build_variant_config(
             distilled=DistilledRoutingConfig(enabled=False),
         )
         rules = tuple(rule for rule in source.rules if rule.expert_id == general_expert_id)
-        return MoEConfig(routing=routing, experts=(general,), rules=rules)
+        return MoEConfig(
+            routing=routing,
+            experts=(general,),
+            rules=rules,
+            execution_policy=source.execution_policy,
+        )
 
     if variant == "moe_top2" and len(experts) < 2:
         raise QualityBenchmarkError("moe_top2 requires at least two configured experts.")
     top_k = 1 if variant == "moe_top1" else 2
     aggregation = "best" if variant == "moe_top1" else "compare"
     routing = replace(source.routing, top_k=top_k, aggregation=aggregation)
-    return MoEConfig(routing=routing, experts=experts, rules=source.rules)
+    return MoEConfig(
+        routing=routing,
+        experts=experts,
+        rules=source.rules,
+        execution_policy=source.execution_policy,
+    )
 
 
 def check_benchmark_readiness(
@@ -201,13 +212,16 @@ def check_benchmark_readiness(
     timeout_seconds: float,
     model_match: str,
     opener: Callable[..., Any] = open_model_endpoint,
+    execution_guard: ExecutionScopeGuard | None = None,
 ) -> dict[str, Any]:
+    guard = execution_guard or ExecutionScopeGuard(config.execution_policy)
     checks = [
         _check_expert_readiness(
             expert,
             timeout_seconds=timeout_seconds,
             model_match=model_match,
             opener=opener,
+            execution_guard=guard,
         )
         for expert in config.experts
     ]
@@ -1750,6 +1764,7 @@ def _check_expert_readiness(
     timeout_seconds: float,
     model_match: str,
     opener: Callable[..., Any],
+    execution_guard: ExecutionScopeGuard,
 ) -> dict[str, Any]:
     base = {
         "expert_id": expert.id,
@@ -1762,6 +1777,15 @@ def _check_expert_readiness(
     models_url = _models_url(expert.base_url)
     if models_url is None:
         return {**base, "status": "blocked", "message": "Missing or malformed base_url."}
+
+    eligibility = execution_guard.evaluate(expert.execution_target)
+    if not eligibility.allowed:
+        return {
+            **base,
+            "status": "blocked",
+            "reason_code": eligibility.reason_code,
+            "message": eligibility.detail or "Endpoint is outside the execution policy.",
+        }
 
     started = time.perf_counter()
     try:
