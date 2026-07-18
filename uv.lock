@@ -969,7 +969,7 @@ ui-test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", marker = "extra == 'assistant-bridge'", specifier = ">=46,<49" },
+    { name = "cryptography", marker = "extra == 'assistant-bridge'", specifier = ">=48.0.1,<49" },
     { name = "detect-secrets", marker = "extra == 'assistant-bridge'", specifier = ">=1.5,<1.6" },
     { name = "huggingface-hub", marker = "extra == 'gguf'" },
     { name = "huggingface-hub", marker = "extra == 'mlx'" },

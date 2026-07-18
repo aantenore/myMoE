@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module, metadata
 import json
 import os
+import re
 import sys
 
 from local_moe.assistant_bridge_runtime import runtime_capabilities
@@ -14,8 +15,14 @@ REQUIRED_MINOR_SERIES = {
     "rfc8785": (0, 1),
 }
 REQUIRED_MAJOR_RANGES = {
-    "cryptography": (46, 49),
+    "cryptography": (48, 49),
     "platformdirs": (4, 5),
+}
+REQUIRED_MINIMUM_RELEASES = {
+    "cryptography": (48, 0, 1),
+}
+REQUIRED_RANGE_LABELS = {
+    "cryptography": ">=48.0.1,<49",
 }
 
 
@@ -71,10 +78,18 @@ def validate_optional_dependencies() -> dict[str, str]:
                 f"The assistant-bridge extra is incomplete: {distribution} is missing."
             ) from exc
         major = _major_minor(value)[0]
-        if not minimum <= major < maximum:
+        minimum_release = REQUIRED_MINIMUM_RELEASES.get(distribution)
+        release_is_supported = (
+            minimum_release is None or _release_triplet(value) >= minimum_release
+        )
+        if not minimum <= major < maximum or not release_is_supported:
+            required = REQUIRED_RANGE_LABELS.get(
+                distribution,
+                f">={minimum},<{maximum}",
+            )
             raise SystemExit(
                 f"The assistant-bridge extra requires {distribution} "
-                f">={minimum},<{maximum}; the installed version is {value}."
+                f"{required}; the installed version is {value}."
             )
         versions[distribution] = value
     return versions
@@ -119,7 +134,7 @@ def _metadata_range_is_supported(dependency: str, requirement: str) -> bool:
             upper_bound in requirement for upper_bound in ("<7.3", "<8")
         )
     if dependency == "cryptography":
-        return ">=46" in requirement and "<49" in requirement
+        return ">=48.0.1" in requirement and "<49" in requirement
     if dependency == "platformdirs":
         return ">=4.3" in requirement and "<5" in requirement
     if dependency == "rfc8785":
@@ -133,6 +148,18 @@ def _major_minor(value: str) -> tuple[int, int]:
         return int(numeric[0]), int(numeric[1])
     except (IndexError, ValueError) as exc:
         raise SystemExit(f"Unsupported dependency version format: {value}") from exc
+
+
+def _release_triplet(value: str) -> tuple[int, int, int]:
+    normalized = value.split("+", 1)[0]
+    match = re.fullmatch(
+        r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.post\d+)?",
+        normalized,
+    )
+    if match is None:
+        raise SystemExit(f"Unsupported dependency version format: {value}")
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch or 0)
 
 
 if __name__ == "__main__":
