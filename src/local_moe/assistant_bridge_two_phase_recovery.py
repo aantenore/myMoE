@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import stat
 
-from .assistant_bridge_integrity import sha256_bytes
+from .assistant_bridge_integrity import canonical_sha256, sha256_bytes
 from .assistant_bridge_two_phase_contracts import ResumeResult
 from .assistant_bridge_two_phase_state import TwoPhaseStateConfig
 from .assistant_bridge_workflow_store import (
@@ -18,7 +18,10 @@ from .assistant_bridge_workspace import (
     WorkspaceRecoveryPolicyUnavailable,
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
+    WorkspaceSnapshot,
+    finalize_committed_workspace_transaction,
     finalize_recovered_workspace_transaction,
+    finish_committed_workspace_transaction,
     recover_workspace_transaction,
 )
 
@@ -82,6 +85,25 @@ class TwoPhaseApplyingRecovery:
         try:
             record = self.store.read_applying_recovery(workflow_id, now=now)
             if record is None:
+                applied = self.store.read_applied_cleanup(workflow_id, now=now)
+                if applied is not None:
+                    root = _recovery_workspace_root(workspace)
+                    if recovery_workspace_root_sha256(root) != (
+                        applied.workspace_root_sha256
+                    ):
+                        raise TwoPhaseApplyingRecoveryError(
+                            "Applying recovery targets another workspace root."
+                        )
+                    finalize_committed_workspace_transaction(
+                        state_dir=self.transaction_state_dir,
+                        transaction_id=applied.apply_transaction_id,
+                        source_root=root,
+                        expected_source_fingerprint=(
+                            applied.binding.source_fingerprint
+                        ),
+                        lock_ttl_seconds=self.transaction_lock_ttl_seconds,
+                    )
+                    return None
                 cleanup = self.store.read_recovered_cleanup(
                     workflow_id,
                     now=now,
@@ -126,6 +148,54 @@ class TwoPhaseApplyingRecovery:
             ):
                 raise TwoPhaseApplyingRecoveryError(
                     "Applying recovery configuration binding changed."
+                )
+            applied_record: WorkflowRecord | None = None
+
+            def finish_apply(snapshot: WorkspaceSnapshot) -> None:
+                nonlocal applied_record
+                payload = snapshot.payload()
+                result_sha256 = canonical_sha256(
+                    {
+                        "workflowId": record.workflow_id,
+                        "bindingSha256": record.binding.binding_sha256,
+                        "candidateContentSha256": (
+                            record.binding.candidate_content_sha256
+                        ),
+                        "transactionId": transaction_id,
+                        "workspace": payload,
+                    }
+                )
+                applied_record, _ = self.store.mark_applied_after_committed_recovery(
+                    record.workflow_id,
+                    transaction_id=transaction_id,
+                    result_sha256=result_sha256,
+                    now=now,
+                )
+
+            committed = finish_committed_workspace_transaction(
+                state_dir=self.transaction_state_dir,
+                transaction_id=transaction_id,
+                source_root=root,
+                expected_source_fingerprint=record.binding.source_fingerprint,
+                on_committed=finish_apply,
+                lock_ttl_seconds=self.transaction_lock_ttl_seconds,
+                fallback_workspace_policy=fallback_workspace_policy,
+            )
+            if committed is not None:
+                if applied_record is None:
+                    raise TwoPhaseApplyingRecoveryError(
+                        "Committed applying recovery did not finish."
+                    )
+                return ResumeResult(
+                    workflow_id=applied_record.workflow_id,
+                    status="applied",
+                    code="applied_recovered",
+                    candidate_fingerprint=(
+                        applied_record.binding.candidate_fingerprint
+                    ),
+                    transaction_id=transaction_id,
+                    result_sha256=applied_record.result_sha256,
+                    idempotent_replay=True,
                 )
             recover_workspace_transaction(
                 state_dir=self.transaction_state_dir,
@@ -217,11 +287,31 @@ def _recovery_result(record: WorkflowRecord, transaction_id: str) -> ResumeResul
 def _has_recovery_journal(state_dir: Path, transaction_id: str) -> bool:
     transaction = state_dir / f"transaction-{transaction_id}"
     journal = transaction / "journal.json"
+    cleanup = state_dir / f"cleanup-{transaction_id}"
+    marker = state_dir / f"cleanup-{transaction_id}.json"
     try:
         transaction_state = transaction.lstat()
         journal_state = journal.lstat()
     except FileNotFoundError:
-        return False
+        try:
+            marker_state = marker.lstat()
+        except FileNotFoundError:
+            return False
+        if stat.S_ISLNK(marker_state.st_mode) or not stat.S_ISREG(marker_state.st_mode):
+            raise TwoPhaseApplyingRecoveryError(
+                "Applying recovery cleanup marker is invalid."
+            )
+        try:
+            cleanup_state = cleanup.lstat()
+        except FileNotFoundError:
+            return True
+        if stat.S_ISLNK(cleanup_state.st_mode) or not stat.S_ISDIR(
+            cleanup_state.st_mode
+        ):
+            raise TwoPhaseApplyingRecoveryError(
+                "Applying recovery cleanup directory is invalid."
+            )
+        return True
     except OSError as exc:
         raise TwoPhaseApplyingRecoveryError(
             "Applying recovery journal is unavailable."

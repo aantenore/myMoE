@@ -47,8 +47,10 @@ class _SimulatedTransactionCrash(RuntimeError):
 _SAFE_TRANSACTION_ID = re.compile(r"^[a-f0-9]{32,64}$")
 _SAFE_BACKUP_NAME = re.compile(r"^[0-9]{8}\.bin$")
 _SAFE_QUARANTINE_NAME = re.compile(r"^\.mymoe-before-[a-f0-9]{32,64}-[0-9]{8}$")
+_SAFE_INSTALL_NAME = re.compile(r"^\.mymoe-install-[a-f0-9]{32,64}-[0-9]{8}$")
 _SAFE_ROLLBACK_NAME = re.compile(r"^\.mymoe-rollback-[a-f0-9]{32,64}-[0-9]{8}$")
 _SAFE_RESTORE_NAME = re.compile(r"^\.mymoe-restore-[a-f0-9]{32,64}-[0-9]{8}$")
+_MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 _ROLLBACK_PHASES = (
     "pending",
     "detach_intent",
@@ -334,9 +336,7 @@ class WorkspaceScopePolicy:
     def __post_init__(self) -> None:
         object.__setattr__(self, "ignored_paths", tuple(self.ignored_paths))
         if not isinstance(self.synthetic_git_identity, GitIdentity):
-            raise WorkspaceSecurityError(
-                "Workspace synthetic Git identity is invalid."
-            )
+            raise WorkspaceSecurityError("Workspace synthetic Git identity is invalid.")
         if not 1 <= self.max_files <= MAX_CANDIDATE_FILES:
             raise WorkspaceSecurityError("Workspace max_files is outside safe bounds.")
         if (
@@ -691,11 +691,17 @@ def apply_changeset(
     state_dir: str | Path,
     transaction_id: str,
     lock_ttl_seconds: float = 120.0,
+    retain_committed_journal: bool = False,
+    on_committed: Callable[[WorkspaceSnapshot], None] | None = None,
     _fault_after_mutation: int | None = None,
     _fault_after_commit: bool = False,
+    _fault_after_committed_callback: bool = False,
+    _fault_after_install_step: str | None = None,
     _test_hook_after_detach: Callable[[Path], None] | None = None,
 ) -> WorkspaceSnapshot:
     _validate_transaction_id(transaction_id)
+    if not isinstance(retain_committed_journal, bool):
+        raise WorkspaceSecurityError("Workspace journal retention mode is invalid.")
     source = _trusted_root(source_snapshot.root, label="Source workspace")
     candidate = _trusted_root(candidate_root, label="Candidate workspace")
     candidate_files = _canonical_materialized_files(source_snapshot, candidate_files)
@@ -717,13 +723,37 @@ def apply_changeset(
             "path": item.path,
             "before": item.before.payload() if item.before else None,
             "after": item.after.payload() if item.after else None,
-            "backup": None,
-            "backup_sha256": None,
-            "staged": None,
-            "staged_sha256": None,
-            "quarantine": None,
+            "backup": (
+                f"{index:08d}.bin"
+                if item.before is not None and item.before.kind != "missing"
+                else None
+            ),
+            "backup_sha256": (
+                item.before.sha256
+                if item.before is not None and item.before.kind != "missing"
+                else None
+            ),
+            "staged": (
+                f"{index:08d}.bin"
+                if item.after is not None and item.after.kind != "missing"
+                else None
+            ),
+            "staged_sha256": (
+                item.after.sha256
+                if item.after is not None and item.after.kind != "missing"
+                else None
+            ),
+            "quarantine": (
+                f".mymoe-before-{transaction_id}-{index:08d}"
+                if item.before is not None and item.before.kind != "missing"
+                else None
+            ),
+            "install": f".mymoe-install-{transaction_id}-{index:08d}",
+            "install_phase": "pending",
             "rollback": f".mymoe-rollback-{transaction_id}-{index:08d}",
             "restore": f".mymoe-restore-{transaction_id}-{index:08d}",
+            "restore_identity": None,
+            "restore_phase": "pending",
             "rollback_phase": "pending",
             "created_directories": [],
             "installed_identity": None,
@@ -736,10 +766,21 @@ def apply_changeset(
         "transaction_id": transaction_id,
         "source_root_sha256": _sha256_text(str(source)),
         "source_fingerprint": source_snapshot.fingerprint,
+        "committed_fingerprint": None,
         "workspace_policy": _workspace_policy_recovery_payload(policy),
         "status": "prepared",
+        "recovery_error": None,
         "changes": records,
     }
+    try:
+        for index, directories in enumerate(_plan_created_directories(source, changes)):
+            records[index]["created_directories"] = list(directories)
+        _assert_journal_capacity(journal_payload)
+        _write_journal(journal, journal_payload)
+    except Exception:
+        _durable_rmtree(transaction, state)
+        _release_transaction_lock(lock)
+        raise
     try:
         current = snapshot_workspace(source, policy)
         if current.fingerprint != source_snapshot.fingerprint:
@@ -751,8 +792,6 @@ def apply_changeset(
             raise WorkspaceSecurityError(
                 "Workspace changes do not match the attested candidate manifest."
             )
-        for index, directories in enumerate(_plan_created_directories(source, changes)):
-            records[index]["created_directories"] = list(directories)
         _stage_attested_candidate(
             candidate,
             candidate_files,
@@ -761,17 +800,39 @@ def apply_changeset(
             staged_dir,
             records,
         )
+        _preflight_transaction_artifacts(
+            source,
+            changes,
+            records,
+            staged_dir=staged_dir,
+        )
         journal_payload["status"] = "prepared"
         _write_journal(journal, journal_payload)
         journal_payload["status"] = "applying"
         _write_journal(journal, journal_payload)
+        _create_all_planned_directories(source, records)
+        _preflight_transaction_artifacts(
+            source,
+            changes,
+            records,
+            staged_dir=staged_dir,
+        )
+        _prepare_install_artifacts(
+            source,
+            changes,
+            records,
+            staged_dir=staged_dir,
+            journal_payload=journal_payload,
+            journal=journal,
+            fault_after_step=_fault_after_install_step,
+        )
         for index, change in enumerate(changes):
             target = source / change.path
             _assert_current_entry(target, change.before)
             if change.before is not None and change.before.kind != "missing":
                 backup = backup_dir / f"{index:08d}.bin"
                 data = _read_attested_file(source, change.before, policy)
-                _durable_write_new(backup, data, change.before.mode)
+                _durable_write_new(backup, data, 0o600)
                 _fsync_directory(backup_dir)
                 records[index]["backup"] = backup.name
                 records[index]["backup_sha256"] = _sha256_bytes(data)
@@ -792,8 +853,17 @@ def apply_changeset(
                 change=change,
                 staged=staged,
                 quarantine_name=records[index].get("quarantine"),
+                install_name=records[index].get("install"),
                 created_directories=records[index].get("created_directories"),
+                record=records[index],
+                journal_payload=journal_payload,
+                journal=journal,
+                fault_after_install_step=_fault_after_install_step,
                 test_hook=_test_hook_after_detach,
+            )
+            _raise_install_fault(
+                _fault_after_install_step,
+                "before_caller_identity_persist",
             )
             records[index]["installed_identity"] = installed_identity
             _write_journal(journal, journal_payload)
@@ -815,15 +885,26 @@ def apply_changeset(
             raise WorkspaceSecurityError(
                 "Post-transaction workspace does not match the verified candidate."
             )
+        journal_payload["committed_fingerprint"] = result.fingerprint
         journal_payload["status"] = "committed"
         _write_journal(journal, journal_payload)
         if _fault_after_commit:
             raise _SimulatedTransactionCrash("simulated crash after commit journal")
-        _durable_rmtree(transaction, state)
+        if on_committed is not None:
+            on_committed(result)
+        if _fault_after_committed_callback:
+            raise _SimulatedTransactionCrash("simulated crash after committed callback")
+        if not retain_committed_journal:
+            _durable_rmtree(transaction, state)
         return result
     except _SimulatedTransactionCrash:
         raise
     except Exception as original:
+        if journal_payload.get("status") == "prepared":
+            _durable_rmtree(transaction, state)
+            raise
+        if journal_payload.get("status") == "committed":
+            raise
         try:
             _rollback_from_journal(
                 source,
@@ -871,13 +952,14 @@ def recover_workspace_transaction(
     state = _trusted_root(state_dir, label="Workspace state")
     source = _trusted_root(source_root, label="Source workspace")
     transaction = state / f"transaction-{transaction_id}"
+    _assert_directory_entry(transaction)
     journal = transaction / "journal.json"
     if not journal.is_file():
         raise WorkspaceSecurityError("Workspace recovery journal does not exist.")
     lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
     _acquire_transaction_lock(lock, lock_ttl_seconds)
     try:
-        raw_journal, _ = _read_regular_path_nofollow(journal, 16 * 1024 * 1024)
+        raw_journal, _ = _read_regular_path_nofollow(journal, _MAX_JOURNAL_BYTES)
         payload = json.loads(raw_journal.decode("utf-8"))
         _validate_journal(payload, transaction_id)
         if payload.get("source_root_sha256") != _sha256_text(str(source)):
@@ -899,6 +981,10 @@ def recover_workspace_transaction(
                 if fallback_workspace_policy is None:
                     raise
                 recovery_policy = fallback_workspace_policy
+        if payload.get("status") == "committed":
+            raise WorkspaceSecurityError(
+                "Committed workspace requires database finish, not rollback."
+            )
         if payload.get("status") != "recovered":
             _rollback_from_journal(
                 source,
@@ -928,6 +1014,7 @@ def finalize_recovered_workspace_transaction(
     source_root: str | Path,
     expected_source_fingerprint: str,
     lock_ttl_seconds: float = 120.0,
+    _fault_after_cleanup_step: str | None = None,
 ) -> None:
     """Remove a recovered journal only after its database reset commits."""
 
@@ -937,24 +1024,346 @@ def finalize_recovered_workspace_transaction(
     state = _trusted_root(state_dir, label="Workspace state")
     source = _trusted_root(source_root, label="Source workspace")
     transaction = state / f"transaction-{transaction_id}"
+    lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
+    _acquire_transaction_lock(lock, lock_ttl_seconds)
+    try:
+        _cleanup_transaction_state(
+            state,
+            transaction_id,
+            transaction=transaction,
+            source_root_sha256=_sha256_text(str(source)),
+            source_fingerprint=expected_source_fingerprint,
+            journal_status="recovered",
+            fault_after_step=_fault_after_cleanup_step,
+        )
+    finally:
+        _release_transaction_lock(lock)
+
+
+def finish_committed_workspace_transaction(
+    *,
+    state_dir: str | Path,
+    transaction_id: str,
+    source_root: str | Path,
+    expected_source_fingerprint: str,
+    on_committed: Callable[[WorkspaceSnapshot], None],
+    lock_ttl_seconds: float = 120.0,
+    fallback_workspace_policy: WorkspaceScopePolicy | None = None,
+    _fault_after_db_finish: bool = False,
+) -> WorkspaceSnapshot | None:
+    """Finish a committed filesystem apply while holding its workspace lock."""
+
+    _validate_transaction_id(transaction_id)
+    if re.fullmatch(r"[0-9a-f]{64}", expected_source_fingerprint) is None:
+        raise WorkspaceSecurityError("Committed workspace source binding is invalid.")
+    state = _trusted_root(state_dir, label="Workspace state")
+    source = _trusted_root(source_root, label="Source workspace")
+    transaction = state / f"transaction-{transaction_id}"
     journal = transaction / "journal.json"
     lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
     _acquire_transaction_lock(lock, lock_ttl_seconds)
     try:
-        raw_journal, _ = _read_regular_path_nofollow(journal, 16 * 1024 * 1024)
+        _assert_directory_entry(transaction)
+        raw_journal, _ = _read_regular_path_nofollow(journal, _MAX_JOURNAL_BYTES)
         payload = json.loads(raw_journal.decode("utf-8"))
         _validate_journal(payload, transaction_id)
+        if payload.get("status") != "committed":
+            return None
         if (
-            payload.get("status") != "recovered"
-            or payload.get("source_root_sha256") != _sha256_text(str(source))
+            payload.get("source_root_sha256") != _sha256_text(str(source))
             or payload.get("source_fingerprint") != expected_source_fingerprint
         ):
             raise WorkspaceSecurityError(
-                "Recovered workspace journal binding is invalid."
+                "Committed workspace journal binding is invalid."
             )
-        _durable_rmtree(transaction, state)
+        try:
+            policy = _workspace_policy_from_recovery_journal(payload)
+        except WorkspaceRecoveryPolicyUnavailable:
+            if fallback_workspace_policy is None:
+                raise
+            policy = fallback_workspace_policy
+        snapshot = snapshot_workspace(source, policy)
+        if snapshot.fingerprint != payload.get("committed_fingerprint"):
+            raise WorkspaceSecurityError(
+                "Committed workspace changed before database finish."
+            )
+        on_committed(snapshot)
+        if _fault_after_db_finish:
+            raise _SimulatedTransactionCrash("simulated crash after database finish")
+        try:
+            _cleanup_committed_transaction(
+                state,
+                transaction_id,
+                transaction=transaction,
+                source_root_sha256=_sha256_text(str(source)),
+                source_fingerprint=expected_source_fingerprint,
+            )
+        except (OSError, WorkspaceSecurityError):
+            pass
+        return snapshot
     finally:
         _release_transaction_lock(lock)
+
+
+def finalize_committed_workspace_transaction(
+    *,
+    state_dir: str | Path,
+    transaction_id: str,
+    source_root: str | Path,
+    expected_source_fingerprint: str,
+    lock_ttl_seconds: float = 120.0,
+    _fault_after_cleanup_step: str | None = None,
+) -> None:
+    """Idempotently remove a committed journal after database apply commits."""
+
+    _validate_transaction_id(transaction_id)
+    if re.fullmatch(r"[0-9a-f]{64}", expected_source_fingerprint) is None:
+        raise WorkspaceSecurityError("Committed workspace source binding is invalid.")
+    state = _trusted_root(state_dir, label="Workspace state")
+    source = _trusted_root(source_root, label="Source workspace")
+    transaction = state / f"transaction-{transaction_id}"
+    lock = state / f"workspace-{_sha256_text(str(source))[:24]}.lock"
+    _acquire_transaction_lock(lock, lock_ttl_seconds)
+    try:
+        _cleanup_transaction_state(
+            state,
+            transaction_id,
+            transaction=transaction,
+            source_root_sha256=_sha256_text(str(source)),
+            source_fingerprint=expected_source_fingerprint,
+            journal_status="committed",
+            fault_after_step=_fault_after_cleanup_step,
+        )
+    finally:
+        _release_transaction_lock(lock)
+
+
+def _cleanup_committed_transaction(
+    state: Path,
+    transaction_id: str,
+    *,
+    transaction: Path,
+    source_root_sha256: str,
+    source_fingerprint: str,
+) -> None:
+    _cleanup_transaction_state(
+        state,
+        transaction_id,
+        transaction=transaction,
+        source_root_sha256=source_root_sha256,
+        source_fingerprint=source_fingerprint,
+        journal_status="committed",
+        fault_after_step=None,
+    )
+
+
+def _cleanup_transaction_state(
+    state: Path,
+    transaction_id: str,
+    *,
+    transaction: Path,
+    source_root_sha256: str,
+    source_fingerprint: str,
+    journal_status: str,
+    fault_after_step: str | None,
+) -> None:
+    cleanup = state / f"cleanup-{transaction_id}"
+    marker = state / f"cleanup-{transaction_id}.json"
+    marker_binding = {
+        "schema_version": "1.0",
+        "transaction_id": transaction_id,
+        "source_root_sha256": source_root_sha256,
+        "source_fingerprint": source_fingerprint,
+        "journal_status": journal_status,
+    }
+    if _entry_exists(cleanup):
+        if _entry_exists(transaction):
+            raise WorkspaceSecurityError("Workspace cleanup state is ambiguous.")
+        marker_payload = _validate_cleanup_marker(marker, marker_binding)
+        _assert_directory_entry(cleanup)
+        if marker_payload.get("transaction_identity") != _directory_identity(cleanup):
+            raise WorkspaceSecurityError(
+                "Workspace cleanup directory identity changed."
+            )
+        cleanup_journal = cleanup / "journal.json"
+        if _entry_exists(cleanup_journal):
+            cleanup_raw, _ = _read_regular_path_nofollow(
+                cleanup_journal,
+                _MAX_JOURNAL_BYTES,
+            )
+            if marker_payload.get("journal_sha256") != _sha256_bytes(cleanup_raw):
+                raise WorkspaceSecurityError(
+                    "Workspace cleanup journal digest changed."
+                )
+    elif _entry_exists(transaction):
+        _assert_directory_entry(transaction)
+        raw_journal, _ = _read_regular_path_nofollow(
+            transaction / "journal.json",
+            _MAX_JOURNAL_BYTES,
+        )
+        payload = json.loads(raw_journal.decode("utf-8"))
+        _validate_journal(payload, transaction_id)
+        if (
+            payload.get("status") != journal_status
+            or payload.get("source_root_sha256") != source_root_sha256
+            or payload.get("source_fingerprint") != source_fingerprint
+        ):
+            raise WorkspaceSecurityError("Workspace cleanup binding is invalid.")
+        marker_payload = {
+            **marker_binding,
+            "transaction_identity": _directory_identity(transaction),
+            "journal_sha256": _sha256_bytes(raw_journal),
+            "committed_fingerprint": payload.get("committed_fingerprint"),
+        }
+        _ensure_cleanup_marker(
+            marker,
+            marker_payload,
+            fault_after_step=fault_after_step,
+        )
+        _raise_cleanup_fault(fault_after_step, "after_marker")
+        _rename_no_replace(transaction, cleanup)
+        _raise_cleanup_fault(fault_after_step, "after_rename")
+    elif _entry_exists(marker):
+        _validate_cleanup_marker(marker, marker_binding)
+        _unlink_cleanup_marker(marker)
+        return
+    else:
+        return
+    _raise_cleanup_fault(fault_after_step, "before_rmtree")
+    _durable_rmtree(cleanup, state)
+    _raise_cleanup_fault(fault_after_step, "after_rmtree")
+    _validate_cleanup_marker(marker, marker_binding)
+    _unlink_cleanup_marker(marker)
+
+
+def _ensure_cleanup_marker(
+    path: Path,
+    payload: dict[str, object],
+    *,
+    fault_after_step: str | None,
+) -> None:
+    if _entry_exists(path):
+        _validate_cleanup_marker(path, payload)
+        return
+    data = _cleanup_marker_bytes(payload)
+    temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    descriptor: int | None = None
+    temp_identity: dict[str, int] | None = None
+    try:
+        descriptor = os.open(
+            temp,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        metadata = os.fstat(descriptor)
+        if _is_link_or_reparse(metadata) or not stat.S_ISREG(metadata.st_mode):
+            raise WorkspaceSecurityError(
+                "Workspace cleanup marker temporary file is invalid."
+            )
+        temp_identity = _identity_from_metadata(metadata)
+        fchmod = getattr(os, "fchmod", None)
+        if callable(fchmod):
+            fchmod(descriptor, 0o600)
+        first_length = max(1, len(data) // 2)
+        _write_descriptor_bytes(descriptor, data[:first_length])
+        os.fsync(descriptor)
+        _raise_cleanup_fault(fault_after_step, "during_marker_write")
+        _write_descriptor_bytes(descriptor, data[first_length:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        if not callable(fchmod):
+            if os.name != "nt":  # pragma: no cover - POSIX exposes fchmod.
+                raise WorkspaceSecurityError(
+                    "Secure cleanup marker creation is unavailable."
+                )
+            if _regular_file_identity(temp) != temp_identity:
+                raise WorkspaceSecurityError(
+                    "Workspace cleanup marker temporary identity changed."
+                )
+            temp.chmod(0o600)
+            if _regular_file_identity(temp) != temp_identity:
+                raise WorkspaceSecurityError(
+                    "Workspace cleanup marker temporary identity changed."
+                )
+            _windows_flush_path(temp, directory=False)
+        _fsync_directory(path.parent)
+        _rename_no_replace(temp, path)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if _entry_exists(temp):
+            if temp_identity is None:
+                temp_identity = _regular_file_identity(temp)
+            _unlink_recovery_artifact(temp, temp_identity)
+
+
+def _validate_cleanup_marker(
+    path: Path,
+    expected: dict[str, object],
+) -> dict[str, object]:
+    try:
+        raw, metadata = _read_regular_path_nofollow(path, 4096)
+    except (OSError, WorkspaceSecurityError) as exc:
+        raise WorkspaceSecurityError(
+            "Workspace cleanup marker is unavailable."
+        ) from exc
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkspaceSecurityError("Workspace cleanup marker is invalid.") from exc
+    if not isinstance(payload, dict) or any(
+        payload.get(key) != value for key, value in expected.items()
+    ):
+        raise WorkspaceSecurityError("Workspace cleanup marker binding is invalid.")
+    if (
+        not _private_artifact_mode_is_valid(metadata.st_mode)
+        or _cleanup_marker_bytes(payload) != raw
+    ):
+        raise WorkspaceSecurityError("Workspace cleanup marker encoding is invalid.")
+    identity = payload.get("transaction_identity")
+    expected_keys = {
+        *expected,
+        "transaction_identity",
+        "journal_sha256",
+        "committed_fingerprint",
+    }
+    if set(payload) != expected_keys or not isinstance(identity, dict):
+        raise WorkspaceSecurityError("Workspace cleanup marker identity is invalid.")
+    _recorded_file_identity(identity)
+    journal_sha256 = payload.get("journal_sha256")
+    committed_fingerprint = payload.get("committed_fingerprint")
+    if re.fullmatch(r"[0-9a-f]{64}", str(journal_sha256)) is None:
+        raise WorkspaceSecurityError("Workspace cleanup marker digest is invalid.")
+    if expected.get("journal_status") == "committed":
+        if re.fullmatch(r"[0-9a-f]{64}", str(committed_fingerprint)) is None:
+            raise WorkspaceSecurityError(
+                "Workspace cleanup committed binding is invalid."
+            )
+    elif committed_fingerprint is not None:
+        raise WorkspaceSecurityError("Workspace cleanup recovered binding is invalid.")
+    return payload
+
+
+def _cleanup_marker_bytes(payload: dict[str, object]) -> bytes:
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(data) > 4096:
+        raise WorkspaceSecurityError("Workspace cleanup marker exceeds its bound.")
+    return data
+
+
+def _unlink_cleanup_marker(path: Path) -> None:
+    identity = _regular_file_identity(path)
+    _unlink_recovery_artifact(path, identity)
+
+
+def _raise_cleanup_fault(fault_after_step: str | None, step: str) -> None:
+    if fault_after_step == step:
+        raise _SimulatedTransactionCrash(f"simulated cleanup crash after {step}")
 
 
 def _snapshot_once(
@@ -1070,8 +1479,7 @@ def _tracked_paths_from_index(index: bytes) -> tuple[str, ...]:
         if (
             not separator
             or not raw_path
-            or re.fullmatch(rb"[0-7]{6} [0-9a-fA-F]{40,64} [0-3]", header)
-            is None
+            or re.fullmatch(rb"[0-7]{6} [0-9a-fA-F]{40,64} [0-3]", header) is None
         ):
             raise WorkspaceSecurityError("Git index attestation is malformed.")
         paths.add(_safe_relative(os.fsdecode(raw_path)))
@@ -1227,10 +1635,197 @@ def _stage_attested_candidate(
             continue
         data = _read_attested_file(candidate_root, change.after, policy)
         staged = staged_dir / f"{index:08d}.bin"
-        _durable_write_new(staged, data, change.after.mode)
+        _durable_write_new(staged, data, 0o600)
         _fsync_directory(staged_dir)
         records[index]["staged"] = staged.name
         records[index]["staged_sha256"] = _sha256_bytes(data)
+
+
+def _preflight_transaction_artifacts(
+    root: Path,
+    changes: Sequence[WorkspaceChange],
+    records: Sequence[dict[str, object]],
+    *,
+    staged_dir: Path,
+) -> None:
+    for change, record in zip(changes, records, strict=True):
+        target = root / change.path
+        raw_names = (
+            (record.get("quarantine"), _SAFE_QUARANTINE_NAME),
+            (record.get("install"), _SAFE_INSTALL_NAME),
+            (record.get("rollback"), _SAFE_ROLLBACK_NAME),
+            (record.get("restore"), _SAFE_RESTORE_NAME),
+        )
+        paths: list[Path] = [target]
+        for raw_name, validator in raw_names:
+            if raw_name is None:
+                continue
+            if not isinstance(raw_name, str) or validator.fullmatch(raw_name) is None:
+                raise WorkspaceSecurityError(
+                    "Workspace transaction artifact path is malformed."
+                )
+            paths.append(target.with_name(raw_name))
+        _assert_planned_path_ancestry(root, change.path)
+        staged_name = record.get("staged")
+        if staged_name is not None:
+            if change.after is None or change.after.kind == "missing":
+                raise WorkspaceSecurityError("Workspace staged artifact is unexpected.")
+            if (
+                not isinstance(staged_name, str)
+                or _SAFE_BACKUP_NAME.fullmatch(staged_name) is None
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace staged artifact path is malformed."
+                )
+            _read_staged_file(staged_dir / staged_name, change.after)
+        for artifact in paths[1:]:
+            if _entry_exists(artifact):
+                raise WorkspaceSecurityError(
+                    "Workspace transaction artifact path already exists."
+                )
+
+
+def _assert_planned_path_ancestry(root: Path, relative: str) -> Path:
+    current = root
+    _assert_directory_entry(current)
+    for part in Path(_safe_relative(relative)).parts[:-1]:
+        candidate = current / part
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            return current
+        _assert_directory_entry(candidate)
+        current = candidate
+    return current
+
+
+def _prepare_install_artifacts(
+    root: Path,
+    changes: Sequence[WorkspaceChange],
+    records: Sequence[dict[str, object]],
+    *,
+    staged_dir: Path,
+    journal_payload: dict[str, object],
+    journal: Path,
+    fault_after_step: str | None,
+) -> None:
+    for index, (change, record) in enumerate(zip(changes, records, strict=True)):
+        if change.after is None or change.after.kind == "missing":
+            continue
+        target = root / change.path
+        install = _journal_install(
+            target,
+            record,
+            transaction_id=str(journal_payload.get("transaction_id", "")),
+            index=index,
+        )
+        staged_name = record.get("staged")
+        if not isinstance(staged_name, str):
+            raise WorkspaceSecurityError("Workspace staged artifact path is malformed.")
+        staged = staged_dir / staged_name
+        data = _read_staged_file(staged, change.after)
+        _assert_recovery_path_ancestry(root, change.path, target, install)
+        record["install_phase"] = "create_intent"
+        _write_journal(journal, journal_payload)
+        identity = _create_journaled_artifact(
+            install,
+            data,
+            record=record,
+            identity_key="installed_identity",
+            phase_key="install_phase",
+            journal_payload=journal_payload,
+            journal=journal,
+            before_identity_fault=lambda: _raise_install_fault(
+                fault_after_step,
+                "before_identity_persist",
+            ),
+            during_write_fault=lambda: _raise_install_fault(
+                fault_after_step,
+                "during_temp_write",
+            ),
+        )
+        _assert_install_artifact(install, change.after, identity)
+        record["install_phase"] = "created"
+        _write_journal(journal, journal_payload)
+        _raise_install_fault(fault_after_step, "after_temp_creation")
+
+
+def _create_journaled_artifact(
+    path: Path,
+    data: bytes,
+    *,
+    record: dict[str, object],
+    identity_key: str,
+    phase_key: str,
+    journal_payload: dict[str, object],
+    journal: Path,
+    before_identity_fault: Callable[[], None],
+    during_write_fault: Callable[[], None],
+) -> dict[str, int]:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if _is_link_or_reparse(metadata) or not stat.S_ISREG(metadata.st_mode):
+            raise WorkspaceSecurityError(
+                "Workspace transaction artifact is not a regular file."
+            )
+        identity = _identity_from_metadata(metadata)
+        fchmod = getattr(os, "fchmod", None)
+        if callable(fchmod):
+            fchmod(descriptor, 0o600)
+        elif os.name == "nt":
+            if _regular_file_identity(path) != identity:
+                raise WorkspaceSecurityError(
+                    "Workspace transaction artifact identity changed at creation."
+                )
+            path.chmod(0o600)
+            if _regular_file_identity(path) != identity:
+                raise WorkspaceSecurityError(
+                    "Workspace transaction artifact identity changed during setup."
+                )
+            _windows_flush_path(path, directory=False)
+        else:  # pragma: no cover - supported POSIX runtimes expose fchmod.
+            raise WorkspaceSecurityError(
+                "Secure transaction artifact creation is unavailable."
+            )
+        os.fsync(descriptor)
+        _fsync_directory(path.parent)
+        before_identity_fault()
+        record[identity_key] = identity
+        record[phase_key] = "write_intent"
+        _write_journal(journal, journal_payload)
+
+        first_length = max(1, len(data) // 2) if data else 0
+        _write_descriptor_bytes(descriptor, data[:first_length])
+        os.fsync(descriptor)
+        during_write_fault()
+        _write_descriptor_bytes(descriptor, data[first_length:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    _fsync_directory(path.parent)
+    if _regular_file_identity(path) != identity:
+        raise WorkspaceSecurityError(
+            "Workspace transaction artifact identity changed during write."
+        )
+    return identity
+
+
+def _write_descriptor_bytes(descriptor: int, data: bytes) -> None:
+    offset = 0
+    while offset < len(data):
+        written = os.write(descriptor, data[offset:])
+        if written <= 0:
+            raise OSError("Workspace transaction artifact write made no progress.")
+        offset += written
 
 
 def _apply_change_fail_closed(
@@ -1239,10 +1834,15 @@ def _apply_change_fail_closed(
     change: WorkspaceChange,
     staged: Path | None,
     quarantine_name: object,
+    install_name: object,
     created_directories: object,
+    record: dict[str, object],
+    journal_payload: dict[str, object],
+    journal: Path,
+    fault_after_install_step: str | None,
     test_hook: Callable[[Path], None] | None,
 ) -> dict[str, int] | None:
-    _create_planned_directories(source, created_directories)
+    _validate_created_directories(created_directories)
     target = source / change.path
     _assert_safe_relative_ancestry(source, change.path)
     quarantine: Path | None = None
@@ -1285,6 +1885,14 @@ def _apply_change_fail_closed(
             data,
             target,
             change.after.mode,
+            root=source,
+            relative=change.path,
+            install_name=install_name,
+            expected=change.after,
+            record=record,
+            journal_payload=journal_payload,
+            journal=journal,
+            fault_after_step=fault_after_install_step,
         )
     else:
         _assert_current_entry(target, None)
@@ -1297,20 +1905,24 @@ def _apply_change_fail_closed(
             )
     if quarantine is not None:
         _assert_current_entry(quarantine, change.before)
-        quarantine.unlink()
-        _fsync_directory(quarantine.parent)
+        quarantine_identity = _regular_file_identity(quarantine)
+        _unlink_recovery_artifact(quarantine, quarantine_identity)
     return installed_identity
 
 
 def _restore_quarantine_no_replace(quarantine: Path, target: Path) -> None:
+    quarantine_identity = _regular_file_identity(quarantine)
     try:
         os.link(quarantine, target)
     except FileExistsError as exc:
         raise WorkspaceSecurityError(
             "Concurrent workspace value was preserved; journal recovery is required."
         ) from exc
-    quarantine.unlink()
-    _fsync_directory(target.parent)
+    if _regular_file_identity(target) != quarantine_identity:
+        raise WorkspaceSecurityError(
+            "Workspace quarantine ownership changed during restoration."
+        )
+    _unlink_recovery_artifact(quarantine, quarantine_identity)
 
 
 def _plan_created_directories(
@@ -1364,47 +1976,278 @@ def _create_planned_directories(source: Path, raw_directories: object) -> None:
         _assert_directory_entry(directory)
 
 
+def _create_all_planned_directories(
+    source: Path,
+    records: Sequence[dict[str, object]],
+) -> None:
+    for record in records:
+        _create_planned_directories(source, record.get("created_directories"))
+
+
+def _validate_created_directories(raw_directories: object) -> None:
+    if not isinstance(raw_directories, list) or not all(
+        isinstance(item, str) for item in raw_directories
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace transaction directory plan is malformed."
+        )
+    for raw in raw_directories:
+        _safe_relative(raw)
+
+
 def _install_bytes_no_replace(
     data: bytes,
     target: Path,
     mode: int,
+    *,
+    root: Path,
+    relative: str,
+    install_name: object,
+    expected: WorkspaceFile,
+    record: dict[str, object],
+    journal_payload: dict[str, object],
+    journal: Path,
+    fault_after_step: str | None,
 ) -> dict[str, int]:
-    descriptor, raw_temp = tempfile.mkstemp(prefix=".mymoe-install-", dir=target.parent)
-    temp = Path(raw_temp)
+    if (
+        not isinstance(install_name, str)
+        or _SAFE_INSTALL_NAME.fullmatch(install_name) is None
+    ):
+        raise WorkspaceSecurityError("Workspace install path is malformed.")
+    temp = target.with_name(install_name)
+    _assert_recovery_path_ancestry(root, relative, target, temp)
+    installed_identity = _recorded_file_identity(record.get("installed_identity"))
+    if installed_identity is None:
+        raise WorkspaceSecurityError("Workspace install identity is unavailable.")
+    _assert_install_artifact(temp, expected, installed_identity)
+    record["install_phase"] = "link_intent"
+    _write_journal(journal, journal_payload)
+    _assert_recovery_path_ancestry(root, relative, target, temp)
     try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            if hasattr(os, "fchmod"):
-                os.fchmod(handle.fileno(), mode)
-            os.fsync(handle.fileno())
-        if not hasattr(os, "fchmod"):
-            temp.chmod(mode)
-            _windows_flush_path(temp, directory=False)
-        installed_identity = _regular_file_identity(temp)
-        _fsync_directory(target.parent)
-        try:
-            os.link(temp, target)
-        except FileExistsError as exc:
+        os.link(temp, target)
+    except FileExistsError as exc:
+        raise WorkspaceSecurityError(
+            "Workspace path changed during no-replace installation."
+        ) from exc
+    _fsync_directory(target.parent)
+    if _regular_file_identity(target) != installed_identity:
+        raise WorkspaceSecurityError(
+            "Workspace no-replace installation lost object ownership."
+        )
+    record["install_phase"] = "linked"
+    _write_journal(journal, journal_payload)
+    _raise_install_fault(fault_after_step, "after_link")
+    _assert_recovery_path_ancestry(root, relative, target, temp)
+    _unlink_recovery_artifact(temp, installed_identity)
+    record["install_phase"] = "temp_unlinked"
+    _write_journal(journal, journal_payload)
+    _raise_install_fault(fault_after_step, "after_temp_unlink")
+    _set_file_mode_durable(target, mode, installed_identity)
+    record["install_phase"] = "mode_applied"
+    _write_journal(journal, journal_payload)
+    _raise_install_fault(fault_after_step, "after_mode_apply")
+    _assert_current_entry(target, expected)
+    return installed_identity
+
+
+def _assert_recovery_path_ancestry(
+    root: Path,
+    relative: str,
+    *paths: Path,
+) -> None:
+    safe_relative = _safe_relative(relative)
+    _assert_safe_relative_ancestry(root, safe_relative)
+    expected_parent = (root / safe_relative).parent
+    _assert_directory_entry(expected_parent)
+    for path in paths:
+        if path.parent != expected_parent:
             raise WorkspaceSecurityError(
-                "Workspace path changed during no-replace installation."
-            ) from exc
-        if _regular_file_identity(target) != installed_identity:
-            raise WorkspaceSecurityError(
-                "Workspace no-replace installation lost object ownership."
+                "Workspace recovery artifact escaped its target directory."
             )
-        _fsync_directory(target.parent)
-        return installed_identity
+
+
+def _assert_install_artifact(
+    path: Path,
+    expected: WorkspaceFile,
+    installed_identity: dict[str, int],
+) -> None:
+    data, metadata = _read_regular_path_nofollow(path, expected.size)
+    if (
+        int(metadata.st_size) != expected.size
+        or not (
+            _private_artifact_mode_is_valid(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) == expected.mode
+        )
+        or _sha256_bytes(data) != expected.sha256
+        or _regular_file_identity(path) != installed_identity
+    ):
+        raise WorkspaceSecurityError("Workspace install artifact changed unexpectedly.")
+
+
+def _assert_install_content(path: Path, expected: WorkspaceFile) -> None:
+    data, metadata = _read_regular_path_nofollow(path, expected.size)
+    if (
+        int(metadata.st_size) != expected.size
+        or not _private_artifact_mode_is_valid(metadata.st_mode)
+        or _sha256_bytes(data) != expected.sha256
+    ):
+        raise WorkspaceSecurityError("Workspace install artifact changed unexpectedly.")
+
+
+def _assert_owned_partial_artifact(
+    path: Path,
+    expected: WorkspaceFile,
+    expected_identity: dict[str, int],
+) -> None:
+    data, metadata = _read_regular_path_nofollow(path, expected.size)
+    if (
+        len(data) > expected.size
+        or not _private_artifact_mode_is_valid(metadata.st_mode)
+        or _regular_file_identity(path) != expected_identity
+    ):
+        raise WorkspaceSecurityError(
+            "Workspace partial transaction artifact changed unexpectedly."
+        )
+
+
+def _entry_matches_installed(
+    path: Path,
+    expected: WorkspaceFile | None,
+    installed_identity: dict[str, int],
+) -> bool:
+    if expected is None or expected.kind == "missing":
+        return False
+    try:
+        _assert_install_artifact(path, expected, installed_identity)
+    except (OSError, WorkspaceSecurityError):
+        return False
+    return True
+
+
+def _set_file_mode_durable(
+    path: Path,
+    mode: int,
+    expected_identity: dict[str, int],
+) -> None:
+    descriptor = os.open(path, _SECURE_OPEN_FLAGS)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            _is_link_or_reparse(metadata)
+            or not stat.S_ISREG(metadata.st_mode)
+            or _identity_from_metadata(metadata) != expected_identity
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace file identity changed before mode application."
+            )
+        fchmod = getattr(os, "fchmod", None)
+        if os.name == "nt":
+            writable_descriptor = _windows_open_fd(
+                path,
+                directory=False,
+                writable=True,
+            )
+            try:
+                writable_metadata = os.fstat(writable_descriptor)
+                if (
+                    _is_link_or_reparse(writable_metadata)
+                    or not stat.S_ISREG(writable_metadata.st_mode)
+                    or _identity_from_metadata(writable_metadata)
+                    != expected_identity
+                    or _regular_file_identity(path) != expected_identity
+                ):
+                    raise WorkspaceSecurityError(
+                        "Workspace file identity changed before mode application."
+                    )
+                if callable(fchmod):
+                    fchmod(writable_descriptor, mode)
+                else:
+                    path.chmod(mode)
+                if (
+                    _identity_from_metadata(os.fstat(writable_descriptor))
+                    != expected_identity
+                    or _regular_file_identity(path) != expected_identity
+                ):
+                    raise WorkspaceSecurityError(
+                        "Workspace file identity changed during mode application."
+                    )
+                os.fsync(writable_descriptor)
+            finally:
+                os.close(writable_descriptor)
+        elif callable(fchmod):
+            fchmod(descriptor, mode)
+            os.fsync(descriptor)
+        else:  # pragma: no cover - supported POSIX runtimes expose fchmod.
+            raise WorkspaceSecurityError("Secure file mode application is unavailable.")
     finally:
-        temp.unlink(missing_ok=True)
-        _fsync_directory(target.parent)
+        os.close(descriptor)
+    if _regular_file_identity(path) != expected_identity:
+        raise WorkspaceSecurityError(
+            "Workspace file identity changed after mode application."
+        )
+    _fsync_directory(path.parent)
+
+
+def _unlink_recovery_artifact(
+    path: Path,
+    expected_identity: dict[str, int],
+) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, _SECURE_OPEN_FLAGS)
+        metadata = os.fstat(descriptor)
+        if (
+            _is_link_or_reparse(metadata)
+            or not stat.S_ISREG(metadata.st_mode)
+            or _identity_from_metadata(metadata) != expected_identity
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace recovery artifact identity changed before cleanup."
+            )
+        fchmod = getattr(os, "fchmod", None)
+        writable_mode = stat.S_IMODE(metadata.st_mode) | stat.S_IWUSR
+        if callable(fchmod):
+            fchmod(descriptor, writable_mode)
+        elif os.name == "nt":
+            if _regular_file_identity(path) != expected_identity:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery artifact identity changed before cleanup."
+                )
+            path.chmod(writable_mode)
+            if _regular_file_identity(path) != expected_identity:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery artifact identity changed during cleanup."
+                )
+            _windows_flush_path(path, directory=False)
+        else:  # pragma: no cover - supported POSIX runtimes expose fchmod.
+            raise WorkspaceSecurityError(
+                "Secure recovery artifact cleanup is unavailable."
+            )
+        os.close(descriptor)
+        descriptor = None
+        if _regular_file_identity(path) != expected_identity:
+            raise WorkspaceSecurityError(
+                "Workspace recovery artifact identity changed before unlink."
+            )
+        path.unlink()
+    except FileNotFoundError:
+        return
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    _fsync_directory(path.parent)
+
+
+def _raise_install_fault(fault_after_step: str | None, step: str) -> None:
+    if fault_after_step == step:
+        raise _SimulatedTransactionCrash(f"simulated install crash after {step}")
 
 
 def _read_staged_file(path: Path, expected: WorkspaceFile) -> bytes:
     data, metadata = _read_regular_path_nofollow(path, expected.size)
     if (
         int(metadata.st_size) != expected.size
-        or stat.S_IMODE(metadata.st_mode) != expected.mode
+        or not _private_artifact_mode_is_valid(metadata.st_mode)
         or _sha256_bytes(data) != expected.sha256
     ):
         raise WorkspaceSecurityError("Candidate staging artifact changed unexpectedly.")
@@ -1431,12 +2274,18 @@ def _rollback_from_journal(
         if not isinstance(raw, dict):
             raise WorkspaceSecurityError("Workspace recovery record is malformed.")
         status_value = raw.get("status")
-        if status_value in {"pending", "rolled_back"}:
+        if status_value == "rolled_back":
             continue
-        if status_value not in {"backed_up", "mutating", "applied"}:
+        if status_value not in {"pending", "backed_up", "mutating", "applied"}:
             raise WorkspaceSecurityError("Workspace recovery status is invalid.")
         change = _change_from_payload(raw)
         target = root / change.path
+        install = _journal_install(
+            target,
+            raw,
+            transaction_id=transaction_id,
+            index=index,
+        )
         rollback = _journal_rollback(
             target,
             raw,
@@ -1449,6 +2298,14 @@ def _rollback_from_journal(
             transaction_id=transaction_id,
             index=index,
         )
+        _assert_recovery_path_ancestry(
+            root,
+            change.path,
+            target,
+            install,
+            rollback,
+            restore,
+        )
         if raw.get("rollback_phase") is None:
             raw["rollback_phase"] = "pending"
         _rollback_phase(raw)
@@ -1460,18 +2317,196 @@ def _rollback_from_journal(
             )
         before_exists = change.before is not None and change.before.kind != "missing"
         after_exists = change.after is not None and change.after.kind != "missing"
+        restore_identity = (
+            _recorded_file_identity(raw.get("restore_identity"))
+            if before_exists
+            else None
+        )
         installed_identity = (
             _recorded_file_identity(raw.get("installed_identity"))
             if after_exists
             else None
         )
+        if after_exists and _entry_exists(install):
+            assert change.after is not None
+            install_prewrite_state = (
+                status_value == "pending"
+                and raw.get("install_phase")
+                in {"create_intent", "write_intent"}
+                and _entry_matches(target, change.before)
+                and not _entry_exists(rollback)
+                and not _entry_exists(restore)
+                and quarantine is None
+            )
+            if installed_identity is None:
+                if not install_prewrite_state:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery install identity is unavailable."
+                    )
+                installed_identity = _regular_file_identity(install)
+                raw["installed_identity"] = installed_identity
+                try:
+                    _assert_install_content(install, change.after)
+                except WorkspaceSecurityError:
+                    _assert_owned_partial_artifact(
+                        install,
+                        change.after,
+                        installed_identity,
+                    )
+                    raw["install_phase"] = "write_intent"
+                else:
+                    raw["install_phase"] = "created"
+                _write_journal(journal, payload)
+            if raw.get("install_phase") == "write_intent":
+                if not install_prewrite_state:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery partial install state is invalid."
+                    )
+                _assert_owned_partial_artifact(
+                    install,
+                    change.after,
+                    installed_identity,
+                )
+                _unlink_recovery_artifact(install, installed_identity)
+                raw["installed_identity"] = None
+                raw["install_phase"] = "recovered_partial_unlinked"
+                installed_identity = None
+                _write_journal(journal, payload)
+            else:
+                _assert_install_artifact(install, change.after, installed_identity)
+        elif not after_exists and _entry_exists(install):
+            raise WorkspaceSecurityError(
+                "Workspace recovery install artifact is unexpected."
+            )
+        if before_exists and _entry_exists(restore):
+            assert change.before is not None
+            restore_creation_state = (
+                _rollback_phase(raw) == "restore_intent"
+                and not _entry_exists(target)
+                and not _entry_exists(install)
+            )
+            if restore_creation_state and _entry_exists(rollback):
+                if not after_exists or installed_identity is None:
+                    restore_creation_state = False
+                else:
+                    _assert_owned_rollback(
+                        rollback,
+                        change.after,
+                        installed_identity,
+                    )
+            elif restore_creation_state and after_exists:
+                restore_creation_state = (
+                    status_value == "mutating" and quarantine is not None
+                )
+            elif restore_creation_state:
+                restore_creation_state = (
+                    not _entry_exists(rollback)
+                    and (
+                        quarantine is None
+                        or status_value == "mutating"
+                    )
+                )
+            if restore_identity is None:
+                if not restore_creation_state:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery restore identity is unavailable."
+                    )
+                restore_identity = _regular_file_identity(restore)
+                raw["restore_identity"] = restore_identity
+                try:
+                    _assert_install_content(restore, change.before)
+                except WorkspaceSecurityError:
+                    _assert_owned_partial_artifact(
+                        restore,
+                        change.before,
+                        restore_identity,
+                    )
+                    raw["restore_phase"] = "write_intent"
+                else:
+                    raw["restore_phase"] = "created"
+                _write_journal(journal, payload)
+            if raw.get("restore_phase") == "write_intent":
+                if not restore_creation_state:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery partial restore state is invalid."
+                    )
+                _assert_owned_partial_artifact(
+                    restore,
+                    change.before,
+                    restore_identity,
+                )
+                _unlink_recovery_artifact(restore, restore_identity)
+                raw["restore_identity"] = None
+                raw["restore_phase"] = "recovered_partial_unlinked"
+                restore_identity = None
+                _write_journal(journal, payload)
+            else:
+                _assert_install_artifact(restore, change.before, restore_identity)
         target_is_before = _entry_matches(target, change.before)
         target_is_after = _entry_matches(target, change.after)
+        target_is_installed = (
+            after_exists
+            and installed_identity is not None
+            and _entry_matches_installed(
+                target,
+                change.after,
+                installed_identity,
+            )
+        )
+        target_is_restoring = (
+            before_exists
+            and restore_identity is not None
+            and _entry_matches_installed(
+                target,
+                change.before,
+                restore_identity,
+            )
+        )
+        if (
+            after_exists
+            and target_is_after
+            and installed_identity is not None
+            and not target_is_installed
+        ):
+            raise WorkspaceSecurityError(
+                "Workspace recovery cannot prove ownership of the installed value."
+            )
+        if status_value in {"pending", "backed_up"}:
+            if (
+                not target_is_before
+                or target_is_installed
+                or _entry_exists(rollback)
+                or _entry_exists(restore)
+                or quarantine is not None
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery found mutation before its durable intent."
+                )
+            if _entry_exists(install):
+                if (
+                    not after_exists
+                    or installed_identity is None
+                    or change.after is None
+                ):
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery install artifact is unexpected."
+                    )
+                _assert_recovery_path_ancestry(root, change.path, target, install)
+                _assert_install_artifact(install, change.after, installed_identity)
+                _unlink_recovery_artifact(install, installed_identity)
+            raw["install_phase"] = "recovered_unlinked"
+            raw["rollback_phase"] = "complete"
+            raw["status"] = "rolled_back"
+            _write_journal(journal, payload)
+            continue
         if (
             after_exists
             and installed_identity is None
             and (
-                target_is_after or _entry_exists(rollback) or status_value == "applied"
+                target_is_after
+                or target_is_installed
+                or _entry_exists(rollback)
+                or status_value == "applied"
             )
         ):
             raise WorkspaceSecurityError(
@@ -1479,7 +2514,7 @@ def _rollback_from_journal(
             )
         if _entry_exists(rollback):
             _assert_owned_rollback(rollback, change.after, installed_identity)
-        if after_exists and target_is_after:
+        if after_exists and target_is_installed:
             if _entry_exists(rollback):
                 raise WorkspaceSecurityError(
                     "Workspace recovery rollback path is already occupied."
@@ -1494,6 +2529,12 @@ def _rollback_from_journal(
                 payload=payload,
                 journal=journal,
                 fault_after_step=_fault_after_step,
+            )
+            _assert_recovery_path_ancestry(
+                root,
+                change.path,
+                target,
+                rollback,
             )
             if _regular_file_identity(target) != installed_identity:
                 raise WorkspaceSecurityError(
@@ -1510,7 +2551,11 @@ def _rollback_from_journal(
                 fault_after_step=_fault_after_step,
             )
         elif after_exists and _entry_exists(rollback):
-            if _entry_exists(target) and not target_is_before:
+            if (
+                _entry_exists(target)
+                and not target_is_before
+                and not target_is_restoring
+            ):
                 raise WorkspaceSecurityError(
                     "Workspace recovery found a concurrent target value."
                 )
@@ -1532,10 +2577,26 @@ def _rollback_from_journal(
             raise WorkspaceSecurityError(
                 "Workspace recovery lost ownership of the installed value."
             )
-        elif not target_is_before and _entry_exists(target):
+        elif not target_is_before and not target_is_restoring and _entry_exists(target):
             raise WorkspaceSecurityError(
                 "Workspace recovery found a value matching neither before nor after."
             )
+        if _entry_exists(install):
+            if not after_exists or installed_identity is None:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery install artifact is unexpected."
+                )
+            assert change.after is not None
+            _assert_recovery_path_ancestry(root, change.path, target, install)
+            _assert_install_artifact(install, change.after, installed_identity)
+            raw["install_phase"] = "unlink_intent"
+            _write_journal(journal, payload)
+            _raise_rollback_fault(_fault_after_step, "install_unlink_intent")
+            _unlink_recovery_artifact(install, installed_identity)
+            _raise_rollback_fault(_fault_after_step, "install_unlink_action")
+        raw["install_phase"] = "recovered_unlinked"
+        _write_journal(journal, payload)
+        _raise_rollback_fault(_fault_after_step, "install_unlinked")
         if (
             before_exists
             and not target_is_before
@@ -1557,40 +2618,79 @@ def _rollback_from_journal(
             raise WorkspaceSecurityError(
                 "Workspace recovery restore path is unexpected."
             )
-        if not _entry_matches(target, change.before):
-            if _entry_exists(target):
+        if not before_exists:
+            if _entry_exists(restore):
                 raise WorkspaceSecurityError(
-                    "Workspace recovery target is occupied before restoration."
+                    "Workspace recovery restore path is unexpected."
                 )
-            if not before_exists:
-                _advance_rollback_phase(
-                    raw,
-                    "restored",
-                    payload=payload,
-                    journal=journal,
-                    fault_after_step=_fault_after_step,
-                )
-            else:
-                assert change.before is not None
+            _advance_rollback_phase(
+                raw,
+                "restored",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+        elif not target_is_before:
+            assert change.before is not None
+            _advance_rollback_phase(
+                raw,
+                "restore_intent",
+                payload=payload,
+                journal=journal,
+                fault_after_step=_fault_after_step,
+            )
+            if not target_is_restoring:
+                if _entry_exists(target):
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery target is occupied before restoration."
+                    )
                 assert restore_data is not None
-                _advance_rollback_phase(
-                    raw,
-                    "restore_intent",
-                    payload=payload,
-                    journal=journal,
-                    fault_after_step=_fault_after_step,
-                )
                 if not _entry_exists(restore):
-                    _durable_write_new(
+                    _assert_recovery_path_ancestry(
+                        root,
+                        change.path,
+                        target,
+                        restore,
+                    )
+                    restore_identity = _create_journaled_artifact(
                         restore,
                         restore_data,
-                        change.before.mode,
+                        record=raw,
+                        identity_key="restore_identity",
+                        phase_key="restore_phase",
+                        journal_payload=payload,
+                        journal=journal,
+                        before_identity_fault=lambda: _raise_rollback_fault(
+                            _fault_after_step,
+                            "restore_before_identity_persist",
+                        ),
+                        during_write_fault=lambda: _raise_rollback_fault(
+                            _fault_after_step,
+                            "restore_during_write",
+                        ),
                     )
+                    _assert_install_artifact(
+                        restore,
+                        change.before,
+                        restore_identity,
+                    )
+                    raw["restore_phase"] = "created"
+                    _write_journal(journal, payload)
                     _raise_rollback_fault(
                         _fault_after_step,
                         "restore_prepare_action",
                     )
-                _assert_current_entry(restore, change.before)
+                if restore_identity is None:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery restore identity is unavailable."
+                    )
+                _assert_install_artifact(restore, change.before, restore_identity)
+                _assert_recovery_path_ancestry(
+                    root,
+                    change.path,
+                    target,
+                    restore,
+                )
                 try:
                     os.link(restore, target)
                 except FileExistsError as exc:
@@ -1599,15 +2699,33 @@ def _rollback_from_journal(
                     ) from exc
                 _fsync_directory(target.parent)
                 _raise_rollback_fault(_fault_after_step, "restore_action")
-                _assert_current_entry(target, change.before)
-                _advance_rollback_phase(
-                    raw,
-                    "restored",
-                    payload=payload,
-                    journal=journal,
-                    fault_after_step=_fault_after_step,
+            if restore_identity is None or not _entry_matches_installed(
+                target,
+                change.before,
+                restore_identity,
+            ):
+                raise WorkspaceSecurityError(
+                    "Workspace recovery restore ownership changed."
                 )
-        else:
+            if _entry_exists(restore):
+                _assert_recovery_path_ancestry(
+                    root,
+                    change.path,
+                    target,
+                    restore,
+                )
+                _assert_install_artifact(restore, change.before, restore_identity)
+                raw["restore_phase"] = "unlink_intent"
+                _write_journal(journal, payload)
+                _raise_rollback_fault(_fault_after_step, "restore_unlink_intent")
+                _unlink_recovery_artifact(restore, restore_identity)
+                _raise_rollback_fault(_fault_after_step, "restore_unlink_action")
+            raw["restore_phase"] = "temp_unlinked"
+            _write_journal(journal, payload)
+            _raise_rollback_fault(_fault_after_step, "restore_unlinked")
+            _assert_recovery_path_ancestry(root, change.path, target)
+            _set_file_mode_durable(target, change.before.mode, restore_identity)
+            _raise_rollback_fault(_fault_after_step, "restore_mode_action")
             _advance_rollback_phase(
                 raw,
                 "restored",
@@ -1615,29 +2733,30 @@ def _rollback_from_journal(
                 journal=journal,
                 fault_after_step=_fault_after_step,
             )
-        _assert_current_entry(target, change.before)
-
-        if _entry_exists(restore):
-            if not before_exists:
-                raise WorkspaceSecurityError(
-                    "Workspace recovery restore path is unexpected."
+        else:
+            if _entry_exists(restore):
+                if restore_identity is None or change.before is None:
+                    raise WorkspaceSecurityError(
+                        "Workspace recovery restore identity is unavailable."
+                    )
+                _assert_recovery_path_ancestry(
+                    root,
+                    change.path,
+                    target,
+                    restore,
                 )
-            assert change.before is not None
-            _assert_current_entry(restore, change.before)
-            if _rollback_phase_index(raw) >= _rollback_phase_number("restore_unlinked"):
-                raise WorkspaceSecurityError(
-                    "Workspace recovery restore path reappeared after cleanup."
-                )
+                _assert_install_artifact(restore, change.before, restore_identity)
+                _unlink_recovery_artifact(restore, restore_identity)
             _advance_rollback_phase(
                 raw,
-                "restore_unlink_intent",
+                "restored",
                 payload=payload,
                 journal=journal,
                 fault_after_step=_fault_after_step,
             )
-            restore.unlink()
-            _fsync_directory(restore.parent)
-            _raise_rollback_fault(_fault_after_step, "restore_unlink_action")
+        _assert_recovery_path_ancestry(root, change.path, target)
+        _assert_current_entry(target, change.before)
+
         _advance_rollback_phase(
             raw,
             "restore_unlinked",
@@ -1661,8 +2780,12 @@ def _rollback_from_journal(
                 journal=journal,
                 fault_after_step=_fault_after_step,
             )
-            rollback.unlink()
-            _fsync_directory(rollback.parent)
+            _assert_recovery_path_ancestry(root, change.path, target, rollback)
+            if installed_identity is None:
+                raise WorkspaceSecurityError(
+                    "Workspace recovery rollback identity is unavailable."
+                )
+            _unlink_recovery_artifact(rollback, installed_identity)
             _raise_rollback_fault(_fault_after_step, "rollback_unlink_action")
         _advance_rollback_phase(
             raw,
@@ -1691,8 +2814,9 @@ def _rollback_from_journal(
                 journal=journal,
                 fault_after_step=_fault_after_step,
             )
-            quarantine.unlink()
-            _fsync_directory(quarantine.parent)
+            _assert_recovery_path_ancestry(root, change.path, target, quarantine)
+            quarantine_identity = _regular_file_identity(quarantine)
+            _unlink_recovery_artifact(quarantine, quarantine_identity)
             _raise_rollback_fault(_fault_after_step, "quarantine_unlink_action")
         _advance_rollback_phase(
             raw,
@@ -1706,6 +2830,27 @@ def _rollback_from_journal(
         raw["rollback_phase"] = "complete"
         _write_journal(journal, payload)
         _raise_rollback_fault(_fault_after_step, "record_rolled_back")
+
+
+def _journal_install(
+    target: Path,
+    raw: dict[str, object],
+    *,
+    transaction_id: str,
+    index: int,
+) -> Path:
+    expected = f".mymoe-install-{transaction_id}-{index:08d}"
+    raw_name = raw.get("install")
+    if raw_name is None:
+        raw["install"] = expected
+        raw_name = expected
+    if (
+        not isinstance(raw_name, str)
+        or raw_name != expected
+        or _SAFE_INSTALL_NAME.fullmatch(raw_name) is None
+    ):
+        raise WorkspaceSecurityError("Workspace recovery install path is malformed.")
+    return target.with_name(raw_name)
 
 
 def _journal_rollback(
@@ -1756,6 +2901,7 @@ def _read_recovery_backup(
     backup_dir: Path,
     before: WorkspaceFile,
 ) -> bytes:
+    _assert_directory_entry(backup_dir)
     backup_name = raw.get("backup")
     if (
         not isinstance(backup_name, str)
@@ -1768,7 +2914,10 @@ def _read_recovery_backup(
     data, backup_metadata = _read_regular_path_nofollow(backup, before.size)
     if _sha256_bytes(data) != raw.get("backup_sha256"):
         raise WorkspaceSecurityError("Workspace recovery backup digest mismatch.")
-    if stat.S_IMODE(backup_metadata.st_mode) != before.mode:
+    if not (
+        _private_artifact_mode_is_valid(backup_metadata.st_mode)
+        or stat.S_IMODE(backup_metadata.st_mode) == before.mode
+    ):
         raise WorkspaceSecurityError("Workspace recovery backup mode mismatch.")
     return data
 
@@ -1824,8 +2973,7 @@ def _assert_owned_rollback(
         expected is None
         or expected.kind == "missing"
         or installed_identity is None
-        or not _entry_matches(rollback, expected)
-        or _regular_file_identity(rollback) != installed_identity
+        or not _entry_matches_installed(rollback, expected, installed_identity)
     ):
         raise WorkspaceSecurityError(
             "Workspace recovery rollback path lost transaction ownership."
@@ -1853,8 +3001,8 @@ def _remove_matching_quarantine(
         raise WorkspaceSecurityError(
             "Workspace recovery quarantine does not match the recorded value."
         )
-    quarantine.unlink()
-    _fsync_directory(quarantine.parent)
+    quarantine_identity = _regular_file_identity(quarantine)
+    _unlink_recovery_artifact(quarantine, quarantine_identity)
 
 
 def _rollback_created_directories(root: Path, raw_directories: object) -> None:
@@ -1883,10 +3031,31 @@ def _regular_file_identity(path: Path) -> dict[str, int]:
         raise WorkspaceSecurityError(
             "Workspace file identity requires a regular non-link file."
         )
-    return {
-        "device_id": int(metadata.st_dev),
-        "inode": int(metadata.st_ino),
-    }
+    return _identity_from_metadata(metadata)
+
+
+def _directory_identity(path: Path) -> dict[str, int]:
+    metadata = path.lstat()
+    if _is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
+        raise WorkspaceSecurityError(
+            "Workspace cleanup identity requires a real directory."
+        )
+    return _identity_from_metadata(metadata)
+
+
+def _identity_from_metadata(metadata: os.stat_result) -> dict[str, int]:
+    device_id = int(metadata.st_dev)
+    inode = int(metadata.st_ino)
+    if not 0 <= device_id <= 2**64 - 1 or not 0 <= inode <= 2**64 - 1:
+        raise WorkspaceSecurityError("Workspace file identity is outside safe bounds.")
+    return {"device_id": device_id, "inode": inode}
+
+
+def _private_artifact_mode_is_valid(raw_mode: int) -> bool:
+    mode = stat.S_IMODE(raw_mode)
+    if os.name == "nt":
+        return bool(mode & stat.S_IWUSR) and not bool(mode & 0o111)
+    return mode == 0o600
 
 
 def _recorded_file_identity(raw: object) -> dict[str, int] | None:
@@ -1899,7 +3068,9 @@ def _recorded_file_identity(raw: object) -> dict[str, int] | None:
     device_id = raw.get("device_id")
     inode = raw.get("inode")
     if any(
-        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= 2**64 - 1
         for value in (device_id, inode)
     ):
         raise WorkspaceSecurityError(
@@ -2151,7 +3322,9 @@ def _execute_git(
     except ProcessCleanupError:
         raise
     except (AssistantBridgeRuntimeError, OSError, ValueError) as exc:
-        raise WorkspaceSecurityError("Git workspace attestation failed safely.") from exc
+        raise WorkspaceSecurityError(
+            "Git workspace attestation failed safely."
+        ) from exc
     if result.code in {"stdout_limit_exceeded", "stderr_limit_exceeded"}:
         raise WorkspaceSecurityError(
             "Git workspace attestation exceeded its output bound."
@@ -2260,11 +3433,55 @@ def _file_from_payload(raw: object) -> WorkspaceFile | None:
     return item
 
 
+def _journal_bytes(payload: dict[str, object]) -> bytes:
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(data) > _MAX_JOURNAL_BYTES:
+        raise WorkspaceSecurityError("Workspace recovery journal exceeds its bound.")
+    return data
+
+
+def _assert_journal_capacity(payload: dict[str, object]) -> None:
+    if _journal_worst_case_size(payload) > _MAX_JOURNAL_BYTES:
+        raise WorkspaceSecurityError("Workspace recovery journal exceeds its bound.")
+
+
+def _journal_worst_case_size(payload: dict[str, object]) -> int:
+    raw_changes = payload.get("changes")
+    if not isinstance(raw_changes, list):
+        raise WorkspaceSecurityError("Workspace recovery journal is malformed.")
+    worst = dict(payload)
+    worst["status"] = "recovery_required"
+    worst["committed_fingerprint"] = "f" * 64
+    worst["recovery_error"] = "X" * 128
+    worst_changes: list[object] = []
+    maximum_identity = {
+        "device_id": 18_446_744_073_709_551_615,
+        "inode": 18_446_744_073_709_551_615,
+    }
+    for raw in raw_changes:
+        if not isinstance(raw, dict):
+            raise WorkspaceSecurityError("Workspace recovery record is malformed.")
+        item = dict(raw)
+        item["status"] = "rolled_back"
+        item["rollback_phase"] = "quarantine_unlink_intent"
+        item["install_phase"] = "recovered_partial_unlinked"
+        item["restore_phase"] = "recovered_partial_unlinked"
+        after = _file_from_payload(item.get("after"))
+        before = _file_from_payload(item.get("before"))
+        if after is not None and after.kind != "missing":
+            item["installed_identity"] = maximum_identity
+        if before is not None and before.kind != "missing":
+            item["restore_identity"] = maximum_identity
+        worst_changes.append(item)
+    worst["changes"] = worst_changes
+    return len(json.dumps(worst, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
 def _write_journal(path: Path, payload: dict[str, object]) -> None:
     temp = path.with_suffix(f".{uuid4().hex}.tmp")
-    data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    data = _journal_bytes(payload)
     try:
-        with temp.open("x", encoding="utf-8") as handle:
+        with temp.open("xb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
@@ -2687,7 +3904,19 @@ def _rename_no_replace(source: Path, target: Path) -> None:
 
 
 def _durable_rmtree(path: Path, parent: Path) -> None:
-    shutil.rmtree(path)
+    def make_writable_and_retry(
+        operation: Callable[..., object],
+        raw_path: str,
+        _: object,
+    ) -> None:
+        target = Path(raw_path)
+        try:
+            target.chmod(stat.S_IMODE(target.lstat().st_mode) | stat.S_IWUSR)
+        except FileNotFoundError:
+            return
+        operation(raw_path)
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
     _fsync_directory(parent)
 
 
@@ -2699,7 +3928,12 @@ def _require_secure_apply_capabilities() -> None:
         )
 
 
-def _windows_open_fd(path: Path, *, directory: bool) -> int:
+def _windows_open_fd(
+    path: Path,
+    *,
+    directory: bool,
+    writable: bool = False,
+) -> int:
     import ctypes
     import msvcrt
 
@@ -2718,9 +3952,10 @@ def _windows_open_fd(path: Path, *, directory: bool) -> int:
     flags = 0x00200000
     if directory:
         flags |= 0x02000000
+    desired_access = 0x40000000 if writable else 0x80000000
     handle = create_file(
         str(path),
-        0x80000000,
+        desired_access,
         0x00000001 | 0x00000002 | 0x00000004,
         None,
         3,
@@ -2735,7 +3970,8 @@ def _windows_open_fd(path: Path, *, directory: bool) -> int:
         raise WorkspaceSecurityError(f"Win32 no-follow open failed with error {error}.")
     descriptor: int | None = None
     try:
-        flags_value = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        access_flag = os.O_WRONLY if writable else os.O_RDONLY
+        flags_value = access_flag | getattr(os, "O_BINARY", 0)
         descriptor = msvcrt.open_osfhandle(int(handle), flags_value)
         information = os.fstat(descriptor)
         if _is_link_or_reparse(information):

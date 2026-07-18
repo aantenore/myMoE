@@ -605,13 +605,29 @@ def _replay_applied_if_needed(args: Any) -> Any | None:
     from .assistant_bridge_two_phase_status import (
         build_two_phase_applied_replay_reader,
     )
+    from .assistant_bridge_workspace import (
+        WorkspaceSecurityError,
+        finalize_committed_workspace_transaction,
+    )
 
     state = load_two_phase_state_config(args.assistant_workflow_config)
-    return build_two_phase_applied_replay_reader(state).replay(
+    record = build_two_phase_applied_replay_reader(state).replay(
         args.assistant_bridge_resume,
         plan_id=args.assistant_resume_plan_id,
         confirmation_id=args.assistant_confirm_receipt,
     )
+    if record is not None:
+        try:
+            finalize_committed_workspace_transaction(
+                state_dir=state.transaction_state_dir,
+                transaction_id=record.apply_transaction_id,
+                source_root=args.assistant_workspace,
+                expected_source_fingerprint=record.binding.source_fingerprint,
+                lock_ttl_seconds=state.transaction_lock_ttl_seconds,
+            )
+        except (OSError, WorkspaceSecurityError):
+            pass
+    return record
 
 
 def _applied_replay_outcome(record: Any, workspace: str) -> AssistantBridgeCliOutcome:

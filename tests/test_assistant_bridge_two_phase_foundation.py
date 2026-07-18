@@ -5,6 +5,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -947,6 +948,88 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     now=121,
                 )
 
+    def test_recovery_only_mark_applied_is_cas_free_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store, binding, applying = _applying_workflow(root)
+            cas_root = root / "cas"
+            self.assertTrue(cas_root.is_dir())
+            shutil.rmtree(cas_root)
+
+            recovery = SQLiteWorkflowStore(store.path, recovery_only=True)
+            first, first_replay = recovery.mark_applied_after_committed_recovery(
+                binding.workflow_id,
+                transaction_id=applying.apply_transaction_id,
+                result_sha256=DIGEST_C,
+                now=113,
+            )
+            repeated, repeated_replay = recovery.mark_applied_after_committed_recovery(
+                binding.workflow_id,
+                transaction_id=applying.apply_transaction_id,
+                result_sha256=DIGEST_C,
+                now=114,
+            )
+
+            self.assertEqual(first.status, "applied")
+            self.assertFalse(first_replay)
+            self.assertEqual(repeated, first)
+            self.assertTrue(repeated_replay)
+            self.assertFalse(cas_root.exists())
+            with self.assertRaises(WorkflowStoreError):
+                recovery.mark_applied_after_committed_recovery(
+                    binding.workflow_id,
+                    transaction_id=DIGEST_A,
+                    result_sha256=DIGEST_C,
+                    now=115,
+                )
+            with self.assertRaisesRegex(WorkflowStoreError, "binding"):
+                recovery.mark_applied_after_committed_recovery(
+                    binding.workflow_id,
+                    transaction_id=applying.apply_transaction_id,
+                    result_sha256=DIGEST_D,
+                    now=115,
+                )
+
+    def test_recovery_only_rejects_altered_consumed_authority_atomically(
+        self,
+    ) -> None:
+        for tamper in ("binding", "revoked"):
+            with (
+                self.subTest(tamper=tamper),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                store, binding, applying = _applying_workflow(root)
+                with sqlite3.connect(store.path) as connection:
+                    if tamper == "binding":
+                        connection.execute(
+                            "UPDATE resume_confirmations SET binding_sha256 = ? "
+                            "WHERE workflow_id = ?",
+                            (DIGEST_A, binding.workflow_id),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE resume_confirmations SET revoked_at = ? "
+                            "WHERE workflow_id = ?",
+                            (113, binding.workflow_id),
+                        )
+
+                recovery = SQLiteWorkflowStore(store.path, recovery_only=True)
+                with self.assertRaisesRegex(WorkflowStoreError, "binding"):
+                    recovery.mark_applied_after_committed_recovery(
+                        binding.workflow_id,
+                        transaction_id=applying.apply_transaction_id,
+                        result_sha256=DIGEST_C,
+                        now=114,
+                    )
+                with sqlite3.connect(store.path) as connection:
+                    row = connection.execute(
+                        "SELECT status, result_sha256 FROM workflows "
+                        "WHERE workflow_id = ?",
+                        (binding.workflow_id,),
+                    ).fetchone()
+                self.assertEqual(row, ("applying", None))
+
     def test_expired_attestation_degrades_and_can_be_atomically_refreshed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1175,6 +1258,46 @@ def _record_verified_attestation(
         binding_sha256=binding.binding_sha256,
         now=now,
     )
+
+
+def _applying_workflow(
+    root: Path,
+) -> tuple[SQLiteWorkflowStore, CandidateBinding, WorkflowRecord]:
+    store = SQLiteWorkflowStore(root / "workflows.sqlite3")
+    private_key, requirement = _verifier("verifier-a")
+    policy = VerificationPolicy("policy-v1", 1, (requirement,))
+    binding, challenge = _binding(root / "binding", store, policy)
+    store.create_workflow(
+        binding,
+        challenge=challenge,
+        stage_idempotency_key=STAGE_KEY,
+        workspace_root_sha256=DIGEST_E,
+        now=100,
+    )
+    trust = AttestationTrustStore(
+        (TrustedEd25519Verifier(requirement, private_key.public_key()),)
+    )
+    _record_verified_attestation(
+        store,
+        binding,
+        _envelope(binding, requirement, private_key, expires_at=190),
+        trust,
+        now=110,
+    )
+    plan = store.issue_resume_plan(
+        binding.workflow_id,
+        idempotency_key=RESUME_KEY,
+        ttl_seconds=30,
+        now=111,
+    )
+    applying, _ = store.consume_resume_confirmation(
+        binding.workflow_id,
+        plan_id=plan.plan_id,
+        confirmation_id=plan.confirmation_id,
+        binding_sha256=plan.binding_sha256,
+        now=112,
+    )
+    return store, binding, applying
 
 
 def _binding(

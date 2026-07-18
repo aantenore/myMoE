@@ -39,6 +39,8 @@ from .assistant_bridge_workspace import (
     WorkspaceSnapshot,
     apply_changeset,
     build_changeset,
+    finalize_committed_workspace_transaction,
+    finish_committed_workspace_transaction,
     recover_workspace_transaction,
     snapshot_materialized,
     snapshot_workspace,
@@ -126,9 +128,7 @@ class TwoPhaseWorkflowService:
         """Return the state-namespace identity bound by a stage confirmation."""
 
         lifetime = (
-            self.config.candidate_ttl_seconds
-            if ttl_seconds is None
-            else ttl_seconds
+            self.config.candidate_ttl_seconds if ttl_seconds is None else ttl_seconds
         )
         if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
             raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
@@ -168,9 +168,7 @@ class TwoPhaseWorkflowService:
                 "expected_candidate_snapshot_fingerprint",
             )
         lifetime = (
-            self.config.candidate_ttl_seconds
-            if ttl_seconds is None
-            else ttl_seconds
+            self.config.candidate_ttl_seconds if ttl_seconds is None else ttl_seconds
         )
         if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
             raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
@@ -188,9 +186,7 @@ class TwoPhaseWorkflowService:
         if replay is not None:
             return replay
         try:
-            source = snapshot_workspace(
-                source_workspace, self.config.workspace_policy
-            )
+            source = snapshot_workspace(source_workspace, self.config.workspace_policy)
             self._require_disjoint_state_paths(source.root)
             if source.fingerprint != expected_source_fingerprint:
                 raise TwoPhaseWorkflowError(
@@ -221,9 +217,7 @@ class TwoPhaseWorkflowService:
                 source_identity=source_identity,
             )
             if (
-                snapshot_materialized(
-                    candidate_workspace, self.config.workspace_policy
-                )
+                snapshot_materialized(candidate_workspace, self.config.workspace_policy)
                 != materialized_candidate
             ):
                 raise TwoPhaseWorkflowError(
@@ -292,17 +286,13 @@ class TwoPhaseWorkflowService:
         require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
         require_sha256(expected_config_sha256, "expected_config_sha256")
         lifetime = (
-            self.config.candidate_ttl_seconds
-            if ttl_seconds is None
-            else ttl_seconds
+            self.config.candidate_ttl_seconds if ttl_seconds is None else ttl_seconds
         )
         if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
             raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
         current = _now(now)
         try:
-            source = snapshot_workspace(
-                source_workspace, self.config.workspace_policy
-            )
+            source = snapshot_workspace(source_workspace, self.config.workspace_policy)
             self._require_disjoint_state_paths(source.root)
             if source.fingerprint != expected_source_fingerprint:
                 raise TwoPhaseWorkflowError(
@@ -349,9 +339,7 @@ class TwoPhaseWorkflowService:
             idempotent_replay=True,
         )
 
-    def status(
-        self, workflow_id: str, *, now: float | None = None
-    ) -> WorkflowRecord:
+    def status(self, workflow_id: str, *, now: float | None = None) -> WorkflowRecord:
         try:
             return self.store.get_workflow(workflow_id, now=now)
         except (ValueError, WorkflowStoreError) as exc:
@@ -466,9 +454,7 @@ class TwoPhaseWorkflowService:
                     now=current_time,
                 )
         if record.status in {"staged", "attested", "ready"}:
-            record = self._reverify_attestations(
-                workflow_id, now=current_time
-            )
+            record = self._reverify_attestations(workflow_id, now=current_time)
         try:
             manifest, changeset = self.cas.load_candidate(
                 record.binding.manifest, record.binding.changeset
@@ -510,6 +496,16 @@ class TwoPhaseWorkflowService:
         except (ValueError, WorkflowStoreError) as exc:
             raise TwoPhaseWorkflowError(str(exc)) from exc
         if applying.status == "applied":
+            try:
+                finalize_committed_workspace_transaction(
+                    state_dir=self.config.transaction_state_dir,
+                    transaction_id=applying.apply_transaction_id,
+                    source_root=workspace,
+                    expected_source_fingerprint=(applying.binding.source_fingerprint),
+                    lock_ttl_seconds=(self.config.transaction_lock_ttl_seconds),
+                )
+            except (OSError, WorkspaceSecurityError):
+                pass
             return _resume_result(
                 applying,
                 code="already_applied",
@@ -581,7 +577,22 @@ class TwoPhaseWorkflowService:
                 idempotent_replay=confirmation_replay,
             )
 
+        committed_finish: tuple[WorkflowRecord, bool] | None = None
         try:
+
+            def finish_apply(snapshot: WorkspaceSnapshot) -> None:
+                nonlocal committed_finish
+                try:
+                    committed_finish = self._mark_applied(
+                        applying,
+                        snapshot,
+                        now=current_time,
+                    )
+                except WorkflowStoreError as exc:
+                    raise WorkspaceSecurityError(
+                        "Database apply finish did not commit."
+                    ) from exc
+
             with self.cas.materialize_candidate(record.binding.manifest) as candidate:
                 result = apply_changeset(
                     source_snapshot=current,
@@ -592,6 +603,8 @@ class TwoPhaseWorkflowService:
                     state_dir=self.config.transaction_state_dir,
                     transaction_id=transaction_id,
                     lock_ttl_seconds=self.config.transaction_lock_ttl_seconds,
+                    retain_committed_journal=True,
+                    on_committed=finish_apply,
                 )
         except (ContentAddressedStoreError, WorkspaceSecurityError):
             if self._journal_exists(transaction_id):
@@ -626,12 +639,15 @@ class TwoPhaseWorkflowService:
                 code="source_drift",
                 idempotent_replay=confirmation_replay,
             )
+        if committed_finish is None:
+            raise TwoPhaseWorkflowError("Database apply finish did not commit.")
         return self._finalize_applied(
             applying,
             result,
             code="applied",
             now=current_time,
             idempotent_replay=confirmation_replay,
+            committed_finish=committed_finish,
         )
 
     def _attest_original_workspace(
@@ -679,9 +695,7 @@ class TwoPhaseWorkflowService:
         expected_source_fingerprint: str,
         expected_config_sha256: str,
     ) -> None:
-        require_sha256(
-            expected_source_fingerprint, "expected_source_fingerprint"
-        )
+        require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
         require_sha256(expected_config_sha256, "expected_config_sha256")
         if record.binding.source_fingerprint != expected_source_fingerprint:
             raise TwoPhaseWorkflowError(
@@ -713,7 +727,32 @@ class TwoPhaseWorkflowService:
         transaction_id: str,
         now: float,
     ) -> ResumeResult:
+        applied_record: WorkflowRecord | None = None
+
+        def finish_apply(snapshot: WorkspaceSnapshot) -> None:
+            nonlocal applied_record
+            applied_record, _ = self._mark_applied(record, snapshot, now=now)
+
         try:
+            committed = finish_committed_workspace_transaction(
+                state_dir=self.config.transaction_state_dir,
+                transaction_id=transaction_id,
+                source_root=workspace,
+                expected_source_fingerprint=record.binding.source_fingerprint,
+                on_committed=finish_apply,
+                lock_ttl_seconds=self.config.transaction_lock_ttl_seconds,
+                fallback_workspace_policy=self.config.workspace_policy,
+            )
+            if committed is not None:
+                if applied_record is None:
+                    raise TwoPhaseWorkflowError(
+                        "Committed apply did not finish durably."
+                    )
+                return _resume_result(
+                    applied_record,
+                    code="applied_recovered",
+                    idempotent_replay=True,
+                )
             recover_workspace_transaction(
                 state_dir=self.config.transaction_state_dir,
                 transaction_id=transaction_id,
@@ -724,18 +763,24 @@ class TwoPhaseWorkflowService:
                 workspace, self.config.workspace_policy
             )
         except WorkspaceSecurityError:
-            conflicted = self._conflict(
-                record, "workspace-recovery-failed", now
-            )
+            try:
+                latest = self.store.get_workflow(record.workflow_id, now=now)
+            except WorkflowStoreError as exc:
+                raise TwoPhaseWorkflowError(str(exc)) from exc
+            if latest.status == "applied":
+                return _resume_result(
+                    latest,
+                    code="already_applied",
+                    idempotent_replay=True,
+                )
+            conflicted = self._conflict(record, "workspace-recovery-failed", now)
             return _resume_result(
                 conflicted,
                 code="recovery_failed",
                 idempotent_replay=True,
             )
         if recovered_snapshot.fingerprint != record.binding.source_fingerprint:
-            conflicted = self._conflict(
-                record, "workspace-recovery-source-drift", now
-            )
+            conflicted = self._conflict(record, "workspace-recovery-source-drift", now)
             return _resume_result(
                 conflicted,
                 code="recovery_failed",
@@ -800,7 +845,38 @@ class TwoPhaseWorkflowService:
         code: str,
         now: float,
         idempotent_replay: bool,
+        committed_finish: tuple[WorkflowRecord, bool] | None = None,
     ) -> ResumeResult:
+        if committed_finish is None:
+            try:
+                applied, store_replay = self._mark_applied(record, snapshot, now=now)
+            except WorkflowStoreError as exc:
+                raise TwoPhaseWorkflowError(str(exc)) from exc
+        else:
+            applied, store_replay = committed_finish
+        try:
+            finalize_committed_workspace_transaction(
+                state_dir=self.config.transaction_state_dir,
+                transaction_id=record.apply_transaction_id,
+                source_root=snapshot.root,
+                expected_source_fingerprint=record.binding.source_fingerprint,
+                lock_ttl_seconds=self.config.transaction_lock_ttl_seconds,
+            )
+        except (OSError, WorkspaceSecurityError):
+            pass
+        return _resume_result(
+            applied,
+            code=code,
+            idempotent_replay=idempotent_replay or store_replay,
+        )
+
+    def _mark_applied(
+        self,
+        record: WorkflowRecord,
+        snapshot: WorkspaceSnapshot,
+        *,
+        now: float,
+    ) -> tuple[WorkflowRecord, bool]:
         result_sha256 = canonical_sha256(
             {
                 "workflowId": record.workflow_id,
@@ -810,19 +886,11 @@ class TwoPhaseWorkflowService:
                 "workspace": snapshot.payload(),
             }
         )
-        try:
-            applied, store_replay = self.store.mark_applied(
-                record.workflow_id,
-                transaction_id=record.apply_transaction_id,
-                result_sha256=result_sha256,
-                now=now,
-            )
-        except WorkflowStoreError as exc:
-            raise TwoPhaseWorkflowError(str(exc)) from exc
-        return _resume_result(
-            applied,
-            code=code,
-            idempotent_replay=idempotent_replay or store_replay,
+        return self.store.mark_applied(
+            record.workflow_id,
+            transaction_id=record.apply_transaction_id,
+            result_sha256=result_sha256,
+            now=now,
         )
 
     def _conflict(
@@ -1010,8 +1078,7 @@ def _candidate_state_matches(
         and (snapshot.head_sha if snapshot.git_repository else None)
         == source_identity.get("headSha")
         and snapshot.index_sha256 == source_identity.get("indexSha256")
-        and snapshot.payload().get("root_sha256")
-        == source_identity.get("rootSha256")
+        and snapshot.payload().get("root_sha256") == source_identity.get("rootSha256")
     )
 
 
@@ -1027,9 +1094,7 @@ def _resume_result(
         code=code,
         candidate_fingerprint=record.binding.candidate_fingerprint,
         transaction_id=(
-            record.apply_transaction_id
-            or record.recovered_transaction_id
-            or None
+            record.apply_transaction_id or record.recovered_transaction_id or None
         ),
         result_sha256=record.result_sha256 or None,
         idempotent_replay=idempotent_replay,

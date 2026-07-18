@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,8 @@ from local_moe.assistant_bridge_workspace import (
     WorkspaceFile,
     apply_changeset,
     build_changeset,
+    finalize_committed_workspace_transaction,
+    finalize_recovered_workspace_transaction,
     materialize_workspace,
     recover_workspace_transaction,
     snapshot_materialized,
@@ -32,6 +35,1025 @@ from local_moe.assistant_bridge_workspace import (
 
 
 class AssistantBridgeWorkspaceTests(unittest.TestCase):
+    def test_deleted_candidate_restore_is_adopted_after_identity_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            target.write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").unlink()
+                candidate = materialized.snapshot()
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _fault_after_mutation=0,
+                    )
+
+            self.assertFalse(target.exists())
+            with self.assertRaises(RuntimeError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    _fault_after_rollback_step="restore_before_identity_persist",
+                )
+            self.assertFalse(target.exists())
+            recover_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), "source\n")
+            self.assertFalse((state / f"transaction-{transaction_id}").exists())
+            self.assertFalse(any(root.rglob(".mymoe-*")))
+
+    def test_install_journal_recovers_every_durable_boundary(self) -> None:
+        steps = (
+            "before_identity_persist",
+            "during_temp_write",
+            "after_temp_creation",
+            "after_link",
+            "after_temp_unlink",
+            "after_mode_apply",
+            "before_caller_identity_persist",
+        )
+        for step in steps:
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                state = Path(tmp) / "state"
+                transaction_id = uuid4().hex
+                with materialize_workspace(source, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    changes = build_changeset(source.files, candidate)
+                    with self.assertRaises(RuntimeError):
+                        apply_changeset(
+                            source_snapshot=source,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=state,
+                            transaction_id=transaction_id,
+                            _fault_after_install_step=step,
+                        )
+
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                )
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "source\n",
+                )
+                self.assertFalse(
+                    any(root.rglob(".mymoe-install-*")),
+                )
+
+    def test_windows_mode_fallback_and_readonly_cleanup_preserve_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.txt"
+            target.write_text("value\n", encoding="utf-8")
+            identity = workspace_module._regular_file_identity(target)
+            events: list[str] = []
+            real_chmod = Path.chmod
+            real_fsync = workspace_module.os.fsync
+
+            def open_writable(
+                path: Path,
+                *,
+                directory: bool,
+                writable: bool = False,
+            ) -> int:
+                self.assertEqual(path, target)
+                self.assertFalse(directory)
+                self.assertTrue(writable)
+                events.append("open_writable")
+                return os.open(path, os.O_WRONLY)
+
+            def observed_chmod(path: Path, mode: int) -> None:
+                events.append("chmod_readonly")
+                real_chmod(path, mode)
+
+            def observed_fsync(descriptor: int) -> None:
+                events.append("flush_retained_handle")
+                real_fsync(descriptor)
+
+            def directory_flush(path: Path, *, directory: bool) -> None:
+                self.assertEqual(path, target.parent)
+                self.assertTrue(directory)
+                events.append("flush_directory")
+
+            with (
+                mock.patch.object(workspace_module.os, "name", "nt"),
+                mock.patch.object(
+                    workspace_module.os,
+                    "fchmod",
+                    None,
+                    create=True,
+                ),
+                mock.patch.object(
+                    workspace_module,
+                    "_windows_open_fd",
+                    side_effect=open_writable,
+                ),
+                mock.patch.object(Path, "chmod", new=observed_chmod),
+                mock.patch.object(
+                    workspace_module.os,
+                    "fsync",
+                    side_effect=observed_fsync,
+                ),
+                mock.patch.object(
+                    workspace_module,
+                    "_windows_flush_path",
+                    side_effect=directory_flush,
+                ),
+            ):
+                self.assertTrue(
+                    workspace_module._private_artifact_mode_is_valid(0o666)
+                )
+                self.assertFalse(
+                    workspace_module._private_artifact_mode_is_valid(0o444)
+                )
+                workspace_module._set_file_mode_durable(target, 0o444, identity)
+                self.assertEqual(
+                    workspace_module._regular_file_identity(target),
+                    identity,
+                )
+
+            self.assertLess(events.index("open_writable"), events.index("chmod_readonly"))
+            self.assertLess(
+                events.index("chmod_readonly"),
+                events.index("flush_retained_handle"),
+            )
+            self.assertEqual(events[-1], "flush_directory")
+
+            failure_target = root / "failure.txt"
+            failure_target.write_text("value\n", encoding="utf-8")
+            failure_identity = workspace_module._regular_file_identity(failure_target)
+            original_mode = stat.S_IMODE(failure_target.stat().st_mode)
+            with (
+                mock.patch.object(workspace_module.os, "name", "nt"),
+                mock.patch.object(
+                    workspace_module.os,
+                    "fchmod",
+                    None,
+                    create=True,
+                ),
+                mock.patch.object(
+                    workspace_module,
+                    "_windows_open_fd",
+                    side_effect=PermissionError("writable handle unavailable"),
+                ),
+                self.assertRaises(PermissionError),
+            ):
+                workspace_module._set_file_mode_durable(
+                    failure_target,
+                    0o444,
+                    failure_identity,
+                )
+            self.assertEqual(
+                stat.S_IMODE(failure_target.stat().st_mode),
+                original_mode,
+            )
+
+            with (
+                mock.patch.object(workspace_module.os, "name", "nt"),
+                mock.patch.object(
+                    workspace_module.os,
+                    "fchmod",
+                    None,
+                    create=True,
+                ),
+                mock.patch.object(
+                    workspace_module,
+                    "_windows_flush_path",
+                ) as cleanup_flush,
+            ):
+                workspace_module._unlink_recovery_artifact(target, identity)
+
+            self.assertFalse(target.exists())
+            self.assertGreaterEqual(cleanup_flush.call_count, 2)
+
+    def test_readonly_source_replace_and_delete_use_owned_cleanup(self) -> None:
+        for delete in (False, True):
+            with self.subTest(delete=delete), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                target = root / "tracked.txt"
+                target.write_text("source\n", encoding="utf-8")
+                target.chmod(0o444)
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                state = Path(tmp) / "state"
+                with materialize_workspace(source, policy) as materialized:
+                    candidate_target = materialized.root / "tracked.txt"
+                    if delete:
+                        candidate_target.chmod(0o644)
+                        candidate_target.unlink()
+                    else:
+                        candidate_target.chmod(0o644)
+                        candidate_target.write_text("candidate\n", encoding="utf-8")
+                    candidate = materialized.snapshot()
+                    with mock.patch.object(
+                        workspace_module,
+                        "_unlink_recovery_artifact",
+                        wraps=workspace_module._unlink_recovery_artifact,
+                    ) as cleanup:
+                        apply_changeset(
+                            source_snapshot=source,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=build_changeset(source.files, candidate),
+                            policy=policy,
+                            state_dir=state,
+                            transaction_id=uuid4().hex,
+                        )
+
+                self.assertTrue(
+                    any(
+                        Path(call.args[0]).name.startswith(".mymoe-before-")
+                        for call in cleanup.call_args_list
+                    )
+                )
+                if delete:
+                    self.assertFalse(target.exists())
+                else:
+                    self.assertEqual(
+                        target.read_text(encoding="utf-8"),
+                        "candidate\n",
+                    )
+
+    def test_preinstall_detach_restore_adopts_after_second_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            target.write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+
+            def crash_after_detach(_: Path) -> None:
+                raise workspace_module._SimulatedTransactionCrash(
+                    "simulated crash after quarantine detach"
+                )
+
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _test_hook_after_detach=crash_after_detach,
+                    )
+
+            self.assertFalse(target.exists())
+            with self.assertRaises(RuntimeError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    _fault_after_rollback_step="restore_before_identity_persist",
+                )
+            recover_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), "source\n")
+            self.assertFalse(any(root.rglob(".mymoe-*")))
+
+    def test_deletion_detach_restore_adopts_after_second_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            target.write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+
+            def crash_after_detach(_: Path) -> None:
+                raise workspace_module._SimulatedTransactionCrash(
+                    "simulated crash after quarantine detach"
+                )
+
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").unlink()
+                candidate = materialized.snapshot()
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _test_hook_after_detach=crash_after_detach,
+                    )
+
+            self.assertFalse(target.exists())
+            with self.assertRaises(RuntimeError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    _fault_after_rollback_step="restore_before_identity_persist",
+                )
+            recover_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), "source\n")
+            self.assertFalse(any(root.rglob(".mymoe-*")))
+
+    def test_deletion_restore_adoption_rejects_ambiguous_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            target = root / "tracked.txt"
+            target.write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+
+            def crash_after_detach(_: Path) -> None:
+                raise workspace_module._SimulatedTransactionCrash(
+                    "simulated crash after quarantine detach"
+                )
+
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").unlink()
+                candidate = materialized.snapshot()
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _test_hook_after_detach=crash_after_detach,
+                    )
+            with self.assertRaises(RuntimeError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    _fault_after_rollback_step="restore_before_identity_persist",
+                )
+
+            rollback = root / f".mymoe-rollback-{transaction_id}-00000000"
+            rollback.write_text("ambiguous\n", encoding="utf-8")
+            with self.assertRaises(WorkspaceSecurityError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                )
+            self.assertEqual(rollback.read_text(encoding="utf-8"), "ambiguous\n")
+            self.assertFalse(target.exists())
+
+    def test_install_link_failure_and_readonly_cleanup_are_recoverable(self) -> None:
+        for failure in ("link", "unlink"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                with materialize_workspace(source, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    changes = build_changeset(source.files, candidate)
+                    if failure == "link":
+                        original_link = workspace_module.os.link
+                        link_failures = 0
+
+                        def fail_install_link_once(
+                            source_path: Path,
+                            target_path: Path,
+                            *args: object,
+                            **kwargs: object,
+                        ) -> None:
+                            nonlocal link_failures
+                            if (
+                                Path(source_path).name.startswith(".mymoe-install-")
+                                and link_failures == 0
+                            ):
+                                link_failures += 1
+                                raise OSError(errno.EXDEV, "cross-device")
+                            original_link(source_path, target_path, *args, **kwargs)
+
+                        patcher = mock.patch.object(
+                            workspace_module.os,
+                            "link",
+                            side_effect=fail_install_link_once,
+                        )
+                        capability = mock.patch.object(
+                            workspace_module,
+                            "_require_secure_apply_capabilities",
+                            return_value=None,
+                        )
+                    else:
+                        original = workspace_module._unlink_recovery_artifact
+                        calls = 0
+
+                        def fail_once(path: Path, identity: dict[str, int]) -> None:
+                            nonlocal calls
+                            calls += 1
+                            if calls == 1:
+                                raise PermissionError("simulated readonly")
+                            original(path, identity)
+
+                        patcher = mock.patch.object(
+                            workspace_module,
+                            "_unlink_recovery_artifact",
+                            side_effect=fail_once,
+                        )
+                        capability = mock.patch.object(
+                            workspace_module,
+                            "_require_secure_apply_capabilities",
+                            wraps=workspace_module._require_secure_apply_capabilities,
+                        )
+                    with (
+                        patcher,
+                        capability,
+                        self.assertRaises((OSError, PermissionError)),
+                    ):
+                        apply_changeset(
+                            source_snapshot=source,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=changes,
+                            policy=policy,
+                            state_dir=Path(tmp) / "state",
+                            transaction_id=uuid4().hex,
+                        )
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "source\n",
+                )
+
+    def test_recovery_rejects_swapped_ancestor_without_external_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            (nested / "tracked.txt").write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "nested" / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                changes = build_changeset(source.files, candidate)
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _fault_after_mutation=0,
+                    )
+
+            with self.assertRaises(RuntimeError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    _fault_after_rollback_step="detach_action",
+                )
+            parked = Path(tmp) / "parked"
+            nested.rename(parked)
+            attacker = Path(tmp) / "attacker"
+            attacker.mkdir()
+            sentinel = attacker / "tracked.txt"
+            sentinel.write_text("external\n", encoding="utf-8")
+            try:
+                nested.symlink_to(attacker, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+            with self.assertRaises(WorkspaceSecurityError):
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                )
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "external\n")
+            nested.unlink()
+            parked.rename(nested)
+            recover_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+            )
+            self.assertEqual(
+                (nested / "tracked.txt").read_text(encoding="utf-8"),
+                "source\n",
+            )
+
+    def test_journal_capacity_exact_boundary_recovers_and_plus_one_rejects(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                changes = build_changeset(source.files, candidate)
+                sizes: list[int] = []
+
+                def capture(payload: dict[str, object]) -> None:
+                    sizes.append(workspace_module._journal_worst_case_size(payload))
+                    raise WorkspaceSecurityError("capacity captured")
+
+                with (
+                    mock.patch.object(
+                        workspace_module,
+                        "_assert_journal_capacity",
+                        side_effect=capture,
+                    ),
+                    self.assertRaisesRegex(WorkspaceSecurityError, "captured"),
+                ):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=uuid4().hex,
+                    )
+                self.assertEqual(len(sizes), 1)
+                exact = sizes[0]
+                accepted_id = uuid4().hex
+                with (
+                    mock.patch.object(
+                        workspace_module,
+                        "_MAX_JOURNAL_BYTES",
+                        exact,
+                    ),
+                    self.assertRaises(RuntimeError),
+                ):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=accepted_id,
+                        _fault_after_mutation=0,
+                    )
+                with mock.patch.object(
+                    workspace_module,
+                    "_MAX_JOURNAL_BYTES",
+                    exact,
+                ):
+                    recover_workspace_transaction(
+                        state_dir=state,
+                        transaction_id=accepted_id,
+                        source_root=root,
+                    )
+                rejected_id = uuid4().hex
+                with (
+                    mock.patch.object(
+                        workspace_module,
+                        "_MAX_JOURNAL_BYTES",
+                        exact - 1,
+                    ),
+                    self.assertRaisesRegex(WorkspaceSecurityError, "exceeds"),
+                ):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=changes,
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=rejected_id,
+                    )
+            self.assertEqual(
+                (root / "tracked.txt").read_text(encoding="utf-8"),
+                "source\n",
+            )
+            self.assertFalse((state / f"transaction-{rejected_id}").exists())
+            self.assertFalse(any(root.rglob(".mymoe-*")))
+
+    def test_committed_cleanup_marker_retries_every_boundary(self) -> None:
+        for step in (
+            "during_marker_write",
+            "after_marker",
+            "after_rename",
+            "before_rmtree",
+            "after_rmtree",
+        ):
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                state = Path(tmp) / "state"
+                transaction_id = uuid4().hex
+                with materialize_workspace(source, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    result = apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        retain_committed_journal=True,
+                        on_committed=lambda _: None,
+                    )
+                with self.assertRaises(RuntimeError):
+                    finalize_committed_workspace_transaction(
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        source_root=root,
+                        expected_source_fingerprint=source.fingerprint,
+                        _fault_after_cleanup_step=step,
+                    )
+                finalize_committed_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                )
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "candidate\n",
+                )
+                self.assertEqual(
+                    result.fingerprint, snapshot_workspace(root, policy).fingerprint
+                )
+                self.assertFalse((state / f"transaction-{transaction_id}").exists())
+                self.assertFalse((state / f"cleanup-{transaction_id}").exists())
+                self.assertFalse((state / f"cleanup-{transaction_id}.json").exists())
+
+    def test_cleanup_rejects_unbound_directory_and_recovered_marker_only_retries(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+            source = snapshot_workspace(root, WorkspaceScopePolicy())
+            state = Path(tmp) / "state"
+            state.mkdir()
+            transaction_id = uuid4().hex
+            cleanup = state / f"cleanup-{transaction_id}"
+            cleanup.mkdir()
+            sentinel = cleanup / "sentinel.txt"
+            sentinel.write_text("keep\n", encoding="utf-8")
+            with self.assertRaises(WorkspaceSecurityError):
+                finalize_committed_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                )
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep\n")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                with self.assertRaises(RuntimeError):
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        _fault_after_mutation=0,
+                    )
+            recover_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+                expected_source_fingerprint=source.fingerprint,
+                retain_recovered_journal=True,
+            )
+            with self.assertRaises(RuntimeError):
+                finalize_recovered_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                    _fault_after_cleanup_step="after_rmtree",
+                )
+            self.assertTrue((state / f"cleanup-{transaction_id}.json").exists())
+            finalize_recovered_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+                expected_source_fingerprint=source.fingerprint,
+            )
+            self.assertFalse((state / f"cleanup-{transaction_id}.json").exists())
+
+    def test_recovered_cleanup_marker_retries_every_boundary(self) -> None:
+        for step in (
+            "during_marker_write",
+            "after_marker",
+            "after_rename",
+            "before_rmtree",
+            "after_rmtree",
+        ):
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                state = Path(tmp) / "state"
+                transaction_id = uuid4().hex
+                with materialize_workspace(source, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    with self.assertRaises(RuntimeError):
+                        apply_changeset(
+                            source_snapshot=source,
+                            candidate_root=materialized.root,
+                            candidate_files=candidate,
+                            changes=build_changeset(source.files, candidate),
+                            policy=policy,
+                            state_dir=state,
+                            transaction_id=transaction_id,
+                            _fault_after_mutation=0,
+                        )
+                recover_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                    retain_recovered_journal=True,
+                )
+                with self.assertRaises(RuntimeError):
+                    finalize_recovered_workspace_transaction(
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        source_root=root,
+                        expected_source_fingerprint=source.fingerprint,
+                        _fault_after_cleanup_step=step,
+                    )
+                finalize_recovered_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                )
+                self.assertEqual(
+                    (root / "tracked.txt").read_text(encoding="utf-8"),
+                    "source\n",
+                )
+                self.assertFalse((state / f"cleanup-{transaction_id}.json").exists())
+
+    def test_cleanup_marker_tampering_and_ambiguous_state_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                apply_changeset(
+                    source_snapshot=source,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=build_changeset(source.files, candidate),
+                    policy=policy,
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    retain_committed_journal=True,
+                    on_committed=lambda _: None,
+                )
+            with self.assertRaises(RuntimeError):
+                finalize_committed_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                    _fault_after_cleanup_step="after_rename",
+                )
+            cleanup = state / f"cleanup-{transaction_id}"
+            marker = state / f"cleanup-{transaction_id}.json"
+            sentinel = cleanup / "sentinel.txt"
+            sentinel.write_text("keep\n", encoding="utf-8")
+            transaction = state / f"transaction-{transaction_id}"
+            transaction.mkdir()
+            with self.assertRaises(WorkspaceSecurityError):
+                finalize_committed_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                )
+            transaction.rmdir()
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            payload["journal_sha256"] = "0" * 64
+            marker.write_text(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            marker.chmod(0o600)
+            with self.assertRaises(WorkspaceSecurityError):
+                finalize_committed_workspace_transaction(
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    source_root=root,
+                    expected_source_fingerprint=source.fingerprint,
+                )
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep\n")
+
+    def test_cleanup_marker_mode_and_canonical_encoding_fail_closed(self) -> None:
+        for tamper in ("mode", "canonical"):
+            with self.subTest(tamper=tamper), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                root.mkdir()
+                (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+                policy = WorkspaceScopePolicy()
+                source = snapshot_workspace(root, policy)
+                state = Path(tmp) / "state"
+                transaction_id = uuid4().hex
+                with materialize_workspace(source, policy) as materialized:
+                    (materialized.root / "tracked.txt").write_text(
+                        "candidate\n",
+                        encoding="utf-8",
+                    )
+                    candidate = materialized.snapshot()
+                    apply_changeset(
+                        source_snapshot=source,
+                        candidate_root=materialized.root,
+                        candidate_files=candidate,
+                        changes=build_changeset(source.files, candidate),
+                        policy=policy,
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        retain_committed_journal=True,
+                        on_committed=lambda _: None,
+                    )
+                with self.assertRaises(RuntimeError):
+                    finalize_committed_workspace_transaction(
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        source_root=root,
+                        expected_source_fingerprint=source.fingerprint,
+                        _fault_after_cleanup_step="after_marker",
+                    )
+                transaction = state / f"transaction-{transaction_id}"
+                sentinel = transaction / "sentinel.txt"
+                sentinel.write_text("keep\n", encoding="utf-8")
+                marker = state / f"cleanup-{transaction_id}.json"
+                if tamper == "mode":
+                    marker.chmod(0o444 if os.name == "nt" else 0o644)
+                else:
+                    payload = json.loads(marker.read_text(encoding="utf-8"))
+                    marker.write_text(
+                        json.dumps(payload, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                with self.assertRaises(WorkspaceSecurityError):
+                    finalize_committed_workspace_transaction(
+                        state_dir=state,
+                        transaction_id=transaction_id,
+                        source_root=root,
+                        expected_source_fingerprint=source.fingerprint,
+                    )
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep\n")
+
+    def test_partial_cleanup_marker_temp_from_dead_writer_does_not_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            (root / "tracked.txt").write_text("source\n", encoding="utf-8")
+            policy = WorkspaceScopePolicy()
+            source = snapshot_workspace(root, policy)
+            state = Path(tmp) / "state"
+            transaction_id = uuid4().hex
+            with materialize_workspace(source, policy) as materialized:
+                (materialized.root / "tracked.txt").write_text(
+                    "candidate\n",
+                    encoding="utf-8",
+                )
+                candidate = materialized.snapshot()
+                apply_changeset(
+                    source_snapshot=source,
+                    candidate_root=materialized.root,
+                    candidate_files=candidate,
+                    changes=build_changeset(source.files, candidate),
+                    policy=policy,
+                    state_dir=state,
+                    transaction_id=transaction_id,
+                    retain_committed_journal=True,
+                    on_committed=lambda _: None,
+                )
+
+            abandoned = state / (
+                f".cleanup-{transaction_id}.json.{uuid4().hex}.tmp"
+            )
+            abandoned.write_bytes(b"{")
+            abandoned.chmod(0o600)
+            finalize_committed_workspace_transaction(
+                state_dir=state,
+                transaction_id=transaction_id,
+                source_root=root,
+                expected_source_fingerprint=source.fingerprint,
+            )
+
+            self.assertTrue(abandoned.exists())
+            self.assertFalse((state / f"transaction-{transaction_id}").exists())
+            self.assertEqual(
+                (root / "tracked.txt").read_text(encoding="utf-8"),
+                "candidate\n",
+            )
+
     def test_git_environment_is_minimal_and_runtime_compatible(self) -> None:
         poisoned = {
             "HOME": "/untrusted/home",
@@ -70,9 +1092,7 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             {"email": "two@@localhost"},
             {"email": "space @localhost"},
         ):
-            with self.subTest(kwargs=kwargs), self.assertRaises(
-                WorkspaceSecurityError
-            ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(WorkspaceSecurityError):
                 GitIdentity(**kwargs)
 
     def test_configured_identity_is_limited_to_synthetic_commit(self) -> None:

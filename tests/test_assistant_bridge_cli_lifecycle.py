@@ -838,11 +838,11 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
 
             self.assertIsNotNone(result)
             assert result is not None
-            self.assertEqual(result.code, "recovered_confirmation_required")
+            self.assertEqual(result.code, "applied_recovered")
             self.assertEqual(result.transaction_id, transaction_id)
             self.assertEqual(
                 (fixture.source / "app.txt").read_text(encoding="utf-8"),
-                "source\n",
+                "candidate\n",
             )
             self.assertFalse(transaction.exists())
             store = SQLiteWorkflowStore(
@@ -851,13 +851,43 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
                 recovery_only=True,
             )
             self.assertIsNone(store.read_applying_recovery(receipt.workflow_id))
-            cleanup = store.read_recovered_cleanup(receipt.workflow_id)
-            self.assertIsNotNone(cleanup)
-            assert cleanup is not None
-            recovered, recovered_transaction_id = cleanup
-            self.assertEqual(recovered.status, "ready")
-            self.assertEqual(recovered.apply_transaction_id, "")
-            self.assertEqual(recovered_transaction_id, transaction_id)
+            applied = store.read_applied_cleanup(receipt.workflow_id)
+            self.assertIsNotNone(applied)
+            assert applied is not None
+            self.assertEqual(applied.status, "applied")
+            self.assertEqual(applied.apply_transaction_id, transaction_id)
+
+    def test_applied_cleanup_does_not_bypass_confirmation_replay(self) -> None:
+        from local_moe.assistant_bridge_two_phase_recovery import (
+            build_two_phase_applying_recovery,
+        )
+        from local_moe.assistant_bridge_two_phase_status import (
+            TwoPhaseAppliedReplayNotReadyError,
+            build_two_phase_applied_replay_reader,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture, lifecycle, receipt, plan, _, transaction = (
+                _prepare_applying_workflow(
+                    Path(temporary),
+                    fault_after_db_finish=True,
+                )
+            )
+            self.assertTrue(transaction.exists())
+            result = build_two_phase_applying_recovery(
+                lifecycle.config.state
+            ).recover_if_applying(
+                receipt.workflow_id,
+                workspace=fixture.source,
+            )
+            self.assertIsNone(result)
+            self.assertFalse(transaction.exists())
+            with self.assertRaises(TwoPhaseAppliedReplayNotReadyError):
+                build_two_phase_applied_replay_reader(lifecycle.config.state).replay(
+                    receipt.workflow_id,
+                    plan_id=plan.plan_id,
+                    confirmation_id="invalid-confirmation",
+                )
 
     def test_rollback_journal_retries_every_persisted_boundary(self) -> None:
         from local_moe.assistant_bridge_two_phase_recovery import (
@@ -869,6 +899,8 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
             "detach_action",
             "detached",
             "restore_intent",
+            "restore_before_identity_persist",
+            "restore_during_write",
             "restore_prepare_action",
             "restore_action",
             "restored",
@@ -883,10 +915,7 @@ class AssistantBridgeLifecycleCliTests(unittest.TestCase):
         for step in steps:
             with self.subTest(step=step), tempfile.TemporaryDirectory() as temporary:
                 fixture, lifecycle, receipt, _, _, transaction = (
-                    _prepare_applying_workflow(
-                        Path(temporary),
-                        fault_after_commit=True,
-                    )
+                    _prepare_applying_workflow(Path(temporary))
                 )
                 state = lifecycle.config.state
                 shutil.rmtree(state.cas_path)
@@ -1615,6 +1644,7 @@ def _prepare_applying_workflow(
     root: Path,
     *,
     fault_after_commit: bool = False,
+    fault_after_db_finish: bool = False,
 ) -> tuple[object, ...]:
     fixture = _Fixture(root)
     lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
@@ -1655,6 +1685,11 @@ def _prepare_applying_workflow(
     )
 
     def crash(**kwargs: object) -> object:
+        if fault_after_db_finish:
+            return real_apply_changeset(
+                **kwargs,
+                _fault_after_committed_callback=True,
+            )
         if fault_after_commit:
             return real_apply_changeset(**kwargs, _fault_after_commit=True)
         return real_apply_changeset(**kwargs, _fault_after_mutation=0)

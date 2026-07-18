@@ -83,6 +83,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
 
             self.assertEqual(result.status, "applied")
             self.assertEqual(result.code, "applied")
+            self.assertFalse(result.idempotent_replay)
             self.assertEqual((context.source / "app.txt").read_text(), "candidate\n")
             self.assertEqual(repeated.status, "applied")
             self.assertEqual(repeated.code, "already_applied")
@@ -146,9 +147,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(
                 [
                     event.event_type
-                    for event in context.service.store.events(
-                        receipts[0].workflow_id
-                    )
+                    for event in context.service.store.events(receipts[0].workflow_id)
                 ],
                 ["candidate_staged"],
             )
@@ -229,11 +228,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
     def test_stage_rejects_candidate_drift_after_snapshot_evaluation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
-            candidate_snapshot_fingerprint = (
-                candidate_workspace_snapshot_fingerprint(
-                    context.candidate,
-                    context.service.config.workspace_policy,
-                )
+            candidate_snapshot_fingerprint = candidate_workspace_snapshot_fingerprint(
+                context.candidate,
+                context.service.config.workspace_policy,
             )
             (context.candidate / "app.txt").write_text("drifted\n")
 
@@ -248,7 +245,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     ),
                 )
 
-    def test_source_drift_before_plan_is_terminal_and_never_issues_authority(self) -> None:
+    def test_source_drift_before_plan_is_terminal_and_never_issues_authority(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
             receipt = context.stage(now=100)
@@ -299,7 +298,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
 
             self.assertEqual(result.status, "conflicted")
             self.assertEqual(result.code, "source_drift")
-            self.assertEqual((context.source / "app.txt").read_text(), "external change\n")
+            self.assertEqual(
+                (context.source / "app.txt").read_text(), "external change\n"
+            )
 
     def test_verified_no_change_still_consumes_fresh_confirmation_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -329,7 +330,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(result.code, "verified_no_change")
             self.assertIsNotNone(result.result_sha256)
 
-    def test_crash_during_transaction_recovers_then_requires_new_confirmation(self) -> None:
+    def test_crash_during_transaction_recovers_then_requires_new_confirmation(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
             receipt = context.stage(now=100)
@@ -346,9 +349,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             def crash(**kwargs: object) -> object:
                 return real_apply_changeset(**kwargs, _fault_after_mutation=0)
 
-            with patch(
-                "local_moe.assistant_bridge_two_phase.apply_changeset", crash
-            ):
+            with patch("local_moe.assistant_bridge_two_phase.apply_changeset", crash):
                 with self.assertRaises(RuntimeError):
                     context.service.apply_resume(
                         receipt.workflow_id,
@@ -377,10 +378,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(recovered.code, "recovered_confirmation_required")
             self.assertEqual((context.source / "app.txt").read_text(), "source\n")
             self.assertFalse(
-                (
-                    context.transactions
-                    / f"transaction-{transaction_id}"
-                ).exists()
+                (context.transactions / f"transaction-{transaction_id}").exists()
             )
             new_plan = context.service.plan_resume(
                 receipt.workflow_id,
@@ -418,9 +416,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             def crash(**kwargs: object) -> object:
                 return real_apply_changeset(**kwargs, _fault_after_mutation=0)
 
-            with patch(
-                "local_moe.assistant_bridge_two_phase.apply_changeset", crash
-            ):
+            with patch("local_moe.assistant_bridge_two_phase.apply_changeset", crash):
                 with self.assertRaises(RuntimeError):
                     context.service.apply_resume(
                         receipt.workflow_id,
@@ -464,10 +460,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertTrue(recovered.idempotent_replay)
             self.assertEqual((context.source / "app.txt").read_text(), "source\n")
             self.assertFalse(
-                (
-                    context.transactions
-                    / f"transaction-{transaction_id}"
-                ).exists()
+                (context.transactions / f"transaction-{transaction_id}").exists()
             )
 
     def test_expired_applying_journal_rolls_back_without_new_authority(self) -> None:
@@ -487,9 +480,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             def crash(**kwargs: object) -> object:
                 return real_apply_changeset(**kwargs, _fault_after_mutation=0)
 
-            with patch(
-                "local_moe.assistant_bridge_two_phase.apply_changeset", crash
-            ):
+            with patch("local_moe.assistant_bridge_two_phase.apply_changeset", crash):
                 with self.assertRaises(RuntimeError):
                     context.service.apply_resume(
                         receipt.workflow_id,
@@ -573,7 +564,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(recovered.code, "recovered_expired")
             self.assertEqual((context.source / "app.txt").read_text(), "source\n")
 
-    def test_consumed_confirmation_without_a_journal_requires_fresh_authority(self) -> None:
+    def test_consumed_confirmation_without_a_journal_requires_fresh_authority(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
             receipt = context.stage(now=100)
@@ -626,7 +619,9 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual(repeated, recovered)
             self.assertEqual((context.source / "app.txt").read_text(), "source\n")
 
-    def test_crash_after_workspace_commit_is_reconciled_without_duplicate_write(self) -> None:
+    def test_crash_after_workspace_commit_is_reconciled_without_duplicate_write(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
             receipt = context.stage(now=100)
@@ -668,8 +663,75 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             )
 
             self.assertEqual(recovered.status, "applied")
-            self.assertEqual(recovered.code, "applied_recovered")
+            self.assertEqual(recovered.code, "already_applied")
             self.assertTrue(recovered.idempotent_replay)
+
+    def test_concurrent_recovery_cannot_rollback_after_database_finish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            plan = context.service.plan_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
+                idempotency_key=RESUME_KEY,
+                attestation_envelopes=(context.envelope(receipt.binding),),
+                now=110,
+            )
+            callback_entered = threading.Event()
+            release_callback = threading.Event()
+            recovery_entered = threading.Event()
+            original_mark = context.service._mark_applied
+            original_recover = context.service._recover_and_require_confirmation
+
+            def blocked_mark(*args: object, **kwargs: object) -> object:
+                callback_entered.set()
+                if not release_callback.wait(5):
+                    raise AssertionError("database finish barrier timed out")
+                return original_mark(*args, **kwargs)
+
+            def observed_recovery(*args: object, **kwargs: object) -> object:
+                recovery_entered.set()
+                return original_recover(*args, **kwargs)
+
+            call = {
+                "workflow_id": receipt.workflow_id,
+                "workspace": context.source,
+                "expected_source_fingerprint": receipt.binding.source_fingerprint,
+                "expected_config_sha256": CONFIG_SHA256,
+                "plan_id": plan.plan_id,
+                "confirmation_id": plan.confirmation_id,
+            }
+            with (
+                patch.object(context.service, "_mark_applied", blocked_mark),
+                patch.object(
+                    context.service,
+                    "_recover_and_require_confirmation",
+                    observed_recovery,
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                first = executor.submit(context.service.apply_resume, **call, now=111)
+                self.assertTrue(callback_entered.wait(5))
+                second = executor.submit(context.service.apply_resume, **call, now=112)
+                self.assertTrue(recovery_entered.wait(5))
+                self.assertFalse(second.done())
+                release_callback.set()
+                first_result = first.result(timeout=5)
+                second_result = second.result(timeout=5)
+
+            self.assertEqual(first_result.status, "applied")
+            self.assertEqual(second_result.status, "applied")
+            self.assertIn(second_result.code, {"applied_recovered", "already_applied"})
+            self.assertEqual(
+                (context.source / "app.txt").read_text(encoding="utf-8"),
+                "candidate\n",
+            )
+            self.assertEqual(
+                context.service.status(receipt.workflow_id, now=113).status,
+                "applied",
+            )
 
     def test_post_commit_crash_finalizes_and_replays_after_all_expiry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -703,7 +765,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             self.assertEqual((context.source / "app.txt").read_text(), "candidate\n")
             self.assertEqual(
                 context.service.status(receipt.workflow_id, now=250).status,
-                "applying",
+                "applied",
             )
 
             finalized = context.service.apply_resume(
@@ -726,7 +788,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             )
 
             self.assertEqual(finalized.status, "applied")
-            self.assertEqual(finalized.code, "applied_recovered")
+            self.assertEqual(finalized.code, "already_applied")
             self.assertTrue(finalized.idempotent_replay)
             self.assertEqual(replayed.status, "applied")
             self.assertEqual(replayed.code, "already_applied")
@@ -776,9 +838,7 @@ class _Context:
             verifier_id="independent-tests",
             adapter_id=ED25519_DSSE_ADAPTER_ID,
             key_id="independent-tests-key",
-            public_key_sha256=ed25519_public_key_sha256(
-                self.private_key.public_key()
-            ),
+            public_key_sha256=ed25519_public_key_sha256(self.private_key.public_key()),
             spec_sha256=sha256_bytes(b"independent-tests-spec-v1"),
         )
         self.policy = VerificationPolicy(
@@ -822,9 +882,7 @@ class _Context:
         return self.service.stage_candidate(
             source_workspace=self.source,
             candidate_workspace=(
-                self.candidate
-                if candidate_workspace is None
-                else candidate_workspace
+                self.candidate if candidate_workspace is None else candidate_workspace
             ),
             task_fingerprint=TASK_SHA256,
             expected_source_fingerprint=source_fingerprint,
