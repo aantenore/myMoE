@@ -61,6 +61,18 @@ class SameOriginRedirectHandler(request.HTTPRedirectHandler):
             )
         return super().redirect_request(req, fp, code, msg, headers, redirect_url)
 
+    def http_error_308(
+        self,
+        req: request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+    ) -> Any:
+        """Handle 308 consistently on Python versions that do not register it."""
+
+        return self.http_error_302(req, fp, code, msg, headers)
+
 
 def open_model_endpoint(
     target: str | request.Request,
