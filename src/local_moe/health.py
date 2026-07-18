@@ -9,6 +9,7 @@ from urllib import error
 from urllib.parse import urlparse
 
 from .config import ExpertConfig, MoEConfig
+from .execution_scope import ExecutionScopeGuard
 from .http_boundary import open_model_endpoint
 
 
@@ -37,12 +38,15 @@ def check_runtime_health(
     *,
     timeout_seconds: float = 1.5,
     opener: Callable[..., Any] = open_model_endpoint,
+    execution_guard: ExecutionScopeGuard | None = None,
 ) -> RuntimeHealth:
+    guard = execution_guard or ExecutionScopeGuard(config.execution_policy)
     experts = tuple(
         _check_expert(
             expert,
             timeout_seconds=timeout_seconds,
             opener=opener,
+            execution_guard=guard,
         )
         for expert in config.experts
     )
@@ -79,6 +83,7 @@ def _check_expert(
     *,
     timeout_seconds: float,
     opener: Callable[..., Any],
+    execution_guard: ExecutionScopeGuard,
 ) -> ExpertHealth:
     if expert.provider != "openai_compatible":
         return ExpertHealth(
@@ -111,6 +116,18 @@ def _check_expert(
             base_url=expert.base_url,
             status="malformed_base_url",
             message="OpenAI-compatible expert base_url must include scheme and host.",
+        )
+
+    eligibility = execution_guard.evaluate(expert.execution_target)
+    if not eligibility.allowed:
+        return ExpertHealth(
+            expert_id=expert.id,
+            provider=expert.provider,
+            model=expert.model,
+            role=expert.role,
+            base_url=expert.base_url,
+            status="scope_blocked",
+            message=eligibility.detail or "Endpoint is outside the execution policy.",
         )
 
     last_error = "Endpoint did not respond."

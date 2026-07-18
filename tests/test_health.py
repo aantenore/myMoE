@@ -110,6 +110,31 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(payload["status"], "degraded")
         self.assertEqual(payload["experts"][0]["status"], "malformed_base_url")
 
+    def test_does_not_probe_endpoint_outside_execution_policy(self) -> None:
+        config = _config(
+            ExpertConfig(
+                id="remote",
+                provider="openai_compatible",
+                model="remote-model",
+                role="general",
+                base_url="https://models.example.test/v1",
+            )
+        )
+
+        def unexpected_opener(*_args, **_kwargs):
+            raise AssertionError("blocked endpoint must not be probed")
+
+        payload = runtime_health_payload(
+            check_runtime_health(
+                config,
+                timeout_seconds=0.05,
+                opener=unexpected_opener,
+            )
+        )
+
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["experts"][0]["status"], "scope_blocked")
+
     def test_skips_non_http_test_provider(self) -> None:
         config = _config(
             ExpertConfig(
