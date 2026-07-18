@@ -825,6 +825,18 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
 
             self.assertEqual(caught.exception.code, "state_invalid")
 
+    def test_database_snapshot_uses_comparable_windows_identity_time(self) -> None:
+        path_state = mock.Mock(st_birthtime_ns=100, st_ctime_ns=200)
+        descriptor_state = mock.Mock(st_birthtime_ns=100, st_ctime_ns=300)
+
+        with mock.patch.object(workflow_store.os, "name", "nt"):
+            path_time = workflow_store._database_identity_time_ns(path_state)
+            descriptor_time = workflow_store._database_identity_time_ns(
+                descriptor_state
+            )
+
+        self.assertEqual(path_time, descriptor_time)
+
     @unittest.skipUnless(
         os.name == "posix" and hasattr(os, "mkfifo"),
         "POSIX descriptor aliases and FIFOs are required",

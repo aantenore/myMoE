@@ -2294,7 +2294,7 @@ def _database_read_snapshot(path: Path) -> tuple[int, int, int, int, int]:
         int(state.st_ino),
         int(state.st_size),
         int(state.st_mtime_ns),
-        int(state.st_ctime_ns),
+        _database_identity_time_ns(state),
     )
 
 
@@ -2332,8 +2332,19 @@ def _database_descriptor_snapshot(descriptor: int) -> tuple[int, int, int, int, 
         int(state.st_ino),
         int(state.st_size),
         int(state.st_mtime_ns),
-        int(state.st_ctime_ns),
+        _database_identity_time_ns(state),
     )
+
+
+def _database_identity_time_ns(state: os.stat_result) -> int:
+    # CPython 3.12 preserves creation time as ``st_ctime_ns`` for Windows
+    # path lookups, while descriptor lookups expose the metadata change time.
+    # The explicit birth time is stable across both views of the same file.
+    if os.name == "nt":
+        birth_time = getattr(state, "st_birthtime_ns", None)
+        if birth_time is not None:
+            return int(birth_time)
+    return int(state.st_ctime_ns)
 
 
 def _database_descriptor_uri(
