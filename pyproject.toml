@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-moe-orchestrator"
-version = "0.1.0"
-description = "Local-first system-level MoE orchestration prototype"
+version = "0.2.0-alpha.1"
+description = "Local-first system-level MoE orchestration runtime"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

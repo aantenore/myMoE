@@ -90,12 +90,17 @@ mymoe \
   --json
 ```
 
-With `mode=local_model_required`, the CLI validates every configured HTTP model
-endpoint before the first agent request. Only `localhost`, IPv4 loopback, and
-IPv6 loopback endpoints are accepted. This whole-config check also prevents a
-local primary agent from sending tool data to a remote fallback through a
-model-backed tool. Remote egress requires an explicitly non-local app mode; no
-agent flag silently opts into it.
+The Execution Scope Guard authorizes and freshly rechecks the selected agent
+expert before its provider call. With `mode=local_model_required`, the CLI also
+validates every configured HTTP model endpoint before the first agent request;
+only `localhost`, IPv4 loopback, and IPv6 loopback endpoints pass that
+whole-config preflight. This is defense in depth in addition to the shared
+scope guard. A loopback endpoint declared as `mesh_llm` or `gateway` still
+requires an external attestor, and no agent flag silently broadens the active
+scope policy.
+
+See [Execution Scope Guard](execution-scopes.md) for the shared policy,
+fallback, and attestation contract.
 
 When a risky call is proposed without approval, the command exits non-zero and
 returns a JSON result with `status=approval_required`, the sanitized approval

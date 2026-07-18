@@ -6,7 +6,7 @@ For a guided end-to-end explanation, start with [How myMoE works](how-it-works/R
 
 Use a system-level MoE first, not a trained monolithic sparse transformer.
 
-Reason: local hardware can run quantized local experts, but training or fine-tuning a true sparse MoE is much more expensive than routing among already-good local experts. This design keeps the runtime local while leaving room for later distillation.
+Reason: local hardware can run quantized local experts, but training or fine-tuning a true sparse MoE is much more expensive than routing among already-good local experts. This design keeps the runtime local by default, makes any broader execution boundary explicit, and leaves room for later distillation.
 
 The target product is general-purpose. Coding is only one route, not the default identity of the app.
 
@@ -18,10 +18,12 @@ flowchart TB
     U["User prompt"] --> C["Web, persistent CLI, or direct CLI"]
     C -->|"current prompt only"| R["Configurable Router"]
     C -->|"budget-aware generation prompt"| O["MoE Orchestrator"]
-    R -->|"selected experts and fallbacks"| O
-    O --> E1["Primary General Expert"]
-    O --> E2["Fast Summary / Fallback Expert"]
-    O --> E3["Optional Specialist Expert"]
+    R -->|"candidates"| EG["Execution Scope Guard<br/>eligibility phase"]
+    EG -->|"eligible experts and fallbacks"| O
+    O --> PG["Execution Scope Guard<br/>fresh pre-call phase"]
+    PG --> E1["Primary General Expert"]
+    PG --> E2["Fast Summary / Fallback Expert"]
+    PG --> E3["Optional Specialist Expert"]
     E1 --> A["Configured aggregation"]
     E2 --> A
     E3 --> A
@@ -41,10 +43,16 @@ and answer-quality benchmarks make offline CI or release decisions.
 
 ## Core Contracts
 
-- `MoEConfig`: immutable parsed configuration.
-- `ExpertConfig`: provider id, endpoint, model id, generation params, weight.
+- `MoEConfig`: immutable parsed configuration, including the execution policy.
+- `ExpertConfig`: provider id, endpoint, model id, generation params, weight,
+  declared transport, and declared execution scope.
 - `RoutingRule`: configured keyword/weight mapping to expert ids.
-- `Router`: pure deterministic scorer with rules and optional local semantic examples, no provider names in code.
+- `Execution Scope Guard`: provider-neutral eligibility and fresh
+  pre-invocation boundary. It defaults to `device_only`, filters ineligible
+  candidates and fallbacks, prevents implicit scope widening, and reports
+  `scope_blocked` when no target can satisfy policy.
+- `Router`: deterministic scorer over guard-eligible experts, using rules and
+  optional local semantic examples with no provider names in code.
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures. Providers can expose streaming generation while preserving the same final result contract.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
@@ -61,6 +69,11 @@ and answer-quality benchmarks make offline CI or release decisions.
 - `Generation Run Log`: local JSONL metadata log for successful generations, intentionally excluding prompt and answer text while retaining route, model, latency, token, context, prompt-hash observations, and aggregate health summaries.
 - `Agent Loop`: provider-neutral OpenAI-compatible model/tool/observation loop with strict local tool schemas, approval-gated side effects, bounded redacted observations, and metadata-only traces.
 - `Quality Benchmark`: deterministic answer-quality comparison harness for single-general, routed top-1, and routed top-2 variants, with endpoint/model readiness checks and provenance-rich artifacts.
+
+The scope policy is separate from model capability and semantic routing. A
+high-scoring expert is still ineligible when its execution evidence cannot
+satisfy the active policy. The complete contract and Mesh-LLM limitations are
+documented in [Execution Scope Guard](execution-scopes.md).
 
 ## Runtime Modes
 
@@ -114,9 +127,10 @@ manual tools, MCP control-plane, and a bounded model-proposed tool-call loop for
 local OpenAI-compatible experts. It should still not be described as a
 general-purpose autonomous agent platform: the loop is deliberately narrow,
 approval-gated, schema-validated, and optimized for local evidence gathering.
-In `local_model_required` mode, the agent CLI validates the whole configured
-expert set and rejects non-loopback HTTP endpoints before any prompt or tool
-observation can leave the process.
+The Execution Scope Guard now applies to normal web/CLI generation, streaming,
+parallel comparison, fallbacks, and the agent runtime. The agent CLI's
+whole-config loopback validation remains a defense-in-depth preflight for
+`local_model_required`; it is no longer the only locality control.
 Open WebUI and AnythingLLM already cover the broad assistant workspace. LM
 Studio, Ollama, and llama.cpp cover model serving. The defensible myMoE layer is
 the privacy-first, hardware-aware routing, tool-safety, and evidence plane above
@@ -165,16 +179,19 @@ The practical policy is:
 
 1. Config loads and validates.
 2. Router selects expected experts on known prompts.
-3. Provider boundary preserves `correlation_id`.
-4. Streaming and non-streaming generation return the same persisted chat contract.
-5. Streaming and non-streaming generation append metadata-only run records without leaking prompt or answer text.
-6. Local endpoint smoke test returns valid text under timeout.
-7. A leakage-free routing holdout passes before routing claims are published.
-8. Doctor and environment diagnostics expose configured runtime storage status without creating missing directories.
-9. Agent tool calls must use strict schemas, reject model-supplied confirmations
+3. Scope policy filters ineligible candidates and fallbacks before scoring,
+   blocks implicit scope widening, and rechecks evidence immediately before
+   every provider invocation.
+4. Provider boundary preserves `correlation_id`.
+5. Streaming and non-streaming generation return the same persisted chat contract.
+6. Streaming and non-streaming generation append metadata-only run records without leaking prompt or answer text.
+7. Local endpoint smoke test returns valid text under timeout.
+8. A leakage-free routing holdout passes before routing claims are published.
+9. Doctor and environment diagnostics expose configured runtime storage status without creating missing directories.
+10. Agent tool calls must use strict schemas, reject model-supplied confirmations
    or secrets, pause risky operations for external approval, and avoid storing
    prompt/tool-result content in traces.
-10. Before claiming product advantage, routed top-1 must not regress against the
+11. Before claiming product advantage, routed top-1 must not regress against the
     single-general baseline while reporting latency, memory, and failure rate.
     Top-2 is diagnostic evidence and cannot rescue a top-1 regression. The
     historical 72-record Qwen3 4B + 1.7B run satisfied this gate: quality delta

@@ -1,6 +1,6 @@
 # How myMoE Works
 
-This guide explains the implemented myMoE runtime from startup to a persisted answer. It separates normal chat, offline evaluation, and the optional agent loop because they are different execution paths with different safety rules.
+This guide explains the implemented myMoE runtime from startup to a persisted answer. Normal chat and the optional agent loop have different tool-safety rules, but every model invocation shares the same execution-scope boundary.
 
 ## 1. The System in One Diagram
 
@@ -17,7 +17,9 @@ flowchart TB
         Chat["Shared chat runtime"]
         Context["Context builder"]
         Router["Configurable router"]
+        Eligibility["Execution scope eligibility"]
         MoE["MoE orchestrator"]
+        Invocation["Fresh pre-call scope check"]
         Providers["Provider adapters"]
         Models["Independent local model servers"]
     end
@@ -30,6 +32,7 @@ flowchart TB
     end
 
     subgraph Agent["Separate bounded agent path"]
+        AgentScope["Execution scope check"]
         AgentModel["One local agent model"]
         Guard["Schema and permission guard"]
         Tools["Allowlisted local tools and MCP"]
@@ -42,8 +45,10 @@ flowchart TB
     Memory --> Context
     Chat -->|"raw current request"| Router
     Context -->|"budget-aware generation prompt"| MoE
-    Router -->|"selected experts and fallbacks"| MoE
-    MoE --> Providers
+    Router -->|"candidates"| Eligibility
+    Eligibility -->|"eligible experts and fallbacks"| MoE
+    MoE --> Invocation
+    Invocation --> Providers
     Providers --> Models
     MoE --> Chat
     Chat --> Chats
@@ -52,7 +57,8 @@ flowchart TB
     DirectCLI --> Router
     DirectCLI --> MoE
 
-    AgentCLI --> AgentModel
+    AgentCLI --> AgentScope
+    AgentScope --> AgentModel
     AgentModel --> Guard
     Guard --> Tools
     Tools --> Guard
@@ -76,6 +82,7 @@ flowchart LR
 
     Profile --> Experts["Experts, models, endpoints and parameters"]
     Profile --> Routing["Strategy, rules, top-k, aggregation and fallbacks"]
+    Profile --> Execution["Scope policy and per-expert transport declarations"]
     Profile --> Planner["Generated local model-server plan"]
 
     Policy --> Context["Context builder"]
@@ -87,7 +94,7 @@ flowchart LR
 | File or directory | What it controls |
 | --- | --- |
 | [`configs/app.json`](../../configs/app.json) | Product mode, default MoE profile, language hints, runtime paths, backend preferences, extension paths, scheduler policy, and permissions. |
-| [`configs/moe.*.json`](../../configs/) | Expert IDs, provider, endpoint, model, role, weight, timeout, generation parameters, routing signals, top-k, aggregation, and fallbacks. |
+| [`configs/moe.*.json`](../../configs/) | Execution policy plus expert IDs, declared transport/scope, provider, endpoint, model, role, weight, timeout, generation parameters, routing signals, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](../../configs/context-policy.json) | Input/output budgets, compaction threshold, recent-turn cap, and memory-item cap. |
 | [`configs/tools.json`](../../configs/tools.json) | Tool metadata, enabled state, risk class, and declared side effects. |
 | [`configs/mcp.json`](../../configs/mcp.json) | Optional MCP stdio servers and per-server tool allowlists. |
@@ -96,7 +103,10 @@ flowchart LR
 
 ### What is replaceable without code?
 
-- Any OpenAI-compatible local model, endpoint, role, weight, timeout, generation parameter, rule, example, fallback order, top-k value, or aggregation mode can be changed in a profile.
+- Any OpenAI-compatible local model, endpoint, execution declaration, role,
+  weight, timeout, generation parameter, rule, example, fallback order, top-k
+  value, or aggregation mode can be changed in a profile. Non-local
+  declarations still require a compatible external attestor.
 - Context budgets and registry file locations can be changed independently.
 - MCP server definitions and cron schedules can be added through guarded configuration paths. An MCP definition is trusted configuration and can name an executable command; process policy and per-call confirmation guard whether it is launched.
 
@@ -156,6 +166,7 @@ sequenceDiagram
     participant Context as Context builder
     participant MoE as MoE orchestrator
     participant Router
+    participant Scope as Execution Scope Guard
     participant Model as Selected local expert
     participant RunLog as Metadata-only run log
 
@@ -165,13 +176,19 @@ sequenceDiagram
     Stores-->>Context: Summary, recent turns, memory snippets
     Context-->>Chat: Bounded generation prompt
     Chat->>MoE: Generation prompt plus raw route prompt
-    MoE->>Router: Score raw current request
-    Router-->>MoE: Top-k experts and fallback order
+    MoE->>Router: Resolve eligible route for raw request
+    Router->>Scope: Evaluate configured candidates
+    Scope-->>Router: Eligible scopes and transports
+    Router-->>MoE: Top-k eligible experts and fallback order
+    MoE->>Scope: Obtain fresh evidence for selected expert
+    Scope-->>MoE: Allowed scope and transport
     MoE->>Model: Local OpenAI-compatible request
 
     alt Selected expert succeeds
         Model-->>MoE: Answer or progressive chunks
     else Selected expert fails
+        MoE->>Scope: Recheck eligible fallback
+        Scope-->>MoE: Allowed without implicit scope widening
         MoE->>Model: Try next configured fallback
         Model-->>MoE: Answer or progressive chunks
     end
@@ -213,7 +230,12 @@ Implementation: [`chat_runtime.py`](../../src/local_moe/chat_runtime.py), [`cont
 
 ## 5. Routing, Selection, and Fallbacks
 
-For each expert, routing starts with the configured base weight and may add three signals:
+The Execution Scope Guard evaluates every expert before semantic routing. Only
+experts with fresh evidence inside `execution.allowed_scopes` and
+`execution.max_scope` can be scored. If none remain, routing stops with
+`scope_blocked`; it does not broaden the policy or call a provider.
+
+For each eligible expert, routing starts with the configured base weight and may add three signals:
 
 ```text
 score = base expert weight
@@ -229,7 +251,9 @@ score = base expert weight
 
 ```mermaid
 flowchart TD
-    Prompt["Raw current request"] --> Base["Initialize expert base weights"]
+    Prompt["Raw current request"] --> Eligible["Filter candidates through Execution Scope Guard"]
+    Eligible -->|"none"| ScopeBlocked["Raise scope_blocked"]
+    Eligible -->|"eligible experts"| Base["Initialize eligible expert base weights"]
     Base --> Keywords["Add configured keyword matches"]
     Keywords --> Semantic{"Hybrid or distilled strategy and semantic enabled?"}
     Semantic -->|"Yes"| SemScore["Apply best n-gram score if threshold and margin pass"]
@@ -240,10 +264,10 @@ flowchart TD
     Classifier --> Rank["Sort by score, then expert ID"]
     Rank --> TopK["Select configured top-k"]
     TopK --> Aggregation{"Aggregation mode"}
-    Aggregation -->|"best"| Best["Try selected experts, then fallbacks, until one succeeds"]
+    Aggregation -->|"best"| Best["Recheck selected expert, then eligible fallbacks"]
     Aggregation -->|"concat"| Many["Run selected experts concurrently"]
     Aggregation -->|"compare"| Many
-    Many --> Fill["Fill failed result slots from fallbacks"]
+    Many --> Fill["Fill failed slots from freshly rechecked eligible fallbacks"]
     Best --> Result{"At least one result?"}
     Fill --> Result
     Result -->|"Yes"| Output["Return answer plus recoverable error metadata"]
@@ -262,9 +286,20 @@ For `concat` and `compare`, the current streaming method waits for normal aggreg
 
 The default profile uses distilled top-1 `best` routing. Its fallback list contains both expert IDs; the already-selected ID is removed before execution. As a result, either default expert can fall back to the other.
 
+Every shipped local profile declares `direct_local` / `device_only`, sets the
+policy ceiling and allowlist to `device_only`, and disables scope widening. A
+fallback at a broader scope is filtered unless widening is explicitly enabled;
+even then, it must still satisfy the policy allowlist and fresh attestation.
+The orchestrator rechecks immediately before normal, streaming, parallel, and
+fallback invocations to narrow the time-of-check/time-of-use window.
+
 An enabled but missing, invalid, or incompatible distilled artifact fails runtime initialization rather than silently changing the routing policy.
 
-Implementation: [`router.py`](../../src/local_moe/router.py), [`distilled_router.py`](../../src/local_moe/distilled_router.py), [`text_features.py`](../../src/local_moe/text_features.py), and [`orchestrator.py`](../../src/local_moe/orchestrator.py).
+Implementation: [`execution_scope.py`](../../src/local_moe/execution_scope.py),
+[`router.py`](../../src/local_moe/router.py),
+[`distilled_router.py`](../../src/local_moe/distilled_router.py),
+[`text_features.py`](../../src/local_moe/text_features.py), and
+[`orchestrator.py`](../../src/local_moe/orchestrator.py).
 
 ## 6. Streaming and Failure Semantics
 
@@ -283,6 +318,7 @@ If streaming fails before any visible content starts, the browser retries the re
 | --- | --- |
 | Empty prompt | HTTP `400`; no model call. |
 | Unknown chat session | HTTP `404`; no model call. |
+| No candidate or fallback satisfies execution policy and fresh evidence | Fail with `scope_blocked`; no ineligible model call and no implicit scope widening. |
 | Selected expert transport, HTTP, JSON, or payload error | Try the next configured fallback. |
 | All selected and fallback experts fail | HTTP `502` for JSON, or an SSE `error` event. |
 | Generation ends without producing a `final` event | No completed exchange is persisted. |
@@ -297,12 +333,15 @@ Normal chat does not expose tools to the model. The agent loop is a separate CLI
 sequenceDiagram
     actor Operator
     participant CLI
+    participant Scope as Execution Scope Guard
     participant Model as One local agent expert
     participant Guard as Schema and permission guard
     participant Tool as Allowlisted local tool
 
     Operator->>CLI: Task plus explicit tool selection
-    CLI->>CLI: Validate budgets and all configured endpoints
+    CLI->>CLI: Validate budgets and local-mode preflight
+    CLI->>Scope: Obtain fresh evidence for selected expert
+    Scope-->>CLI: Allowed scope and transport
     CLI->>Model: Task plus strict visible tool schemas
     Model-->>CLI: Proposed tool call
     CLI->>Guard: Resolve alias and validate arguments
@@ -336,9 +375,20 @@ The guard applies these checks before execution:
 
 Harness-owned confirmation fields are added only after approval. A model cannot approve its own call by writing `confirm=true`. Tool observations are structured, redacted, and bounded before they return to the model. The trace contains statuses, hashes, counts, model/tool labels, and token metadata, but not prompts, arguments, tool bodies, or hidden reasoning.
 
-When `app.mode` is `local_model_required`, this agent path checks **every configured HTTP model endpoint** before its first model request and rejects the run if any endpoint is not loopback. That check belongs to agent mode; general `LocalMoE.generate()` does not itself enforce endpoint locality.
+The Execution Scope Guard applies to the agent model call exactly as it does to
+normal generation: the target must be eligible and is rechecked immediately
+before invocation. When `app.mode` is `local_model_required`, the agent CLI also
+checks every configured HTTP model endpoint before the first request and
+rejects a non-loopback endpoint. That whole-config check is an additional
+agent preflight, not the runtime's only locality boundary. Loopback alone still
+does not authorize a declared Mesh or gateway transport.
 
-Implementation: [`agent_loop.py`](../../src/local_moe/agent_loop.py), [`agent_tools.py`](../../src/local_moe/agent_tools.py), [`agent_tool_schemas.py`](../../src/local_moe/agent_tool_schemas.py), [`agent_provider.py`](../../src/local_moe/agent_provider.py), and [`tool_runner.py`](../../src/local_moe/tool_runner.py).
+Implementation: [`execution_scope.py`](../../src/local_moe/execution_scope.py),
+[`agent_loop.py`](../../src/local_moe/agent_loop.py),
+[`agent_tools.py`](../../src/local_moe/agent_tools.py),
+[`agent_tool_schemas.py`](../../src/local_moe/agent_tool_schemas.py),
+[`agent_provider.py`](../../src/local_moe/agent_provider.py), and
+[`tool_runner.py`](../../src/local_moe/tool_runner.py).
 
 ## 8. Local Data and Privacy Boundaries
 

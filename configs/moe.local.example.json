@@ -1,4 +1,9 @@
 {
+  "execution": {
+    "max_scope": "device_only",
+    "allowed_scopes": ["device_only"],
+    "allow_scope_widening": false
+  },
   "routing": {
     "top_k": 1,
     "fallback_order": ["general"],
@@ -9,6 +14,10 @@
       "id": "coder",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8101/v1",
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      },
       "model": "local-coder",
       "role": "coding",
       "weight": 1.0,
@@ -19,6 +28,10 @@
       "id": "architect",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8102/v1",
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      },
       "model": "local-architect",
       "role": "architecture",
       "weight": 1.0,
@@ -29,6 +42,10 @@
       "id": "general",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8103/v1",
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      },
       "model": "local-general",
       "role": "general",
       "weight": 0.5,

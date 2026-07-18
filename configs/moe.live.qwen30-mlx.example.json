@@ -1,4 +1,9 @@
 {
+  "execution": {
+    "max_scope": "device_only",
+    "allowed_scopes": ["device_only"],
+    "allow_scope_widening": false
+  },
   "routing": {
     "top_k": 1,
     "fallback_order": [],
@@ -9,6 +14,10 @@
       "id": "general",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8101/v1",
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      },
       "model": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
       "role": "quality-first-isolated-general-purpose",
       "weight": 1.0,

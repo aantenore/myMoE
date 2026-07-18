@@ -1,8 +1,8 @@
 # myMoE
 
-myMoE is a local-first, system-level Mixture of Experts orchestrator. It routes each request to one or more independent local models instead of training one large sparse MoE model from scratch.
+myMoE is a local-first, system-level Mixture of Experts orchestration runtime. It routes each request to one or more independent models under an explicit execution-scope policy instead of training one large sparse MoE model from scratch.
 
-The project is currently an MVP local control plane with persistent chat,
+The project is currently an alpha local control plane with persistent chat,
 budget-aware context and memory, configurable routing, model lifecycle tools,
 diagnostics, evaluation, and a separate approval-gated agent loop. The current
 release evidence applies to the tested profile and workloads; it is not a claim
@@ -24,6 +24,7 @@ Local models have different strengths and hardware costs. Keeping every large sp
 - retry a configured fallback when an expert is unavailable;
 - compare multiple expert answers when a profile requests it;
 - keep chat, memory, operational evidence, and model traffic local by default;
+- block routes and fallbacks that exceed the configured execution scope;
 - stop verified assistant tasks locally or hand off a minimal redacted capsule;
 - replace models, routes, budgets, and extension registries through configuration.
 
@@ -37,10 +38,12 @@ flowchart LR
     C --> X["Context builder"]
     X -->|"budget-aware generation prompt"| C
     C -->|"current request only"| R["Configurable router"]
-    C -->|"context-enriched prompt"| O["MoE orchestrator"]
-    R -->|"selected experts and fallbacks"| O
-    O --> G["General local expert"]
-    O --> F["Fast or specialist local expert"]
+    R -->|"candidates"| ESG["Execution Scope Guard<br/>eligibility"]
+    ESG -->|"eligible experts and fallbacks"| O["MoE orchestrator"]
+    C -->|"context-enriched prompt"| O
+    O --> PCG["Execution Scope Guard<br/>fresh pre-call check"]
+    PCG --> G["General local expert"]
+    PCG --> F["Fast or specialist local expert"]
     G --> P["Final response"]
     F --> P
     P -->|"persist complete exchange"| S
@@ -52,8 +55,14 @@ The router and the model deliberately receive different inputs. The router sees
 only the current user request, so an old memory cannot accidentally change the
 route. The selected expert receives a budget-aware prompt assembled from
 memory, the durable session summary, recent turns, and the current request.
+Before routing, the Execution Scope Guard filters ineligible experts; the
+orchestrator obtains fresh evidence again immediately before each provider
+call. The shipped profiles allow only `device_only` execution and never widen a
+fallback scope automatically.
 
-For the complete lifecycle, including routing scores, fallbacks, streaming, startup, persistence, and agent approvals, read [How myMoE works](docs/how-it-works/README.md).
+For the complete lifecycle, including execution scope, routing scores,
+fallbacks, streaming, startup, persistence, and agent approvals, read
+[How myMoE works](docs/how-it-works/README.md).
 
 ## Quick Start
 
@@ -99,10 +108,10 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 
 The default profile is [`configs/moe.live.general-mlx.example.json`](configs/moe.live.general-mlx.example.json).
 
-| Expert | Model | Role | Endpoint |
-| --- | --- | --- | --- |
-| `general` | Qwen3 4B MLX 4-bit | General reasoning and normal chat | `127.0.0.1:8101` |
-| `fast_fallback` | Qwen3 1.7B MLX 4-bit | Summarization, rewriting, translation, formatting, compaction, and fallback | `127.0.0.1:8102` |
+| Expert | Model | Role | Endpoint | Execution |
+| --- | --- | --- | --- | --- |
+| `general` | Qwen3 4B MLX 4-bit | General reasoning and normal chat | `127.0.0.1:8101` | `device_only` / `direct_local` |
+| `fast_fallback` | Qwen3 1.7B MLX 4-bit | Summarization, rewriting, translation, formatting, compaction, and fallback | `127.0.0.1:8102` | `device_only` / `direct_local` |
 
 The profile uses top-1 `best` aggregation. Routing combines base expert weights, explicit keyword rules, local character n-gram examples, and a distilled local character n-gram centroid artifact. The models do not classify their own requests.
 
@@ -111,7 +120,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | Configuration | Responsibility |
 | --- | --- |
 | [`configs/app.json`](configs/app.json) | Active profile, allowed profile/evaluation directories, local work directory, backend preferences, language policy, extension paths, and permissions. |
-| [`configs/moe.*.json`](configs/) | Experts, endpoints, models, generation parameters, routing strategy, top-k, aggregation, and fallbacks. |
+| [`configs/moe.*.json`](configs/) | Execution-scope policy plus experts, declared transports, endpoints, models, generation parameters, routing strategy, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](configs/context-policy.json) | Context limit, reserved output, compaction threshold, recent-turn limit, and memory limit. |
 | [`configs/assistant-bridge.json`](configs/assistant-bridge.json) | Replaceable Codex launch adapters and explicit models, capability inventories, local-first profiles, durable premium budgets, bound verifiers, and capsule limits. |
 | [`configs/assistant-bridge-workflow.example.json`](configs/assistant-bridge-workflow.example.json) | Example external durable-state paths and public-only independent verification policy for the two-phase stage/resume lifecycle. |
@@ -132,7 +141,8 @@ response or tool metadata cannot create a new executable implementation.
 ## Safety and Local Data
 
 - Normal chat never runs tools automatically. Tool-calling is a separate CLI path with an explicit tool selection.
-- In `local_model_required` mode, the agent path rejects any configured HTTP model endpoint that is not loopback.
+- The Execution Scope Guard applies to every generation entry point. The default is `device_only`, fallback scope widening is disabled, and missing or contradictory evidence fails with `scope_blocked` before an ineligible provider call.
+- A loopback URL proves only the first network hop. Mesh and gateway transports require an external attestor even when they listen on `127.0.0.1`; the current Mesh adapter is disabled and fail-closed.
 - Read-only and compute-only agent tools may run automatically; risky calls pause and require an approval bound to the canonical tool name and exact argument SHA-256.
 - `chats.json` and `memory.jsonl` contain user content. `runs.jsonl` and `audit.jsonl` contain operational metadata, not prompt or answer bodies.
 - The portable local-data backup contains private chats and memory and requires confirmation. The support bundle is a different, metadata-focused diagnostic artifact, but it still includes configured Git/model URLs and must be reviewed before sharing; credentials should never be embedded in URLs.
@@ -149,6 +159,7 @@ Start with the [documentation hub](docs/README.md).
 - [How myMoE works](docs/how-it-works/README.md) — end-to-end diagrams and code-level contracts.
 - [Installation](docs/installation.md) — platforms, runtimes, models, and startup.
 - [Architecture](docs/architecture.md) — design decisions, components, modes, and validation gates.
+- [Execution Scope Guard](docs/execution-scopes.md) — scope/transport policy, fail-closed behavior, and Mesh trust boundary.
 - [Routing](docs/router.md) — scoring, multilingual coverage, distillation, and fallback behavior.
 - [Context and Memory](docs/context-architecture.md) — prompt budgets, persistence, compaction, and observability.
 - [UI and CLI](docs/ui.md) — user workflows, HTTP endpoints, and screenshots.
@@ -170,7 +181,7 @@ Current measured results and their limits are documented in [Tested Performance]
 
 ## Product Boundary
 
-myMoE is primarily a local workstation application and evaluation harness. The
+myMoE is primarily a local workstation orchestration runtime and evaluation harness. The
 Hybrid Assistant Bridge may start a separately configured premium Codex process
 only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant

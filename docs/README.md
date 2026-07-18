@@ -10,6 +10,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | Install and start local models | [Installation](installation.md) |
 | Use the web app, CLI, or HTTP API | [UI and CLI](ui.md) |
 | Understand routing decisions | [Routing](router.md) |
+| Control where inference may execute | [Execution Scope Guard](execution-scopes.md) |
 | Understand chat context, memory, and persistence | [Context and Memory Architecture](context-architecture.md) |
 | Run a tool-calling task safely | [Agent Runtime](agent-runtime.md) |
 | Use local Codex first and escalate only after verification | [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) |
@@ -22,6 +23,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
 - [Architecture](architecture.md) — system-level MoE decision, runtime modes, contracts, limitations, and release gates.
 - [Routing](router.md) — exact score composition, semantic examples, distilled artifact, top-k, aggregation, and fallbacks.
+- [Execution Scope Guard](execution-scopes.md) — scope/transport policy, fail-closed eligibility, fallback widening, and Mesh trust assumptions.
 - [Context and Memory Architecture](context-architecture.md) — context budgets, session summaries, memory retrieval, compaction, and run telemetry.
 - [Agent Runtime](agent-runtime.md) — strict tools, risk policy, approvals, MCP, plugins, cron, and diagnostic surfaces.
 - [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) — task-level local/premium policy, verification receipts, minimal escalation capsules, and CLI launch boundary.

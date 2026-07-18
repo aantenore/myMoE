@@ -1,6 +1,9 @@
 # Routing
 
-myMoE uses a local routing layer before generation. The router decides which configured expert should answer a request, then the orchestrator calls the selected local model endpoint.
+myMoE uses a local routing layer before generation. The Execution Scope Guard
+first removes experts that cannot satisfy the active placement policy. The
+router decides which remaining expert should answer, then the orchestrator
+rechecks scope evidence immediately before invoking the selected endpoint.
 
 For the router's place in the complete runtime, see [How myMoE works](how-it-works/README.md#5-routing-selection-and-fallbacks).
 
@@ -40,7 +43,7 @@ backend would require code plus a new validated config method.
 
 ## Decision Flow
 
-For each expert, the router computes:
+For each guard-eligible expert, the router computes:
 
 ```text
 score = base expert weight
@@ -57,7 +60,9 @@ descending and expert id ascending, which makes ties deterministic.
 
 ```mermaid
 flowchart TD
-  P["Raw current request"] --> B["Initialize configured expert weights"]
+  P["Raw current request"] --> G["Filter candidates through Execution Scope Guard"]
+  G -->|"none"| X["Raise scope_blocked"]
+  G -->|"eligible experts"| B["Initialize eligible expert weights"]
   B --> K["Add keyword rule matches"]
   K --> S{"Semantic routing active?"}
   S -->|"Yes"| N["Add best character n-gram score when thresholds pass"]
@@ -68,7 +73,7 @@ flowchart TD
   C --> R["Sort by score, then expert id"]
   R --> T["Select configured top-k"]
   T --> A{"Aggregation mode"}
-  A -->|"best"| E["Try selected experts and fallbacks sequentially"]
+  A -->|"best"| E["Freshly recheck selected experts and eligible fallbacks"]
   A -->|"concat or compare"| M["Run selected experts concurrently"]
   M --> F["Fill failed slots from fallbacks"]
   E --> O["Return first successful result"]
