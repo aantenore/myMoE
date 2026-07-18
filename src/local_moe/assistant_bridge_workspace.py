@@ -16,6 +16,11 @@ from typing import Callable, Iterator, Sequence
 import unicodedata
 from uuid import uuid4
 
+from .assistant_bridge_two_phase_contracts import (
+    MAX_CANDIDATE_FILES,
+    MAX_CANDIDATE_FILE_BYTES,
+    MAX_CANDIDATE_TOTAL_BYTES,
+)
 from .assistant_bridge_runtime import (
     AssistantBridgeRuntimeError,
     ExecutableIdentity,
@@ -312,10 +317,19 @@ class WorkspaceScopePolicy:
             raise WorkspaceSecurityError(
                 "Workspace synthetic Git identity is invalid."
             )
-        if not 1 <= self.max_files <= 100_000:
+        if not 1 <= self.max_files <= MAX_CANDIDATE_FILES:
             raise WorkspaceSecurityError("Workspace max_files is outside safe bounds.")
-        if not 1 <= self.max_file_bytes <= self.max_total_bytes:
+        if (
+            not 1
+            <= self.max_file_bytes
+            <= min(
+                self.max_total_bytes,
+                MAX_CANDIDATE_FILE_BYTES,
+            )
+        ):
             raise WorkspaceSecurityError("Workspace byte bounds are invalid.")
+        if not 1 <= self.max_total_bytes <= MAX_CANDIDATE_TOTAL_BYTES:
+            raise WorkspaceSecurityError("Workspace total byte bound is invalid.")
         paths = [item.path.casefold() for item in self.ignored_paths]
         if len(paths) != len(set(paths)):
             raise WorkspaceSecurityError("Ignored path rules contain a collision.")

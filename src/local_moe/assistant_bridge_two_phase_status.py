@@ -8,6 +8,7 @@ from .assistant_bridge_cas import (
     ContentAddressedStoreUninitializedError,
 )
 from .assistant_bridge_two_phase_state import TwoPhaseStateConfig
+from .assistant_bridge_two_phase_contracts import TwoPhaseContractError
 from .assistant_bridge_workflow_store import (
     SQLiteWorkflowStore,
     WorkflowArtifactError,
@@ -73,22 +74,37 @@ class TwoPhaseStatusReader:
     ) -> WorkflowRecord:
         try:
             record = self.store.read_workflow(workflow_id, now=now)
-            if record.status in _CANDIDATE_REQUIRED_STATES:
-                self.candidate_cas.validate_candidate_closure(
-                    record.binding.manifest,
-                    record.binding.changeset,
-                )
-            return record
         except WorkflowNotFoundError as exc:
             raise TwoPhaseStatusError("workflow_not_found") from exc
         except WorkflowClockConflictError as exc:
             raise TwoPhaseStatusError("clock_conflict") from exc
-        except (ContentAddressedStoreError, WorkflowArtifactError) as exc:
+        except WorkflowArtifactError as exc:
             raise TwoPhaseStatusError("artifact_invalid") from exc
-        except WorkflowStoreError as exc:
+        except (TwoPhaseContractError, WorkflowStoreError) as exc:
             raise TwoPhaseStatusError("state_invalid") from exc
         except Exception as exc:
             raise TwoPhaseStatusError("status_runtime_failed") from exc
+        if record.status not in _CANDIDATE_REQUIRED_STATES:
+            return record
+        try:
+            manifest, _ = self.candidate_cas.validate_candidate_closure(
+                record.binding.manifest,
+                record.binding.changeset,
+            )
+            source = manifest.get("source")
+            if (
+                manifest.get("sourceFingerprint") != record.binding.source_fingerprint
+                or not isinstance(source, dict)
+                or source.get("rootSha256") != record.workspace_root_sha256
+            ):
+                raise ContentAddressedStoreError(
+                    "Candidate artifact binding is invalid."
+                )
+        except (ContentAddressedStoreError, TwoPhaseContractError) as exc:
+            raise TwoPhaseStatusError("artifact_invalid") from exc
+        except Exception as exc:
+            raise TwoPhaseStatusError("status_runtime_failed") from exc
+        return record
 
 
 def build_two_phase_status_reader(

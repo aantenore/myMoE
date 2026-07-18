@@ -10,6 +10,10 @@ from .assistant_bridge_integrity import canonical_json_bytes, canonical_sha256, 
 
 
 TWO_PHASE_SCHEMA_VERSION = "1.0"
+MAX_CANDIDATE_FILES = 100_000
+MAX_CANDIDATE_FILE_BYTES = 64 * 1024 * 1024
+MAX_CANDIDATE_TOTAL_BYTES = 16 * 1024 * 1024 * 1024
+MAX_CANDIDATE_METADATA_BYTES = 64 * 1024 * 1024
 IN_TOTO_STATEMENT_V1 = "https://in-toto.io/Statement/v1"
 INDEPENDENT_PREDICATE_V1 = (
     "https://github.com/aantenore/myMoE/tree/main/docs/spec/"

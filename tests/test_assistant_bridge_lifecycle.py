@@ -607,6 +607,35 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
 
             self.assertEqual(caught.exception.code, "state_invalid")
 
+    def test_status_reader_classifies_incoherent_applied_row_as_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            with sqlite3.connect(state.database_path) as connection:
+                connection.execute("PRAGMA journal_mode = DELETE")
+                connection.execute(
+                    "UPDATE workflows SET status = 'applied', "
+                    "apply_transaction_id = NULL, result_sha256 = NULL "
+                    "WHERE workflow_id = ?",
+                    (receipt.workflow_id,),
+                )
+
+            reader = build_two_phase_status_reader(state)
+            with self.assertRaises(TwoPhaseStatusError) as caught:
+                reader.status(receipt.workflow_id, now=101)
+
+            self.assertEqual(caught.exception.code, "state_invalid")
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs unavailable")
     def test_status_reader_rejects_fifo_secret_before_open(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -763,6 +792,106 @@ class TwoPhaseLifecycleTests(unittest.TestCase):
                     reader.status(receipt.workflow_id, now=101)
 
             self.assertEqual(caught.exception.code, "state_invalid")
+
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(os, "mkfifo"),
+        "POSIX descriptor aliases and FIFOs are required",
+    )
+    def test_status_reader_never_reopens_a_swapped_database_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            reader = build_two_phase_status_reader(state)
+            parked = state.database_path.with_suffix(".parked")
+            fifo = state.database_path.with_suffix(".fifo")
+            os.mkfifo(fifo, mode=0o600)
+            real_connect = sqlite3.connect
+            targets: list[str] = []
+
+            def swap_before_connect(target, *args, **kwargs):
+                targets.append(str(target))
+                state.database_path.rename(parked)
+                fifo.rename(state.database_path)
+                try:
+                    return real_connect(target, *args, **kwargs)
+                finally:
+                    state.database_path.rename(fifo)
+                    parked.rename(state.database_path)
+                    state.database_path.chmod(0o400)
+                    state.database_path.chmod(0o600)
+
+            with mock.patch.object(
+                workflow_store.sqlite3,
+                "connect",
+                side_effect=swap_before_connect,
+            ):
+                with self.assertRaises(TwoPhaseStatusError) as caught:
+                    reader.status(receipt.workflow_id, now=101)
+
+            self.assertEqual(caught.exception.code, "state_invalid")
+            self.assertTrue(targets)
+            self.assertTrue(
+                all(target.startswith("file:/dev/fd/") for target in targets)
+            )
+            self.assertTrue(state.database_path.is_file())
+            self.assertTrue(fifo.exists())
+
+    def test_status_reader_fallback_snapshot_is_outside_configured_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            lifecycle = fixture.lifecycle(_CandidateGenerator(fixture.source))
+            receipt = lifecycle.stage(
+                "change-app",
+                source_workspace=fixture.source,
+                task_fingerprint=TASK_SHA256,
+                expected_source_fingerprint=fixture.source_fingerprint,
+                expected_config_sha256=lifecycle.effective_config_sha256,
+                idempotency_key=STAGE_KEY,
+                now=100,
+            )
+            state = load_two_phase_state_config(fixture.config_path)
+            before = _filesystem_snapshot(fixture.root / "state")
+            real_connect = sqlite3.connect
+            targets: list[str] = []
+
+            def capture_connect(target, *args, **kwargs):
+                targets.append(str(target))
+                return real_connect(target, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    workflow_store,
+                    "_database_descriptor_uri",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    workflow_store.sqlite3,
+                    "connect",
+                    side_effect=capture_connect,
+                ),
+            ):
+                reader = build_two_phase_status_reader(state)
+                record = reader.status(receipt.workflow_id, now=101)
+
+            self.assertEqual(record.status, "staged")
+            self.assertTrue(targets)
+            self.assertTrue(
+                all("mymoe-workflow-status-" in target for target in targets)
+            )
+            self.assertTrue(
+                all(str(state.database_path) not in target for target in targets)
+            )
+            self.assertEqual(_filesystem_snapshot(fixture.root / "state"), before)
 
     def test_status_reader_derives_expiry_without_mutating_existing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

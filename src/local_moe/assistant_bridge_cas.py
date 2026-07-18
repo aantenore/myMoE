@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -13,6 +14,10 @@ from typing import Any, Iterator, Mapping, Sequence
 from .assistant_bridge_integrity import canonical_json_bytes, sha256_bytes
 from .assistant_bridge_two_phase_contracts import (
     ArtifactDescriptor,
+    MAX_CANDIDATE_FILES,
+    MAX_CANDIDATE_FILE_BYTES,
+    MAX_CANDIDATE_METADATA_BYTES,
+    MAX_CANDIDATE_TOTAL_BYTES,
     TwoPhaseContractError,
     require_sha256,
 )
@@ -43,6 +48,13 @@ class ContentAddressedStoreError(ValueError):
 
 class ContentAddressedStoreUninitializedError(ContentAddressedStoreError):
     """Raised when a read-only CAS has not been initialized yet."""
+
+
+def _require_cas_sha256(value: str, label: str) -> str:
+    try:
+        return require_sha256(value, label)
+    except TwoPhaseContractError as exc:
+        raise ContentAddressedStoreError(str(exc)) from exc
 
 
 def _safe_relative_path(value: str) -> str:
@@ -193,6 +205,24 @@ class ContentAddressedStore:
         return self.put_bytes(canonical_json_bytes(dict(value)), media_type=media_type)
 
     def get_bytes(self, descriptor: ArtifactDescriptor) -> bytes:
+        value = self._read_verified_artifact(
+            descriptor,
+            collect=True,
+            max_bytes=None,
+        )
+        assert value is not None
+        return value
+
+    def _read_verified_artifact(
+        self,
+        descriptor: ArtifactDescriptor,
+        *,
+        collect: bool,
+        max_bytes: int | None,
+        output_fd: int | None = None,
+    ) -> bytes | None:
+        if max_bytes is not None and descriptor.size_bytes > max_bytes:
+            raise ContentAddressedStoreError("CAS artifact exceeds its read bound.")
         target = self._object_path(descriptor.sha256, create_parent=False)
         before = _regular_file_state(target)
         if before.st_size != descriptor.size_bytes:
@@ -201,39 +231,66 @@ class ContentAddressedStore:
         try:
             descriptor_fd = os.open(target, _READ_FLAGS)
             opened = os.fstat(descriptor_fd)
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+                before.st_dev,
+                before.st_ino,
             ):
                 raise ContentAddressedStoreError("CAS artifact identity changed.")
-            chunks: list[bytes] = []
+            chunks: list[bytes] | None = [] if collect else None
+            digest = hashlib.sha256()
             remaining = descriptor.size_bytes
             while remaining:
                 chunk = os.read(descriptor_fd, min(1024 * 1024, remaining))
                 if not chunk:
                     raise ContentAddressedStoreError("CAS artifact is truncated.")
-                chunks.append(chunk)
+                digest.update(chunk)
+                if chunks is not None:
+                    chunks.append(chunk)
+                if output_fd is not None:
+                    _write_all(output_fd, chunk)
                 remaining -= len(chunk)
             if os.read(descriptor_fd, 1):
-                raise ContentAddressedStoreError("CAS artifact exceeds its size binding.")
+                raise ContentAddressedStoreError(
+                    "CAS artifact exceeds its size binding."
+                )
             after = os.fstat(descriptor_fd)
         except OSError as exc:
-            raise ContentAddressedStoreError("CAS artifact could not be read safely.") from exc
+            raise ContentAddressedStoreError(
+                "CAS artifact could not be read safely."
+            ) from exc
         finally:
             if descriptor_fd >= 0:
                 os.close(descriptor_fd)
         if (
-            (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
-            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
         ):
             raise ContentAddressedStoreError("CAS artifact changed while read.")
-        value = b"".join(chunks)
-        if sha256_bytes(value) != descriptor.sha256:
+        if digest.hexdigest() != descriptor.sha256:
             raise ContentAddressedStoreError("CAS artifact digest binding failed.")
-        return value
+        return None if chunks is None else b"".join(chunks)
 
-    def get_json(self, descriptor: ArtifactDescriptor) -> dict[str, Any]:
-        raw = self.get_bytes(descriptor)
+    def get_json(
+        self,
+        descriptor: ArtifactDescriptor,
+        *,
+        max_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        raw = self._read_verified_artifact(
+            descriptor,
+            collect=True,
+            max_bytes=max_bytes,
+        )
+        assert raw is not None
         try:
             value = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -253,7 +310,14 @@ class ContentAddressedStore:
         source_fingerprint: str,
         source_identity: Mapping[str, Any],
     ) -> tuple[ArtifactDescriptor, ArtifactDescriptor]:
-        require_sha256(source_fingerprint, "source_fingerprint")
+        _require_cas_sha256(source_fingerprint, "source_fingerprint")
+        if (
+            len(candidate_files) > MAX_CANDIDATE_FILES
+            or len(changes) > MAX_CANDIDATE_FILES
+        ):
+            raise ContentAddressedStoreError(
+                "Candidate file-count bound was exceeded."
+            )
         normalized_source = _normalize_source_identity(
             source_identity, source_fingerprint=source_fingerprint
         )
@@ -263,6 +327,7 @@ class ContentAddressedStore:
         root = raw_root.resolve(strict=True)
         file_records: list[dict[str, object]] = []
         seen: set[str] = set()
+        total_bytes = 0
         for raw in sorted(candidate_files, key=lambda item: str(item.get("path", ""))):
             record = _normalize_file_record(raw)
             path = str(record["path"])
@@ -274,6 +339,15 @@ class ContentAddressedStore:
             size = int(record["size"])
             content: ArtifactDescriptor | None = None
             if kind == "file":
+                if size > MAX_CANDIDATE_FILE_BYTES:
+                    raise ContentAddressedStoreError(
+                        "Candidate file byte bound was exceeded."
+                    )
+                total_bytes += size
+                if total_bytes > MAX_CANDIDATE_TOTAL_BYTES:
+                    raise ContentAddressedStoreError(
+                        "Candidate total byte bound was exceeded."
+                    )
                 value = _read_candidate_file(root, path, expected_size=size)
                 if sha256_bytes(value) != digest:
                     raise ContentAddressedStoreError(
@@ -311,22 +385,34 @@ class ContentAddressedStore:
             label="Changeset",
         )
         _validate_changes_against_manifest(normalized_changes, file_records)
-        changeset = self.put_json(
-            {
-                "schemaVersion": CAS_SCHEMA_VERSION,
-                "sourceFingerprint": source_fingerprint,
-                "changes": normalized_changes,
-            },
+        changeset_payload = {
+            "schemaVersion": CAS_SCHEMA_VERSION,
+            "sourceFingerprint": source_fingerprint,
+            "changes": normalized_changes,
+        }
+        changeset_bytes = canonical_json_bytes(changeset_payload)
+        if len(changeset_bytes) > MAX_CANDIDATE_METADATA_BYTES:
+            raise ContentAddressedStoreError(
+                "Candidate changeset byte bound was exceeded."
+            )
+        changeset = self.put_bytes(
+            changeset_bytes,
             media_type="application/vnd.mymoe.changeset+json",
         )
-        manifest = self.put_json(
-            {
-                "schemaVersion": CAS_SCHEMA_VERSION,
-                "sourceFingerprint": source_fingerprint,
-                "source": normalized_source,
-                "files": file_records,
-                "changeset": changeset.payload(),
-            },
+        manifest_payload = {
+            "schemaVersion": CAS_SCHEMA_VERSION,
+            "sourceFingerprint": source_fingerprint,
+            "source": normalized_source,
+            "files": file_records,
+            "changeset": changeset.payload(),
+        }
+        manifest_bytes = canonical_json_bytes(manifest_payload)
+        if len(manifest_bytes) > MAX_CANDIDATE_METADATA_BYTES:
+            raise ContentAddressedStoreError(
+                "Candidate manifest byte bound was exceeded."
+            )
+        manifest = self.put_bytes(
+            manifest_bytes,
             media_type="application/vnd.mymoe.workspace-manifest+json",
         )
         return manifest, changeset
@@ -348,7 +434,6 @@ class ContentAddressedStore:
                 path = str(raw["path"])
                 if descriptor is None:
                     continue
-                value = self.get_bytes(descriptor)
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if not target.parent.resolve(strict=True).is_relative_to(root):
@@ -361,7 +446,12 @@ class ContentAddressedStore:
                 )
                 descriptor_fd = os.open(target, flags, int(raw["mode"]))
                 try:
-                    _write_all(descriptor_fd, value)
+                    self._read_verified_artifact(
+                        descriptor,
+                        collect=False,
+                        max_bytes=MAX_CANDIDATE_FILE_BYTES,
+                        output_fd=descriptor_fd,
+                    )
                     os.fsync(descriptor_fd)
                 finally:
                     os.close(descriptor_fd)
@@ -382,7 +472,11 @@ class ContentAddressedStore:
         )
         for _, descriptor in validated_files:
             if descriptor is not None:
-                self.get_bytes(descriptor)
+                self._read_verified_artifact(
+                    descriptor,
+                    collect=False,
+                    max_bytes=MAX_CANDIDATE_FILE_BYTES,
+                )
         return manifest, changeset
 
     def _validated_candidate_descriptors(
@@ -402,16 +496,25 @@ class ContentAddressedStore:
             raise ContentAddressedStoreError(
                 "Candidate manifest media type is invalid."
             )
-        manifest = self.get_json(manifest_descriptor)
-        if set(manifest) != {
-            "schemaVersion",
-            "sourceFingerprint",
-            "source",
-            "files",
-            "changeset",
-        } or manifest.get("schemaVersion") != CAS_SCHEMA_VERSION:
-            raise ContentAddressedStoreError("Candidate manifest schema is unsupported.")
-        require_sha256(
+        manifest = self.get_json(
+            manifest_descriptor,
+            max_bytes=MAX_CANDIDATE_METADATA_BYTES,
+        )
+        if (
+            set(manifest)
+            != {
+                "schemaVersion",
+                "sourceFingerprint",
+                "source",
+                "files",
+                "changeset",
+            }
+            or manifest.get("schemaVersion") != CAS_SCHEMA_VERSION
+        ):
+            raise ContentAddressedStoreError(
+                "Candidate manifest schema is unsupported."
+            )
+        _require_cas_sha256(
             str(manifest.get("sourceFingerprint", "")),
             "source_fingerprint",
         )
@@ -424,7 +527,9 @@ class ContentAddressedStore:
         )
         raw_changeset = manifest.get("changeset")
         if not isinstance(raw_changeset, Mapping):
-            raise ContentAddressedStoreError("Candidate changeset descriptor is invalid.")
+            raise ContentAddressedStoreError(
+                "Candidate changeset descriptor is invalid."
+            )
         try:
             changeset_descriptor = ArtifactDescriptor.from_payload(raw_changeset)
         except TwoPhaseContractError as exc:
@@ -445,7 +550,10 @@ class ContentAddressedStore:
         if not isinstance(files, list):
             raise ContentAddressedStoreError("Candidate manifest files are invalid.")
         normalized = _validated_manifest_records(files)
-        changeset = self.get_json(changeset_descriptor)
+        changeset = self.get_json(
+            changeset_descriptor,
+            max_bytes=MAX_CANDIDATE_METADATA_BYTES,
+        )
         _validate_stored_changeset(
             changeset,
             source_fingerprint=str(manifest["sourceFingerprint"]),
@@ -454,6 +562,11 @@ class ContentAddressedStore:
         validated_files: list[
             tuple[dict[str, object], ArtifactDescriptor | None]
         ] = []
+        if len(normalized) > MAX_CANDIDATE_FILES:
+            raise ContentAddressedStoreError(
+                "Candidate manifest file-count bound was exceeded."
+            )
+        total_bytes = 0
         for raw in normalized:
             if raw["kind"] == "missing":
                 validated_files.append((raw, None))
@@ -475,6 +588,15 @@ class ContentAddressedStore:
                 raise ContentAddressedStoreError(
                     "Candidate content descriptor is incoherent."
                 )
+            if descriptor.size_bytes > MAX_CANDIDATE_FILE_BYTES:
+                raise ContentAddressedStoreError(
+                    "Candidate file byte bound was exceeded."
+                )
+            total_bytes += descriptor.size_bytes
+            if total_bytes > MAX_CANDIDATE_TOTAL_BYTES:
+                raise ContentAddressedStoreError(
+                    "Candidate total byte bound was exceeded."
+                )
             validated_files.append((raw, descriptor))
         return manifest, changeset, validated_files
 
@@ -491,7 +613,7 @@ class ContentAddressedStore:
         )
 
     def _object_path(self, digest: str, *, create_parent: bool) -> Path:
-        require_sha256(digest, "CAS digest")
+        _require_cas_sha256(digest, "CAS digest")
         parent = self._objects / digest[:2]
         if create_parent:
             parent.mkdir(mode=0o700, exist_ok=True)
@@ -554,8 +676,12 @@ def _normalize_file_record(value: Mapping[str, Any]) -> dict[str, object]:
         raise ContentAddressedStoreError("Candidate file kind is unsupported.")
     if not isinstance(digest, str):
         raise ContentAddressedStoreError("Candidate file digest type is invalid.")
-    require_sha256(digest, "candidate file sha256")
-    if isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= 2**63 - 1:
+    _require_cas_sha256(digest, "candidate file sha256")
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or not 0 <= size <= 2**63 - 1
+    ):
         raise ContentAddressedStoreError("Candidate file size is outside safe bounds.")
     if isinstance(mode, bool) or not isinstance(mode, int) or not 0 <= mode <= 0o777:
         raise ContentAddressedStoreError("Candidate file mode is outside safe bounds.")
@@ -662,8 +788,8 @@ def _normalize_source_identity(
     index_sha256 = value.get("indexSha256")
     if not isinstance(root_sha256, str) or not isinstance(fingerprint, str):
         raise ContentAddressedStoreError("Candidate source digest types are invalid.")
-    require_sha256(root_sha256, "source root sha256")
-    require_sha256(fingerprint, "source fingerprint")
+    _require_cas_sha256(root_sha256, "source root sha256")
+    _require_cas_sha256(fingerprint, "source fingerprint")
     if fingerprint != source_fingerprint:
         raise ContentAddressedStoreError("Candidate source fingerprint is incoherent.")
     if not isinstance(git_repository, bool):
@@ -672,7 +798,7 @@ def _normalize_source_identity(
         raise ContentAddressedStoreError("Candidate source HEAD is invalid.")
     if not isinstance(index_sha256, str):
         raise ContentAddressedStoreError("Candidate source index digest is invalid.")
-    require_sha256(index_sha256, "source index sha256")
+    _require_cas_sha256(index_sha256, "source index sha256")
     if git_repository:
         if not head_sha or len(head_sha) > 128:
             raise ContentAddressedStoreError("Candidate source HEAD is invalid.")

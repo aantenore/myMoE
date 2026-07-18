@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 import base64
 import binascii
@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import tempfile
 import time
 from typing import Any, Iterator, Mapping
 
@@ -27,6 +28,7 @@ from .assistant_bridge_two_phase_contracts import (
     CandidateBinding,
     IndependentAttestation,
     ResumePlan,
+    TwoPhaseContractError,
     WORKFLOW_STATES,
     require_safe_id,
     require_sha256,
@@ -38,6 +40,7 @@ WORKFLOW_STORE_SCHEMA_VERSION = "2.0"
 _ENVELOPE_MEDIA_TYPE = "application/vnd.dsse.envelope+json"
 _STATEMENT_MEDIA_TYPE = "application/vnd.in-toto+json"
 _SECRET_BYTES = 32
+_MAX_ATTESTATION_ARTIFACT_BYTES = 8 * 1024 * 1024
 _READ_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_CLOEXEC", 0)
@@ -87,15 +90,20 @@ class RecordedAttestation:
     recorded_at: float
 
     def __post_init__(self) -> None:
-        for value, label in (
-            (self.verifier_id, "recorded verifier_id"),
-            (self.adapter_id, "recorded adapter_id"),
-            (self.key_id, "recorded key_id"),
-            (self.attestation_id, "recorded attestation_id"),
-        ):
-            require_safe_id(value, label)
-        require_sha256(self.evidence_sha256, "recorded evidence_sha256")
-        require_sha256(self.statement_sha256, "recorded statement_sha256")
+        try:
+            for value, label in (
+                (self.verifier_id, "recorded verifier_id"),
+                (self.adapter_id, "recorded adapter_id"),
+                (self.key_id, "recorded key_id"),
+                (self.attestation_id, "recorded attestation_id"),
+            ):
+                require_safe_id(value, label)
+            require_sha256(self.evidence_sha256, "recorded evidence_sha256")
+            require_sha256(self.statement_sha256, "recorded statement_sha256")
+        except TwoPhaseContractError as exc:
+            raise WorkflowStoreError(
+                "Recorded attestation identity is invalid."
+            ) from exc
         if (
             self.envelope.media_type != _ENVELOPE_MEDIA_TYPE
             or self.envelope.sha256 != self.evidence_sha256
@@ -103,8 +111,14 @@ class RecordedAttestation:
             or self.statement.sha256 != self.statement_sha256
         ):
             raise WorkflowStoreError("Recorded evidence descriptors are incoherent.")
-        for value in (self.issued_at, self.expires_at, self.recorded_at):
-            _wall_time(value)
+        issued = _wall_time(self.issued_at)
+        expires = _wall_time(self.expires_at)
+        recorded = _wall_time(self.recorded_at)
+        if not issued < expires or not issued <= recorded <= expires:
+            raise WorkflowStoreError("Recorded attestation timeline is invalid.")
+        object.__setattr__(self, "issued_at", issued)
+        object.__setattr__(self, "expires_at", expires)
+        object.__setattr__(self, "recorded_at", recorded)
 
     def payload(self) -> dict[str, object]:
         return {
@@ -138,18 +152,32 @@ class WorkflowRecord:
     last_wall_time: float
 
     def __post_init__(self) -> None:
-        require_safe_id(self.workflow_id, "workflow_id")
+        try:
+            require_safe_id(self.workflow_id, "workflow_id")
+        except TwoPhaseContractError as exc:
+            raise WorkflowStoreError("Workflow identity is invalid.") from exc
         if self.status not in WORKFLOW_STATES:
             raise WorkflowStoreError("Workflow status is invalid.")
-        require_sha256(self.workspace_root_sha256, "workspace_root_sha256")
-        if self.apply_transaction_id:
-            require_sha256(self.apply_transaction_id, "apply_transaction_id")
-        if self.recovered_transaction_id:
-            require_sha256(
-                self.recovered_transaction_id, "recovered_transaction_id"
-            )
-        if self.result_sha256:
-            require_sha256(self.result_sha256, "result_sha256")
+        try:
+            require_sha256(self.workspace_root_sha256, "workspace_root_sha256")
+            if self.apply_transaction_id:
+                require_sha256(self.apply_transaction_id, "apply_transaction_id")
+            if self.recovered_transaction_id:
+                require_sha256(
+                    self.recovered_transaction_id, "recovered_transaction_id"
+                )
+            if self.result_sha256:
+                require_sha256(self.result_sha256, "result_sha256")
+        except TwoPhaseContractError as exc:
+            raise WorkflowStoreError("Workflow digest state is invalid.") from exc
+        if self.status == "applying":
+            if not self.apply_transaction_id or self.result_sha256:
+                raise WorkflowStoreError("Applying workflow state is incoherent.")
+        elif self.status == "applied":
+            if not self.apply_transaction_id or not self.result_sha256:
+                raise WorkflowStoreError("Applied workflow state is incoherent.")
+        elif self.apply_transaction_id or self.result_sha256:
+            raise WorkflowStoreError("Non-apply workflow carries active apply state.")
         ordered = tuple(sorted(self.attestations, key=lambda item: item.verifier_id))
         if len({item.verifier_id for item in ordered}) != len(ordered):
             raise WorkflowStoreError("Workflow repeats an attestation verifier.")
@@ -816,6 +844,10 @@ class SQLiteWorkflowStore:
     ) -> bytes:
         """Load one persisted envelope for verification by the workflow service."""
 
+        if attestation.envelope.size_bytes > _MAX_ATTESTATION_ARTIFACT_BYTES:
+            raise WorkflowArtifactError(
+                "Persisted attestation envelope exceeds its read bound."
+            )
         try:
             envelope = self.evidence_cas.get_bytes(attestation.envelope)
         except (OSError, ValueError) as exc:
@@ -1074,6 +1106,12 @@ class SQLiteWorkflowStore:
             if record.status == "applied":
                 raise WorkflowStoreError("Applied workflow cannot become conflicted.")
             if record.status != "conflicted":
+                if record.apply_transaction_id:
+                    connection.execute(
+                        "UPDATE workflows SET apply_transaction_id = NULL "
+                        "WHERE workflow_id = ?",
+                        (workflow_id,),
+                    )
                 self._transition(
                     connection,
                     record,
@@ -1109,67 +1147,75 @@ class SQLiteWorkflowStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         expected = self._database_identity
-        if expected is not None and _database_identity(self.path) != expected:
+        if (
+            not self._read_only
+            and expected is not None
+            and _database_identity(self.path) != expected
+        ):
             raise WorkflowStoreError("Workflow database identity changed.")
-        read_snapshot: tuple[int, int, int, int, int] | None = None
-        target: str | Path = self.path
-        if self._read_only:
-            _require_no_database_sidecars(self.path)
-            read_snapshot = _database_read_snapshot(self.path)
-            target = f"{self.path.as_uri()}?mode=ro&immutable=1"
-        try:
-            connection = sqlite3.connect(
-                target,
-                timeout=self.timeout,
-                isolation_level=None,
-                uri=self._read_only,
-            )
-        except sqlite3.Error as exc:
-            raise WorkflowStoreError("Workflow database is unavailable.") from exc
-        connection.row_factory = sqlite3.Row
-        try:
-            if expected is not None and _database_identity(self.path) != expected:
-                raise WorkflowStoreError("Workflow database identity changed while opened.")
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA trusted_schema = OFF")
-            connection.execute("PRAGMA temp_store = MEMORY")
-            connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-            if self._read_only:
-                connection.execute("PRAGMA query_only = ON")
-                query_only = int(connection.execute("PRAGMA query_only").fetchone()[0])
-                journal = ""
-                synchronous = 0
-            else:
-                query_only = 0
-                journal = str(
-                    connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+        target_context = (
+            _read_only_database_target(self.path, expected_identity=expected)
+            if self._read_only
+            else nullcontext(self.path)
+        )
+        with target_context as target:
+            try:
+                connection = sqlite3.connect(
+                    target,
+                    timeout=self.timeout,
+                    isolation_level=None,
+                    uri=self._read_only,
                 )
-                connection.execute("PRAGMA synchronous = FULL")
-                synchronous = int(
-                    connection.execute("PRAGMA synchronous").fetchone()[0]
-                )
-            foreign_keys = int(connection.execute("PRAGMA foreign_keys").fetchone()[0])
-            invalid_read = self._read_only and (
-                query_only != 1 or foreign_keys != 1
-            )
-            invalid_write = not self._read_only and (
-                journal.lower() != "wal" or foreign_keys != 1 or synchronous != 2
-            )
-            if invalid_read or invalid_write:
-                raise WorkflowStoreError(
-                    "SQLite durability or referential-integrity mode is unavailable."
-                )
-            yield connection
-        except sqlite3.Error as exc:
-            raise WorkflowStoreError("Workflow database operation failed.") from exc
-        finally:
-            connection.close()
-            if read_snapshot is not None:
-                _require_no_database_sidecars(self.path)
-                if _database_read_snapshot(self.path) != read_snapshot:
+            except sqlite3.Error as exc:
+                raise WorkflowStoreError("Workflow database is unavailable.") from exc
+            connection.row_factory = sqlite3.Row
+            try:
+                if (
+                    not self._read_only
+                    and expected is not None
+                    and _database_identity(self.path) != expected
+                ):
                     raise WorkflowStoreError(
-                        "Workflow database changed during read-only status."
+                        "Workflow database identity changed while opened."
                     )
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA trusted_schema = OFF")
+                connection.execute("PRAGMA temp_store = MEMORY")
+                connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
+                if self._read_only:
+                    connection.execute("PRAGMA query_only = ON")
+                    query_only = int(
+                        connection.execute("PRAGMA query_only").fetchone()[0]
+                    )
+                    journal = ""
+                    synchronous = 0
+                else:
+                    query_only = 0
+                    journal = str(
+                        connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                    )
+                    connection.execute("PRAGMA synchronous = FULL")
+                    synchronous = int(
+                        connection.execute("PRAGMA synchronous").fetchone()[0]
+                    )
+                foreign_keys = int(
+                    connection.execute("PRAGMA foreign_keys").fetchone()[0]
+                )
+                invalid_read = self._read_only and (
+                    query_only != 1 or foreign_keys != 1
+                )
+                invalid_write = not self._read_only and (
+                    journal.lower() != "wal" or foreign_keys != 1 or synchronous != 2
+                )
+                if invalid_read or invalid_write:
+                    raise WorkflowStoreError(
+                        "SQLite durability or referential-integrity mode is unavailable."
+                    )
+                yield connection
+            except sqlite3.Error as exc:
+                raise WorkflowStoreError("Workflow database operation failed.") from exc
+            finally:
+                connection.close()
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -1392,8 +1438,6 @@ class SQLiteWorkflowStore:
             updated_at=float(row["updated_at"]),
             last_wall_time=float(row["last_wall_time"]),
         )
-        if record.status in {"applying", "applied"} and not record.apply_transaction_id:
-            raise WorkflowStoreError("Applying workflow lost its transaction id.")
         return record
 
     def _attestation(
@@ -1442,6 +1486,13 @@ class SQLiteWorkflowStore:
             raise WorkflowStoreError(
                 "Persisted attestation descriptor binding is invalid."
             )
+        if (
+            envelope_descriptor.size_bytes > _MAX_ATTESTATION_ARTIFACT_BYTES
+            or statement_descriptor.size_bytes > _MAX_ATTESTATION_ARTIFACT_BYTES
+        ):
+            raise WorkflowArtifactError(
+                "Persisted attestation artifact exceeds its read bound."
+            )
         try:
             envelope_bytes = self.evidence_cas.get_bytes(envelope_descriptor)
             statement_bytes = self.evidence_cas.get_bytes(statement_descriptor)
@@ -1456,7 +1507,7 @@ class SQLiteWorkflowStore:
             )
         except WorkflowStoreError as exc:
             raise WorkflowArtifactError(str(exc)) from exc
-        return RecordedAttestation(
+        attestation = RecordedAttestation(
             verifier_id=expected["verifierId"],
             adapter_id=expected["adapterId"],
             key_id=expected["keyId"],
@@ -1469,6 +1520,8 @@ class SQLiteWorkflowStore:
             expires_at=expected["expiresAt"],
             recorded_at=float(row["recorded_at"]),
         )
+        _validate_recorded_attestation_lifetime(attestation, binding)
+        return attestation
 
     def _resume_plan(
         self,
@@ -1677,6 +1730,19 @@ def _recovered_status(record: WorkflowRecord, now: float) -> str:
     return "staged"
 
 
+def _validate_recorded_attestation_lifetime(
+    attestation: RecordedAttestation,
+    binding: CandidateBinding,
+) -> None:
+    if (
+        attestation.issued_at < binding.created_at
+        or attestation.expires_at > binding.expires_at
+    ):
+        raise WorkflowStoreError(
+            "Recorded attestation lifetime is outside the workflow."
+        )
+
+
 def _validate_persisted_attestation_artifacts(
     envelope_bytes: bytes,
     statement_bytes: bytes,
@@ -1804,6 +1870,198 @@ def _validate_database_file(path: Path) -> os.stat_result:
     if os.name == "posix" and stat.S_IMODE(state.st_mode) & 0o077:
         raise WorkflowStoreError("Workflow database permissions are too broad.")
     return state
+
+
+def _database_descriptor_snapshot(descriptor: int) -> tuple[int, int, int, int, int]:
+    try:
+        state = os.fstat(descriptor)
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow database is unavailable.") from exc
+    if not stat.S_ISREG(state.st_mode):
+        raise WorkflowStoreError("Workflow database must be a regular file.")
+    if os.name == "posix" and stat.S_IMODE(state.st_mode) & 0o077:
+        raise WorkflowStoreError("Workflow database permissions are too broad.")
+    return (
+        int(state.st_dev),
+        int(state.st_ino),
+        int(state.st_size),
+        int(state.st_mtime_ns),
+        int(state.st_ctime_ns),
+    )
+
+
+def _database_descriptor_uri(
+    descriptor: int,
+    snapshot: tuple[int, int, int, int, int],
+) -> str | None:
+    if os.name != "posix":
+        return None
+    alias = Path("/dev/fd") / str(descriptor)
+    alias_descriptor = -1
+    try:
+        alias_flags = (
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        alias_descriptor = os.open(alias, alias_flags)
+        alias_snapshot = _database_descriptor_snapshot(alias_descriptor)
+    except OSError:
+        return None
+    except WorkflowStoreError:
+        return None
+    finally:
+        if alias_descriptor >= 0:
+            os.close(alias_descriptor)
+    if alias_snapshot != snapshot:
+        return None
+    return f"file:/dev/fd/{descriptor}?mode=ro&immutable=1"
+
+
+def _copy_database_snapshot(
+    source_descriptor: int,
+    source_snapshot: tuple[int, int, int, int, int],
+    *,
+    configured_state_root: Path,
+) -> Path:
+    temporary_descriptor = -1
+    temporary_path: Path | None = None
+    try:
+        temporary_root = Path(tempfile.gettempdir()).resolve(strict=True)
+        configured_root = configured_state_root.resolve(strict=True)
+        if temporary_root == configured_root or temporary_root.is_relative_to(
+            configured_root
+        ):
+            raise WorkflowStoreError(
+                "Workflow database snapshot location is not isolated."
+            )
+        temporary_descriptor, raw_path = tempfile.mkstemp(
+            prefix="mymoe-workflow-status-",
+            suffix=".sqlite3",
+            dir=temporary_root,
+        )
+        temporary_path = Path(raw_path)
+        if os.name == "posix":
+            os.fchmod(temporary_descriptor, 0o600)
+        os.lseek(source_descriptor, 0, os.SEEK_SET)
+        remaining = source_snapshot[2]
+        source_digest = hashlib.sha256()
+        while remaining:
+            chunk = os.read(source_descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                raise WorkflowStoreError("Workflow database snapshot is truncated.")
+            source_digest.update(chunk)
+            offset = 0
+            while offset < len(chunk):
+                written = os.write(temporary_descriptor, chunk[offset:])
+                if written <= 0:
+                    raise OSError("database snapshot write made no progress")
+                offset += written
+            remaining -= len(chunk)
+        if os.read(source_descriptor, 1):
+            raise WorkflowStoreError(
+                "Workflow database snapshot exceeds its size binding."
+            )
+        if _database_descriptor_snapshot(source_descriptor) != source_snapshot:
+            raise WorkflowStoreError("Workflow database changed while snapshotted.")
+        os.fsync(temporary_descriptor)
+        temporary_state = os.fstat(temporary_descriptor)
+        if (
+            not stat.S_ISREG(temporary_state.st_mode)
+            or int(temporary_state.st_size) != source_snapshot[2]
+            or (os.name == "posix" and stat.S_IMODE(temporary_state.st_mode) & 0o077)
+        ):
+            raise WorkflowStoreError("Workflow database snapshot is invalid.")
+        os.lseek(temporary_descriptor, 0, os.SEEK_SET)
+        copied_digest = hashlib.sha256()
+        remaining = source_snapshot[2]
+        while remaining:
+            chunk = os.read(temporary_descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                raise WorkflowStoreError("Workflow database snapshot is truncated.")
+            copied_digest.update(chunk)
+            remaining -= len(chunk)
+        if os.read(temporary_descriptor, 1):
+            raise WorkflowStoreError(
+                "Workflow database snapshot exceeds its size binding."
+            )
+        if copied_digest.digest() != source_digest.digest():
+            raise WorkflowStoreError("Workflow database snapshot digest is invalid.")
+        os.close(temporary_descriptor)
+        temporary_descriptor = -1
+        return temporary_path
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow database snapshot is unavailable.") from exc
+    finally:
+        if temporary_descriptor >= 0:
+            os.close(temporary_descriptor)
+        if temporary_path is not None and temporary_descriptor >= 0:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+@contextmanager
+def _read_only_database_target(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int] | None,
+) -> Iterator[str]:
+    _require_no_database_sidecars(path)
+    path_snapshot = _database_read_snapshot(path)
+    if expected_identity is not None and path_snapshot[:2] != expected_identity:
+        raise WorkflowStoreError("Workflow database identity changed.")
+    descriptor = -1
+    snapshot_path: Path | None = None
+    try:
+        descriptor = os.open(path, _READ_FLAGS)
+        descriptor_snapshot = _database_descriptor_snapshot(descriptor)
+        if descriptor_snapshot != path_snapshot:
+            raise WorkflowStoreError("Workflow database identity changed while opened.")
+        target = _database_descriptor_uri(descriptor, descriptor_snapshot)
+        if target is None:
+            snapshot_path = _copy_database_snapshot(
+                descriptor,
+                descriptor_snapshot,
+                configured_state_root=path.parent,
+            )
+            target = f"{snapshot_path.as_uri()}?mode=ro&immutable=1"
+        yield target
+    except OSError as exc:
+        raise WorkflowStoreError("Workflow database is unavailable.") from exc
+    finally:
+        verification_error: WorkflowStoreError | None = None
+        if descriptor >= 0:
+            try:
+                if _database_descriptor_snapshot(descriptor) != path_snapshot:
+                    raise WorkflowStoreError(
+                        "Workflow database changed during read-only status."
+                    )
+            except WorkflowStoreError as exc:
+                verification_error = exc
+            finally:
+                os.close(descriptor)
+        if snapshot_path is not None:
+            try:
+                snapshot_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if verification_error is None:
+                    verification_error = WorkflowStoreError(
+                        "Workflow database snapshot could not be removed."
+                    )
+                    verification_error.__cause__ = exc
+        try:
+            _require_no_database_sidecars(path)
+            if _database_read_snapshot(path) != path_snapshot:
+                raise WorkflowStoreError(
+                    "Workflow database changed during read-only status."
+                )
+        except WorkflowStoreError as exc:
+            if verification_error is None:
+                verification_error = exc
+        if verification_error is not None:
+            raise verification_error
 
 
 def _same_stage_operation(left: CandidateBinding, right: CandidateBinding) -> bool:

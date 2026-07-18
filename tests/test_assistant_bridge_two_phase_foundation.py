@@ -32,6 +32,8 @@ from local_moe.assistant_bridge_two_phase_contracts import (
     ArtifactDescriptor,
     AttestationCheck,
     CandidateBinding,
+    MAX_CANDIDATE_FILE_BYTES,
+    TwoPhaseContractError,
     VerificationPolicy,
     VerifierRequirement,
 )
@@ -40,10 +42,13 @@ from local_moe.assistant_bridge_two_phase_status import (
     TwoPhaseStatusReader,
 )
 from local_moe.assistant_bridge_workflow_store import (
+    RecordedAttestation,
     SQLiteWorkflowStore,
+    WorkflowArtifactError,
     WorkflowRecord,
     WorkflowStoreError,
 )
+from local_moe import assistant_bridge_workflow_store as workflow_store
 
 
 DIGEST_A = "a" * 64
@@ -167,10 +172,18 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             with mock.patch(
                 "local_moe.assistant_bridge_cas.tempfile.TemporaryDirectory"
             ) as temporary_directory:
-                validated_manifest, validated_changeset = (
-                    store.validate_candidate_closure(manifest, changeset)
-                )
+                with mock.patch.object(
+                    store,
+                    "_read_verified_artifact",
+                    wraps=store._read_verified_artifact,
+                ) as verified:
+                    validated_manifest, validated_changeset = (
+                        store.validate_candidate_closure(manifest, changeset)
+                    )
             temporary_directory.assert_not_called()
+            self.assertTrue(
+                any(call.kwargs.get("collect") is False for call in verified.mock_calls)
+            )
             self.assertEqual(validated_manifest, manifest_payload)
             self.assertEqual(validated_changeset, changeset_payload)
             with store.materialize_candidate(manifest) as materialized:
@@ -178,6 +191,86 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     (materialized / "src" / "module.py").read_bytes(),
                     content,
                 )
+
+    def test_candidate_closure_rejects_semantic_corruption_and_byte_overflow(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ContentAddressedStore(Path(temporary) / "cas")
+            changeset = store.put_json(
+                {
+                    "schemaVersion": "1.0",
+                    "sourceFingerprint": DIGEST_D,
+                    "changes": [],
+                },
+                media_type="application/vnd.mymoe.changeset+json",
+            )
+            base = {
+                "schemaVersion": "1.0",
+                "sourceFingerprint": DIGEST_D,
+                "source": _source_identity(DIGEST_D),
+                "files": [],
+                "changeset": changeset.payload(),
+            }
+            malformed = store.put_json(
+                {**base, "sourceFingerprint": "invalid"},
+                media_type="application/vnd.mymoe.workspace-manifest+json",
+            )
+            oversized_file = {
+                "path": "large.bin",
+                "kind": "file",
+                "sha256": DIGEST_A,
+                "size": MAX_CANDIDATE_FILE_BYTES + 1,
+                "mode": 0o600,
+                "direction": "round_trip",
+                "content": ArtifactDescriptor(
+                    media_type="application/octet-stream",
+                    sha256=DIGEST_A,
+                    size_bytes=MAX_CANDIDATE_FILE_BYTES + 1,
+                ).payload(),
+            }
+            oversized = store.put_json(
+                {**base, "files": [oversized_file]},
+                media_type="application/vnd.mymoe.workspace-manifest+json",
+            )
+
+            for manifest, message in (
+                (malformed, "must be a lowercase SHA-256"),
+                (oversized, "file byte bound"),
+            ):
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(ContentAddressedStoreError, message):
+                        store.validate_candidate_closure(manifest, changeset)
+
+    def test_store_candidate_rejects_file_above_memory_bound_before_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            store = ContentAddressedStore(root / "cas")
+            oversized = {
+                "path": "large.bin",
+                "kind": "file",
+                "sha256": DIGEST_A,
+                "size": MAX_CANDIDATE_FILE_BYTES + 1,
+                "mode": 0o600,
+                "direction": "round_trip",
+            }
+
+            with mock.patch(
+                "local_moe.assistant_bridge_cas._read_candidate_file"
+            ) as read_candidate:
+                with self.assertRaisesRegex(
+                    ContentAddressedStoreError, "file byte bound"
+                ):
+                    store.store_candidate(
+                        candidate,
+                        (oversized,),
+                        (),
+                        source_fingerprint=DIGEST_A,
+                        source_identity=_source_identity(DIGEST_A),
+                    )
+            read_candidate.assert_not_called()
 
     def test_cas_rejects_incoherent_size_mode_order_and_change_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -534,6 +627,26 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     with self.assertRaises(WorkflowStoreError):
                         replace(record, **values)
 
+            invalid_apply_states = (
+                {"status": "applying", "apply_transaction_id": ""},
+                {
+                    "status": "applying",
+                    "apply_transaction_id": DIGEST_A,
+                    "result_sha256": DIGEST_B,
+                },
+                {
+                    "status": "applied",
+                    "apply_transaction_id": DIGEST_A,
+                    "result_sha256": "",
+                },
+                {"status": "staged", "apply_transaction_id": DIGEST_A},
+                {"status": "failed", "result_sha256": DIGEST_B},
+            )
+            for values in invalid_apply_states:
+                with self.subTest(values=values):
+                    with self.assertRaises(WorkflowStoreError):
+                        replace(record, **values)
+
     def test_applying_status_requires_candidate_closure_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -572,6 +685,157 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 binding.manifest,
                 binding.changeset,
             )
+
+    def test_status_binds_candidate_source_and_root_to_durable_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state.sqlite3")
+            _, requirement = _verifier("verifier-a")
+            binding, challenge = _binding(
+                root / "binding",
+                store,
+                VerificationPolicy("policy-v1", 1, (requirement,)),
+            )
+            record, _ = store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            candidate_cas = ContentAddressedStore(
+                root / "binding" / "cas",
+                create_if_missing=False,
+            )
+
+            for incoherent in (
+                replace(
+                    record,
+                    binding=replace(binding, source_fingerprint=DIGEST_C),
+                ),
+                replace(record, workspace_root_sha256=DIGEST_C),
+            ):
+                with self.subTest(record=incoherent):
+                    read_store = mock.Mock()
+                    read_store.read_workflow.return_value = incoherent
+                    with self.assertRaises(TwoPhaseStatusError) as caught:
+                        TwoPhaseStatusReader(read_store, candidate_cas).status(
+                            binding.workflow_id,
+                            now=101,
+                        )
+                    self.assertEqual(caught.exception.code, "artifact_invalid")
+
+    def test_status_normalizes_semantic_artifact_and_state_corruption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state.sqlite3")
+            _, requirement = _verifier("verifier-a")
+            binding, challenge = _binding(
+                root / "binding",
+                store,
+                VerificationPolicy("policy-v1", 1, (requirement,)),
+            )
+            record, _ = store.create_workflow(
+                binding,
+                challenge=challenge,
+                stage_idempotency_key=STAGE_KEY,
+                workspace_root_sha256=DIGEST_E,
+                now=100,
+            )
+            candidate_cas = ContentAddressedStore(root / "binding" / "cas")
+            payload = candidate_cas.get_json(binding.manifest)
+            malformed = candidate_cas.put_json(
+                {**payload, "sourceFingerprint": "invalid"},
+                media_type="application/vnd.mymoe.workspace-manifest+json",
+            )
+            malformed_record = replace(
+                record,
+                binding=replace(binding, manifest=malformed),
+            )
+            artifact_store = mock.Mock()
+            artifact_store.read_workflow.return_value = malformed_record
+            with self.assertRaises(TwoPhaseStatusError) as artifact_error:
+                TwoPhaseStatusReader(artifact_store, candidate_cas).status(
+                    binding.workflow_id,
+                    now=101,
+                )
+            self.assertEqual(artifact_error.exception.code, "artifact_invalid")
+
+            state_store = mock.Mock()
+            state_store.read_workflow.side_effect = TwoPhaseContractError(
+                "persisted digest is invalid"
+            )
+            with self.assertRaises(TwoPhaseStatusError) as state_error:
+                TwoPhaseStatusReader(state_store, candidate_cas).status(
+                    binding.workflow_id,
+                    now=101,
+                )
+            self.assertEqual(state_error.exception.code, "state_invalid")
+
+    def test_recorded_attestation_timeline_and_workflow_bounds_are_validated(
+        self,
+    ) -> None:
+        envelope = ArtifactDescriptor(
+            media_type="application/vnd.dsse.envelope+json",
+            sha256=DIGEST_A,
+            size_bytes=1,
+        )
+        statement = ArtifactDescriptor(
+            media_type="application/vnd.in-toto+json",
+            sha256=DIGEST_B,
+            size_bytes=1,
+        )
+        common = {
+            "verifier_id": "verifier-a",
+            "adapter_id": "adapter-a",
+            "key_id": "key-a",
+            "attestation_id": "attestation-a",
+            "evidence_sha256": DIGEST_A,
+            "statement_sha256": DIGEST_B,
+            "envelope": envelope,
+            "statement": statement,
+        }
+        for times in (
+            {"issued_at": 110, "expires_at": 110, "recorded_at": 110},
+            {"issued_at": 110, "expires_at": 120, "recorded_at": 109},
+            {"issued_at": 110, "expires_at": 120, "recorded_at": 121},
+        ):
+            with self.subTest(times=times):
+                with self.assertRaisesRegex(WorkflowStoreError, "timeline"):
+                    RecordedAttestation(**common, **times)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store = SQLiteWorkflowStore(root / "state.sqlite3")
+            _, requirement = _verifier("verifier-a")
+            binding, _ = _binding(
+                root / "binding",
+                store,
+                VerificationPolicy("policy-v1", 1, (requirement,)),
+            )
+            for times in (
+                {"issued_at": 99, "expires_at": 120, "recorded_at": 110},
+                {"issued_at": 110, "expires_at": 201, "recorded_at": 120},
+            ):
+                attestation = RecordedAttestation(**common, **times)
+                with self.subTest(times=times):
+                    with self.assertRaisesRegex(WorkflowStoreError, "outside"):
+                        workflow_store._validate_recorded_attestation_lifetime(
+                            attestation,
+                            binding,
+                        )
+
+            oversized = replace(
+                RecordedAttestation(
+                    **common,
+                    issued_at=110,
+                    expires_at=120,
+                    recorded_at=115,
+                ),
+                envelope=replace(envelope, size_bytes=9 * 1024 * 1024),
+            )
+            with self.assertRaisesRegex(WorkflowArtifactError, "read bound"):
+                store.load_attestation_envelope(oversized)
 
     def test_resume_is_idempotent_and_persists_transaction_before_apply(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
