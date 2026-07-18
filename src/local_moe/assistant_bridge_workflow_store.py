@@ -295,10 +295,9 @@ class SQLiteWorkflowStore:
             ).fetchone()
             if row is not None:
                 record = self._record(connection, row, active_at=current)
-                self._check_clock(record, current)
                 if (
                     record.workflow_id != binding.workflow_id
-                    or record.binding.binding_sha256 != binding.binding_sha256
+                    or not _same_stage_operation(record.binding, binding)
                     or record.workspace_root_sha256 != workspace_root_sha256
                 ):
                     raise WorkflowStoreError(
@@ -1606,6 +1605,22 @@ def _validate_database_file(path: Path) -> os.stat_result:
     if os.name == "posix" and stat.S_IMODE(state.st_mode) & 0o077:
         raise WorkflowStoreError("Workflow database permissions are too broad.")
     return state
+
+
+def _same_stage_operation(left: CandidateBinding, right: CandidateBinding) -> bool:
+    """Compare stage intent while excluding absolute freshness timestamps."""
+
+    return (
+        left.workflow_id == right.workflow_id
+        and left.stage_idempotency_sha256 == right.stage_idempotency_sha256
+        and left.task_fingerprint == right.task_fingerprint
+        and left.config_sha256 == right.config_sha256
+        and left.source_fingerprint == right.source_fingerprint
+        and left.challenge_sha256 == right.challenge_sha256
+        and left.verification_policy == right.verification_policy
+        and left.lifetime_matches(right.lifetime_seconds)
+        and right.lifetime_matches(left.lifetime_seconds)
+    )
 
 
 def _load_or_create_secret(path: Path) -> bytes:

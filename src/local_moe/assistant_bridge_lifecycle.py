@@ -35,6 +35,19 @@ class TwoPhaseLifecycleError(ValueError):
 
 
 @dataclass(frozen=True)
+class _ResolvedStatePaths:
+    database: Path
+    cas: Path
+    transactions: Path
+
+    @property
+    def values(self) -> tuple[str, ...]:
+        return tuple(
+            str(value) for value in (self.database, self.cas, self.transactions)
+        )
+
+
+@dataclass(frozen=True)
 class GeneratedCandidate:
     workspace: Path = field(repr=False)
     source_fingerprint: str
@@ -85,6 +98,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         workflow_service: TwoPhaseWorkflowService,
         candidate_generator: CandidateGenerator[TRequest],
         config: TwoPhaseLifecycleConfig,
+        governed_workspace: Path,
     ) -> None:
         generator_sha256 = require_sha256(
             candidate_generator.configuration_sha256,
@@ -93,6 +107,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         self.workflow_service = workflow_service
         self.candidate_generator = candidate_generator
         self.config = config
+        self._governed_workspace = governed_workspace
         self._generator_configuration_sha256 = generator_sha256
         self.effective_config_sha256 = canonical_sha256(
             {
@@ -114,6 +129,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         now: float | None = None,
     ) -> StageReceipt:
         self._require_current_config(expected_config_sha256)
+        self._require_governed_workspace(source_workspace)
         replay = self.workflow_service.find_stage_replay(
             source_workspace=source_workspace,
             task_fingerprint=task_fingerprint,
@@ -121,6 +137,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
             expected_config_sha256=expected_config_sha256,
             verification_policy=self.config.trust.policy,
             idempotency_key=idempotency_key,
+            ttl_seconds=ttl_seconds,
             now=now,
         )
         if replay is not None:
@@ -177,6 +194,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         now: float | None = None,
     ) -> ResumePlan:
         self._require_current_config(expected_config_sha256)
+        self._require_governed_workspace(workspace)
         return self.workflow_service.plan_resume(
             workflow_id,
             workspace=workspace,
@@ -200,6 +218,7 @@ class TwoPhaseLifecycle(Generic[TRequest]):
         now: float | None = None,
     ) -> ResumeResult:
         self._require_current_config(expected_config_sha256)
+        self._require_governed_workspace(workspace)
         return self.workflow_service.apply_resume(
             workflow_id,
             workspace=workspace,
@@ -227,16 +246,32 @@ class TwoPhaseLifecycle(Generic[TRequest]):
                 "Lifecycle configuration no longer matches the expected digest."
             )
 
+    def _require_governed_workspace(self, workspace: str | Path) -> None:
+        if _resolve_existing_directory(workspace, "Governed workspace") != (
+            self._governed_workspace
+        ):
+            raise TwoPhaseLifecycleError(
+                "Lifecycle operation targets another governed workspace."
+            )
+
 
 def build_two_phase_lifecycle(
     config: TwoPhaseLifecycleConfig,
     *,
+    governed_workspace: str | Path,
     workspace_policy: WorkspaceScopePolicy,
     candidate_generator: CandidateGenerator[TRequest],
 ) -> TwoPhaseLifecycle[TRequest]:
-    cas = ContentAddressedStore(config.state.cas_path)
+    workspace = _resolve_existing_directory(governed_workspace, "Governed workspace")
+    state_paths = _resolve_disjoint_state_paths(
+        workspace,
+        database=config.state.database_path,
+        cas=config.state.cas_path,
+        transactions=config.state.transaction_state_dir,
+    )
+    cas = ContentAddressedStore(state_paths.cas)
     store = SQLiteWorkflowStore(
-        config.state.database_path,
+        state_paths.database,
         evidence_cas=cas,
         timeout=config.state.sqlite_timeout_seconds,
     )
@@ -245,7 +280,8 @@ def build_two_phase_lifecycle(
         cas=cas,
         config=TwoPhaseWorkflowConfig(
             workspace_policy=workspace_policy,
-            transaction_state_dir=str(config.state.transaction_state_dir),
+            transaction_state_dir=str(state_paths.transactions),
+            durable_state_paths=state_paths.values,
             candidate_ttl_seconds=config.state.candidate_ttl_seconds,
             confirmation_ttl_seconds=config.state.confirmation_ttl_seconds,
             transaction_lock_ttl_seconds=(config.state.transaction_lock_ttl_seconds),
@@ -256,4 +292,76 @@ def build_two_phase_lifecycle(
         workflow_service=workflow,
         candidate_generator=candidate_generator,
         config=config,
+        governed_workspace=workspace,
     )
+
+
+def _resolve_disjoint_state_paths(
+    workspace: Path,
+    *,
+    database: Path,
+    cas: Path,
+    transactions: Path,
+) -> _ResolvedStatePaths:
+    resolved = _ResolvedStatePaths(
+        database=_resolve_configured_path(database),
+        cas=_resolve_configured_path(cas),
+        transactions=_resolve_configured_path(transactions),
+    )
+    if any(
+        _paths_overlap(workspace, value)
+        for value in (
+            resolved.database,
+            resolved.cas,
+            resolved.transactions,
+        )
+    ):
+        raise TwoPhaseLifecycleError(
+            "Durable state paths must be outside the governed workspace."
+        )
+    return resolved
+
+
+def _resolve_existing_directory(value: str | Path, label: str) -> Path:
+    raw = Path(value).expanduser()
+    if raw.is_symlink():
+        raise TwoPhaseLifecycleError(f"{label} must be a non-link directory.")
+    try:
+        resolved = raw.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise TwoPhaseLifecycleError(f"{label} is unavailable.") from exc
+    if not resolved.is_dir():
+        raise TwoPhaseLifecycleError(f"{label} must be a directory.")
+    return resolved
+
+
+def _resolve_configured_path(value: Path) -> Path:
+    raw = Path(value).expanduser()
+    missing: list[str] = []
+    current = raw
+    while not current.exists():
+        if current.is_symlink() or current.parent == current:
+            raise TwoPhaseLifecycleError("Durable state path is unavailable.")
+        missing.append(current.name)
+        current = current.parent
+    try:
+        resolved = current.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise TwoPhaseLifecycleError("Durable state path is unavailable.") from exc
+    for component in reversed(missing):
+        resolved /= component
+    return resolved
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    try:
+        left.relative_to(right)
+    except ValueError:
+        pass
+    else:
+        return True
+    try:
+        right.relative_to(left)
+    except ValueError:
+        return False
+    return True

@@ -295,6 +295,32 @@ class CandidateBinding:
         )
 
     @property
+    def lifetime_seconds(self) -> float:
+        """Return freshness duration independently from absolute wall-clock time."""
+
+        return self.expires_at - self.created_at
+
+    def lifetime_matches(self, seconds: float) -> bool:
+        """Compare TTL at the precision available to its absolute timestamps."""
+
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            return False
+        requested = float(seconds)
+        if not math.isfinite(requested):
+            return False
+        tolerance = max(
+            math.ulp(self.created_at),
+            math.ulp(self.expires_at),
+            math.ulp(requested),
+        )
+        return math.isclose(
+            self.lifetime_seconds,
+            requested,
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        )
+
+    @property
     def binding_sha256(self) -> str:
         return canonical_sha256(self.payload())
 

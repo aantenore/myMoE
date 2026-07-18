@@ -227,6 +227,58 @@ if loaded:
 
 
 class TwoPhaseLifecycleTests(unittest.TestCase):
+    def test_rejects_each_configured_state_path_inside_governed_workspace(
+        self,
+    ) -> None:
+        cases = (
+            ("database_path", "source/.durable/workflows.sqlite3"),
+            ("cas_path", "source/.durable/cas"),
+            ("transaction_state_dir", "source/.durable/transactions"),
+        )
+        for field, value in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                fixture = _Fixture(Path(temporary))
+                raw = json.loads(fixture.config_path.read_text(encoding="utf-8"))
+                raw["state"][field] = value
+                fixture.config_path.write_text(json.dumps(raw), encoding="utf-8")
+                generator = _CandidateGenerator(fixture.source)
+
+                with self.assertRaisesRegex(
+                    TwoPhaseLifecycleError,
+                    "outside the governed workspace",
+                ):
+                    fixture.lifecycle(generator)
+
+                self.assertEqual(generator.calls, 0)
+                self.assertFalse((fixture.source / ".durable").exists())
+
+    def test_state_path_overlap_uses_resolved_physical_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = _Fixture(Path(temporary))
+            alias = fixture.root / "workspace-alias"
+            try:
+                os.symlink(fixture.source, alias)
+            except OSError as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+            raw = json.loads(fixture.config_path.read_text(encoding="utf-8"))
+            raw["state"]["database_path"] = (
+                "workspace-alias/.durable/workflows.sqlite3"
+            )
+            fixture.config_path.write_text(json.dumps(raw), encoding="utf-8")
+            generator = _CandidateGenerator(fixture.source)
+
+            with self.assertRaisesRegex(
+                TwoPhaseLifecycleError,
+                "outside the governed workspace",
+            ):
+                fixture.lifecycle(generator)
+
+            self.assertEqual(generator.calls, 0)
+            self.assertFalse((fixture.source / ".durable").exists())
+
     def test_stage_replay_preflight_skips_candidate_generator_and_shares_cas(
         self,
     ) -> None:
@@ -546,6 +598,7 @@ class _Fixture:
         config = load_two_phase_lifecycle_config(self.config_path)
         return build_two_phase_lifecycle(
             config,
+            governed_workspace=self.source,
             workspace_policy=WorkspaceScopePolicy(),
             candidate_generator=generator,
         )

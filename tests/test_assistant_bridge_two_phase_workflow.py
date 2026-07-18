@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -100,6 +103,128 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
 
             self.assertEqual(first.binding, third.binding)
             self.assertTrue(third.idempotent_replay)
+
+    def test_concurrent_same_key_stage_replays_identical_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            alternate_candidate = context.root / "alternate-candidate"
+            shutil.copytree(context.candidate, alternate_candidate)
+            (alternate_candidate / "app.txt").write_text("alternate\n")
+            barrier = threading.Barrier(2)
+            create_workflow = context.service.store.create_workflow
+
+            def synchronized_create(*args: object, **kwargs: object):
+                barrier.wait(timeout=5)
+                return create_workflow(*args, **kwargs)
+
+            with patch.object(
+                context.service.store,
+                "create_workflow",
+                side_effect=synchronized_create,
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(
+                            context.stage,
+                            now=1_750_000_000.123_456,
+                            ttl_seconds=80.125,
+                        ),
+                        executor.submit(
+                            context.stage,
+                            now=1_750_000_000.223_456,
+                            ttl_seconds=80.125,
+                            candidate_workspace=alternate_candidate,
+                        ),
+                    )
+                    receipts = tuple(future.result(timeout=10) for future in futures)
+
+            self.assertEqual(receipts[0].binding, receipts[1].binding)
+            self.assertEqual(
+                sorted(receipt.idempotent_replay for receipt in receipts),
+                [False, True],
+            )
+            self.assertEqual(
+                [
+                    event.event_type
+                    for event in context.service.store.events(
+                        receipts[0].workflow_id
+                    )
+                ],
+                ["candidate_staged"],
+            )
+
+    def test_stage_replay_compares_ttl_duration_not_absolute_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+
+            first = context.stage(now=100, ttl_seconds=80)
+            replay = context.stage(now=100.1, ttl_seconds=80)
+
+            self.assertEqual(first.binding, replay.binding)
+            self.assertTrue(replay.idempotent_replay)
+            with self.assertRaisesRegex(
+                TwoPhaseWorkflowError,
+                "another operation",
+            ):
+                context.stage(now=100.2, ttl_seconds=81)
+
+    def test_concurrent_same_key_stage_conflicts_on_different_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            barrier = threading.Barrier(2)
+            create_workflow = context.service.store.create_workflow
+
+            def synchronized_create(*args: object, **kwargs: object):
+                barrier.wait(timeout=5)
+                return create_workflow(*args, **kwargs)
+
+            with patch.object(
+                context.service.store,
+                "create_workflow",
+                side_effect=synchronized_create,
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(context.stage, now=100, ttl_seconds=80),
+                        executor.submit(context.stage, now=100.1, ttl_seconds=81),
+                    )
+                    outcomes: list[object] = []
+                    for future in futures:
+                        try:
+                            outcomes.append(future.result(timeout=10))
+                        except TwoPhaseWorkflowError as exc:
+                            outcomes.append(exc)
+
+            self.assertEqual(
+                sum(not isinstance(value, Exception) for value in outcomes),
+                1,
+            )
+            errors = [value for value in outcomes if isinstance(value, Exception)]
+            self.assertEqual(len(errors), 1)
+            self.assertIn("another candidate", str(errors[0]))
+
+    def test_resume_rechecks_transaction_state_path_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            try:
+                os.symlink(context.source, context.transactions)
+            except OSError as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            with self.assertRaisesRegex(
+                TwoPhaseWorkflowError,
+                "outside the governed workspace",
+            ):
+                context.service.plan_resume(
+                    receipt.workflow_id,
+                    workspace=context.source,
+                    expected_source_fingerprint=receipt.binding.source_fingerprint,
+                    expected_config_sha256=CONFIG_SHA256,
+                    idempotency_key=RESUME_KEY,
+                    attestation_envelopes=(context.envelope(receipt.binding),),
+                    now=110,
+                )
 
     def test_stage_rejects_candidate_drift_after_snapshot_evaluation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -275,6 +400,75 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                 now=115,
             )
             self.assertEqual(applied.status, "applied")
+
+    def test_journal_recovery_does_not_depend_on_candidate_cas(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            context = _context(Path(temporary), changed=True)
+            receipt = context.stage(now=100)
+            plan = context.service.plan_resume(
+                receipt.workflow_id,
+                workspace=context.source,
+                expected_source_fingerprint=receipt.binding.source_fingerprint,
+                expected_config_sha256=CONFIG_SHA256,
+                idempotency_key=RESUME_KEY,
+                attestation_envelopes=(context.envelope(receipt.binding),),
+                now=110,
+            )
+
+            def crash(**kwargs: object) -> object:
+                return real_apply_changeset(**kwargs, _fault_after_mutation=0)
+
+            with patch(
+                "local_moe.assistant_bridge_two_phase.apply_changeset", crash
+            ):
+                with self.assertRaises(RuntimeError):
+                    context.service.apply_resume(
+                        receipt.workflow_id,
+                        workspace=context.source,
+                        expected_source_fingerprint=receipt.binding.source_fingerprint,
+                        expected_config_sha256=CONFIG_SHA256,
+                        plan_id=plan.plan_id,
+                        confirmation_id=plan.confirmation_id,
+                        now=111,
+                    )
+            applying = context.service.status(receipt.workflow_id, now=112)
+            transaction_id = applying.apply_transaction_id
+            digest = receipt.binding.manifest.sha256
+            manifest_object = (
+                context.service.cas.root
+                / "objects"
+                / "sha256"
+                / digest[:2]
+                / digest[2:]
+            )
+            manifest_object.unlink()
+
+            with patch.object(
+                context.service.cas,
+                "load_candidate",
+                side_effect=AssertionError("recovery must not read candidate CAS"),
+            ) as load_candidate:
+                recovered = context.service.apply_resume(
+                    receipt.workflow_id,
+                    workspace=context.source,
+                    expected_source_fingerprint=receipt.binding.source_fingerprint,
+                    expected_config_sha256=CONFIG_SHA256,
+                    plan_id=plan.plan_id,
+                    confirmation_id=plan.confirmation_id,
+                    now=113,
+                )
+
+            load_candidate.assert_not_called()
+            self.assertEqual(recovered.status, "ready")
+            self.assertEqual(recovered.code, "recovered_confirmation_required")
+            self.assertTrue(recovered.idempotent_replay)
+            self.assertEqual((context.source / "app.txt").read_text(), "source\n")
+            self.assertFalse(
+                (
+                    context.transactions
+                    / f"transaction-{transaction_id}"
+                ).exists()
+            )
 
     def test_expired_applying_journal_rolls_back_without_new_authority(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -603,6 +797,11 @@ class _Context:
             config=TwoPhaseWorkflowConfig(
                 workspace_policy=WorkspaceScopePolicy(),
                 transaction_state_dir=str(self.transactions),
+                durable_state_paths=(
+                    str(store.path),
+                    str(cas.root),
+                    str(self.transactions),
+                ),
                 candidate_ttl_seconds=100,
                 confirmation_ttl_seconds=20,
             ),
@@ -613,6 +812,8 @@ class _Context:
         self,
         *,
         now: float,
+        ttl_seconds: float | None = None,
+        candidate_workspace: Path | None = None,
         expected_candidate_snapshot_fingerprint: str | None = None,
     ) -> object:
         source_fingerprint = snapshot_workspace(
@@ -620,7 +821,11 @@ class _Context:
         ).fingerprint
         return self.service.stage_candidate(
             source_workspace=self.source,
-            candidate_workspace=self.candidate,
+            candidate_workspace=(
+                self.candidate
+                if candidate_workspace is None
+                else candidate_workspace
+            ),
             task_fingerprint=TASK_SHA256,
             expected_source_fingerprint=source_fingerprint,
             expected_config_sha256=CONFIG_SHA256,
@@ -629,6 +834,7 @@ class _Context:
             ),
             verification_policy=self.policy,
             idempotency_key=STAGE_KEY,
+            ttl_seconds=ttl_seconds,
             now=now,
         )
 

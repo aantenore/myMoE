@@ -60,6 +60,7 @@ def candidate_workspace_snapshot_fingerprint(
 class TwoPhaseWorkflowConfig:
     workspace_policy: WorkspaceScopePolicy
     transaction_state_dir: str
+    durable_state_paths: tuple[str, ...]
     candidate_ttl_seconds: float = 24 * 60 * 60
     confirmation_ttl_seconds: float = 300
     transaction_lock_ttl_seconds: float = 120
@@ -67,6 +68,11 @@ class TwoPhaseWorkflowConfig:
     def __post_init__(self) -> None:
         if not self.transaction_state_dir:
             raise TwoPhaseWorkflowError("Transaction state directory is required.")
+        if not self.durable_state_paths or any(
+            not isinstance(value, str) or not value
+            for value in self.durable_state_paths
+        ):
+            raise TwoPhaseWorkflowError("Durable state paths are required.")
         for value, minimum, maximum, label in (
             (self.candidate_ttl_seconds, 1, 7 * 24 * 60 * 60, "candidate TTL"),
             (self.confirmation_ttl_seconds, 1, 3600, "confirmation TTL"),
@@ -134,6 +140,7 @@ class TwoPhaseWorkflowService:
             expected_config_sha256=expected_config_sha256,
             verification_policy=verification_policy,
             idempotency_key=idempotency_key,
+            ttl_seconds=lifetime,
             now=current,
         )
         if replay is not None:
@@ -142,6 +149,7 @@ class TwoPhaseWorkflowService:
             source = snapshot_workspace(
                 source_workspace, self.config.workspace_policy
             )
+            self._require_disjoint_state_paths(source.root)
             if source.fingerprint != expected_source_fingerprint:
                 raise TwoPhaseWorkflowError(
                     "Workspace source no longer matches the expected stage input."
@@ -233,6 +241,7 @@ class TwoPhaseWorkflowService:
         expected_config_sha256: str,
         verification_policy: VerificationPolicy,
         idempotency_key: str,
+        ttl_seconds: float | None = None,
         now: float | None = None,
     ) -> StageReceipt | None:
         """Return an existing stage before a candidate generator is invoked."""
@@ -240,11 +249,19 @@ class TwoPhaseWorkflowService:
         require_sha256(task_fingerprint, "task_fingerprint")
         require_sha256(expected_source_fingerprint, "expected_source_fingerprint")
         require_sha256(expected_config_sha256, "expected_config_sha256")
+        lifetime = (
+            self.config.candidate_ttl_seconds
+            if ttl_seconds is None
+            else ttl_seconds
+        )
+        if isinstance(lifetime, bool) or not 1 <= lifetime <= 7 * 24 * 60 * 60:
+            raise TwoPhaseWorkflowError("Candidate TTL is outside safe bounds.")
         current = _now(now)
         try:
             source = snapshot_workspace(
                 source_workspace, self.config.workspace_policy
             )
+            self._require_disjoint_state_paths(source.root)
             if source.fingerprint != expected_source_fingerprint:
                 raise TwoPhaseWorkflowError(
                     "Workspace source no longer matches the expected stage input."
@@ -272,6 +289,7 @@ class TwoPhaseWorkflowService:
             or binding.source_fingerprint != expected_source_fingerprint
             or binding.config_sha256 != expected_config_sha256
             or binding.verification_policy != verification_policy
+            or not binding.lifetime_matches(float(lifetime))
             or record.workspace_root_sha256 != source_identity["rootSha256"]
         ):
             raise TwoPhaseWorkflowError(
@@ -339,6 +357,7 @@ class TwoPhaseWorkflowService:
         now: float | None = None,
     ) -> ResumePlan:
         current = _now(now)
+        self._require_disjoint_state_paths(workspace)
         record = self.status(workflow_id, now=current)
         self._validate_expected_binding(
             record,
@@ -380,12 +399,26 @@ class TwoPhaseWorkflowService:
         now: float | None = None,
     ) -> ResumeResult:
         current_time = _now(now)
+        self._require_disjoint_state_paths(workspace)
         record = self.status(workflow_id, now=current_time)
         self._validate_expected_binding(
             record,
             expected_source_fingerprint=expected_source_fingerprint,
             expected_config_sha256=expected_config_sha256,
         )
+        if record.status == "applying":
+            transaction_id = record.apply_transaction_id
+            if not transaction_id:
+                raise TwoPhaseWorkflowError(
+                    "Apply transaction identity is unavailable."
+                )
+            if self._journal_exists(transaction_id):
+                return self._recover_and_require_confirmation(
+                    record,
+                    workspace=workspace,
+                    transaction_id=transaction_id,
+                    now=current_time,
+                )
         if record.status in {"staged", "attested", "ready"}:
             record = self._reverify_attestations(
                 workflow_id, now=current_time
@@ -564,6 +597,22 @@ class TwoPhaseWorkflowService:
             if current.fingerprint == record.binding.source_fingerprint
             else None
         )
+
+    def _require_disjoint_state_paths(self, workspace_root: str | Path) -> None:
+        try:
+            workspace = Path(workspace_root).expanduser().resolve(strict=True)
+            state_paths = tuple(
+                Path(value).expanduser().resolve(strict=False)
+                for value in self.config.durable_state_paths
+            )
+        except (OSError, RuntimeError) as exc:
+            raise TwoPhaseWorkflowError(
+                "Durable state paths could not be resolved."
+            ) from exc
+        if any(_paths_overlap(workspace, state_path) for state_path in state_paths):
+            raise TwoPhaseWorkflowError(
+                "Durable state paths must be outside the governed workspace."
+            )
 
     @staticmethod
     def _validate_workspace_root(
@@ -943,6 +992,20 @@ def _recovery_code(record: WorkflowRecord) -> str:
         if record.status == "expired"
         else "recovered_confirmation_required"
     )
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    try:
+        left.relative_to(right)
+    except ValueError:
+        pass
+    else:
+        return True
+    try:
+        right.relative_to(left)
+    except ValueError:
+        return False
+    return True
 
 
 def _now(value: float | None) -> float:
