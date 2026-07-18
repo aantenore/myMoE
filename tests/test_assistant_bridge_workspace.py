@@ -16,6 +16,7 @@ from uuid import uuid4
 import local_moe.assistant_bridge_workspace as workspace_module
 from local_moe.assistant_bridge_runtime import fingerprint_environment
 from local_moe.assistant_bridge_workspace import (
+    GitIdentity,
     IgnoredPathRule,
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
@@ -41,13 +42,85 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, poisoned, clear=False):
             environment = workspace_module._sanitized_git_environment(
-                identity=False,
+                commit_identity=None,
                 executable_path=Path(sys.executable),
             )
 
         for name in poisoned:
             self.assertNotIn(name, environment)
+        for name in (
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+        ):
+            self.assertNotIn(name, environment)
         self.assertTrue(fingerprint_environment(environment).sha256)
+
+    def test_synthetic_git_identity_is_validated(self) -> None:
+        self.assertEqual(
+            WorkspaceScopePolicy().synthetic_git_identity,
+            GitIdentity(),
+        )
+        for kwargs in (
+            {"name": ""},
+            {"name": " invalid"},
+            {"name": "invalid\nname"},
+            {"email": "missing-at"},
+            {"email": "two@@localhost"},
+            {"email": "space @localhost"},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(
+                WorkspaceSecurityError
+            ):
+                GitIdentity(**kwargs)
+
+    def test_configured_identity_is_limited_to_synthetic_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            root.mkdir()
+            _initialize_repo(root)
+            source_head = _git(root, "rev-parse", "HEAD")
+            source_identity = _git(
+                root,
+                "log",
+                "-1",
+                "--format=%an%x00%ae%x00%cn%x00%ce",
+            )
+            configured = GitIdentity(
+                name="Configured Materializer",
+                email="configured@localhost",
+            )
+            policy = WorkspaceScopePolicy(synthetic_git_identity=configured)
+            snapshot = snapshot_workspace(root, policy)
+
+            with materialize_workspace(snapshot, policy) as materialized:
+                synthetic_identity = _git(
+                    materialized.root,
+                    "log",
+                    "-1",
+                    "--format=%an%x00%ae%x00%cn%x00%ce",
+                )
+
+            self.assertEqual(
+                synthetic_identity.split("\x00"),
+                [
+                    configured.name,
+                    configured.email,
+                    configured.name,
+                    configured.email,
+                ],
+            )
+            self.assertEqual(_git(root, "rev-parse", "HEAD"), source_head)
+            self.assertEqual(
+                _git(
+                    root,
+                    "log",
+                    "-1",
+                    "--format=%an%x00%ae%x00%cn%x00%ce",
+                ),
+                source_identity,
+            )
 
     def test_unborn_git_and_ignored_scope_are_attested_without_real_git_metadata(
         self,

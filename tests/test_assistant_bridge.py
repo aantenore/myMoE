@@ -19,6 +19,7 @@ import local_moe.assistant_bridge_runtime as assistant_bridge_runtime
 from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
+    GitIdentity,
     VerificationEvidence,
     attest_workspace,
     build_assistant_task,
@@ -49,6 +50,38 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.config = load_assistant_bridge_config(
             ROOT / "configs" / "assistant-bridge.json"
         )
+
+    def test_workspace_synthetic_git_identity_is_configurable(self) -> None:
+        self.assertEqual(
+            self.config.workspace.scope.synthetic_git_identity,
+            GitIdentity(),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = json.loads(
+                (ROOT / "configs" / "assistant-bridge.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            raw["workspace"]["synthetic_git_identity"] = {
+                "name": "Configured Materializer",
+                "email": "configured@localhost",
+            }
+            path = Path(tmp) / "assistant-bridge.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+
+            configured = load_assistant_bridge_config(path)
+
+        self.assertEqual(
+            configured.workspace.scope.synthetic_git_identity,
+            GitIdentity(
+                name="Configured Materializer",
+                email="configured@localhost",
+            ),
+        )
+        descriptor = configured.workspace.effective_descriptor()
+        self.assertIn("synthetic_git_identity_sha256", descriptor)
+        self.assertNotIn("Configured Materializer", json.dumps(descriptor))
+        self.assertNotIn("configured@localhost", json.dumps(descriptor))
 
     def test_loads_task_and_strict_evidence_contract_fixtures(self) -> None:
         task = load_assistant_task(

@@ -253,6 +253,10 @@
     "max_total_bytes": 268435456,
     "max_file_bytes": 67108864,
     "ignored_paths": [],
+    "synthetic_git_identity": {
+      "name": "Workspace Materializer",
+      "email": "materializer@localhost"
+    },
     "transaction_state_dir": "work/runtime/assistant-transactions",
     "transaction_lock_ttl_seconds": 120
   }

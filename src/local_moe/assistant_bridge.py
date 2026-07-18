@@ -70,6 +70,7 @@ from .assistant_bridge_verifier_isolation import (
     verifier_isolation_capability,
 )
 from .assistant_bridge_workspace import (
+    GitIdentity,
     IgnoredPathRule,
     MaterializedWorkspace,
     WorkspaceScopePolicy,
@@ -1123,6 +1124,9 @@ class BridgeWorkspacePolicy:
                 {"path": item.path, "direction": item.direction}
                 for item in self.scope.ignored_paths
             ],
+            "synthetic_git_identity_sha256": _sha256_text(
+                _canonical_json(self.scope.synthetic_git_identity.payload())
+            ),
             "transaction_state_dir_sha256": _sha256_text(
                 str(Path(self.transaction_state_dir).resolve())
             ),
@@ -1902,6 +1906,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "max_file_bytes",
             "max_files",
             "max_total_bytes",
+            "synthetic_git_identity",
             "transaction_lock_ttl_seconds",
             "transaction_state_dir",
         },
@@ -1958,6 +1963,15 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             )
         except WorkspaceSecurityError as exc:
             raise AssistantBridgeError(str(exc)) from None
+    synthetic_identity_raw = _as_object(
+        workspace_raw.get("synthetic_git_identity", {}),
+        "workspace.synthetic_git_identity",
+    )
+    _reject_unknown(
+        "workspace.synthetic_git_identity",
+        synthetic_identity_raw,
+        {"email", "name"},
+    )
     try:
         workspace_policy = BridgeWorkspacePolicy(
             scope=WorkspaceScopePolicy(
@@ -1973,6 +1987,20 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
                     "workspace.max_file_bytes",
                 ),
                 ignored_paths=tuple(ignored_rules),
+                synthetic_git_identity=GitIdentity(
+                    name=_string_value(
+                        synthetic_identity_raw.get(
+                            "name", "Workspace Materializer"
+                        ),
+                        "workspace.synthetic_git_identity.name",
+                    ),
+                    email=_string_value(
+                        synthetic_identity_raw.get(
+                            "email", "materializer@localhost"
+                        ),
+                        "workspace.synthetic_git_identity.email",
+                    ),
+                ),
             ),
             transaction_state_dir=str(transaction_path.resolve()),
             transaction_lock_ttl_seconds=_number_value(

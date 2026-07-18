@@ -48,6 +48,7 @@ SUPPORTED_FACADE_API = frozenset(
         "DiffEvidence",
         "EscalationCapsule",
         "ExternalVerifierSpec",
+        "GitIdentity",
         "PremiumAuthAttestation",
         "ProfilePolicy",
         "ProviderSpec",
@@ -117,6 +118,7 @@ COMPATIBILITY_SEAM_REEXPORTS: dict[str, tuple[str, ...]] = {
         "redact_user_controlled_fields",
     ),
     "local_moe.assistant_bridge_workspace": (
+        "GitIdentity",
         "IgnoredPathRule",
         "MaterializedWorkspace",
         "WorkspaceChange",

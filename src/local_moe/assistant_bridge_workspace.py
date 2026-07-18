@@ -61,6 +61,34 @@ _TRUSTED_DIFF_ATTRIBUTES = (
 
 
 @dataclass(frozen=True)
+class GitIdentity:
+    """Explicit identity used only for an internal synthetic Git commit."""
+
+    name: str = "Workspace Materializer"
+    email: str = "materializer@localhost"
+
+    def __post_init__(self) -> None:
+        for value, label, maximum in (
+            (self.name, "Git identity name", 128),
+            (self.email, "Git identity email", 254),
+        ):
+            if (
+                not isinstance(value, str)
+                or value != value.strip()
+                or not 1 <= len(value) <= maximum
+                or any(character in value for character in "\x00\r\n<>")
+            ):
+                raise WorkspaceSecurityError(f"{label} is invalid.")
+        if self.email.count("@") != 1 or any(
+            character.isspace() for character in self.email
+        ):
+            raise WorkspaceSecurityError("Git identity email is invalid.")
+
+    def payload(self) -> dict[str, str]:
+        return {"name": self.name, "email": self.email}
+
+
+@dataclass(frozen=True)
 class TrustedGitSession:
     """One bounded Git executable identity reused for read-only workspace queries."""
 
@@ -115,7 +143,7 @@ class TrustedGitSession:
         intent = _execute_git(
             intent_command,
             self.root,
-            identity=False,
+            commit_identity=None,
             git_identity=self.executable,
             stdout_limit_bytes=max_output_bytes,
         )
@@ -136,7 +164,7 @@ class TrustedGitSession:
         return _execute_git(
             check_command,
             self.root,
-            identity=False,
+            commit_identity=None,
             git_identity=self.executable,
             stdout_limit_bytes=max_output_bytes,
         )
@@ -276,9 +304,14 @@ class WorkspaceScopePolicy:
     max_total_bytes: int = 256 * 1024 * 1024
     max_file_bytes: int = 64 * 1024 * 1024
     ignored_paths: tuple[IgnoredPathRule, ...] = ()
+    synthetic_git_identity: GitIdentity = field(default_factory=GitIdentity)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ignored_paths", tuple(self.ignored_paths))
+        if not isinstance(self.synthetic_git_identity, GitIdentity):
+            raise WorkspaceSecurityError(
+                "Workspace synthetic Git identity is invalid."
+            )
         if not 1 <= self.max_files <= 100_000:
             raise WorkspaceSecurityError("Workspace max_files is outside safe bounds.")
         if not 1 <= self.max_file_bytes <= self.max_total_bytes:
@@ -442,7 +475,10 @@ def materialize_workspace(
             snapshot,
             snapshot_materialized(root, policy),
         )
-        _initialize_synthetic_repository(root)
+        _initialize_synthetic_repository(
+            root,
+            identity=policy.synthetic_git_identity,
+        )
         yield MaterializedWorkspace(
             root=root,
             source_snapshot=snapshot,
@@ -880,33 +916,37 @@ def _manifest_files(
     return tuple(result)
 
 
-def _initialize_synthetic_repository(root: Path) -> None:
+def _initialize_synthetic_repository(
+    root: Path,
+    *,
+    identity: GitIdentity,
+) -> None:
     git_identity = _resolve_trusted_git_identity(required=True)
     if git_identity is None:  # Defensive: required=True must either resolve or raise.
         raise WorkspaceSecurityError("Trusted Git executable is unavailable.")
     _run_git(
         ("init", "-q", "--template="),
         root,
-        identity=True,
+        commit_identity=None,
         git_identity=git_identity,
     )
     _install_trusted_diff_attributes(root)
     _run_git(
         ("add", "-f", "--all"),
         root,
-        identity=True,
+        commit_identity=None,
         git_identity=git_identity,
     )
     _run_git(
         ("commit", "-q", "--allow-empty", "-m", "materialized baseline"),
         root,
-        identity=True,
+        commit_identity=identity,
         git_identity=git_identity,
     )
     remotes = _run_git(
         ("remote",),
         root,
-        identity=True,
+        commit_identity=None,
         capture=True,
         git_identity=git_identity,
     ).splitlines()
@@ -1399,7 +1439,7 @@ def _resolve_trusted_git_identity(
             if not candidate.is_file() or not os.access(candidate, os.X_OK):
                 continue
             environment = _sanitized_git_environment(
-                identity=False,
+                commit_identity=None,
                 executable_path=candidate,
             )
             return resolve_executable(str(candidate), env=environment)
@@ -1427,7 +1467,7 @@ def _is_git_workspace(
     result = _execute_git(
         ("rev-parse", "--is-inside-work-tree"),
         root,
-        identity=False,
+        commit_identity=None,
         git_identity=git_identity,
     )
     if result.returncode != 0:
@@ -1468,7 +1508,7 @@ def _git_optional(
     result = _execute_git(
         args,
         root,
-        identity=False,
+        commit_identity=None,
         git_identity=selected,
     )
     if result.returncode == 0:
@@ -1484,7 +1524,7 @@ def _run_git(
     *,
     capture: bool = False,
     capture_bytes: bool = False,
-    identity: bool = False,
+    commit_identity: GitIdentity | None = None,
     git_identity: ExecutableIdentity | None = None,
     stdout_limit_bytes: int = _GIT_STDOUT_LIMIT_BYTES,
 ) -> str | bytes:
@@ -1495,7 +1535,7 @@ def _run_git(
     result = _execute_git(
         command,
         cwd,
-        identity=identity,
+        commit_identity=commit_identity,
         git_identity=selected,
         stdout_limit_bytes=stdout_limit_bytes,
     )
@@ -1537,12 +1577,12 @@ def _execute_git(
     argv: Sequence[str],
     cwd: Path,
     *,
-    identity: bool,
+    commit_identity: GitIdentity | None,
     git_identity: ExecutableIdentity,
     stdout_limit_bytes: int = _GIT_STDOUT_LIMIT_BYTES,
 ) -> ProcessExecutionResult:
     environment = _sanitized_git_environment(
-        identity=identity,
+        commit_identity=commit_identity,
         executable_path=Path(git_identity.resolved_path),
     )
     try:
@@ -1581,7 +1621,7 @@ def _execute_git(
 
 def _sanitized_git_environment(
     *,
-    identity: bool,
+    commit_identity: GitIdentity | None,
     executable_path: Path,
 ) -> dict[str, str]:
     allowed = {
@@ -1614,13 +1654,13 @@ def _sanitized_git_environment(
             "GIT_PROTOCOL_FROM_USER": "0",
         }
     )
-    if identity:
+    if commit_identity is not None:
         env.update(
             {
-                "GIT_AUTHOR_NAME": "Antonio Antenore",
-                "GIT_AUTHOR_EMAIL": "ant_ant95@hotmail.it",
-                "GIT_COMMITTER_NAME": "Antonio Antenore",
-                "GIT_COMMITTER_EMAIL": "ant_ant95@hotmail.it",
+                "GIT_AUTHOR_NAME": commit_identity.name,
+                "GIT_AUTHOR_EMAIL": commit_identity.email,
+                "GIT_COMMITTER_NAME": commit_identity.name,
+                "GIT_COMMITTER_EMAIL": commit_identity.email,
             }
         )
     return env
