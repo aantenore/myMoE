@@ -2921,15 +2921,14 @@ def verify_command_result(
             )
         )
 
-    for plan in verifier_plans:
-        evidence.append(
-            _run_bound_verifier(
-                plan,
-                task=task,
-                workspace=workspace,
-                verifier_workspace=verifier_workspace,
-            )
+    evidence.extend(
+        _run_bound_verifier_batch(
+            verifier_plans,
+            task=task,
+            workspace=workspace,
+            verifier_workspace=verifier_workspace,
         )
+    )
 
     for item in external_evidence:
         _validate_external_evidence(item, config, task, workspace)
@@ -3390,15 +3389,12 @@ class AssistantBridgeRunner:
         selected_verifiers = (
             () if two_phase_required else self._selected_verifiers(task)
         )
-        verifier_plans = tuple(
-            _build_verifier_plan(
-                spec,
-                workspace=workspace,
-                runtime_policy=self.config.runtime,
-                isolation_policy=self.config.verifier_isolation,
-                resource_policy=self.config.verifier_resources,
-            )
-            for spec in selected_verifiers
+        verifier_plans = _build_verifier_plan_batch(
+            selected_verifiers,
+            workspace=workspace,
+            runtime_policy=self.config.runtime,
+            isolation_policy=self.config.verifier_isolation,
+            resource_policy=self.config.verifier_resources,
         )
         if any(
             plan.spec.kind == "command"
@@ -4791,6 +4787,39 @@ def _validate_external_evidence(
         )
 
 
+def _build_verifier_plan_batch(
+    specs: Sequence[CommandVerifierSpec],
+    *,
+    workspace: str | Path,
+    runtime_policy: BridgeRuntimePolicy,
+    isolation_policy: VerifierIsolationPolicy,
+    resource_policy: VerifierResourcePolicy,
+) -> tuple[BoundVerifierPlan, ...]:
+    """Build one verifier batch from a fresh, call-scoped capability snapshot."""
+
+    resource_capability_snapshot: VerifierResourceCapabilities | None = None
+    if any(spec.kind == "command" for spec in specs):
+        try:
+            resource_capability_snapshot = verifier_resource_capabilities(
+                resource_policy
+            )
+        except (VerifierResourceError, OSError, ValueError):
+            raise AssistantBridgeError(
+                "Verifier resource capability snapshot could not be attested."
+            ) from None
+    return tuple(
+        _build_verifier_plan(
+            spec,
+            workspace=workspace,
+            runtime_policy=runtime_policy,
+            isolation_policy=isolation_policy,
+            resource_policy=resource_policy,
+            resource_capability_snapshot=resource_capability_snapshot,
+        )
+        for spec in specs
+    )
+
+
 def _build_verifier_plan(
     spec: CommandVerifierSpec,
     *,
@@ -4799,6 +4828,7 @@ def _build_verifier_plan(
     isolation_policy: VerifierIsolationPolicy = VerifierIsolationPolicy(),
     resource_policy: VerifierResourcePolicy = VerifierResourcePolicy(),
     execution_environment: Mapping[str, str] | None = None,
+    resource_capability_snapshot: VerifierResourceCapabilities | None = None,
 ) -> BoundVerifierPlan:
     root = str(Path(workspace).expanduser().resolve())
 
@@ -5035,7 +5065,11 @@ def _build_verifier_plan(
         )
     )
     try:
-        resource_capabilities = verifier_resource_capabilities(resource_policy)
+        resource_capabilities = (
+            verifier_resource_capabilities(resource_policy)
+            if resource_capability_snapshot is None
+            else resource_capability_snapshot
+        )
         resources = build_verifier_resource_plan(
             resource_policy,
             resource_capabilities,
@@ -5140,12 +5174,59 @@ def _sandbox_launcher_authority_sha256(
     return _sha256_text(_canonical_json(payload))
 
 
+def _run_bound_verifier_batch(
+    plans: Sequence[BoundVerifierPlan],
+    *,
+    task: AssistantTaskEnvelope,
+    workspace: WorkspaceAttestation,
+    verifier_workspace: str | Path,
+) -> tuple[VerificationEvidence, ...]:
+    """Run a verifier batch after exactly one fresh resource re-attestation."""
+
+    command_plans = tuple(plan for plan in plans if plan.spec.kind == "command")
+    resource_capability_snapshot: VerifierResourceCapabilities | None = None
+    if command_plans:
+        if any(plan.resources is None for plan in command_plans):
+            raise AssistantBridgeError(
+                "Verifier batch has an incomplete resource policy binding."
+            )
+        policies = tuple(
+            plan.resources.policy
+            for plan in command_plans
+            if plan.resources is not None
+        )
+        resource_policy = policies[0]
+        if any(policy != resource_policy for policy in policies[1:]):
+            raise AssistantBridgeError(
+                "Verifier batch contains inconsistent resource policies."
+            )
+        try:
+            resource_capability_snapshot = verifier_resource_capabilities(
+                resource_policy
+            )
+        except (VerifierResourceError, OSError, ValueError):
+            raise AssistantBridgeError(
+                "Verifier resource capability re-attestation failed."
+            ) from None
+    return tuple(
+        _run_bound_verifier(
+            plan,
+            task=task,
+            workspace=workspace,
+            verifier_workspace=verifier_workspace,
+            resource_capability_snapshot=resource_capability_snapshot,
+        )
+        for plan in plans
+    )
+
+
 def _run_bound_verifier(
     plan: BoundVerifierPlan,
     *,
     task: AssistantTaskEnvelope,
     workspace: WorkspaceAttestation,
     verifier_workspace: str | Path,
+    resource_capability_snapshot: VerifierResourceCapabilities | None = None,
 ) -> VerificationEvidence:
     if plan.spec.kind == "trusted_git_diff_check":
         return _run_trusted_git_verifier(
@@ -5168,6 +5249,7 @@ def _run_bound_verifier(
         runtime_policy=plan.runtime_policy,
         isolation_policy=plan.isolation.policy,
         resource_policy=plan.resources.policy,
+        resource_capability_snapshot=resource_capability_snapshot,
     )
     if current.plan_sha256 != plan.plan_sha256:
         raise AssistantBridgeError(

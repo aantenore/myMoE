@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import ANY, patch
 
@@ -121,6 +122,89 @@ class AssistantBridgeContractTests(unittest.TestCase):
                 path.write_text(json.dumps(raw), encoding="utf-8")
                 with self.assertRaisesRegex(AssistantBridgeError, message):
                     load_assistant_bridge_config(path)
+
+    def test_verifier_planning_uses_one_fresh_resource_snapshot_per_batch(self) -> None:
+        first = next(
+            item for item in self.config.command_verifiers if item.kind == "command"
+        )
+        second = replace(first, id="project-test-suite-second")
+        snapshots = (object(), object())
+        observed: list[object] = []
+
+        def capture_build(spec, **kwargs):
+            observed.append(kwargs["resource_capability_snapshot"])
+            return spec.id
+
+        with patch.object(
+            assistant_bridge_module,
+            "verifier_resource_capabilities",
+            side_effect=snapshots,
+        ) as probe, patch.object(
+            assistant_bridge_module,
+            "_build_verifier_plan",
+            side_effect=capture_build,
+        ):
+            first_batch = assistant_bridge_module._build_verifier_plan_batch(
+                (first, second),
+                workspace=ROOT,
+                runtime_policy=self.config.runtime,
+                isolation_policy=self.config.verifier_isolation,
+                resource_policy=self.config.verifier_resources,
+            )
+            second_batch = assistant_bridge_module._build_verifier_plan_batch(
+                (first, second),
+                workspace=ROOT,
+                runtime_policy=self.config.runtime,
+                isolation_policy=self.config.verifier_isolation,
+                resource_policy=self.config.verifier_resources,
+            )
+
+        self.assertEqual(first_batch, (first.id, second.id))
+        self.assertEqual(second_batch, (first.id, second.id))
+        self.assertEqual(probe.call_count, 2)
+        self.assertEqual(observed[:2], [snapshots[0], snapshots[0]])
+        self.assertEqual(observed[2:], [snapshots[1], snapshots[1]])
+
+    def test_verifier_execution_reattests_resources_once_per_batch(self) -> None:
+        first_spec = next(
+            item for item in self.config.command_verifiers if item.kind == "command"
+        )
+        second_spec = replace(first_spec, id="project-test-suite-second")
+        resource_plan = SimpleNamespace(policy=self.config.verifier_resources)
+        plans = (
+            SimpleNamespace(spec=first_spec, resources=resource_plan),
+            SimpleNamespace(spec=second_spec, resources=resource_plan),
+        )
+        snapshots = (object(), object())
+
+        def capture_run(plan, **kwargs):
+            return kwargs["resource_capability_snapshot"]
+
+        with patch.object(
+            assistant_bridge_module,
+            "verifier_resource_capabilities",
+            side_effect=snapshots,
+        ) as probe, patch.object(
+            assistant_bridge_module,
+            "_run_bound_verifier",
+            side_effect=capture_run,
+        ):
+            first_batch = assistant_bridge_module._run_bound_verifier_batch(
+                plans,
+                task=build_assistant_task("Verify a batch."),
+                workspace=attest_workspace(ROOT),
+                verifier_workspace=ROOT,
+            )
+            second_batch = assistant_bridge_module._run_bound_verifier_batch(
+                plans,
+                task=build_assistant_task("Verify a new batch."),
+                workspace=attest_workspace(ROOT),
+                verifier_workspace=ROOT,
+            )
+
+        self.assertEqual(probe.call_count, 2)
+        self.assertEqual(first_batch, (snapshots[0], snapshots[0]))
+        self.assertEqual(second_batch, (snapshots[1], snapshots[1]))
 
     def test_task_and_receipt_ids_bind_the_complete_contract(self) -> None:
         first = build_assistant_task(

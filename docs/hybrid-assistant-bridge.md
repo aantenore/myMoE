@@ -251,9 +251,11 @@ The backends intentionally make different claims:
 - Linux promotes CPU quota, memory, and task count to `kernel_hard` only when a
   fixed, OS-owned `/usr/bin/systemd-run` can create a user cgroup-v2 scope and a
   bounded probe reads back effective `cpu.max`, `memory.max`, and `pids.max`
-  values inside that scope. The probe must also demonstrate synchronous exit
-  status propagation. Its `XDG_RUNTIME_DIR` and optional D-Bus address are
-  explicit, privately bound launch inputs. The real scope uses
+  values inside that scope. The probe rejects an empty membership, the cgroup
+  root, and non-scope groups; it attests membership in a non-root transient
+  `.scope` without publishing its host path. It must also demonstrate
+  synchronous exit status propagation. Its `XDG_RUNTIME_DIR` and optional
+  D-Bus address are explicit, privately bound launch inputs. The real scope uses
   `KillMode=control-group`, a `RuntimeMaxSec` backstop bound to the verifier
   timeout, `--pipe`, and `--collect`; per-process CPU time, file size, and open
   files still come from the inline `setrlimit` supervisor. If any probe or
@@ -266,7 +268,9 @@ The backends intentionally make different claims:
   selected command-verifier routes fail closed.
 
 Workspace-growth accounting measures regular-file bytes without following file
-or directory links; it is post-run detection, never an active quota.
+or directory links, fails closed on any traversal error, and verifies that the
+workspace root keeps the same filesystem identity throughout each scan; it is
+post-run detection, never an active quota.
 Likewise, bounded stdout/stderr capture and observed-process-tree cleanup are
 supervised runtime checks with `hard_containment=false`. Every public policy,
 capability, plan, and report therefore states
@@ -276,6 +280,12 @@ behind a stronger label. The default configuration requires only the portable
 per-process CPU-time, file-size, and descriptor limits plus post-run workspace
 growth accounting; operators can require stronger controls per resource, which
 then fail closed on hosts that cannot prove them.
+
+Resource discovery is call-scoped rather than cached globally. One fresh
+capability snapshot is shared by every command verifier in a planning batch,
+and one new re-attestation is shared by the corresponding execution batch.
+This removes repeated host probes while ensuring that a later batch cannot
+reuse stale capability evidence.
 
 Python project verifiers can declare the typed `python_runner: unittest`
 contract plus safe relative `workspace_python_paths`. The bridge resolves the
