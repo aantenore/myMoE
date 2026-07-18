@@ -5,16 +5,22 @@ myMoE's canonical quality gate is `scripts/run_ci_checks.py`. It is implemented 
 Run the full gate locally:
 
 ```bash
-uv run --locked --python 3.12 python scripts/run_ci_checks.py
+uv run --locked --extra assistant-bridge --python 3.12 python scripts/run_ci_checks.py
 ```
 
 The runner fails fast below Python 3.10, matching `pyproject.toml`, instead of
 running most checks and failing later during packaging.
 
+The `uv run` command installs the project and its Assistant Bridge dependencies.
+The runner preserves the inherited environment for child checks except for
+`PYTHONPATH`, which the hardened Assistant Bridge runtime rejects as a code
+injection path. Child checks therefore import the installed project instead of
+injecting `src` into Python's module search path.
+
 Inspect the plan without executing it:
 
 ```bash
-uv run --locked --python 3.12 python scripts/run_ci_checks.py --dry-run --json
+uv run --locked --extra assistant-bridge --python 3.12 python scripts/run_ci_checks.py --dry-run --json
 ```
 
 The gate currently performs these steps:

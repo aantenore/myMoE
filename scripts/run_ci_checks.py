@@ -114,12 +114,12 @@ def require_supported_python(version_info: Any) -> None:
         )
 
 
-def build_env(root: Path) -> dict[str, str]:
-    env = dict(os.environ)
-    existing = env.get("PYTHONPATH", "")
-    src = str(root / "src")
-    env["PYTHONPATH"] = src if not existing else os.pathsep.join([src, existing])
-    return env
+def build_env(_root: Path) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() != "PYTHONPATH"
+    }
 
 
 def step_payload(step: CheckStep) -> dict[str, Any]:

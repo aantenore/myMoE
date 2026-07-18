@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,13 +94,27 @@ class CiRunnerTests(unittest.TestCase):
         self.assertIn('python-version: ["3.10", "3.12"]', active)
         self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", active)
 
-    def test_build_env_prepends_src_with_platform_separator(self) -> None:
+    def test_build_env_removes_pythonpath_and_preserves_other_values(self) -> None:
         runner = _load_runner()
 
-        env = runner.build_env(ROOT)
+        with patch.dict(
+            os.environ,
+            {
+                "PYTHONPATH": os.pathsep.join(["injected", "source"]),
+                "MYMOE_CI_SENTINEL": "preserved",
+            },
+            clear=False,
+        ):
+            expected = {
+                key: value
+                for key, value in os.environ.items()
+                if key.upper() != "PYTHONPATH"
+            }
+            env = runner.build_env(ROOT)
 
-        first = env["PYTHONPATH"].split(os.pathsep)[0]
-        self.assertEqual(first, str(ROOT / "src"))
+        self.assertNotIn("PYTHONPATH", env)
+        self.assertEqual(env["MYMOE_CI_SENTINEL"], "preserved")
+        self.assertEqual(env, expected)
 
     def test_dry_run_outputs_json_plan(self) -> None:
         completed = subprocess.run(
