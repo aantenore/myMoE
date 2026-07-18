@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from .config import ExpertConfig, MoEConfig
 from .context import ConversationTurn, build_compaction_prompt
+from .execution_scope import ExecutionScopeGuard
 from .providers import GenerationRequest, build_provider
 
 
@@ -18,9 +19,18 @@ class CompactionResult:
 
 
 class LocalCompactionProvider:
-    def __init__(self, config: MoEConfig, expert_id: str | None = None):
+    def __init__(
+        self,
+        config: MoEConfig,
+        expert_id: str | None = None,
+        *,
+        execution_guard: ExecutionScopeGuard | None = None,
+    ):
         self._config = config
         self._expert = _select_compaction_expert(config, expert_id)
+        self._execution_guard = execution_guard or ExecutionScopeGuard(
+            config.execution_policy
+        )
         self._provider = build_provider(self._expert.provider)
 
     @property
@@ -46,6 +56,7 @@ class LocalCompactionProvider:
                 expert,
                 timeout_seconds=min(expert.timeout_seconds, timeout),
             )
+        self._execution_guard.require_allowed(expert.execution_target)
         result = self._provider.generate(
             expert,
             GenerationRequest(prompt=prompt, correlation_id=cid),
