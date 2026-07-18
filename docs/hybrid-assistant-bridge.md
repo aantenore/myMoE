@@ -74,6 +74,11 @@ authorization from a model response.
   assistant output or hidden reasoning. Run telemetry separates `prior`
   evidence used to explain escalation from `final` evidence produced against
   the completed candidate; only the final phase can satisfy completion.
+- `IndependentCandidateAttestation`: an in-toto statement that binds an
+  independently produced result to the exact candidate, source, task,
+  configuration, trust policy, and validity window. Its stable field and digest
+  derivations are defined by the
+  [version 1 predicate specification](spec/independent-candidate-attestation/v1/README.md).
 - `EscalationCapsule`: a bounded, redacted task objective plus constraints,
   failure codes, evidence references, and an optional bounded diff. It excludes
   the original conversation and local execution transcript. Before publication,

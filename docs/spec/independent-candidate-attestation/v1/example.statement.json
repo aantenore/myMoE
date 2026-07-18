@@ -1,0 +1,83 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "urn:mymoe:candidate:workflow-example-001",
+      "digest": {
+        "sha256": "a588fabc2081e33f231ffa10d8868a83a5d5b9839ca075dc41f47328c2d7c0fa"
+      }
+    }
+  ],
+  "predicateType": "https://github.com/aantenore/myMoE/tree/main/docs/spec/independent-candidate-attestation/v1",
+  "predicate": {
+    "schemaVersion": "1.0",
+    "binding": {
+      "schemaVersion": "1.0",
+      "workflowId": "workflow-example-001",
+      "stageIdempotencySha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "taskFingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+      "configSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "sourceFingerprint": "4444444444444444444444444444444444444444444444444444444444444444",
+      "candidateContentSha256": "4fadd87088fc351fa56f8071d50dfc688300dd42c8d391131892e57bbbb9eb11",
+      "candidateFingerprint": "a588fabc2081e33f231ffa10d8868a83a5d5b9839ca075dc41f47328c2d7c0fa",
+      "challengeSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "manifest": {
+        "mediaType": "application/vnd.mymoe.workspace-manifest+json",
+        "digest": {
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "sizeBytes": 512
+      },
+      "changeset": {
+        "mediaType": "application/vnd.mymoe.changeset+json",
+        "digest": {
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+        },
+        "sizeBytes": 256
+      },
+      "verificationPolicy": {
+        "policyId": "policy-v1",
+        "quorum": 1,
+        "verifiers": [
+          {
+            "verifierId": "verifier-a",
+            "adapterId": "dsse-ed25519-v1",
+            "keyId": "key-a",
+            "publicKeySha256": "8888888888888888888888888888888888888888888888888888888888888888",
+            "specSha256": "9999999999999999999999999999999999999999999999999999999999999999"
+          }
+        ]
+      },
+      "verificationPolicySha256": "ef1f06e226f000e2c962a05e5daabcd919b633e5677c4b033904fa975b2daf5e",
+      "createdAt": 1735689600.0,
+      "expiresAt": 1735693200.0
+    },
+    "bindingSha256": "4c1512175bb01d132f57d789d7035f268993ca0a44da246b7cc317bc9d4516b6",
+    "attestation": {
+      "attestationId": "attestation-example-001",
+      "verifierId": "verifier-a",
+      "adapterId": "dsse-ed25519-v1",
+      "keyId": "key-a",
+      "publicKeySha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "specSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "trustPolicySha256": "ef1f06e226f000e2c962a05e5daabcd919b633e5677c4b033904fa975b2daf5e",
+      "issuedAt": 1735689660.0,
+      "expiresAt": 1735690200.0
+    },
+    "outcome": {
+      "passed": true,
+      "checks": [
+        {
+          "id": "contract-tests",
+          "passed": true,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "workspace-integrity",
+          "passed": true,
+          "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ]
+    }
+  }
+}
