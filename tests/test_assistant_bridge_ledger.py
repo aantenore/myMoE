@@ -230,7 +230,10 @@ class AssistantBridgeLedgerTests(unittest.TestCase):
             self.assertTrue(all(not thread.is_alive() for thread in threads))
             self.assertEqual(winners, [ticket.transaction_id])
             self.assertEqual(len(failures), len(contenders) - 1)
-            self.assertTrue(all("already consumed" in failure for failure in failures))
+            self.assertTrue(
+                all("already consumed" in failure for failure in failures),
+                failures,
+            )
 
     def test_confirmation_capacity_prunes_expired_tickets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -447,6 +450,100 @@ class AssistantBridgeLedgerTests(unittest.TestCase):
 
             self.assertNotIn("sensitive filesystem diagnostic", str(raised.exception))
             self.assertFalse(path.with_suffix(".json.lock").exists())
+
+    def test_transient_lock_permission_error_is_retried_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            ledger = BridgeStateLedger(path, namespace="test")
+            lock = ledger.path.with_suffix(ledger.path.suffix + ".lock")
+            original_mkdir = Path.mkdir
+            attempts = 0
+
+            def fail_once(
+                path_value: Path,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                nonlocal attempts
+                if path_value == lock and attempts == 0:
+                    attempts += 1
+                    raise PermissionError("sensitive transient filesystem diagnostic")
+                original_mkdir(path_value, *args, **kwargs)  # type: ignore[arg-type]
+
+            with (
+                patch("local_moe.assistant_bridge_ledger._IS_WINDOWS", True),
+                patch.object(Path, "mkdir", new=fail_once),
+            ):
+                self.assertTrue(ledger.consume_budget(DIGEST_A, 1))
+
+            self.assertEqual(attempts, 1)
+            self.assertFalse(lock.exists())
+
+    def test_persistent_lock_permission_error_remains_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            ledger = BridgeStateLedger(
+                path,
+                namespace="test",
+                lock_timeout_seconds=0.1,
+            )
+            lock = ledger.path.with_suffix(ledger.path.suffix + ".lock")
+            original_mkdir = Path.mkdir
+
+            def always_fail(
+                path_value: Path,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                if path_value == lock:
+                    raise PermissionError("sensitive persistent filesystem diagnostic")
+                original_mkdir(path_value, *args, **kwargs)  # type: ignore[arg-type]
+
+            with (
+                patch("local_moe.assistant_bridge_ledger._IS_WINDOWS", True),
+                patch.object(Path, "mkdir", new=always_fail),
+            ):
+                with self.assertRaisesRegex(
+                    BridgeLedgerError,
+                    "lock could not be acquired",
+                ) as raised:
+                    ledger.consume_budget(DIGEST_A, 1)
+
+            self.assertNotIn(
+                "sensitive persistent filesystem diagnostic",
+                str(raised.exception),
+            )
+            self.assertFalse(path.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX-specific lock behavior")
+    def test_posix_permission_error_is_not_retried_without_contention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            ledger = BridgeStateLedger(path, namespace="test")
+            lock = ledger.path.with_suffix(ledger.path.suffix + ".lock")
+            original_mkdir = Path.mkdir
+            attempts = 0
+
+            def always_fail(
+                path_value: Path,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                nonlocal attempts
+                if path_value == lock:
+                    attempts += 1
+                    raise PermissionError("sensitive POSIX filesystem diagnostic")
+                original_mkdir(path_value, *args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(Path, "mkdir", new=always_fail):
+                with self.assertRaisesRegex(
+                    BridgeLedgerError,
+                    "lock could not be acquired",
+                ):
+                    ledger.consume_budget(DIGEST_A, 1)
+
+            self.assertEqual(attempts, 1)
+            self.assertFalse(path.exists())
 
     def test_symlinked_ledger_or_parent_is_rejected(self) -> None:
         if not hasattr(os, "symlink"):

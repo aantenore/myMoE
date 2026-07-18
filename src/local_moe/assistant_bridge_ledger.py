@@ -24,6 +24,7 @@ _LEGACY_SCHEMA_VERSIONS = frozenset({"2.0", "2.1"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN = re.compile(r"^confirm-v2-[A-Za-z0-9_-]{43}$")
 _BUDGET_LEASE_TOKEN = re.compile(r"^budget-v2-[A-Za-z0-9_-]{43}$")
+_IS_WINDOWS = os.name == "nt"
 
 
 class BridgeLedgerError(ValueError):
@@ -476,6 +477,17 @@ class BridgeStateLedger:
                     raise BridgeLedgerError("Bridge ledger lock is busy.")
                 time.sleep(0.02)
             except OSError as exc:
+                # Windows may report a contended directory creation as
+                # PermissionError instead of FileExistsError.  Keep the
+                # acquisition fail-closed, but give that transient collision
+                # the same bounded retry window as ordinary contention.
+                retryable_contention = (
+                    lock.is_dir()
+                    or (_IS_WINDOWS and isinstance(exc, PermissionError))
+                )
+                if retryable_contention and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                    continue
                 raise BridgeLedgerError(
                     "Bridge ledger lock could not be acquired."
                 ) from exc
