@@ -8,6 +8,7 @@ from typing import Iterator
 from uuid import uuid4
 
 from .config import MoEConfig
+from .execution_scope import ExecutionScopeGuard
 from .providers import (
     ExpertResult,
     GenerationRequest,
@@ -54,9 +55,20 @@ class DisagreementReport:
 
 
 class LocalMoE:
-    def __init__(self, config: MoEConfig):
+    def __init__(
+        self,
+        config: MoEConfig,
+        *,
+        execution_guard: ExecutionScopeGuard | None = None,
+    ):
         self._config = config
-        self._router = RuleRouter(config)
+        self._execution_guard = execution_guard or ExecutionScopeGuard(
+            config.execution_policy
+        )
+        self._router = RuleRouter(
+            config,
+            execution_guard=self._execution_guard,
+        )
         self._providers = {
             expert.id: build_provider(expert.provider) for expert in config.experts
         }
@@ -141,6 +153,7 @@ class LocalMoE:
             stream_generate = getattr(provider, "stream_generate", None)
             try:
                 if callable(stream_generate):
+                    self._execution_guard.require_allowed(expert.execution_target)
                     final_result = None
                     for event in stream_generate(expert, req):
                         if event.result is not None:
@@ -159,7 +172,7 @@ class LocalMoE:
                     yield MoEStreamEvent(kind="final", content=response.content, response=response)
                     return
 
-                result = provider.generate(expert, req)
+                result = self._invoke_provider(expert_id, req)
                 response = MoEResponse(
                     content=result.content,
                     correlation_id=cid,
@@ -181,13 +194,10 @@ class LocalMoE:
     ) -> tuple[list[ExpertResult], list[str]]:
         results: list[ExpertResult] = []
         errors: list[str] = []
-        experts_by_id = self._config.experts_by_id
 
         for expert_id in expert_order:
-            expert = experts_by_id[expert_id]
-            provider = self._providers[expert_id]
             try:
-                results.append(provider.generate(expert, req))
+                results.append(self._invoke_provider(expert_id, req))
             except ProviderError as exc:
                 errors.append(f"{expert_id}: {exc}")
                 continue
@@ -201,14 +211,11 @@ class LocalMoE:
     ) -> tuple[list[ExpertResult], list[str]]:
         results: list[ExpertResult] = []
         errors: list[str] = []
-        experts_by_id = self._config.experts_by_id
 
         with ThreadPoolExecutor(max_workers=max(len(expert_order), 1)) as pool:
             futures = {}
             for expert_id in expert_order:
-                expert = experts_by_id[expert_id]
-                provider = self._providers[expert_id]
-                futures[pool.submit(provider.generate, expert, req)] = expert_id
+                futures[pool.submit(self._invoke_provider, expert_id, req)] = expert_id
 
             for future in as_completed(futures):
                 expert_id = futures[future]
@@ -230,13 +237,10 @@ class LocalMoE:
     ) -> tuple[list[ExpertResult], list[str]]:
         results: list[ExpertResult] = []
         errors: list[str] = []
-        experts_by_id = self._config.experts_by_id
 
         for expert_id in expert_order:
-            expert = experts_by_id[expert_id]
-            provider = self._providers[expert_id]
             try:
-                results.append(provider.generate(expert, req))
+                results.append(self._invoke_provider(expert_id, req))
             except ProviderError as exc:
                 errors.append(f"{expert_id}: {exc}")
                 continue
@@ -244,6 +248,15 @@ class LocalMoE:
                 break
 
         return results, errors
+
+    def _invoke_provider(
+        self,
+        expert_id: str,
+        req: GenerationRequest,
+    ) -> ExpertResult:
+        expert = self._config.experts_by_id[expert_id]
+        self._execution_guard.require_allowed(expert.execution_target)
+        return self._providers[expert_id].generate(expert, req)
 
     def _aggregate(self, results: list[ExpertResult], disagreement: DisagreementReport | None) -> str:
         if len(results) == 1:

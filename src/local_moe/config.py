@@ -5,6 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .execution_scope import (
+    ExecutionDeclaration,
+    ExecutionPolicy,
+    ExecutionScope,
+    ExecutionTarget,
+    ExecutionTransport,
+    normalized_execution_declaration,
+    scope_rank,
+)
 from .path_security import read_text_file
 
 
@@ -22,6 +31,21 @@ class ExpertConfig:
     timeout_seconds: float = 60.0
     base_url: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
+    execution: ExecutionDeclaration = field(default_factory=ExecutionDeclaration)
+
+    @property
+    def execution_target(self) -> ExecutionTarget:
+        endpoint = str(self.base_url) if self.base_url is not None else None
+        return ExecutionTarget(
+            expert_id=self.id,
+            provider=self.provider,
+            endpoint=endpoint,
+            declaration=normalized_execution_declaration(
+                provider=self.provider,
+                endpoint=endpoint,
+                declaration=self.execution,
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -73,6 +97,7 @@ class MoEConfig:
     routing: RoutingConfig
     experts: tuple[ExpertConfig, ...]
     rules: tuple[RoutingRule, ...]
+    execution_policy: ExecutionPolicy = field(default_factory=ExecutionPolicy)
 
     @property
     def experts_by_id(self) -> dict[str, ExpertConfig]:
@@ -101,6 +126,7 @@ def load_config_within(
 
 
 def parse_config(raw: dict[str, Any]) -> MoEConfig:
+    execution_policy = _parse_execution_policy(raw.get("execution", {}))
     routing_raw = raw.get("routing", {})
     routing = RoutingConfig(
         top_k=int(routing_raw.get("top_k", 1)),
@@ -159,7 +185,12 @@ def parse_config(raw: dict[str, Any]) -> MoEConfig:
         if routing.distilled.min_confidence < 0 or routing.distilled.weight < 0:
             raise ConfigError("routing.distilled min_confidence and weight must be non-negative.")
 
-    return MoEConfig(routing=routing, experts=experts, rules=rules)
+    return MoEConfig(
+        routing=routing,
+        experts=experts,
+        rules=rules,
+        execution_policy=execution_policy,
+    )
 
 
 def _parse_expert(raw: dict[str, Any]) -> ExpertConfig:
@@ -167,6 +198,13 @@ def _parse_expert(raw: dict[str, Any]) -> ExpertConfig:
     missing = [key for key in required if not raw.get(key)]
     if missing:
         raise ConfigError(f"Expert missing required fields: {missing}")
+
+    endpoint = str(raw["base_url"]) if raw.get("base_url") is not None else None
+    execution = _parse_execution_declaration(
+        raw.get("execution", {}),
+        provider=str(raw["provider"]),
+        endpoint=endpoint,
+    )
 
     return ExpertConfig(
         id=str(raw["id"]),
@@ -177,7 +215,95 @@ def _parse_expert(raw: dict[str, Any]) -> ExpertConfig:
         timeout_seconds=float(raw.get("timeout_seconds", 60.0)),
         base_url=raw.get("base_url"),
         params=dict(raw.get("params", {})),
+        execution=execution,
     )
+
+
+def _parse_execution_policy(raw: object) -> ExecutionPolicy:
+    if not isinstance(raw, dict):
+        raise ConfigError("execution must be an object.")
+    unknown = sorted(
+        str(key)
+        for key in raw
+        if key not in {"max_scope", "allowed_scopes", "allow_scope_widening"}
+    )
+    if unknown:
+        raise ConfigError(f"Unknown execution keys: {', '.join(unknown)}.")
+
+    max_scope = _parse_execution_scope(
+        raw.get("max_scope", ExecutionScope.DEVICE_ONLY.value),
+        "execution.max_scope",
+    )
+    allowed_raw = raw.get("allowed_scopes")
+    if allowed_raw is None:
+        allowed_scopes = tuple(
+            scope
+            for scope in ExecutionScope
+            if scope_rank(scope) <= scope_rank(max_scope)
+        )
+    else:
+        if not isinstance(allowed_raw, list):
+            raise ConfigError("execution.allowed_scopes must be a list.")
+        allowed_scopes = tuple(
+            _parse_execution_scope(item, "execution.allowed_scopes")
+            for item in allowed_raw
+        )
+
+    allow_scope_widening = raw.get("allow_scope_widening", False)
+    if not isinstance(allow_scope_widening, bool):
+        raise ConfigError("execution.allow_scope_widening must be boolean.")
+    try:
+        return ExecutionPolicy(
+            max_scope=max_scope,
+            allowed_scopes=allowed_scopes,
+            allow_scope_widening=allow_scope_widening,
+        )
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def _parse_execution_declaration(
+    raw: object,
+    *,
+    provider: str,
+    endpoint: str | None,
+) -> ExecutionDeclaration:
+    if not isinstance(raw, dict):
+        raise ConfigError("expert.execution must be an object.")
+    unknown = sorted(str(key) for key in raw if key not in {"scope", "transport"})
+    if unknown:
+        raise ConfigError(f"Unknown expert.execution keys: {', '.join(unknown)}.")
+
+    scope = None
+    if "scope" in raw:
+        scope = _parse_execution_scope(raw["scope"], "expert.execution.scope")
+    transport = None
+    if "transport" in raw:
+        transport = _parse_execution_transport(
+            raw["transport"],
+            "expert.execution.transport",
+        )
+    return normalized_execution_declaration(
+        provider=provider,
+        endpoint=endpoint,
+        declaration=ExecutionDeclaration(scope=scope, transport=transport),
+    )
+
+
+def _parse_execution_scope(value: object, label: str) -> ExecutionScope:
+    try:
+        return ExecutionScope(str(value))
+    except ValueError as exc:
+        supported = ", ".join(scope.value for scope in ExecutionScope)
+        raise ConfigError(f"{label} must be one of: {supported}.") from exc
+
+
+def _parse_execution_transport(value: object, label: str) -> ExecutionTransport:
+    try:
+        return ExecutionTransport(str(value))
+    except ValueError as exc:
+        supported = ", ".join(transport.value for transport in ExecutionTransport)
+        raise ConfigError(f"{label} must be one of: {supported}.") from exc
 
 
 def _parse_rule(raw: dict[str, Any]) -> RoutingRule:
