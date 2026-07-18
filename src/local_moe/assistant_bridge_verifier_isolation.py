@@ -14,7 +14,9 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
+import tempfile
 from typing import Iterable, Sequence
 
 from .assistant_bridge_runtime import (
@@ -27,6 +29,7 @@ from .assistant_bridge_runtime import (
 _MACOS_BACKEND = Path("/usr/bin/sandbox-exec")
 _LINUX_BACKEND = Path("/usr/bin/bwrap")
 _SCHEMA = "assistant-bridge-verifier-isolation/v1"
+_BWRAP_PROBE_TIMEOUT_SECONDS = 5
 
 
 class VerifierIsolationError(ValueError):
@@ -360,17 +363,65 @@ def _attest_backend(path: Path, backend: str) -> VerifierIsolationCapability:
         identity = resolve_executable(str(path), env=environment)
         if Path(identity.resolved_path) != path.resolve(strict=True):
             raise OSError("backend resolved outside its fixed OS path")
+        if backend == "bwrap" and not _probe_bubblewrap_backend(
+            identity.launch_path,
+            environment=environment,
+        ):
+            raise OSError("backend cannot establish the required namespaces")
     except (AssistantBridgeRuntimeError, OSError, ValueError) as exc:
         return VerifierIsolationCapability(
             supported=False,
             backend=backend,
-            reason=f"required OS-owned {backend} backend is unavailable",
+            reason=(
+                f"required OS-owned {backend} backend is unavailable or unusable"
+            ),
         )
     return VerifierIsolationCapability(
         supported=True,
         backend=backend,
         executable=identity,
     )
+
+
+def _probe_bubblewrap_backend(
+    executable: str,
+    *,
+    environment: dict[str, str] | None = None,
+) -> bool:
+    """Prove that the host can launch the same namespace boundary we bind.
+
+    File attestation alone is insufficient on hosts where a kernel or LSM policy
+    permits executing bubblewrap but denies its user-namespace setup.
+    """
+
+    probe_environment = {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "LC_ALL": "C",
+        **({} if environment is None else environment),
+    }
+    try:
+        with tempfile.TemporaryDirectory(prefix="mymoe-bwrap-probe-") as tmp:
+            workspace = Path(tmp).resolve(strict=True)
+            argv = _bubblewrap_argv(
+                workspace=workspace,
+                runtime_roots=(),
+                attested_read_artifacts=(),
+                command_argv=("/usr/bin/true",),
+            )
+            completed = subprocess.run(
+                [executable, *argv],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=workspace,
+                env=probe_environment,
+                check=False,
+                timeout=_BWRAP_PROBE_TIMEOUT_SECONDS,
+            )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _absolute_existing_path(value: str | Path) -> Path:

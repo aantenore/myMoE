@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -532,6 +533,75 @@ class VerifierIsolationTests(unittest.TestCase):
         self.assertLess(argv.index("--cap-drop"), separator)
         self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
         self.assertEqual(argv[separator + 1 :], ("/usr/bin/true",))
+
+    def test_linux_capability_probe_requires_a_successful_namespace_launch(
+        self,
+    ) -> None:
+        outcomes = (
+            (subprocess.CompletedProcess((), 0), True),
+            (subprocess.CompletedProcess((), 1), False),
+        )
+        for completed, expected in outcomes:
+            with self.subTest(returncode=completed.returncode), patch.object(
+                verifier_isolation.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                supported = verifier_isolation._probe_bubblewrap_backend(
+                    "/usr/bin/bwrap"
+                )
+
+            self.assertIs(supported, expected)
+            argv = run.call_args.args[0]
+            separator = argv.index("--")
+            self.assertEqual(argv[0], "/usr/bin/bwrap")
+            self.assertIn("--unshare-all", argv[:separator])
+            self.assertIn("--unshare-net", argv[:separator])
+            self.assertEqual(argv[separator + 1 :], ["/usr/bin/true"])
+
+        with patch.object(
+            verifier_isolation.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired("/usr/bin/bwrap", 5),
+        ):
+            self.assertFalse(
+                verifier_isolation._probe_bubblewrap_backend("/usr/bin/bwrap")
+            )
+
+    def test_linux_backend_file_is_not_a_capability_without_namespace_probe(
+        self,
+    ) -> None:
+        executable = SimpleNamespace(
+            resolved_path="/usr/bin/bwrap",
+            launch_path="/usr/bin/bwrap",
+        )
+        metadata = SimpleNamespace(st_mode=0o100755, st_uid=0)
+        with (
+            patch.object(Path, "lstat", return_value=metadata),
+            patch.object(Path, "resolve", return_value=Path("/usr/bin/bwrap")),
+            patch.object(verifier_isolation.os, "access", return_value=True),
+            patch.object(
+                verifier_isolation,
+                "resolve_executable",
+                return_value=executable,
+            ),
+            patch.object(
+                verifier_isolation,
+                "_probe_bubblewrap_backend",
+                return_value=False,
+            ) as probe,
+        ):
+            capability = verifier_isolation._attest_backend(
+                Path("/usr/bin/bwrap"),
+                "bwrap",
+            )
+
+        self.assertFalse(capability.supported)
+        self.assertIn("unusable", capability.reason)
+        probe.assert_called_once_with(
+            "/usr/bin/bwrap",
+            environment={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        )
 
     def test_linux_bubblewrap_omits_artifact_covered_by_venv_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

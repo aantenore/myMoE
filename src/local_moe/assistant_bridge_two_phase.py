@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import math
 from pathlib import Path
 import stat
+import time
 from typing import Any, Mapping, Sequence
 
 from .assistant_bridge_cas import (
@@ -37,6 +38,7 @@ from .assistant_bridge_workspace import (
     WorkspaceScopePolicy,
     WorkspaceSecurityError,
     WorkspaceSnapshot,
+    WorkspaceTransactionBusyError,
     apply_changeset,
     build_changeset,
     finalize_committed_workspace_transaction,
@@ -61,6 +63,10 @@ class TwoPhaseConfirmationNotReadyError(TwoPhaseWorkflowError):
     """Raised when a workflow needs a newly planned confirmation."""
 
     code = "confirmation_not_ready"
+
+
+_MAX_CONCURRENT_APPLY_WAIT_SECONDS = 5.0
+_CONCURRENT_APPLY_POLL_SECONDS = 0.01
 
 
 def candidate_workspace_snapshot_fingerprint(
@@ -762,6 +768,12 @@ class TwoPhaseWorkflowService:
             recovered_snapshot = snapshot_workspace(
                 workspace, self.config.workspace_policy
             )
+        except WorkspaceTransactionBusyError:
+            return self._await_concurrent_apply(
+                record,
+                transaction_id=transaction_id,
+                now=now,
+            )
         except WorkspaceSecurityError:
             try:
                 latest = self.store.get_workflow(record.workflow_id, now=now)
@@ -799,6 +811,49 @@ class TwoPhaseWorkflowService:
             code=_recovery_code(ready),
             idempotent_replay=True,
         )
+
+    def _await_concurrent_apply(
+        self,
+        record: WorkflowRecord,
+        *,
+        transaction_id: str,
+        now: float,
+    ) -> ResumeResult:
+        """Wait briefly for the live owner of a committed transaction lock."""
+
+        wait_seconds = min(
+            self.config.transaction_lock_ttl_seconds,
+            _MAX_CONCURRENT_APPLY_WAIT_SECONDS,
+        )
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                latest = self.store.get_workflow(record.workflow_id, now=now)
+            except WorkflowStoreError as exc:
+                raise TwoPhaseWorkflowError(str(exc)) from exc
+            if latest.status == "applied":
+                if latest.apply_transaction_id != transaction_id:
+                    raise TwoPhaseWorkflowError(
+                        "Concurrent apply transaction binding changed."
+                    )
+                return _resume_result(
+                    latest,
+                    code="already_applied",
+                    idempotent_replay=True,
+                )
+            if (
+                latest.status != "applying"
+                or latest.apply_transaction_id != transaction_id
+            ):
+                raise TwoPhaseWorkflowError(
+                    "Concurrent apply state changed before database finish."
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TwoPhaseWorkflowError(
+                    "Concurrent apply is still in progress."
+                )
+            time.sleep(min(_CONCURRENT_APPLY_POLL_SECONDS, remaining))
 
     def _reverify_attestations(
         self,

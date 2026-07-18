@@ -36,6 +36,10 @@ class WorkspaceSecurityError(ValueError):
     """Raised when a workspace cannot be snapshotted or changed safely."""
 
 
+class WorkspaceTransactionBusyError(WorkspaceSecurityError):
+    """Raised when another live transaction owns the workspace lock."""
+
+
 class WorkspaceRecoveryPolicyUnavailable(WorkspaceSecurityError):
     """Raised when an older recovery journal has no durable policy binding."""
 
@@ -3506,7 +3510,9 @@ def _acquire_transaction_lock(path: Path, ttl_seconds: float) -> None:
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
         if age <= ttl_seconds or _pid_is_alive(pid):
-            raise WorkspaceSecurityError("Workspace transaction lock is busy.")
+            raise WorkspaceTransactionBusyError(
+                "Workspace transaction lock is busy."
+            )
         stale = path.with_name(f"{path.name}.stale-{uuid4().hex}")
         try:
             _rename_no_replace(path, stale)

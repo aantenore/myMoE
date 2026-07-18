@@ -14,7 +14,8 @@ concurrency:
 jobs:
   checks:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
+    # Ubuntu 24.04 blocks unprofiled bubblewrap user namespaces via AppArmor.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-22.04' || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
