@@ -244,6 +244,49 @@ class ModelServerManagerTests(unittest.TestCase):
         self.assertEqual(attestor.calls, 2)
         self.assertEqual(starts, 0)
 
+    def test_start_does_not_probe_again_after_authorized_process_launch(self) -> None:
+        config = parse_config(
+            {
+                "routing": {"top_k": 1},
+                "experts": [
+                    {
+                        "id": "general",
+                        "provider": "openai_compatible",
+                        "model": "local-model",
+                        "role": "general",
+                        "base_url": "http://127.0.0.1:8199/v1",
+                    }
+                ],
+                "rules": [],
+            }
+        )
+        attestor = _RevocableAttestor()
+        guard = ExecutionScopeGuard(config.execution_policy, attestor=attestor)
+        probes = 0
+
+        def probe(_url: str) -> bool:
+            nonlocal probes
+            probes += 1
+            return False
+
+        def start(_command: tuple[str, ...], _log_path: Path) -> _FakeProcess:
+            attestor.allowed = False
+            return _FakeProcess(pid=9999)
+
+        manager = ModelServerManager.from_config(
+            config,
+            reachability_checker=probe,
+            process_factory=start,
+            execution_guard=guard,
+        )
+
+        action = manager.start(confirm=True)
+
+        self.assertEqual(action.status, "started")
+        self.assertEqual(attestor.calls, 2)
+        self.assertEqual(probes, 1)
+        self.assertEqual(action.results[0].status, "managed_running")
+
     def test_external_transport_is_probed_but_never_started_locally(self) -> None:
         config = parse_config(
             {

@@ -230,6 +230,7 @@ class ModelServerManager:
                     spec,
                     message="Model server started.",
                     execution_allowed=True,
+                    endpoint_reachable=False,
                 )
             )
 
