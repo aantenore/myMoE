@@ -147,6 +147,38 @@ class RuntimeRootIdentity:
 
 
 @dataclass(frozen=True)
+class _BubblewrapReadBinding:
+    """One exact host source exposed at one caller-visible sandbox path."""
+
+    source: Path
+    destination: Path
+
+
+@dataclass(frozen=True)
+class _BubblewrapSymlink:
+    """One attested link recreated inside bubblewrap's sparse namespace."""
+
+    target: str
+    destination: Path
+
+
+@dataclass(frozen=True)
+class _BubblewrapReadPlan:
+    """Immutable filesystem operations shared by actual and semantic argv."""
+
+    bindings: tuple[_BubblewrapReadBinding, ...]
+    symlinks: tuple[_BubblewrapSymlink, ...]
+
+
+@dataclass(frozen=True)
+class _BubblewrapArtifactSnapshot:
+    """Stable canonical target and captured symlink chain for one artifact."""
+
+    resolved_target: Path
+    symlinks: tuple[_BubblewrapSymlink, ...]
+
+
+@dataclass(frozen=True)
 class VerifierIsolationPlan:
     """Exact outer sandbox invocation bound without exposing local paths."""
 
@@ -313,16 +345,19 @@ def build_verifier_isolation_plan(
             ),
         )
     elif capability.backend == "bwrap":
-        argv = _bubblewrap_argv(
+        read_plan = _bubblewrap_read_plan(
             workspace=root,
             runtime_roots=runtime_paths,
             attested_read_artifacts=artifacts,
+        )
+        argv = _bubblewrap_argv_from_read_plan(
+            workspace=root,
+            read_plan=read_plan,
             command_argv=tuple(command_argv),
         )
         semantic_argv = _semantic_bubblewrap_argv(
             workspace=root,
-            runtime_roots=runtime_paths,
-            attested_read_artifacts=artifacts,
+            read_plan=read_plan,
             command_argv=tuple(command_argv),
             semantic_workspace=semantic_root,
         )
@@ -589,14 +624,37 @@ def _bubblewrap_argv(
     attested_read_artifacts: Sequence[Path],
     command_argv: tuple[str, ...],
 ) -> tuple[str, ...]:
-    read_roots = _bubblewrap_read_roots(
+    read_plan = _bubblewrap_read_plan(
         workspace=workspace,
         runtime_roots=runtime_roots,
         attested_read_artifacts=attested_read_artifacts,
     )
+    return _bubblewrap_argv_from_read_plan(
+        workspace=workspace,
+        read_plan=read_plan,
+        command_argv=command_argv,
+    )
+
+
+def _bubblewrap_argv_from_read_plan(
+    *,
+    workspace: Path,
+    read_plan: _BubblewrapReadPlan,
+    command_argv: tuple[str, ...],
+) -> tuple[str, ...]:
     argv = list(_bubblewrap_prefix())
-    for path in read_roots:
-        argv.extend(("--ro-bind", str(path), str(path)))
+    for binding in read_plan.bindings:
+        argv.extend(
+            (
+                "--ro-bind",
+                str(binding.source),
+                str(binding.destination),
+            )
+        )
+    for symlink in read_plan.symlinks:
+        argv.extend(
+            ("--symlink", symlink.target, str(symlink.destination))
+        )
     argv.extend(
         (
             "--bind",
@@ -611,12 +669,12 @@ def _bubblewrap_argv(
     return tuple(argv)
 
 
-def _bubblewrap_read_roots(
+def _bubblewrap_read_plan(
     *,
     workspace: Path,
     runtime_roots: Sequence[Path],
     attested_read_artifacts: Sequence[Path],
-) -> tuple[Path, ...]:
+) -> _BubblewrapReadPlan:
     system_roots = tuple(
         path
         for path in (
@@ -636,30 +694,133 @@ def _bubblewrap_read_roots(
     declared_roots = _remove_contained_paths(
         _deduplicate_paths((*system_roots, *runtime_roots))
     )
-    # A virtual-environment launcher can traverse a version alias that Python
-    # also retains in its runtime search paths. Mount every attested symlink
-    # hop instead of exposing only the canonical installation directory, but
-    # never widen a declared root through a broader ancestor alias.
-    artifact_paths = tuple(
-        candidate
-        for artifact in attested_read_artifacts
-        for candidate in _symlink_resolution_paths(artifact)
-        if not candidate.is_dir()
-        or _path_is_covered(candidate.resolve(strict=True), declared_roots)
+    artifact_targets: list[Path] = []
+    symlinks: list[_BubblewrapSymlink] = []
+    # A virtual-environment launcher can traverse a caller-visible version
+    # alias that is absent from the otherwise empty namespace. Capture its
+    # attested target now and recreate the link inside the sparse namespace.
+    # The alias can only reach roots mounted separately by this plan, so even a
+    # broad ancestor link cannot expose undeclared host siblings.
+    for artifact in attested_read_artifacts:
+        snapshot = _capture_stable_bubblewrap_artifact(artifact)
+        for symlink in snapshot.symlinks:
+            destination = symlink.destination
+            if _path_is_covered(
+                destination, (*declared_roots, workspace)
+            ):
+                continue
+            symlinks.append(symlink)
+        target = snapshot.resolved_target
+        if not _path_is_covered(target, (*declared_roots, workspace)):
+            if target.is_dir():
+                continue
+            artifact_targets.append(target)
+
+    read_roots = _remove_contained_paths(
+        _deduplicate_paths((*declared_roots, *artifact_targets))
     )
-    return _remove_contained_paths(
-        _deduplicate_paths(
-            (
-                *declared_roots,
-                *(
-                    item
-                    for item in artifact_paths
-                    if not _path_is_covered(
-                        item, (*declared_roots, workspace)
-                    )
-                ),
+    return _BubblewrapReadPlan(
+        bindings=tuple(
+            _BubblewrapReadBinding(
+                source=path,
+                destination=path,
             )
+            for path in read_roots
+        ),
+        symlinks=_deduplicate_bubblewrap_symlinks(symlinks),
+    )
+
+
+def _capture_stable_bubblewrap_artifact(
+    artifact: Path,
+) -> _BubblewrapArtifactSnapshot:
+    before = _capture_bubblewrap_artifact_once(artifact)
+    after = _capture_bubblewrap_artifact_once(artifact)
+    if before != after:
+        raise VerifierIsolationError(
+            "An attested verifier read alias changed during plan construction."
         )
+    return before
+
+
+def _capture_bubblewrap_artifact_once(
+    artifact: Path,
+) -> _BubblewrapArtifactSnapshot:
+    try:
+        before = artifact.resolve(strict=True)
+        candidates = _symlink_resolution_paths(artifact)
+        symlinks: list[_BubblewrapSymlink] = []
+        for candidate in candidates:
+            metadata = candidate.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                symlinks.append(
+                    _BubblewrapSymlink(
+                        target=os.readlink(candidate),
+                        destination=candidate,
+                    )
+                )
+        after = artifact.resolve(strict=True)
+    except OSError as exc:
+        raise VerifierIsolationError(
+            "An attested verifier read artifact became unavailable."
+        ) from exc
+    captured = _deduplicate_bubblewrap_symlinks(symlinks)
+    reconstructed = _resolve_captured_bubblewrap_symlinks(
+        artifact,
+        captured,
+    )
+    if before != after or reconstructed != after:
+        raise VerifierIsolationError(
+            "An attested verifier read alias changed during plan construction."
+        )
+    return _BubblewrapArtifactSnapshot(
+        resolved_target=after,
+        symlinks=captured,
+    )
+
+
+def _resolve_captured_bubblewrap_symlinks(
+    artifact: Path,
+    symlinks: Sequence[_BubblewrapSymlink],
+) -> Path:
+    targets = {
+        os.path.normcase(str(symlink.destination)): symlink.target
+        for symlink in symlinks
+    }
+    current = Path(os.path.abspath(os.fspath(artifact.expanduser())))
+    seen: set[str] = set()
+    for _ in range(64):
+        prefix = Path(current.anchor)
+        rewritten: Path | None = None
+        parts = current.parts[1:] if current.is_absolute() else current.parts
+        for index, part in enumerate(parts):
+            candidate = prefix / part
+            key = os.path.normcase(str(candidate))
+            target = targets.get(key)
+            if target is not None:
+                if key in seen:
+                    raise VerifierIsolationError(
+                        "A verifier read path contains a symlink cycle."
+                    )
+                seen.add(key)
+                link_target = Path(target)
+                base = (
+                    link_target
+                    if link_target.is_absolute()
+                    else candidate.parent / link_target
+                )
+                rewritten = Path(
+                    os.path.abspath(
+                        os.fspath(base.joinpath(*parts[index + 1 :]))
+                    )
+                )
+                break
+            prefix = candidate
+        if rewritten is None:
+            return current
+        current = rewritten
+    raise VerifierIsolationError(
+        "A verifier read path exceeded the symlink resolution bound."
     )
 
 
@@ -682,19 +843,23 @@ def _bubblewrap_prefix() -> tuple[str, ...]:
 def _semantic_bubblewrap_argv(
     *,
     workspace: Path,
-    runtime_roots: Sequence[Path],
-    attested_read_artifacts: Sequence[Path],
+    read_plan: _BubblewrapReadPlan,
     command_argv: tuple[str, ...],
     semantic_workspace: str,
 ) -> tuple[str, ...]:
-    read_roots = _bubblewrap_read_roots(
-        workspace=workspace,
-        runtime_roots=runtime_roots,
-        attested_read_artifacts=attested_read_artifacts,
-    )
     argv = list(_bubblewrap_prefix())
-    for path in read_roots:
-        argv.extend(("--ro-bind", str(path), str(path)))
+    for binding in read_plan.bindings:
+        argv.extend(
+            (
+                "--ro-bind",
+                str(binding.source),
+                str(binding.destination),
+            )
+        )
+    for symlink in read_plan.symlinks:
+        argv.extend(
+            ("--symlink", symlink.target, str(symlink.destination))
+        )
     argv.extend(
         (
             "--bind",
@@ -819,6 +984,25 @@ def _remove_contained_paths(paths: Sequence[Path]) -> tuple[Path, ...]:
     for candidate in sorted(paths, key=lambda item: (len(item.parts), str(item))):
         if not _path_is_covered(candidate, result):
             result.append(candidate)
+    return tuple(result)
+
+
+def _deduplicate_bubblewrap_symlinks(
+    symlinks: Sequence[_BubblewrapSymlink],
+) -> tuple[_BubblewrapSymlink, ...]:
+    result: list[_BubblewrapSymlink] = []
+    targets_by_destination: dict[str, str] = {}
+    for symlink in symlinks:
+        destination_key = os.path.normcase(str(symlink.destination))
+        existing = targets_by_destination.get(destination_key)
+        if existing is not None:
+            if existing != symlink.target:
+                raise VerifierIsolationError(
+                    "Conflicting verifier aliases target one sandbox path."
+                )
+            continue
+        targets_by_destination[destination_key] = symlink.target
+        result.append(symlink)
     return tuple(result)
 
 

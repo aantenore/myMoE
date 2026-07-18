@@ -633,33 +633,60 @@ class VerifierIsolationTests(unittest.TestCase):
             workspace = fixture / "workspace"
             runtime = fixture / "python-3.12.13"
             alias = fixture / "python-3.12"
+            unrelated = fixture / "unrelated"
             venv = fixture / "venv"
             workspace.mkdir()
             (runtime / "bin").mkdir(parents=True)
+            unrelated.mkdir()
             interpreter = runtime / "bin" / "python3.12"
             interpreter.write_bytes(b"attested-interpreter")
             alias.symlink_to(runtime, target_is_directory=True)
             (venv / "bin").mkdir(parents=True)
             launcher = venv / "bin" / "python"
             launcher.symlink_to(alias / "bin" / "python3.12")
-            argv = verifier_isolation._bubblewrap_argv(
+            read_plan = verifier_isolation._bubblewrap_read_plan(
                 workspace=workspace,
                 runtime_roots=(venv, runtime),
                 attested_read_artifacts=(launcher,),
+            )
+            argv = verifier_isolation._bubblewrap_argv_from_read_plan(
+                workspace=workspace,
+                read_plan=read_plan,
                 command_argv=(str(launcher),),
             )
+            semantic_argv = verifier_isolation._semantic_bubblewrap_argv(
+                workspace=workspace,
+                read_plan=read_plan,
+                command_argv=(str(launcher),),
+                semantic_workspace="<ephemeral-workspace>",
+            )
+            alias.unlink()
+            alias.symlink_to(unrelated, target_is_directory=True)
 
         separator = argv.index("--")
         wrapper = argv[:separator]
-        bind_sources = tuple(
-            wrapper[index + 1]
+        read_bindings = tuple(
+            (wrapper[index + 1], wrapper[index + 2])
             for index, item in enumerate(wrapper)
             if item == "--ro-bind"
         )
-        self.assertIn(str(venv), bind_sources)
-        self.assertIn(str(runtime), bind_sources)
-        self.assertIn(str(alias), bind_sources)
-        self.assertNotIn(str(launcher), bind_sources)
+        symlinks = tuple(
+            (wrapper[index + 1], wrapper[index + 2])
+            for index, item in enumerate(wrapper)
+            if item == "--symlink"
+        )
+        self.assertIn((str(venv), str(venv)), read_bindings)
+        self.assertIn((str(runtime), str(runtime)), read_bindings)
+        self.assertIn((str(runtime), str(alias)), symlinks)
+        self.assertNotIn((str(alias), str(alias)), read_bindings)
+        self.assertNotIn((str(unrelated), str(alias)), read_bindings)
+        self.assertFalse(
+            any(source == str(launcher) for source, _ in read_bindings)
+        )
+        self.assertEqual(
+            wrapper[: wrapper.index("--bind")],
+            semantic_argv[: semantic_argv.index("--bind")],
+        )
         self.assertEqual(argv[separator + 1], str(launcher))
 
     def test_linux_bubblewrap_does_not_mount_broad_ancestor_alias(self) -> None:
@@ -693,16 +720,78 @@ class VerifierIsolationTests(unittest.TestCase):
 
         separator = argv.index("--")
         wrapper = argv[:separator]
-        bind_sources = tuple(
-            wrapper[index + 1]
+        read_bindings = tuple(
+            (wrapper[index + 1], wrapper[index + 2])
             for index, item in enumerate(wrapper)
             if item == "--ro-bind"
         )
-        self.assertIn(str(venv), bind_sources)
-        self.assertIn(str(runtime), bind_sources)
-        self.assertNotIn(str(broad_root), bind_sources)
-        self.assertNotIn(str(ancestor_alias), bind_sources)
+        symlinks = tuple(
+            (wrapper[index + 1], wrapper[index + 2])
+            for index, item in enumerate(wrapper)
+            if item == "--symlink"
+        )
+        exact_alias_path = ancestor_alias / "runtime" / "bin" / "python3.12"
+        self.assertIn((str(venv), str(venv)), read_bindings)
+        self.assertIn((str(runtime), str(runtime)), read_bindings)
+        self.assertIn((str(broad_root), str(ancestor_alias)), symlinks)
+        self.assertNotIn((str(interpreter), str(exact_alias_path)), read_bindings)
+        self.assertFalse(
+            any(
+                source in {str(broad_root), str(ancestor_alias)}
+                or destination in {str(broad_root), str(ancestor_alias)}
+                for source, destination in read_bindings
+            )
+        )
         self.assertEqual(argv[separator + 1], str(launcher))
+
+    def test_linux_bubblewrap_rejects_alias_mutation_during_attestation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp).resolve()
+            workspace = fixture / "workspace"
+            first_runtime = fixture / "python-first"
+            second_runtime = fixture / "python-second"
+            alias = fixture / "python-current"
+            venv = fixture / "venv"
+            workspace.mkdir()
+            for runtime in (first_runtime, second_runtime):
+                (runtime / "bin").mkdir(parents=True)
+                (runtime / "bin" / "python3.12").write_bytes(runtime.name.encode())
+            alias.symlink_to(first_runtime, target_is_directory=True)
+            (venv / "bin").mkdir(parents=True)
+            launcher = venv / "bin" / "python"
+            launcher.symlink_to(alias / "bin" / "python3.12")
+            original_capture = (
+                verifier_isolation._capture_bubblewrap_artifact_once
+            )
+            capture_count = 0
+
+            def mutate_after_first_capture(
+                artifact: Path,
+            ) -> verifier_isolation._BubblewrapArtifactSnapshot:
+                nonlocal capture_count
+                snapshot = original_capture(artifact)
+                capture_count += 1
+                if capture_count == 1:
+                    alias.unlink()
+                    alias.symlink_to(second_runtime, target_is_directory=True)
+                return snapshot
+
+            with patch.object(
+                verifier_isolation,
+                "_capture_bubblewrap_artifact_once",
+                side_effect=mutate_after_first_capture,
+            ):
+                with self.assertRaises(verifier_isolation.VerifierIsolationError):
+                    verifier_isolation._bubblewrap_argv(
+                        workspace=workspace,
+                        runtime_roots=(venv, first_runtime),
+                        attested_read_artifacts=(launcher,),
+                        command_argv=(str(launcher),),
+                    )
+
+        self.assertEqual(capture_count, 2)
 
     def test_cleanup_failure_propagates_from_sandboxed_verifier(self) -> None:
         capability = verifier_isolation_capability(
