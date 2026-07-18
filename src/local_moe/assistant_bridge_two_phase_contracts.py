@@ -456,7 +456,7 @@ def build_attestation_statement(
 
 @dataclass(frozen=True)
 class IndependentAttestation:
-    """Immutable output of an adapter verification, never an authority input."""
+    """Immutable trusted-adapter output; raw evidence remains the external input."""
 
     adapter_id: str
     verifier_id: str

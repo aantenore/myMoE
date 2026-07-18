@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -36,6 +37,7 @@ from local_moe.assistant_bridge_two_phase_contracts import (
 )
 from local_moe.assistant_bridge_workflow_store import (
     SQLiteWorkflowStore,
+    WorkflowRecord,
     WorkflowStoreError,
 )
 
@@ -49,7 +51,45 @@ STAGE_KEY = "stage-operation-0000000000000001"
 RESUME_KEY = "resume-operation-000000000000001"
 
 
+class _DelegatingEvidenceStore:
+    def __init__(self, delegate: ContentAddressedStore) -> None:
+        self.delegate = delegate
+
+    def put_bytes(
+        self, value: bytes, *, media_type: str
+    ) -> ArtifactDescriptor:
+        return self.delegate.put_bytes(value, media_type=media_type)
+
+    def get_bytes(self, descriptor: ArtifactDescriptor) -> bytes:
+        return self.delegate.get_bytes(descriptor)
+
+
 class TwoPhaseFoundationTests(unittest.TestCase):
+    def test_explicit_database_path_never_resolves_default_app_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "custom" / "workflows.sqlite3"
+            with mock.patch(
+                "local_moe.assistant_bridge_workflow_store.user_state_path"
+            ) as default_state_path:
+                store = SQLiteWorkflowStore(database)
+
+            default_state_path.assert_not_called()
+            self.assertEqual(store.path, database.resolve())
+
+    def test_workflow_store_accepts_an_evidence_store_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            port = _DelegatingEvidenceStore(
+                ContentAddressedStore(root / "evidence")
+            )
+
+            store = SQLiteWorkflowStore(
+                root / "state" / "workflows.sqlite3",
+                evidence_cas=port,
+            )
+
+            self.assertIs(store.evidence_cas, port)
+
     def test_cas_uses_rfc8785_and_detects_artifact_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = ContentAddressedStore(Path(temporary) / "cas")
@@ -292,7 +332,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     with self.assertRaises(AttestationVerificationError):
                         verifier.verify(binding, changed, now=110)
 
-    def test_workflow_store_enforces_quorum_and_raw_envelope_authority(self) -> None:
+    def test_workflow_store_enforces_quorum_from_verified_adapter_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store = SQLiteWorkflowStore(root / "state" / "workflows.sqlite3")
@@ -320,16 +360,18 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 )
             )
 
-            partial, partial_replay = store.record_attestation_envelope(
-                binding.workflow_id,
+            partial, partial_replay = _record_verified_attestation(
+                store,
+                binding,
                 _envelope(binding, first_requirement, first_key, attestation_id="att-a"),
-                trust_store=trust,
+                trust,
                 now=110,
             )
-            ready, ready_replay = store.record_attestation_envelope(
-                binding.workflow_id,
+            ready, ready_replay = _record_verified_attestation(
+                store,
+                binding,
                 _envelope(binding, second_requirement, second_key, attestation_id="att-b"),
-                trust_store=trust,
+                trust,
                 now=111,
             )
 
@@ -366,21 +408,25 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             trust = AttestationTrustStore(
                 (TrustedEd25519Verifier(requirement, private_key.public_key()),)
             )
-            ready, _ = store.record_attestation_envelope(
-                binding.workflow_id,
+            ready, _ = _record_verified_attestation(
+                store,
+                binding,
                 _envelope(binding, requirement, private_key),
-                trust_store=trust,
+                trust,
                 now=110,
             )
             evidence = ready.attestations[0].envelope
 
             reopened = SQLiteWorkflowStore(store.path)
-            reloaded = reopened.reverify_attestations(
-                binding.workflow_id,
-                trust_store=trust,
+            reloaded = reopened.get_workflow(binding.workflow_id, now=111)
+            persisted = reloaded.attestations[0]
+            verified = trust.verify(
+                reloaded.binding,
+                reopened.load_attestation_envelope(persisted),
                 now=111,
             )
             self.assertEqual(reloaded.status, "ready")
+            self.assertEqual(verified.evidence_sha256, persisted.evidence_sha256)
             object_path = (
                 reopened.evidence_cas.root
                 / "objects"
@@ -461,8 +507,8 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 (TrustedEd25519Verifier(requirement, private_key.public_key()),)
             )
             envelope = _envelope(binding, requirement, private_key)
-            store.record_attestation_envelope(
-                binding.workflow_id, envelope, trust_store=trust, now=110
+            _record_verified_attestation(
+                store, binding, envelope, trust, now=110
             )
             first_plan = store.issue_resume_plan(
                 binding.workflow_id,
@@ -541,8 +587,8 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 private_key,
                 expires_at=120,
             )
-            store.record_attestation_envelope(
-                binding.workflow_id, envelope, trust_store=trust, now=110
+            _record_verified_attestation(
+                store, binding, envelope, trust, now=110
             )
 
             with self.assertRaisesRegex(WorkflowStoreError, "verified ready"):
@@ -579,10 +625,11 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 attestation_id="attestation-old",
                 expires_at=120,
             )
-            store.record_attestation_envelope(
-                binding.workflow_id,
+            _record_verified_attestation(
+                store,
+                binding,
                 first_envelope,
-                trust_store=trust,
+                trust,
                 now=110,
             )
             first_plan = store.issue_resume_plan(
@@ -595,18 +642,18 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             degraded = store.get_workflow(binding.workflow_id, now=121)
             self.assertEqual(degraded.status, "staged")
             self.assertFalse(degraded.quorum_satisfied)
-            with self.assertRaisesRegex(
-                WorkflowStoreError, "not currently valid|replayed"
-            ):
-                store.record_attestation_envelope(
-                    binding.workflow_id,
+            with self.assertRaises(AttestationVerificationError):
+                _record_verified_attestation(
+                    store,
+                    binding,
                     first_envelope,
-                    trust_store=trust,
+                    trust,
                     now=121,
                 )
 
-            refreshed, replay = store.record_attestation_envelope(
-                binding.workflow_id,
+            refreshed, replay = _record_verified_attestation(
+                store,
+                binding,
                 _envelope(
                     binding,
                     requirement,
@@ -615,7 +662,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                     issued_at=121,
                     expires_at=180,
                 ),
-                trust_store=trust,
+                trust,
                 now=122,
             )
             second_plan = store.issue_resume_plan(
@@ -651,10 +698,11 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             trust = AttestationTrustStore(
                 (TrustedEd25519Verifier(requirement, private_key.public_key()),)
             )
-            store.record_attestation_envelope(
-                binding.workflow_id,
+            _record_verified_attestation(
+                store,
+                binding,
                 _envelope(binding, requirement, private_key, expires_at=190),
-                trust_store=trust,
+                trust,
                 now=110,
             )
             plan = store.issue_resume_plan(
@@ -762,6 +810,23 @@ def _source_identity(fingerprint: str) -> dict[str, object]:
         "headSha": None,
         "indexSha256": sha256_bytes(b""),
     }
+
+
+def _record_verified_attestation(
+    store: SQLiteWorkflowStore,
+    binding: CandidateBinding,
+    envelope: bytes,
+    trust: AttestationTrustStore,
+    *,
+    now: float,
+) -> tuple[WorkflowRecord, bool]:
+    verified = trust.verify(binding, envelope, now=now)
+    return store.record_verified_attestation(
+        binding.workflow_id,
+        verified,
+        binding_sha256=binding.binding_sha256,
+        now=now,
+    )
 
 
 def _binding(

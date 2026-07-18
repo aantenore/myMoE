@@ -6,21 +6,25 @@ from pathlib import Path
 import stat
 from typing import Any, Mapping, Sequence
 
-from .assistant_bridge_attestation import AttestationTrustStore
 from .assistant_bridge_cas import (
-    ContentAddressedStore,
     ContentAddressedStoreError,
 )
 from .assistant_bridge_integrity import canonical_sha256, sha256_bytes
 from .assistant_bridge_two_phase_contracts import (
     CandidateBinding,
+    IndependentAttestation,
     ResumePlan,
     ResumeResult,
     StageReceipt,
     VerificationPolicy,
     require_sha256,
 )
+from .assistant_bridge_two_phase_ports import (
+    AttestationVerifier,
+    CandidateStore,
+)
 from .assistant_bridge_workflow_store import (
+    RecordedAttestation,
     SQLiteWorkflowStore,
     WorkflowRecord,
     WorkflowStoreError,
@@ -75,9 +79,9 @@ class TwoPhaseWorkflowService:
         self,
         *,
         store: SQLiteWorkflowStore,
-        cas: ContentAddressedStore,
+        cas: CandidateStore,
         config: TwoPhaseWorkflowConfig,
-        trust_store: AttestationTrustStore | None = None,
+        trust_store: AttestationVerifier | None = None,
     ) -> None:
         self.store = store
         self.cas = cas
@@ -189,12 +193,19 @@ class TwoPhaseWorkflowService:
             raise TwoPhaseWorkflowError(
                 "Independent attestation trust is not configured."
             )
+        current = _now(now)
         try:
-            record, _ = self.store.record_attestation_envelope(
-                workflow_id,
+            record = self.store.get_workflow(workflow_id, now=current)
+            attestation = self.trust_store.verify(
+                record.binding,
                 envelope,
-                trust_store=self.trust_store,
-                now=now,
+                now=current,
+            )
+            record, _ = self.store.record_verified_attestation(
+                workflow_id,
+                attestation,
+                binding_sha256=record.binding.binding_sha256,
+                now=current,
             )
             return record
         except (ValueError, WorkflowStoreError) as exc:
@@ -507,11 +518,29 @@ class TwoPhaseWorkflowService:
                 "Independent attestation trust is not configured."
             )
         try:
-            return self.store.reverify_attestations(
-                workflow_id,
-                trust_store=self.trust_store,
-                now=now,
+            record = self.store.get_workflow(workflow_id, now=now)
+            if record.status == "expired" or now > record.binding.expires_at:
+                raise TwoPhaseWorkflowError("Workflow expired.")
+            active = tuple(
+                item
+                for item in record.attestations
+                if item.issued_at <= now <= item.expires_at
             )
+            if len(active) < record.binding.verification_policy.quorum:
+                raise TwoPhaseWorkflowError(
+                    "Workflow has no currently valid attestation quorum."
+                )
+            for persisted in active:
+                verified = self.trust_store.verify(
+                    record.binding,
+                    self.store.load_attestation_envelope(persisted),
+                    now=now,
+                )
+                if not _verified_attestation_matches(verified, persisted):
+                    raise TwoPhaseWorkflowError(
+                        "Durable attestation changed during re-verification."
+                    )
+            return record
         except (ValueError, WorkflowStoreError) as exc:
             raise TwoPhaseWorkflowError(str(exc)) from exc
 
@@ -588,6 +617,22 @@ class TwoPhaseWorkflowService:
                 "Workspace transaction journal escaped its state root."
             ) from exc
         return True
+
+
+def _verified_attestation_matches(
+    verified: IndependentAttestation,
+    persisted: RecordedAttestation,
+) -> bool:
+    return (
+        verified.verifier_id == persisted.verifier_id
+        and verified.adapter_id == persisted.adapter_id
+        and verified.key_id == persisted.key_id
+        and verified.attestation_id == persisted.attestation_id
+        and verified.evidence_sha256 == persisted.evidence_sha256
+        and sha256_bytes(verified.statement_bytes) == persisted.statement_sha256
+        and verified.issued_at == persisted.issued_at
+        and verified.expires_at == persisted.expires_at
+    )
 
 
 def _source_identity(snapshot: WorkspaceSnapshot) -> dict[str, object]:

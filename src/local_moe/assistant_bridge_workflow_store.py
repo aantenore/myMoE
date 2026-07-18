@@ -17,10 +17,6 @@ from typing import Any, Iterator, Mapping
 
 from platformdirs import user_state_path
 
-from .assistant_bridge_attestation import (
-    AttestationTrustStore,
-    AttestationVerificationError,
-)
 from .assistant_bridge_cas import (
     ContentAddressedStore,
     ContentAddressedStoreError,
@@ -29,11 +25,13 @@ from .assistant_bridge_integrity import canonical_json_bytes, canonical_sha256, 
 from .assistant_bridge_two_phase_contracts import (
     ArtifactDescriptor,
     CandidateBinding,
+    IndependentAttestation,
     ResumePlan,
     WORKFLOW_STATES,
     require_safe_id,
     require_sha256,
 )
+from .assistant_bridge_two_phase_ports import EvidenceStore
 
 
 WORKFLOW_STORE_SCHEMA_VERSION = "2.0"
@@ -210,7 +208,7 @@ class WorkflowEvent:
 
 
 def default_workflow_state_paths() -> WorkflowStatePaths:
-    base = user_state_path("myMoE", appauthor=False, ensure_exists=True)
+    base = user_state_path("myMoE", appauthor=False, ensure_exists=False)
     root = Path(base) / "assistant-bridge" / "v2"
     return WorkflowStatePaths(
         database=root / "workflows.sqlite3",
@@ -225,13 +223,16 @@ class SQLiteWorkflowStore:
         self,
         path: str | Path | None = None,
         *,
-        evidence_cas: ContentAddressedStore | None = None,
+        evidence_cas: EvidenceStore | None = None,
         timeout: float = 5.0,
     ) -> None:
-        defaults = default_workflow_state_paths()
-        selected = defaults.database if path is None else Path(path)
-        self.path = _prepare_database_path(selected)
-        cas_root = defaults.cas_root if path is None else self.path.parent / "cas"
+        if path is None:
+            defaults = default_workflow_state_paths()
+            self.path = _prepare_database_path(defaults.database)
+            cas_root = defaults.cas_root
+        else:
+            self.path = _prepare_database_path(Path(path))
+            cas_root = self.path.parent / "cas"
         try:
             self.evidence_cas = (
                 ContentAddressedStore(cas_root)
@@ -240,8 +241,6 @@ class SQLiteWorkflowStore:
             )
         except ContentAddressedStoreError as exc:
             raise WorkflowStoreError(str(exc)) from exc
-        if type(self.evidence_cas) is not ContentAddressedStore:
-            raise WorkflowStoreError("Workflow evidence CAS type is unsupported.")
         if not 0.1 <= timeout <= 60:
             raise WorkflowStoreError("SQLite workflow timeout is outside safe bounds.")
         self.timeout = timeout
@@ -416,17 +415,18 @@ class SQLiteWorkflowStore:
                 records.append(record)
             return tuple(records)
 
-    def record_attestation_envelope(
+    def record_verified_attestation(
         self,
         workflow_id: str,
-        envelope: bytes,
+        attestation: IndependentAttestation,
         *,
-        trust_store: AttestationTrustStore,
+        binding_sha256: str,
         now: float | None = None,
     ) -> tuple[WorkflowRecord, bool]:
+        """Persist evidence already verified by the trusted workflow service."""
+
         require_safe_id(workflow_id, "workflow_id")
-        if type(trust_store) is not AttestationTrustStore:
-            raise WorkflowStoreError("Attestation trust store type is unsupported.")
+        require_sha256(binding_sha256, "binding_sha256")
         current = _wall_time(now)
         with self._transaction() as connection:
             record = self._selected_record(
@@ -441,9 +441,23 @@ class SQLiteWorkflowStore:
                     "Independent attestation cannot be recorded in this state."
                 )
             try:
-                attestation = trust_store.verify(record.binding, envelope, now=current)
-            except AttestationVerificationError as exc:
+                requirement = record.binding.verification_policy.requirement(
+                    attestation.verifier_id
+                )
+            except ValueError as exc:
                 raise WorkflowStoreError(str(exc)) from exc
+            if binding_sha256 != record.binding.binding_sha256:
+                raise WorkflowStoreError(
+                    "Verified attestation targets another workflow binding."
+                )
+            if (
+                attestation.adapter_id != requirement.adapter_id
+                or attestation.key_id != requirement.key_id
+                or not attestation.issued_at <= current <= attestation.expires_at
+            ):
+                raise WorkflowStoreError(
+                    "Verified attestation metadata does not match workflow policy."
+                )
             existing_evidence = connection.execute(
                 "SELECT workflow_id, verifier_id, expires_at, superseded_at "
                 "FROM workflow_attestations "
@@ -690,63 +704,20 @@ class SQLiteWorkflowStore:
             assert row is not None
             return self._resume_plan(record, row, idempotent_replay=False)
 
-    def reverify_attestations(
-        self,
-        workflow_id: str,
-        *,
-        trust_store: AttestationTrustStore,
-        now: float | None = None,
-    ) -> WorkflowRecord:
-        """Rebuild verifier authority from durable envelopes before any write plan."""
+    def load_attestation_envelope(
+        self, attestation: RecordedAttestation
+    ) -> bytes:
+        """Load one persisted envelope for verification by the workflow service."""
 
-        require_safe_id(workflow_id, "workflow_id")
-        if type(trust_store) is not AttestationTrustStore:
-            raise WorkflowStoreError("Attestation trust store type is unsupported.")
-        current = _wall_time(now)
-        with self._transaction() as connection:
-            record = self._selected_record(
-                connection, workflow_id, active_at=current
+        try:
+            envelope = self.evidence_cas.get_bytes(attestation.envelope)
+        except (OSError, ValueError) as exc:
+            raise WorkflowStoreError(str(exc)) from exc
+        if sha256_bytes(envelope) != attestation.evidence_sha256:
+            raise WorkflowStoreError(
+                "Persisted attestation envelope binding is invalid."
             )
-            if record.status not in {"applying", "applied"}:
-                record = self._refresh_attestation_status(
-                    connection, record, now=current
-                )
-            self._check_live(record, current)
-            active = tuple(
-                item
-                for item in record.attestations
-                if item.issued_at <= current <= item.expires_at
-            )
-            if len(active) < record.binding.verification_policy.quorum:
-                raise WorkflowStoreError(
-                    "Workflow has no currently valid attestation quorum."
-                )
-            for persisted in active:
-                try:
-                    envelope = self.evidence_cas.get_bytes(persisted.envelope)
-                    verified = trust_store.verify(
-                        record.binding, envelope, now=current
-                    )
-                except (
-                    AttestationVerificationError,
-                    ContentAddressedStoreError,
-                ) as exc:
-                    raise WorkflowStoreError(str(exc)) from exc
-                if (
-                    verified.verifier_id != persisted.verifier_id
-                    or verified.adapter_id != persisted.adapter_id
-                    or verified.key_id != persisted.key_id
-                    or verified.attestation_id != persisted.attestation_id
-                    or verified.evidence_sha256 != persisted.evidence_sha256
-                    or sha256_bytes(verified.statement_bytes)
-                    != persisted.statement_sha256
-                    or verified.issued_at != persisted.issued_at
-                    or verified.expires_at != persisted.expires_at
-                ):
-                    raise WorkflowStoreError(
-                        "Durable attestation changed during re-verification."
-                    )
-            return record
+        return envelope
 
     def consume_resume_confirmation(
         self,
