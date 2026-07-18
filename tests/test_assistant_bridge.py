@@ -449,10 +449,10 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
     def test_command_plan_payload_hides_executable_path_and_version_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            secret = "private-version-material"
-            executable = Path(tmp) / f"tool-{secret}"
+            version_marker = "private-version-material"
+            executable = Path(tmp) / f"tool-{version_marker}"
             executable.write_text(
-                f"#!/bin/sh\necho '{secret}'\n",
+                f"#!/bin/sh\necho '{version_marker}'\n",
                 encoding="utf-8",
             )
             executable.chmod(0o700)
@@ -470,7 +470,7 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
         rendered = json.dumps(plan.payload(), sort_keys=True)
         self.assertNotIn(str(executable), rendered)
-        self.assertNotIn(secret, rendered)
+        self.assertNotIn(version_marker, rendered)
         self.assertIn(plan.executable_identity.sha256, rendered)
 
     def test_command_plan_binds_private_executable_identity(self) -> None:
