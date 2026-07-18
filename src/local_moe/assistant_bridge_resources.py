@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import stat
@@ -59,10 +60,11 @@ _DEFAULT_REQUIRED_STRENGTHS = {
     "processes": "unsupported",
     "workspace_growth": "post_run",
 }
-_POSIX_RESOURCE_SUPERVISOR_ENV = "MYMOE_RESOURCE_SUPERVISOR"
-_POSIX_RESOURCE_LAUNCH = (
-    "exec(__import__('os').environ['MYMOE_RESOURCE_SUPERVISOR'])"
+_SYSTEMD_ENVIRONMENT_KEYS = frozenset(
+    {"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
 )
+_SYSTEMD_PROBE_EXIT = 23
+_SYSTEMD_PROBE_OUTPUT_BYTES = 4096
 
 
 class VerifierResourceError(ValueError):
@@ -172,6 +174,11 @@ class VerifierResourceCapabilities:
     controls: Mapping[str, ResourceControlCapability]
     reason: str = ""
     executable: ExecutableIdentity | None = field(default=None, repr=False)
+    supervisor_executable: ExecutableIdentity | None = field(
+        default=None, repr=False
+    )
+    environment: Mapping[str, str] = field(default_factory=dict, repr=False)
+    probe_sha256: str = ""
 
     def __post_init__(self) -> None:
         controls = dict(self.controls)
@@ -182,6 +189,23 @@ class VerifierResourceCapabilities:
         object.__setattr__(
             self, "controls", MappingProxyType(dict(sorted(controls.items())))
         )
+        environment = dict(self.environment)
+        if set(environment).difference(_SYSTEMD_ENVIRONMENT_KEYS):
+            raise VerifierResourceError(
+                "Resource capability environment contains an unsupported key."
+            )
+        for key, value in environment.items():
+            if not value or "\x00" in value or len(value) > 4096:
+                raise VerifierResourceError(
+                    f"Resource capability environment value {key} is invalid."
+                )
+        object.__setattr__(
+            self,
+            "environment",
+            MappingProxyType(dict(sorted(environment.items()))),
+        )
+        if self.probe_sha256:
+            _require_sha256(self.probe_sha256, "resource capability probe")
 
     def strength(self, control: str) -> str:
         return self.controls[control].strength
@@ -209,6 +233,13 @@ class VerifierResourceCapabilities:
                 if self.executable is None
                 else self.executable.binding_payload()
             ),
+            "supervisor_executable": (
+                None
+                if self.supervisor_executable is None
+                else self.supervisor_executable.binding_payload()
+            ),
+            "environment": dict(self.environment),
+            "probe_sha256": self.probe_sha256 or None,
         }
 
     def payload(self) -> dict[str, object]:
@@ -224,6 +255,14 @@ class VerifierResourceCapabilities:
             "executable": (
                 None if self.executable is None else self.executable.payload()
             ),
+            "supervisor_executable": (
+                None
+                if self.supervisor_executable is None
+                else self.supervisor_executable.payload()
+            ),
+            "environment_keys": sorted(self.environment),
+            "environment_sha256": _sha256_json(dict(self.environment)),
+            "probe_sha256": self.probe_sha256 or None,
             "complete_resource_containment": False,
         }
 
@@ -244,6 +283,7 @@ class VerifierResourcePlan:
     argv_sha256: str = ""
     binding_sha256: str = ""
     workspace_before_bytes: int = field(default=0, repr=False)
+    wall_time_milliseconds: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "argv", tuple(self.argv))
@@ -267,6 +307,7 @@ class VerifierResourcePlan:
             "command_binding_sha256": self.command_binding_sha256 or None,
             "resource_argv_sha256": self.argv_sha256 or None,
             "binding_sha256": self.binding_sha256,
+            "wall_time_milliseconds": self.wall_time_milliseconds,
             "launcher_chain": (
                 None
                 if self.launcher_chain is None
@@ -284,6 +325,7 @@ class VerifierResourceEnforcementReport:
     output_capture: Mapping[str, object]
     tree_cleanup: Mapping[str, object]
     workspace_growth: Mapping[str, object]
+    missing_required_controls: tuple[str, ...]
     compliant: bool
 
     def __post_init__(self) -> None:
@@ -306,6 +348,11 @@ class VerifierResourceEnforcementReport:
         object.__setattr__(
             self, "workspace_growth", MappingProxyType(dict(self.workspace_growth))
         )
+        object.__setattr__(
+            self,
+            "missing_required_controls",
+            tuple(self.missing_required_controls),
+        )
 
     def payload(self) -> dict[str, object]:
         return {
@@ -316,6 +363,8 @@ class VerifierResourceEnforcementReport:
             "output_capture": dict(self.output_capture),
             "tree_cleanup": dict(self.tree_cleanup),
             "workspace_growth": dict(self.workspace_growth),
+            "missing_required_controls": list(self.missing_required_controls),
+            "required_strengths_satisfied": not self.missing_required_controls,
             "compliant": self.compliant,
             "complete_resource_containment": False,
         }
@@ -346,6 +395,7 @@ def verifier_resource_capabilities(
                 "only inherited per-process limits are available"
             ),
             executable=fallback.executable,
+            supervisor_executable=fallback.supervisor_executable,
         )
     if selected.startswith("win"):
         return _windows_job_capabilities(selected)
@@ -364,6 +414,7 @@ def build_verifier_resource_plan(
     command_binding_sha256: str,
     environment: Mapping[str, str],
     sandbox_ready: bool,
+    wall_time_seconds: float = 900.0,
     command_companions: Sequence[str | Path] = (),
     command_launcher_chain: LauncherChainIdentity | None = None,
 ) -> VerifierResourcePlan:
@@ -371,6 +422,16 @@ def build_verifier_resource_plan(
 
     root = Path(workspace).expanduser().resolve(strict=True)
     _require_sha256(command_binding_sha256, "command binding")
+    if (
+        isinstance(wall_time_seconds, bool)
+        or not isinstance(wall_time_seconds, (int, float))
+        or not math.isfinite(float(wall_time_seconds))
+        or not 0.001 <= float(wall_time_seconds) <= 86_400
+    ):
+        raise VerifierResourceError(
+            "Verifier resource wall time must be between 0.001 and 86400 seconds."
+        )
+    wall_time_milliseconds = max(1, math.ceil(float(wall_time_seconds) * 1000))
     before_bytes = measure_workspace_bytes(root)
     missing = capabilities.missing_requirements(policy)
     blocked_reason = ""
@@ -380,8 +441,6 @@ def build_verifier_resource_plan(
         blocked_reason = "required_resource_strength_unavailable:" + ",".join(
             missing
         )
-    elif capabilities.backend == "windows-job-object-contract":
-        blocked_reason = "windows_job_object_execution_requires_sandbox_adapter"
     elif not capabilities.supported and policy.required:
         blocked_reason = "resource_backend_unavailable"
 
@@ -394,6 +453,7 @@ def build_verifier_resource_plan(
             reason=blocked_reason,
             resource_argv_sha256="",
             launcher_chain=None,
+            wall_time_milliseconds=wall_time_milliseconds,
         )
         return VerifierResourcePlan(
             policy=policy,
@@ -404,15 +464,25 @@ def build_verifier_resource_plan(
             binding_sha256=_sha256_json(binding),
             workspace_before_bytes=before_bytes,
             environment=environment,
+            wall_time_milliseconds=wall_time_milliseconds,
         )
 
     executable: ExecutableIdentity
     argv: tuple[str, ...]
     semantic_argv: Mapping[str, object]
     companions = _deduplicate_companions(
-        (command_executable.launch_path, *command_companions)
+        (
+            *(
+                ()
+                if capabilities.supervisor_executable is None
+                else (capabilities.supervisor_executable.launch_path,)
+            ),
+            command_executable.launch_path,
+            *command_companions,
+        )
     )
     resource_environment = dict(environment)
+    resource_environment.update(capabilities.environment)
     if capabilities.backend in {"darwin-setrlimit", "linux-setrlimit"}:
         if capabilities.executable is None:
             raise VerifierResourceError(
@@ -427,13 +497,10 @@ def build_verifier_resource_plan(
         argv = (
             "-I",
             "-c",
-            _POSIX_RESOURCE_LAUNCH,
+            _POSIX_RESOURCE_SUPERVISOR,
             _canonical_json(limits),
             command_executable.launch_path,
             *tuple(command_argv),
-        )
-        resource_environment[_POSIX_RESOURCE_SUPERVISOR_ENV] = (
-            _POSIX_RESOURCE_SUPERVISOR
         )
         semantic_argv = {
             "wrapper": "fixed-python-setrlimit/v1",
@@ -442,17 +509,24 @@ def build_verifier_resource_plan(
             "command_binding_sha256": command_binding_sha256,
         }
     elif capabilities.backend == "linux-systemd-cgroup-v2":
-        if capabilities.executable is None:
+        if (
+            capabilities.executable is None
+            or capabilities.supervisor_executable is None
+        ):
             raise VerifierResourceError(
-                "The systemd capability has no attested executable."
+                "The systemd capability has no attested backend and supervisor."
             )
         executable = capabilities.executable
+        supervisor = capabilities.supervisor_executable
+        limits = {
+            "cpu_time_seconds": policy.cpu_time_seconds,
+            "file_size_bytes": policy.file_size_bytes,
+            "open_files": policy.open_files,
+        }
         properties = (
             "KillMode=control-group",
+            f"RuntimeMaxSec={wall_time_milliseconds}ms",
             f"CPUQuota={policy.cpu_quota_percent}%",
-            f"LimitCPU={policy.cpu_time_seconds}",
-            f"LimitFSIZE={policy.file_size_bytes}",
-            f"LimitNOFILE={policy.open_files}",
             f"MemoryMax={policy.memory_bytes}",
             f"TasksMax={policy.processes}",
         )
@@ -461,14 +535,29 @@ def build_verifier_resource_plan(
             "--scope",
             "--quiet",
             "--collect",
+            "--pipe",
+            "--expand-environment=no",
             *(f"--property={item}" for item in properties),
             "--",
+            supervisor.launch_path,
+            "-I",
+            "-c",
+            _POSIX_RESOURCE_SUPERVISOR,
+            _canonical_json(limits),
             command_executable.launch_path,
             *tuple(command_argv),
         )
         semantic_argv = {
             "wrapper": "systemd-user-scope-cgroup-v2/v1",
             "properties": list(properties),
+            "scope_flags": [
+                "--scope",
+                "--collect",
+                "--pipe",
+                "--expand-environment=no",
+            ],
+            "supervisor_sha256": _sha256_text(_POSIX_RESOURCE_SUPERVISOR),
+            "limits": limits,
             "command_binding_sha256": command_binding_sha256,
         }
     else:
@@ -490,7 +579,10 @@ def build_verifier_resource_plan(
             else replace(
                 resolve_launcher_chain(
                     executable,
-                    ("bound-verifier-resource-governance",),
+                    _launcher_attestation_argv(
+                        argv,
+                        bound_command_argv=tuple(command_argv),
+                    ),
                     companions=companions,
                     cwd=root,
                     env=resource_environment,
@@ -512,6 +604,7 @@ def build_verifier_resource_plan(
         reason="",
         resource_argv_sha256=argv_sha256,
         launcher_chain=launcher_chain,
+        wall_time_milliseconds=wall_time_milliseconds,
     )
     return VerifierResourcePlan(
         policy=policy,
@@ -526,6 +619,7 @@ def build_verifier_resource_plan(
         argv_sha256=argv_sha256,
         binding_sha256=_sha256_json(binding),
         workspace_before_bytes=before_bytes,
+        wall_time_milliseconds=wall_time_milliseconds,
     )
 
 
@@ -549,12 +643,15 @@ def build_verifier_resource_enforcement_report(
     workspace_ok = growth <= plan.policy.workspace_growth_bytes
     output_ok = not stdout_truncated and not stderr_truncated
     cleanup_ok = cleanup.get("verified") is True
+    missing_requirements = plan.capabilities.missing_requirements(plan.policy)
+    requirements_ok = not missing_requirements
     controls = {
         name: {
             "strength": capability.strength,
             "mechanism": capability.mechanism,
             "required_strength": plan.policy.required_strengths[name],
             "available": capability.strength != "unsupported",
+            "meets_required_strength": name not in missing_requirements,
         }
         for name, capability in plan.capabilities.controls.items()
     }
@@ -593,7 +690,14 @@ def build_verifier_resource_enforcement_report(
         output_capture=output_capture,
         tree_cleanup=tree_cleanup,
         workspace_growth=workspace_growth,
-        compliant=bool(plan.runnable and workspace_ok and output_ok and cleanup_ok),
+        missing_required_controls=missing_requirements,
+        compliant=bool(
+            plan.runnable
+            and requirements_ok
+            and workspace_ok
+            and output_ok
+            and cleanup_ok
+        ),
     )
 
 
@@ -606,15 +710,22 @@ def measure_workspace_bytes(workspace: str | Path) -> int:
         current = Path(directory)
         directories.sort()
         files.sort()
+        traversable: list[str] = []
         for name in directories:
             metadata = current.joinpath(name).lstat()
-            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            if stat.S_ISLNK(metadata.st_mode):
+                continue
+            if not stat.S_ISDIR(metadata.st_mode):
                 raise VerifierResourceError(
-                    "Workspace resource accounting rejects linked directories."
+                    "Workspace resource accounting accepts directories only."
                 )
+            traversable.append(name)
+        directories[:] = traversable
         for name in files:
             metadata = current.joinpath(name).lstat()
-            if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            if stat.S_ISLNK(metadata.st_mode):
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
                 raise VerifierResourceError(
                     "Workspace resource accounting accepts regular files only."
                 )
@@ -633,8 +744,7 @@ def _setrlimit_capabilities(
         for name in ("RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE"):
             if not hasattr(resource, name):
                 raise OSError(f"{name} is unavailable")
-        environment = {"PATH": os.defpath, "LANG": "C", "LC_ALL": "C"}
-        executable = resolve_executable(sys.executable, env=environment)
+        executable = _resolve_supervisor_executable()
     except (AssistantBridgeRuntimeError, ImportError, OSError, ValueError):
         return _unsupported_capabilities(
             platform_name, "fixed Python setrlimit supervisor is unavailable"
@@ -671,6 +781,7 @@ def _setrlimit_capabilities(
             "memory and process-count limits are not hard tree controls"
         ),
         executable=executable,
+        supervisor_executable=executable,
     )
 
 
@@ -682,13 +793,26 @@ def _linux_cgroup_capabilities(
     if not _linux_cgroup_v2_available():
         return None
     executable = _attest_os_owned_executable(Path(policy.linux_backend))
-    if executable is None or not _probe_systemd_user_scope(executable.launch_path):
+    try:
+        supervisor = _resolve_supervisor_executable()
+    except (AssistantBridgeRuntimeError, OSError, ValueError):
+        return None
+    environment = _systemd_user_environment()
+    if executable is None or environment is None:
+        return None
+    probe_sha256 = _probe_systemd_user_scope(
+        executable.launch_path,
+        supervisor=supervisor,
+        policy=policy,
+        environment=environment,
+    )
+    if probe_sha256 is None:
         return None
     controls = _control_map(
-        cpu_time=("process_hard", "systemd LimitCPU", "inherited CPU-time limit"),
+        cpu_time=("process_hard", "RLIMIT_CPU", "inherited per-process CPU limit"),
         cpu_quota=("kernel_hard", "cgroup v2 cpu.max", "tree-wide CPU-rate quota"),
-        file_size=("process_hard", "systemd LimitFSIZE", "inherited file-size limit"),
-        open_files=("process_hard", "systemd LimitNOFILE", "inherited descriptor limit"),
+        file_size=("process_hard", "RLIMIT_FSIZE", "inherited file-size limit"),
+        open_files=("process_hard", "RLIMIT_NOFILE", "inherited descriptor limit"),
         memory=("kernel_hard", "cgroup v2 memory.max", "tree-wide memory ceiling"),
         processes=("kernel_hard", "cgroup v2 pids.max", "tree-wide task ceiling"),
         workspace_growth=(
@@ -704,21 +828,24 @@ def _linux_cgroup_capabilities(
         controls=controls,
         reason="cgroup v2 user-scope properties were verified by a transient probe",
         executable=executable,
+        supervisor_executable=supervisor,
+        environment=environment,
+        probe_sha256=probe_sha256,
     )
 
 
 def _windows_job_capabilities(platform_name: str) -> VerifierResourceCapabilities:
-    if not _windows_job_objects_available():
-        return _unsupported_capabilities(
-            platform_name, "Windows Job Object APIs are unavailable"
-        )
+    api_status = "available" if _windows_job_objects_available() else "unavailable"
+    reason = (
+        f"Windows Job Object APIs are {api_status}, but no attested launcher "
+        "adapter binds command verifiers to a Job Object"
+    )
     controls = _control_map(
-        cpu_time=("kernel_hard", "Job Object time limit", "job-wide CPU-time limit"),
-        cpu_quota=("kernel_hard", "Job Object CPU rate", "job-wide CPU-rate limit"),
-        file_size=("unsupported", "none", "Job Objects do not cap file size"),
-        open_files=("unsupported", "none", "Job Objects do not cap handles"),
-        memory=("kernel_hard", "JobMemoryLimit", "job-wide memory ceiling"),
-        processes=("kernel_hard", "ActiveProcessLimit", "job-wide process ceiling"),
+        **{
+            name: ("unsupported", "none", reason)
+            for name in RESOURCE_CONTROLS
+            if name != "workspace_growth"
+        },
         workspace_growth=(
             "post_run",
             "workspace byte accounting",
@@ -727,13 +854,10 @@ def _windows_job_capabilities(platform_name: str) -> VerifierResourceCapabilitie
     )
     return VerifierResourceCapabilities(
         platform=platform_name,
-        backend="windows-job-object-contract",
-        supported=True,
+        backend="windows-job-object-unbound",
+        supported=False,
         controls=controls,
-        reason=(
-            "Job Object controls are available, but command verifiers remain blocked "
-            "until an independent filesystem and network sandbox is available"
-        ),
+        reason=reason,
     )
 
 
@@ -790,24 +914,76 @@ def _attest_os_owned_executable(path: Path) -> ExecutableIdentity | None:
         return None
 
 
+def _resolve_supervisor_executable() -> ExecutableIdentity:
+    environment = {"PATH": os.defpath, "LANG": "C", "LC_ALL": "C"}
+    return resolve_executable(sys.executable, env=environment)
+
+
+def _systemd_user_environment() -> Mapping[str, str] | None:
+    runtime_value = os.environ.get("XDG_RUNTIME_DIR", "")
+    if (
+        not runtime_value
+        or "\x00" in runtime_value
+        or len(runtime_value) > 4096
+    ):
+        return None
+    runtime_path = Path(runtime_value)
+    if not runtime_path.is_absolute():
+        return None
+    try:
+        metadata = runtime_path.lstat()
+        resolved = runtime_path.resolve(strict=True)
+    except OSError:
+        return None
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        return None
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid) and metadata.st_uid != getuid():
+        return None
+    result = {"XDG_RUNTIME_DIR": str(resolved)}
+    bus_value = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+    if bus_value:
+        if "\x00" in bus_value or len(bus_value) > 4096:
+            return None
+        result["DBUS_SESSION_BUS_ADDRESS"] = bus_value
+    return MappingProxyType(dict(sorted(result.items())))
+
+
 def _linux_cgroup_v2_available() -> bool:
-    return (
-        Path("/sys/fs/cgroup/cgroup.controllers").is_file()
-        and Path("/run/systemd/system").is_dir()
-        and bool(os.environ.get("XDG_RUNTIME_DIR"))
-    )
-
-
-def _probe_systemd_user_scope(executable: str) -> bool:
-    true_path = Path("/usr/bin/true")
-    if _attest_os_owned_executable(true_path) is None:
+    controllers_path = Path("/sys/fs/cgroup/cgroup.controllers")
+    if not controllers_path.is_file() or not Path("/run/systemd/system").is_dir():
         return False
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key in {"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
+    try:
+        controllers = frozenset(
+            controllers_path.read_text(encoding="ascii").split()
+        )
+    except (OSError, UnicodeError):
+        return False
+    return {"cpu", "memory", "pids"}.issubset(controllers)
+
+
+def _probe_systemd_user_scope(
+    executable: str,
+    *,
+    supervisor: ExecutableIdentity,
+    policy: VerifierResourcePolicy,
+    environment: Mapping[str, str],
+) -> str | None:
+    probe_environment = dict(environment)
+    probe_environment.update(
+        {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
+    )
+    expected = {
+        "cpu_quota_percent": policy.cpu_quota_percent,
+        "memory_bytes": policy.memory_bytes,
+        "processes": policy.processes,
+        "runtime_max_milliseconds": 5000,
+        "sentinel_exit": _SYSTEMD_PROBE_EXIT,
     }
-    environment.update({"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"})
     try:
         completed = subprocess.run(
             [
@@ -816,20 +992,57 @@ def _probe_systemd_user_scope(executable: str) -> bool:
                 "--scope",
                 "--quiet",
                 "--collect",
-                "--property=TasksMax=16",
-                "--property=MemoryMax=67108864",
-                str(true_path),
+                "--pipe",
+                "--expand-environment=no",
+                "--property=KillMode=control-group",
+                "--property=RuntimeMaxSec=5000ms",
+                f"--property=CPUQuota={policy.cpu_quota_percent}%",
+                f"--property=MemoryMax={policy.memory_bytes}",
+                f"--property=TasksMax={policy.processes}",
+                "--",
+                supervisor.launch_path,
+                "-I",
+                "-c",
+                _SYSTEMD_SCOPE_PROBE,
+                _canonical_json(expected),
             ],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=environment,
+            capture_output=True,
+            env=probe_environment,
             check=False,
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0
+        return None
+    if (
+        completed.returncode != _SYSTEMD_PROBE_EXIT
+        or len(completed.stdout) > _SYSTEMD_PROBE_OUTPUT_BYTES
+        or len(completed.stderr) > _SYSTEMD_PROBE_OUTPUT_BYTES
+    ):
+        return None
+    try:
+        readback = json.loads(completed.stdout.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(readback, dict) or readback.get("verified") is not True:
+        return None
+    if set(readback) != {
+        "cpu_max",
+        "memory_max",
+        "pids_max",
+        "verified",
+    }:
+        return None
+    return _sha256_json(
+        {
+            "contract": "systemd-user-scope-cgroup-v2-readback/v1",
+            "environment_sha256": _sha256_json(dict(environment)),
+            "expected": expected,
+            "readback": readback,
+            "exit_status_propagated": True,
+            "collect_requested": True,
+        }
+    )
 
 
 def _windows_job_objects_available() -> bool:
@@ -861,6 +1074,7 @@ def _plan_binding(
     reason: str,
     resource_argv_sha256: str,
     launcher_chain: LauncherChainIdentity | None,
+    wall_time_milliseconds: int,
 ) -> dict[str, object]:
     # The wrapper is rebuilt inside a disposable workspace at execution time.
     # Its exact cwd and environment therefore differ from the confirmed source
@@ -875,6 +1089,7 @@ def _plan_binding(
         "reason": reason or None,
         "resource_argv_sha256": resource_argv_sha256 or None,
         "launcher_chain_attested": launcher_chain is not None,
+        "wall_time_milliseconds": wall_time_milliseconds,
     }
 
 
@@ -888,6 +1103,32 @@ def _deduplicate_companions(values: Sequence[str | Path]) -> tuple[str, ...]:
             seen.add(key)
             result.append(raw)
     return tuple(result)
+
+
+def _launcher_attestation_argv(
+    argv: Sequence[str],
+    *,
+    bound_command_argv: Sequence[str] = (),
+) -> tuple[str, ...]:
+    inline_sources = {
+        _POSIX_RESOURCE_SUPERVISOR: (
+            "<inline-python-sha256:" + _sha256_text(_POSIX_RESOURCE_SUPERVISOR) + ">"
+        ),
+        _SYSTEMD_SCOPE_PROBE: (
+            "<inline-python-sha256:" + _sha256_text(_SYSTEMD_SCOPE_PROBE) + ">"
+        ),
+    }
+    result = tuple(inline_sources.get(item, item) for item in argv)
+    suffix = tuple(bound_command_argv)
+    if suffix:
+        if len(suffix) > len(result) or result[-len(suffix) :] != suffix:
+            raise VerifierResourceError(
+                "Resource launcher command suffix does not match its binding."
+            )
+        result = result[: -len(suffix)] + (
+            "<bound-command-argv-sha256:" + _sha256_json(list(suffix)) + ">",
+        )
+    return result
 
 
 def _require_sha256(value: str, label: str) -> None:
@@ -934,4 +1175,67 @@ command = sys.argv[2:]
 if not command or not os.path.isabs(command[0]) or "\x00" in command[0]:
     raise SystemExit(94)
 os.execve(command[0], command, dict(os.environ))
+""".strip()
+
+
+_SYSTEMD_SCOPE_PROBE = r"""
+import json
+from pathlib import Path
+import sys
+
+expected = json.loads(sys.argv[1])
+if set(expected) != {
+    "cpu_quota_percent", "memory_bytes", "processes",
+    "runtime_max_milliseconds", "sentinel_exit"
+}:
+    raise SystemExit(90)
+
+line = next(
+    (item for item in Path("/proc/self/cgroup").read_text().splitlines()
+     if item.startswith("0::")),
+    "",
+)
+root = Path("/sys/fs/cgroup").resolve(strict=True)
+relative = line.partition("::")[2].lstrip("/")
+scope = (root / relative).resolve(strict=True)
+try:
+    scope.relative_to(root)
+except ValueError:
+    raise SystemExit(91)
+
+def read_control(name):
+    value = scope.joinpath(name).read_text(encoding="ascii").strip()
+    if not value or len(value) > 128:
+        raise SystemExit(92)
+    return value
+
+cpu_max = read_control("cpu.max")
+memory_max = read_control("memory.max")
+pids_max = read_control("pids.max")
+
+try:
+    cpu_quota_raw, cpu_period_raw = cpu_max.split()
+    cpu_quota = int(cpu_quota_raw)
+    cpu_period = int(cpu_period_raw)
+    memory = int(memory_max)
+    processes = int(pids_max)
+except (TypeError, ValueError):
+    verified = False
+else:
+    verified = all((
+        cpu_quota > 0,
+        cpu_period > 0,
+        cpu_quota * 100
+        <= expected["cpu_quota_percent"] * cpu_period,
+        0 < memory <= expected["memory_bytes"],
+        0 < processes <= expected["processes"],
+    ))
+
+print(json.dumps({
+    "cpu_max": cpu_max,
+    "memory_max": memory_max,
+    "pids_max": pids_max,
+    "verified": verified,
+}, ensure_ascii=True, separators=(",", ":"), sort_keys=True), flush=True)
+raise SystemExit(expected["sentinel_exit"] if verified else 93)
 """.strip()
