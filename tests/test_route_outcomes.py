@@ -75,7 +75,7 @@ class RouteOutcomeTests(unittest.TestCase):
 
     def test_missing_final_evidence_is_inconclusive(self) -> None:
         record = build_verified_outcome(
-            _bridge_metadata(evidence=[]),
+            _bridge_metadata(evidence=[], required_verifier_ids=[]),
             _signals(),
             created_at="2026-07-19T03:00:00+00:00",
         )
@@ -83,6 +83,52 @@ class RouteOutcomeTests(unittest.TestCase):
         self.assertEqual(record.outcome, "inconclusive")
         self.assertEqual(record.evidence_strength, "implicit")
         self.assertEqual(record.failure_class, "verification_missing")
+
+    def test_required_verifier_must_pass_in_final_phase(self) -> None:
+        metadata = _bridge_metadata(
+            evidence=[_evidence("unrelated-check", passed=True)],
+            prior_evidence=[_evidence("check-a", passed=True)],
+        )
+
+        record = build_verified_outcome(
+            metadata,
+            _signals(),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        self.assertEqual(record.outcome, "failed")
+        self.assertEqual(record.failure_class, "required_verifier_missing")
+
+    def test_failed_bridge_cannot_be_rescued_by_unrelated_passing_evidence(self) -> None:
+        metadata = _bridge_metadata(
+            evidence=[_evidence("unrelated-check", passed=True)],
+            status="failed",
+            code="premium-runtime-failed",
+        )
+
+        record = build_verified_outcome(
+            metadata,
+            _signals(),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        self.assertEqual(record.outcome, "failed")
+        self.assertEqual(record.failure_class, "premium-runtime-failed")
+
+    def test_prior_failure_does_not_override_verified_final_recovery(self) -> None:
+        metadata = _bridge_metadata(
+            evidence=[_evidence("check-a", passed=True)],
+            prior_evidence=[_evidence("local-check", passed=False)],
+        )
+
+        record = build_verified_outcome(
+            metadata,
+            _signals(),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        self.assertEqual(record.outcome, "passed")
+        self.assertEqual(record.failure_class, "none")
 
     def test_capability_comparison_is_order_independent(self) -> None:
         metadata = _bridge_metadata(evidence=[])
@@ -168,9 +214,13 @@ def _signals() -> TaskSignals:
 def _bridge_metadata(
     *,
     evidence: list[dict[str, object]],
+    prior_evidence: list[dict[str, object]] | None = None,
     commands: list[dict[str, object]] | None = None,
     capsule: dict[str, object] | None = None,
     premium_calls: int = 0,
+    required_verifier_ids: list[str] | None = None,
+    status: str = "completed",
+    code: str = "completed",
 ) -> dict[str, object]:
     local_runtime = {
         "provider_id": "local-a",
@@ -187,8 +237,8 @@ def _bridge_metadata(
     return {
         "schema_version": "2.0",
         "mode": "assistant_bridge",
-        "status": "completed",
-        "code": "completed",
+        "status": status,
+        "code": code,
         "route_receipt": {
             "schema_version": "2.0",
             "contract": "RouteDecisionReceipt",
@@ -206,7 +256,11 @@ def _bridge_metadata(
                 },
                 "constraint_count": 2,
                 "no_change_expected": False,
-                "required_verifier_ids": ["check-a"],
+                "required_verifier_ids": (
+                    ["check-a"]
+                    if required_verifier_ids is None
+                    else required_verifier_ids
+                ),
                 "allow_remote": True,
                 "allow_remote_workspace": False,
                 "max_premium_calls": 1,
@@ -225,7 +279,7 @@ def _bridge_metadata(
             "local_runtime": local_runtime,
             "premium_runtime": premium_runtime,
         },
-        "verification": {"prior": [], "final": evidence},
+        "verification": {"prior": prior_evidence or [], "final": evidence},
         "commands": commands or [],
         "capsule": capsule,
         "final_provider": "local-a",
@@ -238,7 +292,7 @@ def _evidence(
     code: str, *, passed: bool, kind: str = "command"
 ) -> dict[str, object]:
     return {
-        "id": f"evidence-{code}",
+        "id": code,
         "verifier": "verifier-a",
         "kind": kind,
         "passed": passed,
