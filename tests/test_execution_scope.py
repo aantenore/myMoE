@@ -228,6 +228,15 @@ class ExecutionScopeContractTests(unittest.TestCase):
         self.assertEqual(decision.selected[0].expert_id, "mesh")
         self.assertEqual(attestor.calls["mesh"], 1)
 
+    def test_fresh_attestation_preserves_its_original_authority(self) -> None:
+        config = _config([_expert("local")])
+        attestor = FixedAttestor({"local": ExecutionScope.DEVICE_ONLY})
+        guard = ExecutionScopeGuard(config.execution_policy, attestor=attestor)
+
+        attestation = guard.require_allowed(config.experts[0].execution_target)
+
+        self.assertEqual(attestation.authority, "test")
+
     def test_attested_scope_must_match_the_declaration(self) -> None:
         config = _config(
             [

@@ -103,6 +103,7 @@ class ExecutionEligibility:
     allowed: bool
     scope: ExecutionScope | None = None
     transport: ExecutionTransport | None = None
+    authority: str | None = None
     reason_code: str | None = None
     detail: str = ""
 
@@ -206,6 +207,7 @@ class ExecutionScopeGuard:
             allowed=True,
             scope=attestation.scope,
             transport=attestation.transport,
+            authority=attestation.authority,
         )
 
     def require_allowed(self, target: ExecutionTarget) -> ExecutionAttestation:
@@ -215,7 +217,11 @@ class ExecutionScopeGuard:
                 eligibility.detail or "execution target is not eligible.",
                 expert_id=target.expert_id,
             )
-        if eligibility.scope is None or eligibility.transport is None:
+        if (
+            eligibility.scope is None
+            or eligibility.transport is None
+            or not eligibility.authority
+        ):
             raise ScopePolicyError(
                 "execution attestation is incomplete.",
                 expert_id=target.expert_id,
@@ -224,7 +230,7 @@ class ExecutionScopeGuard:
             expert_id=target.expert_id,
             scope=eligibility.scope,
             transport=eligibility.transport,
-            authority="guard",
+            authority=eligibility.authority,
         )
 
     def permits_fallback(
