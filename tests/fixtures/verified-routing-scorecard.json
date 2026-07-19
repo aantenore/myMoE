@@ -1,0 +1,52 @@
+{
+  "digest": "1a8baac934977cb2dee1f73f7def558294cb6a6965e0f9986a1d6c17cde50ec1",
+  "entries": [
+    {
+      "capability": "analysis",
+      "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "cost_sample_count": 20,
+      "difficulty": "medium",
+      "mean_cost_usd": 0.0,
+      "mean_egress_chars": 0.0,
+      "mean_premium_calls": 0.0,
+      "mean_tokens": 800.0,
+      "p95_latency_ms": 1000.0,
+      "route": "local",
+      "success_rate": 0.75,
+      "verified_samples": 20
+    },
+    {
+      "capability": "analysis",
+      "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "cost_sample_count": 20,
+      "difficulty": "medium",
+      "mean_cost_usd": 0.02,
+      "mean_egress_chars": 1000.0,
+      "mean_premium_calls": 0.25,
+      "mean_tokens": 1300.0,
+      "p95_latency_ms": 2500.0,
+      "route": "local_then_verify",
+      "success_rate": 0.95,
+      "verified_samples": 20
+    },
+    {
+      "capability": "analysis",
+      "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "cost_sample_count": 20,
+      "difficulty": "medium",
+      "mean_cost_usd": 0.05,
+      "mean_egress_chars": 4000.0,
+      "mean_premium_calls": 1.0,
+      "mean_tokens": 1000.0,
+      "p95_latency_ms": 2000.0,
+      "route": "premium",
+      "success_rate": 0.98,
+      "verified_samples": 20
+    }
+  ],
+  "expires_at": "2030-01-01T00:00:00+00:00",
+  "generated_at": "2026-07-19T00:00:00+00:00",
+  "minimum_evidence_strength": "independent",
+  "schema_version": "1.0",
+  "source_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

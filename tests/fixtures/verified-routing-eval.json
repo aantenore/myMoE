@@ -1,0 +1,89 @@
+{
+  "axes": {
+    "capabilities": [
+      "analysis",
+      "code",
+      "web",
+      "large_context"
+    ],
+    "contexts": [
+      "short",
+      "medium",
+      "long",
+      "compacted"
+    ],
+    "difficulties": [
+      "simple",
+      "medium",
+      "complex",
+      "very_complex"
+    ],
+    "languages": [
+      "en",
+      "it",
+      "de",
+      "zh"
+    ]
+  },
+  "calibration_bins": 10,
+  "claim_scope": "synthetic_deterministic_only",
+  "contract": "VerifiedRoutingSyntheticEvalFixture",
+  "current_baseline": {
+    "premium_probability_by_difficulty": {
+      "complex": 0.7,
+      "medium": 0.3,
+      "simple": 0.1,
+      "very_complex": 0.9
+    },
+    "premium_threshold": 0.5
+  },
+  "expected_cases": 64,
+  "metric_model": {
+    "local": {
+      "base_completion_tokens": 180,
+      "base_cost_usd": 0.0,
+      "base_egress_chars": 0,
+      "base_latency_ms": 700,
+      "base_prompt_tokens": 320,
+      "premium_calls": 0
+    },
+    "premium": {
+      "base_completion_tokens": 260,
+      "base_cost_usd": 0.04,
+      "base_egress_chars": 900,
+      "base_latency_ms": 1300,
+      "base_prompt_tokens": 480,
+      "premium_calls": 1
+    }
+  },
+  "outcome_templates": [
+    {
+      "id": "both-pass",
+      "local_verified": true,
+      "premium_verified": true,
+      "verified_shadow_probability": 0.15
+    },
+    {
+      "id": "premium-recovers",
+      "local_verified": false,
+      "premium_verified": true,
+      "verified_shadow_probability": 0.85
+    },
+    {
+      "id": "both-fail",
+      "local_verified": false,
+      "premium_verified": false,
+      "verified_shadow_probability": 0.35
+    },
+    {
+      "id": "local-only-pass",
+      "local_verified": true,
+      "premium_verified": false,
+      "verified_shadow_probability": 0.1
+    }
+  ],
+  "schema_version": "1.0",
+  "verified_shadow": {
+    "premium_threshold": 0.5
+  }
+}
