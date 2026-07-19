@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping
 
 from .route_scorecard import RouteScorecard, RouteScorecardEntry
@@ -96,6 +97,30 @@ class VerifiedRoutePolicy:
     digest: str
     mode: str = "shadow"
     schema_version: str = CONTRACT_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != CONTRACT_VERSION:
+            raise VerifiedRoutingError("Unsupported route policy schema_version.")
+        if self.mode != "shadow":
+            raise VerifiedRoutingError("Route policy mode must be shadow in schema 1.0.")
+        if set(self.profiles) != _PROFILE_NAMES:
+            raise VerifiedRoutingError(
+                "profiles must define economy, balanced, quality, privacy, and offline."
+            )
+        profiles: dict[str, RouteProfilePolicy] = {}
+        for name in sorted(self.profiles):
+            profile = self.profiles[name]
+            if not isinstance(profile, RouteProfilePolicy):
+                raise VerifiedRoutingError(f"profiles.{name} is invalid.")
+            profiles[name] = RouteProfilePolicy(
+                weights=RoutePolicyWeights(**profile.weights.payload()),
+                min_success_rate=profile.min_success_rate,
+                min_samples=profile.min_samples,
+                min_confidence=profile.min_confidence,
+            )
+        object.__setattr__(self, "profiles", MappingProxyType(profiles))
+        if self.digest != sha256_json(self.payload()):
+            raise VerifiedRoutingError("Route policy digest does not match its content.")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -300,7 +325,9 @@ def recommend_shadow_route(
     if baseline not in ROUTE_PLANS:
         raise VerifiedRoutingError("Receipt route is not supported.")
     profile_policy = policy.profiles[profile]
-    hard_rejections = _hard_rejections(receipt)
+    if profile == "offline" and baseline in {"local_then_verify", "premium"}:
+        raise VerifiedRoutingError("Offline receipts cannot contain a remote route.")
+    hard_rejections = _hard_rejections(receipt, profile=profile)
 
     stale = _is_stale(scorecard, now)
     global_reasons: list[str] = ["shadow_mode"]
@@ -396,7 +423,7 @@ def recommend_shadow_route(
             scorecard=scorecard,
         )
 
-    pareto_routes = _pareto_routes(acceptable)
+    pareto_routes = _pareto_routes(acceptable, profile_policy.weights)
     rescored = [
         _with_pareto(candidate, candidate.route in pareto_routes) for candidate in scored
     ]
@@ -428,7 +455,11 @@ def recommend_shadow_route(
     )
 
 
-def _hard_rejections(receipt: "RouteDecisionReceipt") -> dict[str, tuple[str, ...]]:
+def _hard_rejections(
+    receipt: "RouteDecisionReceipt",
+    *,
+    profile: str,
+) -> dict[str, tuple[str, ...]]:
     local_gaps = tuple(receipt.local_gaps)
     premium_gaps = tuple(receipt.premium_gaps)
     remote_allowed = bool(receipt.remote_allowed)
@@ -436,6 +467,8 @@ def _hard_rejections(receipt: "RouteDecisionReceipt") -> dict[str, tuple[str, ..
     result: dict[str, tuple[str, ...]] = {}
     for route in ROUTE_PLANS:
         reasons: list[str] = []
+        if profile == "offline" and route in {"local_then_verify", "premium"}:
+            reasons.append("offline_remote_forbidden")
         if route in {"local", "local_then_verify"} and local_gaps:
             reasons.append("local_capability_gap")
         if route in {"local_then_verify", "premium"}:
@@ -498,11 +531,15 @@ def _utility(
     return round((reward - penalties) / weights.total, 12)
 
 
-def _pareto_routes(candidates: list[CandidateRouteScore]) -> frozenset[str]:
+def _pareto_routes(
+    candidates: list[CandidateRouteScore],
+    weights: RoutePolicyWeights,
+) -> frozenset[str]:
     nondominated: set[str] = set()
     for candidate in candidates:
         dominated = any(
-            other.route != candidate.route and _dominates(other, candidate)
+            other.route != candidate.route
+            and _dominates(other, candidate, weights)
             for other in candidates
         )
         if not dominated:
@@ -510,39 +547,46 @@ def _pareto_routes(candidates: list[CandidateRouteScore]) -> frozenset[str]:
     return frozenset(nondominated)
 
 
-def _dominates(left: CandidateRouteScore, right: CandidateRouteScore) -> bool:
-    left_values = _metric_vector(left)
-    right_values = _metric_vector(right)
-    no_worse = (
-        left_values[0] >= right_values[0]
-        and left_values[1] <= right_values[1]
-        and left_values[2] <= right_values[2]
-        and left_values[3] <= right_values[3]
-        and left_values[4] <= right_values[4]
+def _dominates(
+    left: CandidateRouteScore,
+    right: CandidateRouteScore,
+    weights: RoutePolicyWeights,
+) -> bool:
+    left_values = _metric_vector(left, weights)
+    right_values = _metric_vector(right, weights)
+    return all(
+        left_value >= right_value
+        for left_value, right_value in zip(left_values, right_values)
+    ) and any(
+        left_value > right_value
+        for left_value, right_value in zip(left_values, right_values)
     )
-    strictly_better = (
-        left_values[0] > right_values[0]
-        or left_values[1] < right_values[1]
-        or left_values[2] < right_values[2]
-        or left_values[3] < right_values[3]
-        or left_values[4] < right_values[4]
-    )
-    return no_worse and strictly_better
 
 
-def _metric_vector(candidate: CandidateRouteScore) -> tuple[float, ...]:
-    assert candidate.success_rate is not None
-    assert candidate.mean_cost_usd is not None
-    assert candidate.p95_latency_ms is not None
-    assert candidate.mean_egress_chars is not None
-    assert candidate.mean_premium_calls is not None
-    return (
-        candidate.success_rate,
-        candidate.mean_cost_usd,
-        candidate.p95_latency_ms,
-        candidate.mean_egress_chars,
-        candidate.mean_premium_calls,
-    )
+def _metric_vector(
+    candidate: CandidateRouteScore,
+    weights: RoutePolicyWeights,
+) -> tuple[float, ...]:
+    values: list[float] = []
+    if weights.quality > 0.0:
+        values.append(_required_metric(candidate.success_rate, "success_rate"))
+    if weights.cost > 0.0:
+        values.append(-_required_metric(candidate.mean_cost_usd, "mean_cost_usd"))
+    if weights.latency > 0.0:
+        values.append(-_required_metric(candidate.p95_latency_ms, "p95_latency_ms"))
+    if weights.egress > 0.0:
+        values.append(-_required_metric(candidate.mean_egress_chars, "mean_egress_chars"))
+    if weights.premium > 0.0:
+        values.append(
+            -_required_metric(candidate.mean_premium_calls, "mean_premium_calls")
+        )
+    return tuple(values)
+
+
+def _required_metric(value: float | None, label: str) -> float:
+    if value is None:
+        raise VerifiedRoutingError(f"Pareto filtering requires {label} evidence.")
+    return value
 
 
 def _with_pareto(

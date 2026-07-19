@@ -50,6 +50,22 @@ class RoutePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(VerifiedRoutingError, "Unknown"):
             route_policy_from_payload(raw)
 
+    def test_policy_profiles_are_deep_immutable_and_digest_stable(self) -> None:
+        digest = self.policy.digest
+        with self.assertRaises(TypeError):
+            self.policy.profiles["balanced"] = self.policy.profiles["economy"]
+        with self.assertRaises(AttributeError):
+            self.policy.profiles["balanced"].weights.cost = 0.0
+
+        detached = self.policy.payload()
+        detached["profiles"]["balanced"]["weights"]["cost"] = 0.0
+
+        self.assertGreater(
+            self.policy.profiles["balanced"].weights.cost,
+            0.0,
+        )
+        self.assertEqual(self.policy.digest, digest)
+
     def test_profiles_choose_deterministically_without_applying(self) -> None:
         signals = _signals()
         economy = recommend_shadow_route(
@@ -100,6 +116,39 @@ class RoutePolicyTests(unittest.TestCase):
             "premium_budget_unavailable",
             candidates["local_then_verify"].rejection_codes,
         )
+
+    def test_offline_profile_explicitly_excludes_every_remote_route(self) -> None:
+        decision = recommend_shadow_route(
+            _receipt(
+                profile="offline",
+                remote_allowed=True,
+                premium_call_budget=1,
+            ),
+            _signals(),
+            self.scorecard,
+            self.policy,
+            profile="offline",
+            now=NOW,
+        )
+
+        self.assertEqual(decision.recommended_route, "local")
+        candidates = {candidate.route: candidate for candidate in decision.candidates}
+        for route in ("local_then_verify", "premium"):
+            self.assertFalse(candidates[route].hard_eligible)
+            self.assertIn(
+                "offline_remote_forbidden",
+                candidates[route].rejection_codes,
+            )
+
+        with self.assertRaisesRegex(VerifiedRoutingError, "Offline"):
+            recommend_shadow_route(
+                _receipt(route="premium", profile="offline"),
+                _signals(),
+                self.scorecard,
+                self.policy,
+                profile="offline",
+                now=NOW,
+            )
 
     def test_blocked_receipt_is_terminal_without_scorecard_lookup(self) -> None:
         decision = recommend_shadow_route(
@@ -172,6 +221,39 @@ class RoutePolicyTests(unittest.TestCase):
         self.assertTrue(decision.abstained)
         self.assertEqual(decision.recommended_route, decision.baseline_route)
         self.assertIn("incomplete_cost_evidence", decision.reason_codes)
+
+    def test_zero_cost_weight_ignores_missing_cost_in_pareto_filter(self) -> None:
+        policy_raw = self.policy.payload()
+        policy_raw["profiles"]["balanced"]["weights"]["cost"] = 0.0
+        policy = route_policy_from_payload(policy_raw)
+
+        scorecard_raw = self.scorecard.payload()
+        for entry in scorecard_raw["entries"]:
+            entry["cost_sample_count"] = 0
+            entry["mean_cost_usd"] = None
+        content = dict(scorecard_raw)
+        content.pop("digest")
+        scorecard_raw["digest"] = sha256_json(content)
+        scorecard = route_scorecard_from_payload(scorecard_raw, now=NOW)
+
+        decision = recommend_shadow_route(
+            _receipt(),
+            _signals(),
+            scorecard,
+            policy,
+            profile="balanced",
+            now=NOW,
+        )
+
+        self.assertFalse(decision.abstained)
+        self.assertFalse(decision.applied)
+        self.assertNotIn("incomplete_cost_evidence", decision.reason_codes)
+        self.assertTrue(
+            all(
+                candidate.mean_cost_usd is None
+                for candidate in decision.candidates
+            )
+        )
 
     def test_profile_and_task_signal_binding_are_enforced(self) -> None:
         with self.assertRaisesRegex(VerifiedRoutingError, "profile"):
