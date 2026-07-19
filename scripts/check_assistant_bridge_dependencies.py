@@ -16,13 +16,16 @@ REQUIRED_MINOR_SERIES = {
 }
 REQUIRED_MAJOR_RANGES = {
     "cryptography": (48, 49),
+    "filelock": (3, 4),
     "platformdirs": (4, 5),
 }
 REQUIRED_MINIMUM_RELEASES = {
     "cryptography": (48, 0, 1),
+    "filelock": (3, 29, 7),
 }
 REQUIRED_RANGE_LABELS = {
     "cryptography": ">=48.0.1,<49",
+    "filelock": ">=3.29.7,<4",
 }
 
 
@@ -100,6 +103,7 @@ def validate_installed_project_metadata() -> None:
     expected = (
         "cryptography",
         "detect-secrets",
+        "filelock",
         "platformdirs",
         "psutil",
         "rfc8785",
@@ -135,6 +139,8 @@ def _metadata_range_is_supported(dependency: str, requirement: str) -> bool:
         )
     if dependency == "cryptography":
         return ">=48.0.1" in requirement and "<49" in requirement
+    if dependency == "filelock":
+        return ">=3.29.7" in requirement and "<4" in requirement
     if dependency == "platformdirs":
         return ">=4.3" in requirement and "<5" in requirement
     if dependency == "rfc8785":

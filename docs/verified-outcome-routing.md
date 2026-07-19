@@ -118,6 +118,10 @@ Start from a JSON export of `BridgeRunResult.metadata_payload()`. The export may
 contain route, verifier, command, and capsule metadata, but must not contain the
 user-facing `result.content` object.
 
+Install the project with the `assistant-bridge` extra. It includes the
+cross-platform process lock used by the append-only outcome store while the
+base myMoE distribution remains dependency-free.
+
 Derive structural signals without loading the task text:
 
 ```bash

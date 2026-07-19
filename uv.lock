@@ -932,14 +932,12 @@ wheels = [
 name = "local-moe-orchestrator"
 version = "0.3.0a1"
 source = { editable = "." }
-dependencies = [
-    { name = "filelock" },
-]
 
 [package.optional-dependencies]
 assistant-bridge = [
     { name = "cryptography" },
     { name = "detect-secrets" },
+    { name = "filelock" },
     { name = "platformdirs" },
     { name = "psutil" },
     { name = "rfc8785" },
@@ -974,7 +972,7 @@ ui-test = [
 requires-dist = [
     { name = "cryptography", marker = "extra == 'assistant-bridge'", specifier = ">=48.0.1,<49" },
     { name = "detect-secrets", marker = "extra == 'assistant-bridge'", specifier = ">=1.5,<1.6" },
-    { name = "filelock", specifier = ">=3.29.7,<4" },
+    { name = "filelock", marker = "extra == 'assistant-bridge'", specifier = ">=3.29.7,<4" },
     { name = "huggingface-hub", marker = "extra == 'gguf'" },
     { name = "huggingface-hub", marker = "extra == 'mlx'" },
     { name = "huggingface-hub", marker = "extra == 'mlx-current'" },

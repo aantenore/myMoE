@@ -27,6 +27,7 @@ class AssistantBridgeDependencyContractTests(unittest.TestCase):
         self.versions = {
             "cryptography": "48.0.1",
             "detect-secrets": "1.5.0",
+            "filelock": "3.29.7",
             "platformdirs": "4.10.1",
             "psutil": "7.2.2",
             "rfc8785": "0.1.4",
