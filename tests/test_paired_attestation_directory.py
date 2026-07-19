@@ -9,6 +9,7 @@ import stat
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -131,9 +132,12 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             _finish_watcher(watcher, errors)
 
     def test_response_symlink_hardlink_and_permissive_mode_fail_closed(self) -> None:
-        if os.name == "nt":
-            self.skipTest("POSIX link and permission contract")
-        for mode in ("symlink", "hardlink", "permissive"):
+        modes = (
+            ("hardlink",)
+            if os.name == "nt"
+            else ("symlink", "hardlink", "permissive")
+        )
+        for mode in modes:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 exchange = _exchange(root / "exchange")
@@ -152,6 +156,76 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                 with self.assertRaises(DirectoryPairedAttestationError):
                     producer.attest(binding, workspace, time.time() + 0.5)
                 _finish_watcher(watcher, errors)
+
+    def test_windows_publication_never_exposes_a_two_link_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            observed_links: list[int] = []
+            real_rename = os.rename
+
+            def windows_rename(source, destination) -> None:
+                if os.path.exists(destination):
+                    raise FileExistsError(os.fspath(destination))
+                real_rename(source, destination)
+                observed_links.append(os.lstat(destination).st_nlink)
+
+            with (
+                patch.object(directory_adapter.os, "name", "nt"),
+                patch.object(
+                    directory_adapter.os,
+                    "rename",
+                    side_effect=windows_rename,
+                ),
+                patch.object(
+                    directory_adapter.os,
+                    "link",
+                    side_effect=AssertionError("Windows publication used a hard link"),
+                ),
+            ):
+                _atomic_no_clobber(target, b"first")
+                with self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "overwrite is forbidden",
+                ):
+                    _atomic_no_clobber(target, b"second")
+
+            self.assertEqual(observed_links, [1])
+            self.assertEqual(target.read_bytes(), b"first")
+
+    def test_windows_reparse_response_is_rejected_before_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            target.write_bytes(b"x")
+            observed = target.lstat()
+            reparse = SimpleNamespace(
+                st_mode=observed.st_mode,
+                st_nlink=1,
+                st_size=observed.st_size,
+                st_uid=getattr(observed, "st_uid", 0),
+                st_dev=observed.st_dev,
+                st_ino=observed.st_ino,
+                st_mtime_ns=observed.st_mtime_ns,
+                st_file_attributes=getattr(
+                    stat,
+                    "FILE_ATTRIBUTE_REPARSE_POINT",
+                    0x400,
+                ),
+            )
+
+            with (
+                patch.object(Path, "lstat", return_value=reparse),
+                patch.object(directory_adapter.os, "open") as open_file,
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "bounded single-link regular file",
+                ),
+            ):
+                directory_adapter._read_secure_file(
+                    target,
+                    maximum_bytes=1024,
+                    label="attestation response",
+                )
+            open_file.assert_not_called()
 
     def test_response_replaced_by_fifo_between_lstat_and_open_never_blocks(
         self,

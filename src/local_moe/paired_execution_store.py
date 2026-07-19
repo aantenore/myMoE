@@ -14,8 +14,6 @@ import threading
 import time
 from typing import Any, Mapping
 
-from filelock import FileLock, Timeout
-
 from .paired_execution_contracts import (
     PairedOutcomeBinding,
     PairedRunCheckpoint,
@@ -150,11 +148,6 @@ class PairedExecutionStore:
             )
         self.lock_timeout_seconds = timeout
         self._thread_lock = threading.Lock()
-        self._process_lock = FileLock(
-            str(self.lock_path),
-            timeout=timeout,
-            mode=0o600,
-        )
         self._owner_pid = os.getpid()
         self._owner_nonce = secrets.token_hex(32)
         self._active_claims: dict[str, _ClaimAuthority] = {}
@@ -407,27 +400,14 @@ class PairedExecutionStore:
                     raise VerifiedRoutingError("Paired run is not prepared.")
                 _validate_run_directory(self.run_dir, metadata)
             _ensure_lock_file(self.lock_path)
-            try:
-                self._process_lock.acquire(timeout=self.lock_timeout_seconds)
-            except Timeout as exc:
-                raise VerifiedRoutingError(
-                    "Paired store lock acquisition timed out."
-                ) from exc
-            except OSError as exc:
-                raise VerifiedRoutingError(
-                    "Paired store lock acquisition failed."
-                ) from exc
-            try:
+            with _existing_file_lock(
+                self.lock_path,
+                timeout_seconds=self.lock_timeout_seconds,
+                exclusive=True,
+            ):
                 _validate_run_directory(self.run_dir)
                 _validate_regular_file(self.lock_path, "paired store lock")
                 yield
-            finally:
-                try:
-                    self._process_lock.release()
-                except OSError as exc:
-                    raise VerifiedRoutingError(
-                        "Paired store lock release failed."
-                    ) from exc
 
     def _require_prepared(self, state: _JournalState) -> _JournalState:
         if state.root is None:
@@ -788,9 +768,26 @@ def _list_run_directory(path: Path) -> tuple[str, ...]:
 def _existing_read_lock(path: Path, *, timeout_seconds: float):
     """Lock an existing journal without create/truncate side effects."""
 
+    with _existing_file_lock(
+        path,
+        timeout_seconds=timeout_seconds,
+        exclusive=False,
+    ):
+        yield
+
+
+@contextmanager
+def _existing_file_lock(
+    path: Path,
+    *,
+    timeout_seconds: float,
+    exclusive: bool,
+):
+    """Lock one existing inode without deleting or replacing its path."""
+
     before = _validate_regular_file(path, "paired store lock")
     flags = (
-        (os.O_RDWR if os.name == "nt" else os.O_RDONLY)
+        (os.O_RDWR if exclusive or os.name == "nt" else os.O_RDONLY)
         | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOINHERIT", 0)
@@ -802,7 +799,10 @@ def _existing_read_lock(path: Path, *, timeout_seconds: float):
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
         _validate_file_metadata(opened, "paired store lock")
-        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+        if os.name != "nt" and (before.st_dev, before.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
             raise VerifiedRoutingError(
                 "Paired store lock changed while it was opened."
             )
@@ -816,7 +816,8 @@ def _existing_read_lock(path: Path, *, timeout_seconds: float):
                 else:
                     import fcntl
 
-                    fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                    fcntl.flock(descriptor, mode | fcntl.LOCK_NB)
                 locked = True
             except OSError as exc:
                 if exc.errno not in {
@@ -825,8 +826,9 @@ def _existing_read_lock(path: Path, *, timeout_seconds: float):
                     getattr(errno, "EDEADLK", errno.EAGAIN),
                     getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
                 }:
+                    kind = "" if exclusive else " read"
                     raise VerifiedRoutingError(
-                        "Paired store read lock acquisition failed."
+                        f"Paired store{kind} lock acquisition failed."
                     ) from exc
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -834,20 +836,22 @@ def _existing_read_lock(path: Path, *, timeout_seconds: float):
                         "Paired store lock acquisition timed out."
                     ) from exc
                 time.sleep(min(0.05, remaining))
-        current = _validate_regular_file(path, "paired store lock")
-        if (current.st_dev, current.st_ino) != (
-            opened.st_dev,
-            opened.st_ino,
-        ):
-            raise VerifiedRoutingError(
-                "Paired store lock changed during acquisition."
-            )
+        current_path = _validate_regular_file(path, "paired store lock")
+        current_descriptor = os.fstat(descriptor)
+        _validate_file_metadata(current_descriptor, "paired store lock")
+        _validate_locked_file_identity(
+            before_path=before,
+            opened_descriptor=opened,
+            current_path=current_path,
+            current_descriptor=current_descriptor,
+        )
         yield
     except VerifiedRoutingError:
         raise
     except OSError as exc:
+        kind = "" if exclusive else " read"
         raise VerifiedRoutingError(
-            "Paired store read lock acquisition failed."
+            f"Paired store{kind} lock acquisition failed."
         ) from exc
     finally:
         if descriptor is not None:
@@ -863,8 +867,9 @@ def _existing_read_lock(path: Path, *, timeout_seconds: float):
 
                         fcntl.flock(descriptor, fcntl.LOCK_UN)
             except OSError as exc:
+                kind = "" if exclusive else " read"
                 raise VerifiedRoutingError(
-                    "Paired store read lock release failed."
+                    f"Paired store{kind} lock release failed."
                 ) from exc
             finally:
                 os.close(descriptor)
@@ -910,6 +915,7 @@ def _atomic_install(path: Path, content: bytes) -> bool:
         os.O_WRONLY
         | os.O_CREAT
         | os.O_EXCL
+        | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
@@ -972,6 +978,7 @@ def _read_secure_file(
         raise VerifiedRoutingError(f"{label} size is invalid.")
     flags = (
         os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
@@ -1054,6 +1061,35 @@ def _identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
         metadata.st_size,
         metadata.st_mtime_ns,
     )
+
+
+def _validate_locked_file_identity(
+    *,
+    before_path: os.stat_result,
+    opened_descriptor: os.stat_result,
+    current_path: os.stat_result,
+    current_descriptor: os.stat_result,
+) -> None:
+    if os.name == "nt":
+        changed = (
+            _identity(before_path) != _identity(current_path)
+            or _identity(opened_descriptor) != _identity(current_descriptor)
+        )
+    else:
+        identities = {
+            (item.st_dev, item.st_ino)
+            for item in (
+                before_path,
+                opened_descriptor,
+                current_path,
+                current_descriptor,
+            )
+        }
+        changed = len(identities) != 1
+    if changed:
+        raise VerifiedRoutingError(
+            "Paired store lock changed during acquisition."
+        )
 
 
 def _strict_json_loads(value: bytes) -> object:

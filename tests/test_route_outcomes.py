@@ -358,6 +358,57 @@ class RouteOutcomeTests(unittest.TestCase):
             self.assertEqual(OutcomeStore(path).list_records(), (record,))
             self.assertEqual(len(path.read_text(encoding="utf-8").splitlines()), 1)
 
+    def test_store_opens_payload_in_binary_mode_when_available(self) -> None:
+        synthetic_binary_flag = 1 << 29
+        native_binary_flag = getattr(os, "O_BINARY", 0)
+        real_open = os.open
+        observed_flags: list[int] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+
+            def open_with_synthetic_binary_flag(
+                candidate: str | os.PathLike[str],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                if Path(candidate) == path:
+                    observed_flags.append(flags)
+                portable_flags = flags & ~synthetic_binary_flag
+                if flags & synthetic_binary_flag:
+                    portable_flags |= native_binary_flag
+                if dir_fd is None:
+                    return real_open(candidate, portable_flags, mode)
+                return real_open(
+                    candidate,
+                    portable_flags,
+                    mode,
+                    dir_fd=dir_fd,
+                )
+
+            with patch.object(
+                route_outcomes_module.os,
+                "O_BINARY",
+                synthetic_binary_flag,
+                create=True,
+            ), patch.object(
+                route_outcomes_module.os,
+                "open",
+                side_effect=open_with_synthetic_binary_flag,
+            ):
+                route_outcomes_module._append_secure_outcome_file(path, b"{}\n")
+                self.assertEqual(
+                    route_outcomes_module._read_secure_outcome_file(path),
+                    b"{}\n",
+                )
+
+        self.assertEqual(len(observed_flags), 2)
+        self.assertTrue(
+            all(flags & synthetic_binary_flag for flags in observed_flags)
+        )
+
     def test_store_lock_timeout_fails_closed(self) -> None:
         context = multiprocessing.get_context("spawn")
         with tempfile.TemporaryDirectory() as tmp:

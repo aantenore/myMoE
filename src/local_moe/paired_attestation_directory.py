@@ -375,7 +375,7 @@ def _pin_verifier_workspace(value: Path) -> Path:
         raise DirectoryPairedAttestationError(
             "Verifier workspace is unavailable."
         ) from exc
-    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
+    if _is_link_or_reparse(details) or not stat.S_ISDIR(details.st_mode):
         raise DirectoryPairedAttestationError(
             "Verifier workspace must be a non-link directory."
         )
@@ -387,7 +387,7 @@ def _private_directory_identity(path: Path, label: str) -> _DirectoryIdentity:
         details = path.lstat()
     except OSError as exc:
         raise DirectoryPairedAttestationError(f"{label} is unavailable.") from exc
-    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
+    if _is_link_or_reparse(details) or not stat.S_ISDIR(details.st_mode):
         raise DirectoryPairedAttestationError(
             f"{label} must be a non-link directory."
         )
@@ -420,7 +420,7 @@ def _read_secure_file(path: Path, *, maximum_bytes: int, label: str) -> bytes:
     except OSError as exc:
         raise DirectoryPairedAttestationError(f"{label} is unavailable.") from exc
     if (
-        stat.S_ISLNK(before.st_mode)
+        _is_link_or_reparse(before)
         or not stat.S_ISREG(before.st_mode)
         or before.st_nlink != 1
         or not 0 < before.st_size <= maximum_bytes
@@ -500,13 +500,20 @@ def _atomic_no_clobber(path: Path, value: bytes) -> None:
         os.close(descriptor)
         descriptor = -1
         try:
-            os.link(temporary, path, follow_symlinks=False)
+            if os.name == "nt":
+                # Windows rename is an atomic move that refuses an existing
+                # destination.  Unlike the portable hard-link publication used
+                # below, it never exposes the final name while two links exist.
+                os.rename(temporary, path)
+            else:
+                os.link(temporary, path, follow_symlinks=False)
             linked = True
         except FileExistsError as exc:
             raise DirectoryPairedAttestationError(
                 "Attestation request already exists; overwrite is forbidden."
             ) from exc
-        os.unlink(temporary)
+        if os.name != "nt":
+            os.unlink(temporary)
         _fsync_directory(path.parent)
         _read_secure_file(
             path,
@@ -550,6 +557,12 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _is_link_or_reparse(details: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    attributes = int(getattr(details, "st_file_attributes", 0))
+    return stat.S_ISLNK(details.st_mode) or bool(attributes & reparse_flag)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

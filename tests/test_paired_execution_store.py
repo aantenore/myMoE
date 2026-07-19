@@ -100,6 +100,7 @@ class PairedExecutionStoreTests(unittest.TestCase):
             run_dir = Path(temporary) / "run"
             store = PairedExecutionStore(run_dir)
             store.prepare(_root())
+            self.assertTrue(store.lock_path.is_file())
             store.lock_path.unlink()
 
             with self.assertRaisesRegex(VerifiedRoutingError, "without run.lock"):
@@ -524,6 +525,120 @@ class PairedExecutionStoreTests(unittest.TestCase):
                 ):
                     store_module._atomic_install(target, b"{}\n")
             self.assertFalse(target.exists())
+
+    def test_windows_lock_identity_uses_stable_same_api_comparisons(self) -> None:
+        path_before = mock.Mock(
+            st_dev=1,
+            st_ino=10,
+            st_size=0,
+            st_mtime_ns=100,
+        )
+        path_after = mock.Mock(
+            st_dev=1,
+            st_ino=10,
+            st_size=0,
+            st_mtime_ns=100,
+        )
+        descriptor_opened = mock.Mock(
+            st_dev=2,
+            st_ino=20,
+            st_size=0,
+            st_mtime_ns=200,
+        )
+        descriptor_current = mock.Mock(
+            st_dev=2,
+            st_ino=20,
+            st_size=0,
+            st_mtime_ns=200,
+        )
+
+        with mock.patch.object(store_module.os, "name", "nt"):
+            store_module._validate_locked_file_identity(
+                before_path=path_before,
+                opened_descriptor=descriptor_opened,
+                current_path=path_after,
+                current_descriptor=descriptor_current,
+            )
+            path_after.st_mtime_ns = 101
+            with self.assertRaisesRegex(VerifiedRoutingError, "changed"):
+                store_module._validate_locked_file_identity(
+                    before_path=path_before,
+                    opened_descriptor=descriptor_opened,
+                    current_path=path_after,
+                    current_descriptor=descriptor_current,
+                )
+            path_after.st_mtime_ns = 100
+            descriptor_current.st_mtime_ns = 201
+            with self.assertRaisesRegex(VerifiedRoutingError, "changed"):
+                store_module._validate_locked_file_identity(
+                    before_path=path_before,
+                    opened_descriptor=descriptor_opened,
+                    current_path=path_after,
+                    current_descriptor=descriptor_current,
+                )
+
+        descriptor_current.st_mtime_ns = 200
+        with (
+            mock.patch.object(store_module.os, "name", "posix"),
+            self.assertRaisesRegex(VerifiedRoutingError, "changed"),
+        ):
+            store_module._validate_locked_file_identity(
+                before_path=path_before,
+                opened_descriptor=descriptor_opened,
+                current_path=path_after,
+                current_descriptor=descriptor_current,
+            )
+
+    def test_json_file_descriptors_use_binary_mode_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "event.json"
+            binary_flag = 1 << 29
+            opened: list[tuple[Path, int]] = []
+            real_open = os.open
+
+            def tracking_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+            ) -> int:
+                opened.append((Path(path), flags))
+                return real_open(path, flags & ~binary_flag, mode)
+
+            with (
+                mock.patch.object(
+                    store_module.os,
+                    "O_BINARY",
+                    binary_flag,
+                    create=True,
+                ),
+                mock.patch.object(
+                    store_module.os,
+                    "open",
+                    side_effect=tracking_open,
+                ),
+            ):
+                self.assertTrue(store_module._atomic_install(target, b"{}\n"))
+                self.assertEqual(
+                    store_module._read_secure_file(
+                        target,
+                        "test event",
+                        maximum_bytes=1024,
+                    ),
+                    b"{}\n",
+                )
+
+            temporary_write = next(
+                flags
+                for path, flags in opened
+                if path.name.startswith(".event.json.")
+            )
+            target_read = next(
+                flags
+                for path, flags in opened
+                if path == target
+            )
+            self.assertTrue(temporary_write & binary_flag)
+            self.assertTrue(target_read & binary_flag)
 
     def test_run_json_duplicate_keys_and_noncanonical_encoding_are_rejected(
         self,
