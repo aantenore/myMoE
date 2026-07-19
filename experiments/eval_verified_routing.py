@@ -189,8 +189,8 @@ def _metrics(
     false_negative = sum(1 for _, route, _, target in selected if route == "local" and target)
     false_positive = sum(
         1
-        for case, route, _, _ in selected
-        if route == "premium" and bool(case["local_verified"])
+        for _, route, _, target in selected
+        if route == "premium" and not target
     )
     verified = 0
     premium_calls = 0

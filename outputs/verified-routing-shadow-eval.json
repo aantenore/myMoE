@@ -14,7 +14,7 @@
         "completion_tokens": 20800,
         "ece": 0.325,
         "egress_chars": 39600,
-        "escalation_precision": 0.333333333333,
+        "escalation_precision": 0.25,
         "escalation_recall": 0.5,
         "estimated_cost_usd": 1.92,
         "false_local": 0.5,
@@ -22,7 +22,7 @@
         "premium_calls": 32,
         "prompt_tokens": 40960,
         "total_tokens": 61760,
-        "unnecessary_premium": 0.666666666667,
+        "unnecessary_premium": 0.75,
         "verified_success": 0.5
       },
       "strata": {
@@ -33,7 +33,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -41,7 +41,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "code": {
@@ -50,7 +50,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -58,7 +58,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "large_context": {
@@ -67,7 +67,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -75,7 +75,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "web": {
@@ -84,7 +84,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -92,7 +92,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           }
         },
@@ -120,7 +120,7 @@
             "completion_tokens": 5200,
             "ece": 0.5,
             "egress_chars": 10800,
-            "escalation_precision": null,
+            "escalation_precision": 0.0,
             "escalation_recall": null,
             "estimated_cost_usd": 0.48,
             "false_local": null,
@@ -128,7 +128,7 @@
             "premium_calls": 8,
             "prompt_tokens": 11520,
             "total_tokens": 16720,
-            "unnecessary_premium": null,
+            "unnecessary_premium": 1.0,
             "verified_success": 0.0
           },
           "medium": {
@@ -173,7 +173,7 @@
             "completion_tokens": 6400,
             "ece": 0.45,
             "egress_chars": 19800,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 1.0,
             "estimated_cost_usd": 0.896,
             "false_local": 0.0,
@@ -181,7 +181,7 @@
             "premium_calls": 16,
             "prompt_tokens": 11520,
             "total_tokens": 17920,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "medium": {
@@ -224,7 +224,7 @@
             "completion_tokens": 7520,
             "ece": 0.65,
             "egress_chars": 19800,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 1.0,
             "estimated_cost_usd": 1.024,
             "false_local": 0.0,
@@ -232,7 +232,7 @@
             "premium_calls": 16,
             "prompt_tokens": 11520,
             "total_tokens": 19040,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           }
         },
@@ -243,7 +243,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -251,7 +251,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "en": {
@@ -260,7 +260,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -268,7 +268,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "it": {
@@ -277,7 +277,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -285,7 +285,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           },
           "zh": {
@@ -294,7 +294,7 @@
             "completion_tokens": 5200,
             "ece": 0.325,
             "egress_chars": 9900,
-            "escalation_precision": 0.333333333333,
+            "escalation_precision": 0.25,
             "escalation_recall": 0.5,
             "estimated_cost_usd": 0.48,
             "false_local": 0.5,
@@ -302,7 +302,7 @@
             "premium_calls": 8,
             "prompt_tokens": 10240,
             "total_tokens": 15440,
-            "unnecessary_premium": 0.666666666667,
+            "unnecessary_premium": 0.75,
             "verified_success": 0.5
           }
         }

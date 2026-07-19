@@ -38,6 +38,8 @@ class VerifiedRoutingEvalTests(unittest.TestCase):
 
         self.assertEqual(local["false_local"], 1.0)
         self.assertEqual(baseline["premium_calls"], 32)
+        self.assertEqual(baseline["escalation_precision"], 0.25)
+        self.assertEqual(baseline["unnecessary_premium"], 0.75)
         self.assertEqual(shadow["premium_calls"], 16)
         self.assertEqual(shadow["verified_success"], 0.75)
         self.assertEqual(shadow["escalation_precision"], 1.0)
