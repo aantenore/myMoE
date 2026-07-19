@@ -13,6 +13,11 @@ mechanical verification, and invoke premium Codex only when policy, evidence,
 and a bounded budget permit escalation. It is a task-level evidence layer, not
 another model gateway.
 
+The shadow-only Verified Outcome Routing Lab can then link each content-free
+route receipt to final verification and operational metrics, build a versioned
+scorecard, and replay alternative efficiency profiles offline. It never changes
+the live route in the current release.
+
 ![myMoE chat-first interface](docs/screenshots/dashboard.png)
 
 ## Why It Exists
@@ -124,6 +129,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/context-policy.json`](configs/context-policy.json) | Context limit, reserved output, compaction threshold, recent-turn limit, and memory limit. |
 | [`configs/assistant-bridge.json`](configs/assistant-bridge.json) | Replaceable Codex launch adapters and explicit models, capability inventories, local-first profiles, durable premium budgets, bound verifiers, and capsule limits. |
 | [`configs/assistant-bridge-workflow.example.json`](configs/assistant-bridge-workflow.example.json) | Example external durable-state paths and public-only independent verification policy for the two-phase stage/resume lifecycle. |
+| [`configs/verified-routing-policy.example.json`](configs/verified-routing-policy.example.json) | Shadow profile weights, quality floors, evidence counts, confidence thresholds, and normalization scales. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
@@ -165,6 +171,7 @@ Start with the [documentation hub](docs/README.md).
 - [UI and CLI](docs/ui.md) — user workflows, HTTP endpoints, and screenshots.
 - [Agent Runtime](docs/agent-runtime.md) — tools, approvals, MCP, cron, plugins, and diagnostics.
 - [Hybrid Assistant Bridge](docs/hybrid-assistant-bridge.md) — local verification, premium escalation capsules, profiles, and CLI usage.
+- [Verified Outcome Routing Lab](docs/verified-outcome-routing.md) — content-free outcome lineage, scorecards, shadow recommendations, and evaluation metrics.
 - [Evaluation](docs/evaluation.md) — evaluation contracts and release evidence.
 
 ## Verification
@@ -187,7 +194,8 @@ only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant
 service, or an unrestricted autonomous agent platform. Automatic specialist
 cold-loading and automatic durable compaction are not implemented; both remain
-explicit operator decisions.
+explicit operator decisions. Verified Outcome Routing is observational and
+shadow-only: there is no online learning, exploration, or automatic activation.
 
 ## License
 

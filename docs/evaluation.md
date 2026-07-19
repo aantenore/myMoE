@@ -83,6 +83,32 @@ availability when a fast route misses or its endpoint is offline. The
 deterministic rubric does not establish broad semantic superiority, so future
 model/profile changes still require fresh live evidence.
 
+## Verified Outcome Routing Shadow Eval
+
+The shadow lab has a separate evaluation contract because it predicts whether
+premium escalation is needed rather than which local expert best matches a
+prompt. On paired counterfactual cases:
+
+- `need_premium = not local_verified and premium_verified`;
+- a local decision when premium was needed is a false local;
+- a premium decision when local was verified is unnecessary premium use;
+- cases where neither route verifies are reported as unrecoverable and do not
+  inflate escalation precision or recall.
+
+The report also tracks verified success, tokens, optional measured cost, p95
+latency, remote payload size, Brier score, expected calibration error, and
+strata for capability, difficulty, language, and context band. CI expands the
+compact fixture into 64 pairwise-covered deterministic cases and compares
+`local_only`, `current_baseline`, and `verified_shadow`.
+
+The committed
+[`verified-routing-shadow-eval.json`](../outputs/verified-routing-shadow-eval.json)
+is a formula and invariant test only. It declares
+`claim_scope = synthetic_deterministic_only` and `empirical_claim = false`; its
+numbers must never be presented as measured product savings. Activation would
+require disjoint real outcome cohorts from the target configuration plus a
+separate regression gate.
+
 The benchmark contract lives in `configs/quality-benchmark.json`,
 `experiments/quality_benchmark_cases.jsonl`, and
 `experiments/run_quality_benchmark.py`. Routed top-1 is the value variant and
@@ -133,6 +159,7 @@ The automated gate checks:
 - unit tests for config, router, provider contracts, runtime, evaluator, CLI, and orchestrator,
 - base and extended routing eval,
 - a disjoint live routing holdout regenerated on every run,
+- the 64-case Verified Outcome Routing shadow simulation,
 - artifact and report provenance freshness,
 - zero train/holdout id or normalized prompt-hash overlap,
 - minimum holdout routing accuracy of `0.90` across at least `50` cases,

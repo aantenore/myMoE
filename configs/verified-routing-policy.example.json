@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "mode": "shadow",
+  "normalization": {
+    "cost_usd": 0.1,
+    "latency_ms": 10000,
+    "egress_chars": 10000,
+    "premium_calls": 1
+  },
+  "profiles": {
+    "economy": {
+      "weights": {
+        "quality": 0.25,
+        "cost": 0.3,
+        "latency": 0.15,
+        "egress": 0.15,
+        "premium": 0.15
+      },
+      "min_success_rate": 0.65,
+      "min_samples": 20,
+      "min_confidence": 0.6
+    },
+    "balanced": {
+      "weights": {
+        "quality": 0.5,
+        "cost": 0.15,
+        "latency": 0.15,
+        "egress": 0.1,
+        "premium": 0.1
+      },
+      "min_success_rate": 0.7,
+      "min_samples": 20,
+      "min_confidence": 0.65
+    },
+    "quality": {
+      "weights": {
+        "quality": 0.8,
+        "cost": 0.05,
+        "latency": 0.05,
+        "egress": 0.05,
+        "premium": 0.05
+      },
+      "min_success_rate": 0.8,
+      "min_samples": 20,
+      "min_confidence": 0.7
+    },
+    "privacy": {
+      "weights": {
+        "quality": 0.45,
+        "cost": 0.1,
+        "latency": 0.1,
+        "egress": 0.2,
+        "premium": 0.15
+      },
+      "min_success_rate": 0.7,
+      "min_samples": 20,
+      "min_confidence": 0.7
+    },
+    "offline": {
+      "weights": {
+        "quality": 0.5,
+        "cost": 0.15,
+        "latency": 0.2,
+        "egress": 0.1,
+        "premium": 0.05
+      },
+      "min_success_rate": 0.65,
+      "min_samples": 20,
+      "min_confidence": 0.6
+    }
+  }
+}

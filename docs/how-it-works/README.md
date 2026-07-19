@@ -471,6 +471,10 @@ flowchart LR
 
 The current release contract treats routed top-1 as the value variant and top-2 comparison as diagnostic evidence. Top-2 cannot compensate for a top-1 regression. Holdout integrity rejects duplicated or overlapping prompt IDs and normalized prompt hashes and binds reports to configuration, dataset, and artifact fingerprints.
 
+The optional [Verified Outcome Routing Lab](../verified-outcome-routing.md)
+extends this offline boundary with content-free decision-to-verification
+lineage and shadow policy replay. It does not participate in the request path.
+
 See [Evaluation](../evaluation.md), [Tested Performance](../tested-performance.md), and [CI](../ci.md).
 
 ## 11. Source Map
