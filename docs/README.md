@@ -28,7 +28,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Context and Memory Architecture](context-architecture.md) — context budgets, session summaries, memory retrieval, compaction, and run telemetry.
 - [Agent Runtime](agent-runtime.md) — strict tools, risk policy, approvals, MCP, plugins, cron, and diagnostic surfaces.
 - [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) — task-level local/premium policy, verification receipts, minimal escalation capsules, and CLI launch boundary.
-- [Verified Outcome Routing Lab](verified-outcome-routing.md) — structural task signals, metadata-only outcomes, versioned scorecards, shadow policy replay, and counterfactual metrics.
+- [Verified Outcome Routing Lab](verified-outcome-routing.md) — structural task signals, metadata-only outcomes, versioned scorecards, shadow replay, and preregistered paired promotion qualification without runtime activation.
 - [Independent Candidate Attestation Predicate v1](spec/independent-candidate-attestation/v1/README.md) — stable provenance and integrity contract for candidate evidence.
 
 ## Run and Operate

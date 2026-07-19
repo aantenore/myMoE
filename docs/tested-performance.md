@@ -64,6 +64,22 @@ The benchmark uses short prompts and `96` output tokens per prompt. It is a perf
 
 Qwen3.6 OptiQ was retried with a tighter `2048` KV cache and still failed with Metal OOM. It is not selected for this 24 GB hardware class. See `outputs/qwen36-optiq-low-kv-benchmark.json` and `outputs/qwen36-optiq-low-kv-decision.md`.
 
+## Latest Answer-Quality Release Evidence
+
+The provenance-bound 2026-07-19 run used the pinned Qwen3 4B and 1.7B MLX
+snapshots and completed all 72 planned executions. Single-general and routed
+top-1 both reached `1.0` task success and `1.0` deterministic quality score.
+Top-1 routed 25% of cases to the smaller expert, reduced overall mean latency
+from `2.5915 s` to `2.4913 s`, and reached a median routed-pair latency ratio of
+`0.4231`. Host sampling covered every observation, peak RAM use was `86.1555%`,
+and swap grew by `249,749,832` bytes. The release quality gate passed and marked
+the artifact release-ready.
+
+Top-2 is intentionally diagnostic and did not outperform top-1: its task
+success was `0.75`, deterministic quality score `0.9437`, and mean latency
+`3.0044 s`. These results are bounded to the committed eight-case rubric and
+three repetitions; they do not establish general semantic superiority.
+
 ## Practical Requirements
 
 Minimum for first-run demo:

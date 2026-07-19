@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "contract": "VerifiedRoutingPromotionGatePolicy",
+  "minimum_paired_tasks": 50,
+  "minimum_paired_tasks_per_cell": 20,
+  "minimum_evidence_strength": "independent",
+  "minimum_confidence": 0.7,
+  "confidence_level": 0.95,
+  "maximum_candidate_latency_ratio": 1.1,
+  "maximum_candidate_p95_latency_ms": 120000,
+  "minimum_relative_improvement": 0.01,
+  "maximum_holdout_age_seconds": 86400,
+  "maximum_pair_time_skew_seconds": 3600,
+  "maximum_canary_basis_points": 500,
+  "maximum_manifest_ttl_seconds": 86400,
+  "require_complete_cost_evidence": true,
+  "blocking_failure_classes": [
+    "budget-violation",
+    "hard-invariant",
+    "privacy-violation"
+  ],
+  "non_blocking_failure_classes": [
+    "contract-failed",
+    "multiple_verification_failures",
+    "premium-runtime-failed",
+    "verification-failed"
+  ]
+}

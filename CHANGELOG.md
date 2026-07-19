@@ -2,6 +2,34 @@
 
 All notable changes to myMoE are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- A preregistered paired-evidence gate that rebuilds scorecard lineage, rejects
+  training/holdout overlap, applies intention-to-treat coverage, and evaluates
+  exact profile/capability/difficulty/runtime cells.
+- Content-addressed promotion reports plus short-lived, structural-eligibility canary
+  manifests for transitions that monotonically reduce premium use.
+- Atomic no-clobber evidence writes, strict gate/plan contracts, Wilson success
+  bounds, cost completeness, latency, egress, premium-use, and hard-invariant
+  guardrails.
+
+### Changed
+
+- Refreshed the live 72-execution Qwen3 quality artifact. Routed top-1 retained
+  full task success and deterministic quality while the release quality gate
+  became ready.
+
+### Known limitations
+
+- Canary manifests are not consumed by the runtime and cannot activate a
+  route. Real paired Assistant Bridge evidence has not yet been collected, so
+  the repository ships no empirical canary manifest.
+- The preregistered AB/BA order and equivalent disposable workspace snapshots
+  remain runner responsibilities until a future paired-run envelope attests
+  them directly.
+
 ## [0.3.0-alpha.1] - 2026-07-19
 
 ### Added

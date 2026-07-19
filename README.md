@@ -13,10 +13,12 @@ mechanical verification, and invoke premium Codex only when policy, evidence,
 and a bounded budget permit escalation. It is a task-level evidence layer, not
 another model gateway.
 
-The shadow-only Verified Outcome Routing Lab can then link each content-free
-route receipt to final verification and operational metrics, build a versioned
-scorecard, and replay alternative efficiency profiles offline. It never changes
-the live route in the current release.
+The Verified Outcome Routing Lab can then link each content-free route receipt
+to final verification and operational metrics, build a versioned scorecard,
+and replay alternative efficiency profiles offline. Its paired promotion gate
+can emit a short-lived, structural-eligibility canary manifest from preregistered,
+disjoint evidence. No manifest is consumed by the runtime in the current
+release, so the lab still never changes a live route.
 
 ![myMoE chat-first interface](docs/screenshots/dashboard.png)
 
@@ -130,6 +132,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/assistant-bridge.json`](configs/assistant-bridge.json) | Replaceable Codex launch adapters and explicit models, capability inventories, local-first profiles, durable premium budgets, bound verifiers, and capsule limits. |
 | [`configs/assistant-bridge-workflow.example.json`](configs/assistant-bridge-workflow.example.json) | Example external durable-state paths and public-only independent verification policy for the two-phase stage/resume lifecycle. |
 | [`configs/verified-routing-policy.example.json`](configs/verified-routing-policy.example.json) | Shadow profile weights, quality floors, evidence counts, confidence thresholds, and normalization scales. |
+| [`configs/verified-routing-promotion.example.json`](configs/verified-routing-promotion.example.json) | Paired holdout size, statistical confidence, monotone transition, latency, cost-evidence, canary-size, and expiry guardrails. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
@@ -171,7 +174,7 @@ Start with the [documentation hub](docs/README.md).
 - [UI and CLI](docs/ui.md) — user workflows, HTTP endpoints, and screenshots.
 - [Agent Runtime](docs/agent-runtime.md) — tools, approvals, MCP, cron, plugins, and diagnostics.
 - [Hybrid Assistant Bridge](docs/hybrid-assistant-bridge.md) — local verification, premium escalation capsules, profiles, and CLI usage.
-- [Verified Outcome Routing Lab](docs/verified-outcome-routing.md) — content-free outcome lineage, scorecards, shadow recommendations, and evaluation metrics.
+- [Verified Outcome Routing Lab](docs/verified-outcome-routing.md) — content-free outcome lineage, scorecards, shadow recommendations, preregistered paired qualification, and structural-eligibility canary manifests.
 - [Evaluation](docs/evaluation.md) — evaluation contracts and release evidence.
 
 ## Verification
@@ -194,8 +197,9 @@ only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant
 service, or an unrestricted autonomous agent platform. Automatic specialist
 cold-loading and automatic durable compaction are not implemented; both remain
-explicit operator decisions. Verified Outcome Routing is observational and
-shadow-only: there is no online learning, exploration, or automatic activation.
+explicit operator decisions. Verified Outcome Routing remains observational at
+runtime: the offline paired gate can produce an eligibility manifest, but there
+is no online learning, exploration, or automatic activation.
 
 ## License
 

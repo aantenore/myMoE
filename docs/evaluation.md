@@ -63,25 +63,28 @@ unseen set before making a fresh generalization claim.
 - Leakage-free live routing holdout: `52/52` (`100%`), 95% Wilson interval
   `93.1%-100%`, with zero id or prompt-hash overlap. Evidence lives in
   `outputs/live-general-routing-holdout.json`.
-- Historical live answer-quality benchmark: 72 completed executions with zero failures or
-  truncation. Single-general and routed top-1 both achieved `1.0` task success,
-  `1.0` quality pass rate, and `0.975` quality score. Mean latency was `7.4902 s`
-  vs `7.5889 s`; the six routed pairs achieved median latency ratio `0.6889`.
-- Host evidence passed with `99.13%` sample coverage, `86.6365%` peak RAM use,
-  and `198,369,608` bytes swap growth in that historical run.
-- The current checked-in benchmark artifact is intentionally `blocked` because
-  the response-language contract changed while the required local model
-  endpoints were offline. Offline CI can validate the rest of the project, but
-  release readiness remains false until the live benchmark is rerun.
-  The previous 72-record evidence is preserved as
+- Current live answer-quality benchmark: 72 completed executions with zero
+  response failures or truncation. Single-general and routed top-1 both
+  achieved `1.0` task success, `1.0` quality pass rate, and `1.0` quality
+  score. Mean latency was `2.5915 s` vs `2.4913 s`; the six fast-routed pairs
+  achieved median latency ratio `0.4231` while routing 25% of cases away from
+  the general model.
+- Top-2 remains diagnostic: it reported complete comparisons and disagreement,
+  but achieved `0.75` task success, `0.9437` quality score, and `3.0044 s` mean
+  latency. It is not the value route and its result is not masked by top-1.
+- Current host evidence passed with `100%` sample coverage, `86.1555%` peak RAM
+  use, and `249,749,832` bytes swap growth.
+- The release quality gate now passes with `release_ready = true`. The previous
+  72-record evidence remains preserved as
   `outputs/quality-benchmark-2026-07-10.json` for historical comparison.
 
 Interpretation: the harness works, the current router clears the committed
-multilingual routing gate, and routed top-1 demonstrates benchmark-bounded value
-without quality regression in the historical live run. The bidirectional runtime fallback preserves
-availability when a fast route misses or its endpoint is offline. The
-deterministic rubric does not establish broad semantic superiority, so future
-model/profile changes still require fresh live evidence.
+multilingual routing gate, and routed top-1 demonstrates benchmark-bounded
+value without quality regression in the current live run. The bidirectional
+runtime fallback preserves availability when a fast route misses or its
+endpoint is offline. The deterministic rubric does not establish broad
+semantic superiority, so future model/profile changes still require fresh live
+evidence.
 
 ## Verified Outcome Routing Shadow Eval
 
@@ -108,6 +111,15 @@ is a formula and invariant test only. It declares
 numbers must never be presented as measured product savings. Activation would
 require disjoint real outcome cohorts from the target configuration plus a
 separate regression gate.
+
+That regression gate now exists as an offline structural-eligibility contract. It
+requires a content-addressed plan frozen before execution, exact scorecard
+reconstruction from the supplied training set, zero training/holdout overlap,
+complete baseline/candidate arms for every planned task, per-cell sample floors,
+Wilson lower bounds, zero candidate-only failures, monotone premium/egress/cost
+usage, and bounded latency. A passing report may emit a short-lived canary
+manifest, but no runtime path consumes it. No empirical manifest is checked in
+because real paired Assistant Bridge evidence is not yet available.
 
 The benchmark contract lives in `configs/quality-benchmark.json`,
 `experiments/quality_benchmark_cases.jsonl`, and
