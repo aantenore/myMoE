@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, localcontext
 import hashlib
 import json
 import math
@@ -11,6 +12,9 @@ from statistics import NormalDist
 import tempfile
 from typing import Iterable, Mapping, Sequence
 
+from .paired_execution_contracts import PairedOutcomeBinding
+from .paired_execution_pricing import PairedCostEvidence, PricingContract
+from .paired_evidence import PairedAttestationVerifier, VerifiedPairedEvidence
 from .route_outcomes import VerifiedOutcomeRecord
 from .route_policy import VerifiedRoutePolicy
 from .route_scorecard import RouteScorecard, build_route_scorecard
@@ -63,9 +67,23 @@ _PLAN_FIELDS = {
     "canary_basis_points",
     "manifest_ttl_seconds",
     "assignment_salt_sha256",
+    "attestation_policy_sha256",
+    "execution_harness_sha256",
+    "runner_source_sha256",
+    "pricing_contract",
+    "pricing_sha256",
     "cases",
     "plan_sha256",
 }
+_PLAN_REQUIRED_FIELDS = _PLAN_FIELDS.difference(
+    {
+        "pricing_contract",
+        "pricing_sha256",
+        "attestation_policy_sha256",
+        "execution_harness_sha256",
+        "runner_source_sha256",
+    }
+)
 _CASE_FIELDS = {
     "task_fingerprint",
     "normalized_item_sha256",
@@ -87,10 +105,21 @@ _MANDATORY_BLOCKING_FAILURE_CLASSES = {
     "privacy-violation",
 }
 _EVALUATOR_DEPENDENCIES = (
+    "assistant_bridge_attestation.py",
+    "assistant_bridge_cas.py",
+    "assistant_bridge_two_phase_config.py",
+    "assistant_bridge_two_phase_contracts.py",
+    "paired_evidence.py",
+    "paired_execution_bridge.py",
+    "paired_execution.py",
+    "paired_execution_contracts.py",
+    "paired_execution_pricing.py",
+    "paired_execution_store.py",
     "route_outcomes.py",
     "route_policy.py",
     "route_promotion.py",
     "route_scorecard.py",
+    "route_signals.py",
     "verified_routing_contracts.py",
 )
 
@@ -336,8 +365,13 @@ class VerifiedRoutingEvidencePlan:
     canary_basis_points: int
     manifest_ttl_seconds: int
     assignment_salt_sha256: str
+    attestation_policy_sha256: str | None
+    execution_harness_sha256: str | None
+    runner_source_sha256: str | None
     cases: tuple[PromotionCase, ...]
     plan_sha256: str
+    pricing_contract: PricingContract | None = None
+    pricing_sha256: str | None = None
     schema_version: str = CONTRACT_VERSION
     contract: str = "VerifiedRoutingEvidencePlan"
 
@@ -361,6 +395,42 @@ class VerifiedRoutingEvidencePlan:
         ):
             object.__setattr__(
                 self, name, require_sha256(getattr(self, name), name)
+            )
+        for name in (
+            "attestation_policy_sha256",
+            "execution_harness_sha256",
+            "runner_source_sha256",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, require_sha256(value, name))
+        pricing_contract = self.pricing_contract
+        if pricing_contract is not None:
+            if not isinstance(pricing_contract, PricingContract):
+                if not isinstance(pricing_contract, Mapping):
+                    raise VerifiedRoutingError(
+                        "pricing_contract must be a pricing contract object."
+                    )
+                pricing_contract = PricingContract.from_payload(
+                    pricing_contract
+                )
+            object.__setattr__(
+                self,
+                "pricing_contract",
+                pricing_contract,
+            )
+        if self.pricing_sha256 is not None:
+            object.__setattr__(
+                self,
+                "pricing_sha256",
+                require_sha256(self.pricing_sha256, "pricing_sha256"),
+            )
+        if pricing_contract is not None and (
+            self.pricing_sha256 is None
+            or self.pricing_sha256 != pricing_contract.pricing_sha256
+        ):
+            raise VerifiedRoutingError(
+                "Evidence plan pricing digest does not match its pricing contract."
             )
         for name in ("canary_basis_points", "manifest_ttl_seconds"):
             value = require_non_negative_int(getattr(self, name), name)
@@ -397,7 +467,7 @@ class VerifiedRoutingEvidencePlan:
         return self.cases[0].profile
 
     def content_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "contract": self.contract,
             "created_at": self.created_at,
@@ -412,6 +482,19 @@ class VerifiedRoutingEvidencePlan:
             "assignment_salt_sha256": self.assignment_salt_sha256,
             "cases": [case.payload() for case in self.cases],
         }
+        for name in (
+            "attestation_policy_sha256",
+            "execution_harness_sha256",
+            "runner_source_sha256",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
+        if self.pricing_sha256 is not None:
+            payload["pricing_sha256"] = self.pricing_sha256
+        if self.pricing_contract is not None:
+            payload["pricing_contract"] = self.pricing_contract.payload()
+        return payload
 
     def payload(self) -> dict[str, object]:
         payload = self.content_payload()
@@ -455,6 +538,10 @@ def build_evidence_plan(
     canary_basis_points: int,
     manifest_ttl_seconds: int,
     assignment_salt_sha256: str,
+    attestation_policy_sha256: str,
+    execution_harness_sha256: str,
+    runner_source_sha256: str,
+    pricing_contract: PricingContract | Mapping[str, object],
 ) -> VerifiedRoutingEvidencePlan:
     normalized = tuple(
         sorted(
@@ -477,6 +564,11 @@ def build_evidence_plan(
         raise VerifiedRoutingError("Requested canary size exceeds the gate policy.")
     if not 0 < manifest_ttl_seconds <= gate_policy.maximum_manifest_ttl_seconds:
         raise VerifiedRoutingError("Requested manifest TTL exceeds the gate policy.")
+    normalized_pricing = (
+        pricing_contract
+        if isinstance(pricing_contract, PricingContract)
+        else PricingContract.from_payload(pricing_contract)
+    )
     content = {
         "schema_version": CONTRACT_VERSION,
         "contract": "VerifiedRoutingEvidencePlan",
@@ -494,10 +586,25 @@ def build_evidence_plan(
         "assignment_salt_sha256": require_sha256(
             assignment_salt_sha256, "assignment_salt_sha256"
         ),
+        "attestation_policy_sha256": require_sha256(
+            attestation_policy_sha256,
+            "attestation_policy_sha256",
+        ),
+        "execution_harness_sha256": require_sha256(
+            execution_harness_sha256,
+            "execution_harness_sha256",
+        ),
+        "runner_source_sha256": require_sha256(
+            runner_source_sha256,
+            "runner_source_sha256",
+        ),
+        "pricing_contract": normalized_pricing.payload(),
+        "pricing_sha256": normalized_pricing.pricing_sha256,
         "cases": [case.payload() for case in normalized],
     }
     plan_fields = dict(content)
     plan_fields.pop("cases")
+    plan_fields["pricing_contract"] = normalized_pricing
     return VerifiedRoutingEvidencePlan(
         **plan_fields,  # type: ignore[arg-type]
         cases=normalized,
@@ -514,6 +621,7 @@ def evaluate_route_promotion(
     training_records: Iterable[VerifiedOutcomeRecord | Mapping[str, object]],
     holdout_records: Iterable[VerifiedOutcomeRecord | Mapping[str, object]],
     evaluated_at: str,
+    paired_verifier: PairedAttestationVerifier | None = None,
 ) -> tuple[ContentAddressedDocument, ContentAddressedDocument | None]:
     evaluated_at = require_utc_timestamp(evaluated_at, "evaluated_at")
     evaluated_dt = _timestamp(evaluated_at)
@@ -523,9 +631,60 @@ def evaluate_route_promotion(
         raise VerifiedRoutingError("Training outcomes must be non-empty.")
 
     _validate_static_bindings(plan, gate_policy, route_policy, scorecard)
+    (
+        paired_proofs,
+        proof_errors,
+        proof_policy_matches,
+    ) = _verify_paired_record_sets(
+        training,
+        holdout,
+        verifier=paired_verifier,
+        pricing=plan.pricing_contract,
+        expected_policy_sha256=plan.attestation_policy_sha256,
+        expected_execution_harness_sha256=plan.execution_harness_sha256,
+        expected_runner_source_sha256=plan.runner_source_sha256,
+        evaluated_at_epoch=evaluated_dt.timestamp(),
+    )
+    all_records = (*training, *holdout)
+    proof_complete = (
+        paired_verifier is not None
+        and plan.attestation_policy_sha256 is not None
+        and plan.execution_harness_sha256 is not None
+        and plan.runner_source_sha256 is not None
+        and proof_policy_matches
+        and not proof_errors
+        and len(paired_proofs) == len(all_records)
+    )
+    if proof_complete:
+        training = tuple(
+            paired_proofs[record.record_id].record for record in training
+        )
+        holdout = tuple(
+            paired_proofs[record.record_id].record for record in holdout
+        )
     _validate_scorecard_lineage(scorecard, training)
 
     checks: list[dict[str, object]] = []
+    _add_check(
+        checks,
+        "paired_attestation_provenance",
+        proof_complete,
+        "inconclusive",
+        {
+            "verified_records": len(paired_proofs),
+            "expected_records": len(all_records),
+            "invalid_or_missing_proofs": len(proof_errors),
+            "policy_matches_plan": proof_policy_matches,
+            "proof_preregistered": all(
+                value is not None
+                for value in (
+                    plan.attestation_policy_sha256,
+                    plan.execution_harness_sha256,
+                    plan.runner_source_sha256,
+                )
+            ),
+        },
+    )
     _add_check(
         checks,
         "evaluator_binding",
@@ -566,7 +725,15 @@ def evaluate_route_promotion(
         },
     )
     training_timing_errors = sum(
-        _timestamp(record.created_at) > scorecard_generated for record in training
+        _authoritative_candidate_time(record, paired_proofs)
+        > scorecard_generated
+        for record in training
+    )
+    training_attestation_timing_errors = sum(
+        paired_proofs[record.record_id].latest_attestation_issued_at
+        > scorecard_generated.timestamp()
+        for record in training
+        if record.record_id in paired_proofs
     )
     training_profile_errors = sum(
         record.profile != plan.profile for record in training
@@ -582,10 +749,15 @@ def evaluate_route_promotion(
     _add_check(
         checks,
         "training_chronology_and_profile",
-        training_timing_errors == 0 and training_profile_errors == 0,
+        training_timing_errors == 0
+        and training_attestation_timing_errors == 0
+        and training_profile_errors == 0,
         "inconclusive",
         {
             "records_after_scorecard_generation": training_timing_errors,
+            "attestations_after_scorecard_generation": (
+                training_attestation_timing_errors
+            ),
             "records_from_other_profiles": training_profile_errors,
         },
     )
@@ -595,6 +767,17 @@ def evaluate_route_promotion(
         training_replay_errors == 0,
         "inconclusive",
         {"duplicate_receipt_or_evidence_digests": training_replay_errors},
+    )
+    training_pair_uniqueness = _training_pair_uniqueness_errors(
+        training,
+        paired_proofs,
+    )
+    _add_check(
+        checks,
+        "training_semantic_pair_uniqueness",
+        not any(training_pair_uniqueness.values()),
+        "inconclusive",
+        training_pair_uniqueness,
     )
 
     training_tasks = {record.task_fingerprint for record in training}
@@ -607,6 +790,16 @@ def evaluate_route_promotion(
         record.route_receipt_sha256 for record in holdout
     }
     holdout_evidence_digests = {record.evidence_sha256 for record in holdout}
+    training_normalized_items = {
+        paired_proofs[record.record_id].paired_outcome_binding.normalized_item_sha256
+        for record in training
+        if record.record_id in paired_proofs
+    }
+    holdout_normalized_items = {
+        paired_proofs[record.record_id].paired_outcome_binding.normalized_item_sha256
+        for record in holdout
+        if record.record_id in paired_proofs
+    }
     overlap_counts = {
         "task_fingerprints": len(training_tasks & holdout_tasks),
         "record_ids": len(training_records_ids & holdout_record_ids),
@@ -619,6 +812,9 @@ def evaluate_route_promotion(
             {record.evidence_sha256 for record in training}
             & {record.evidence_sha256 for record in holdout}
         ),
+        "normalized_item_sha256": len(
+            training_normalized_items & holdout_normalized_items
+        ),
     }
     _add_check(
         checks,
@@ -627,17 +823,52 @@ def evaluate_route_promotion(
         "inconclusive",
         overlap_counts,
     )
+    holdout_evidence_replay_errors = _holdout_evidence_replay_errors(holdout)
     holdout_replay_errors = (
         len(holdout) - len(holdout_receipts)
         + len(holdout) - len(holdout_receipt_digests)
-        + len(holdout) - len(holdout_evidence_digests)
+        + holdout_evidence_replay_errors
     )
     _add_check(
         checks,
         "holdout_execution_uniqueness",
         holdout_replay_errors == 0,
         "inconclusive",
-        {"duplicate_receipt_or_evidence_digests": holdout_replay_errors},
+        {
+            "duplicate_receipt_or_unbound_evidence_digests": (
+                holdout_replay_errors
+            )
+        },
+    )
+    paired_payloads = [
+        paired_proofs[record.record_id].paired_outcome_binding.payload()
+        for record in holdout
+        if record.record_id in paired_proofs
+    ]
+    paired_run_ids = [str(item["run_id"]) for item in paired_payloads]
+    paired_claim_ids = [str(item["claim_sha256"]) for item in paired_payloads]
+    paired_binding_ids = [
+        str(item["binding_sha256"]) for item in paired_payloads
+    ]
+    paired_run_counts: dict[str, int] = {}
+    for run_id in paired_run_ids:
+        paired_run_counts[run_id] = paired_run_counts.get(run_id, 0) + 1
+    paired_replay_errors = (
+        len(holdout) - len(paired_payloads)
+        + len(paired_claim_ids) - len(set(paired_claim_ids))
+        + len(paired_binding_ids) - len(set(paired_binding_ids))
+        + sum(count != 2 for count in paired_run_counts.values())
+    )
+    _add_check(
+        checks,
+        "paired_execution_uniqueness",
+        paired_replay_errors == 0,
+        "inconclusive",
+        {
+            "records_without_paired_binding": len(holdout)
+            - len(paired_payloads),
+            "duplicate_or_incomplete_paired_executions": paired_replay_errors,
+        },
     )
 
     planned_tasks = {case.task_fingerprint for case in plan.cases}
@@ -660,6 +891,7 @@ def evaluate_route_promotion(
         holdout_by_task.setdefault(record.task_fingerprint, []).append(record)
     pairs: list[tuple[PromotionCase, VerifiedOutcomeRecord, VerifiedOutcomeRecord]] = []
     pair_errors = 0
+    paired_lineage_errors = 0
     evidence_errors = 0
     freshness_errors = 0
     pair_time_skew_errors = 0
@@ -685,8 +917,17 @@ def evaluate_route_promotion(
             continue
         baseline = by_route[case.baseline_route]
         candidate = by_route[case.candidate_route]
-        if not _pair_matches_plan(case, baseline, candidate):
+        if not _pair_static_matches_plan(case, baseline, candidate):
             pair_errors += 1
+            continue
+        if not _paired_lineage_matches_plan(
+            case,
+            baseline,
+            candidate,
+            plan_sha256=plan.plan_sha256,
+            pricing_contract=plan.pricing_contract,
+        ):
+            paired_lineage_errors += 1
             continue
         for record in (baseline, candidate):
             if (
@@ -696,7 +937,7 @@ def evaluate_route_promotion(
                 or record.outcome == "inconclusive"
             ):
                 evidence_errors += 1
-            created = _timestamp(record.created_at)
+            created = _authoritative_candidate_time(record, paired_proofs)
             age = (evaluated_dt - created).total_seconds()
             if (
                 created < plan_dt
@@ -704,13 +945,22 @@ def evaluate_route_promotion(
                 or age >= gate_policy.maximum_holdout_age_seconds
             ):
                 freshness_errors += 1
+        baseline_time = _authoritative_candidate_time(
+            baseline,
+            paired_proofs,
+        )
+        candidate_time = _authoritative_candidate_time(
+            candidate,
+            paired_proofs,
+        )
         if (
-            abs(
-                (
-                    _timestamp(candidate.created_at)
-                    - _timestamp(baseline.created_at)
-                ).total_seconds()
-            )
+            candidate_time <= baseline_time
+            if case.order == "AB"
+            else baseline_time <= candidate_time
+        ):
+            pair_time_skew_errors += 1
+        elif (
+            abs((candidate_time - baseline_time).total_seconds())
             > gate_policy.maximum_pair_time_skew_seconds
         ):
             pair_time_skew_errors += 1
@@ -718,9 +968,24 @@ def evaluate_route_promotion(
     _add_check(
         checks,
         "paired_arm_completeness",
-        pair_errors == 0 and len(pairs) == len(plan.cases),
+        (
+            pair_errors == 0
+            and paired_lineage_errors == 0
+            and len(pairs) == len(plan.cases)
+        ),
         "inconclusive",
-        {"complete_pairs": len(pairs), "invalid_or_missing_pairs": pair_errors},
+        {
+            "complete_pairs": len(pairs),
+            "invalid_or_missing_pairs": pair_errors,
+            "invalid_paired_lineage": paired_lineage_errors,
+        },
+    )
+    _add_check(
+        checks,
+        "paired_execution_lineage",
+        paired_lineage_errors == 0,
+        "inconclusive",
+        {"invalid_paired_lineage": paired_lineage_errors},
     )
     _add_check(
         checks,
@@ -798,8 +1063,15 @@ def evaluate_route_promotion(
             unique_training_tasks = {
                 record.task_fingerprint for record in qualifying_training
             }
+            unique_training_items = {
+                paired_proofs[record.record_id]
+                .paired_outcome_binding.normalized_item_sha256
+                for record in qualifying_training
+                if record.record_id in paired_proofs
+            }
             if (
                 len(unique_training_tasks) != len(qualifying_training)
+                or len(unique_training_items) != len(qualifying_training)
                 or len(unique_training_tasks) < profile_policy.min_samples
             ):
                 training_effective_sample_errors += 1
@@ -880,6 +1152,26 @@ def evaluate_route_promotion(
     reasons = sorted(
         str(check["id"]) for check in checks if not bool(check["passed"])
     )
+    paired_proof_set_sha256 = sha256_json(
+        {
+            "proofs": [
+                {
+                    "record_id": record_id,
+                    "receipt": proof.receipt_descriptor.payload(),
+                    "paired_binding_sha256": (
+                        proof.paired_outcome_binding.binding_sha256
+                    ),
+                    "verifier_ids": list(proof.verifier_ids),
+                }
+                for record_id, proof in sorted(paired_proofs.items())
+            ]
+        }
+    )
+    paired_verifier_sha256 = (
+        None
+        if paired_verifier is None
+        else paired_verifier.configuration_sha256
+    )
     report_content: dict[str, object] = {
         "schema_version": CONTRACT_VERSION,
         "contract": "VerifiedRoutingPromotionReport",
@@ -896,6 +1188,12 @@ def evaluate_route_promotion(
             "training_source_digest": scorecard.source_digest,
             "holdout_source_digest": _record_set_digest(holdout),
             "evaluator_sha256": promotion_evaluator_sha256(),
+            "pricing_sha256": plan.pricing_sha256,
+            "attestation_policy_sha256": plan.attestation_policy_sha256,
+            "execution_harness_sha256": plan.execution_harness_sha256,
+            "runner_source_sha256": plan.runner_source_sha256,
+            "paired_attestation_verifier_sha256": paired_verifier_sha256,
+            "paired_proof_set_sha256": paired_proof_set_sha256,
         },
         "coverage": {
             "planned_tasks": len(plan.cases),
@@ -921,7 +1219,7 @@ def evaluate_route_promotion(
         seconds=plan.manifest_ttl_seconds
     )
     holdout_valid_until = min(
-        _timestamp(record.created_at)
+        _authoritative_candidate_time(record, paired_proofs)
         + timedelta(seconds=gate_policy.maximum_holdout_age_seconds)
         for record in holdout
     )
@@ -973,6 +1271,12 @@ def evaluate_route_promotion(
             "scorecard_digest": scorecard.digest,
             "training_source_digest": scorecard.source_digest,
             "evaluator_sha256": promotion_evaluator_sha256(),
+            "pricing_sha256": plan.pricing_sha256,
+            "attestation_policy_sha256": plan.attestation_policy_sha256,
+            "execution_harness_sha256": plan.execution_harness_sha256,
+            "runner_source_sha256": plan.runner_source_sha256,
+            "paired_attestation_verifier_sha256": paired_verifier_sha256,
+            "paired_proof_set_sha256": paired_proof_set_sha256,
         },
         "enabled_cells": enabled_cells,
         "invariants": {
@@ -1011,7 +1315,7 @@ def load_evidence_plan(path: str | Path) -> VerifiedRoutingEvidencePlan:
         raise VerifiedRoutingError("Evidence plan must be an object.")
     data = dict(raw)
     reject_unknown(data, _PLAN_FIELDS, "evidence plan")
-    missing = sorted(_PLAN_FIELDS.difference(data))
+    missing = sorted(_PLAN_REQUIRED_FIELDS.difference(data))
     if missing:
         raise VerifiedRoutingError(
             f"Missing evidence plan fields: {', '.join(missing)}."
@@ -1020,6 +1324,21 @@ def load_evidence_plan(path: str | Path) -> VerifiedRoutingEvidencePlan:
     if not isinstance(raw_cases, list):
         raise VerifiedRoutingError("Evidence plan cases must be a list.")
     cases = tuple(_promotion_case_from_payload(case) for case in raw_cases)
+    if "pricing_contract" in data:
+        pricing_contract = data["pricing_contract"]
+        if not isinstance(pricing_contract, dict):
+            raise VerifiedRoutingError(
+                "Evidence plan pricing_contract must be an object."
+            )
+        data["pricing_contract"] = PricingContract.from_payload(
+            pricing_contract
+        )
+    for name in (
+        "attestation_policy_sha256",
+        "execution_harness_sha256",
+        "runner_source_sha256",
+    ):
+        data.setdefault(name, None)
     return VerifiedRoutingEvidencePlan(
         **data,  # type: ignore[arg-type]
         cases=cases,
@@ -1153,18 +1472,32 @@ def _evaluate_cell(
     candidate_premium = _mean([record.premium_calls for record in candidates])
     baseline_egress = _mean([record.remote_payload_chars for record in baselines])
     candidate_egress = _mean([record.remote_payload_chars for record in candidates])
+    baseline_exact_costs = tuple(_exact_paired_cost(record) for record in baselines)
+    candidate_exact_costs = tuple(_exact_paired_cost(record) for record in candidates)
     cost_complete = all(
-        record.estimated_cost_usd is not None
-        for record in [*baselines, *candidates]
+        value is not None
+        for value in (*baseline_exact_costs, *candidate_exact_costs)
     )
-    baseline_cost = (
-        _mean([float(record.estimated_cost_usd) for record in baselines])
+    baseline_cost_total = (
+        _decimal_sum(value for value in baseline_exact_costs if value is not None)
         if cost_complete
         else None
     )
-    candidate_cost = (
-        _mean([float(record.estimated_cost_usd) for record in candidates])
+    candidate_cost_total = (
+        _decimal_sum(value for value in candidate_exact_costs if value is not None)
         if cost_complete
+        else None
+    )
+    # Exact Decimal totals decide eligibility.  Float values are only a legacy,
+    # human-readable projection in the generated report.
+    baseline_cost = (
+        float(_decimal_mean(baseline_cost_total, samples))
+        if baseline_cost_total is not None
+        else None
+    )
+    candidate_cost = (
+        float(_decimal_mean(candidate_cost_total, samples))
+        if candidate_cost_total is not None
         else None
     )
     cost_required = gate_policy.require_complete_cost_evidence or cost_weight > 0
@@ -1177,9 +1510,9 @@ def _evaluate_cell(
     monotone_cost = (
         cost_evidence_complete
         and (
-            baseline_cost is None
-            or candidate_cost is None
-            or candidate_cost <= baseline_cost
+            baseline_cost_total is None
+            or candidate_cost_total is None
+            or candidate_cost_total <= baseline_cost_total
         )
     )
     pairwise_premium_increases = sum(
@@ -1191,10 +1524,13 @@ def _evaluate_cell(
         for baseline, candidate in zip(baselines, candidates)
     )
     pairwise_cost_increases = sum(
-        candidate.estimated_cost_usd is not None
-        and baseline.estimated_cost_usd is not None
-        and candidate.estimated_cost_usd > baseline.estimated_cost_usd
-        for baseline, candidate in zip(baselines, candidates)
+        candidate_cost is not None
+        and baseline_cost is not None
+        and candidate_cost > baseline_cost
+        for baseline_cost, candidate_cost in zip(
+            baseline_exact_costs,
+            candidate_exact_costs,
+        )
     )
     improved_dimensions: list[str] = []
     if candidate_successes > baseline_successes:
@@ -1209,9 +1545,13 @@ def _evaluate_cell(
         if _relative_improvement(baseline_value, candidate_value) >= threshold:
             improved_dimensions.append(name)
     if (
-        baseline_cost is not None
-        and candidate_cost is not None
-        and _relative_improvement(baseline_cost, candidate_cost) >= threshold
+        baseline_cost_total is not None
+        and candidate_cost_total is not None
+        and _decimal_relative_improvement_at_least(
+            baseline_cost_total,
+            candidate_cost_total,
+            threshold,
+        )
     ):
         improved_dimensions.append("cost")
     passed = (
@@ -1324,7 +1664,7 @@ def _validate_scorecard_lineage(
         )
 
 
-def _pair_matches_plan(
+def _pair_static_matches_plan(
     case: PromotionCase,
     baseline: VerifiedOutcomeRecord,
     candidate: VerifiedOutcomeRecord,
@@ -1354,7 +1694,285 @@ def _pair_matches_plan(
         baseline.source == candidate.source
         and baseline.confidence == candidate.confidence
         and baseline.route_receipt_sha256 != candidate.route_receipt_sha256
-        and baseline.evidence_sha256 != candidate.evidence_sha256
+    )
+
+
+def _holdout_evidence_replay_errors(
+    records: Sequence[VerifiedOutcomeRecord],
+) -> int:
+    """Allow shared evidence only inside one fully bound AB/BA execution.
+
+    A deterministic or independent verifier can legitimately produce identical
+    evidence for both routes.  Distinct durable claims, bindings, and route
+    receipts carry replay protection; evidence equality alone is not a replay.
+    """
+
+    groups: dict[str, list[VerifiedOutcomeRecord]] = {}
+    for record in records:
+        groups.setdefault(record.evidence_sha256, []).append(record)
+    errors = 0
+    for group in groups.values():
+        if len(group) == 1:
+            continue
+        bindings = [record.paired_run for record in group]
+        if len(group) != 2 or any(binding is None for binding in bindings):
+            errors += len(group) - 1
+            continue
+        run_ids = {str(binding["run_id"]) for binding in bindings if binding}
+        claims = {str(binding["claim_sha256"]) for binding in bindings if binding}
+        binding_ids = {
+            str(binding["binding_sha256"]) for binding in bindings if binding
+        }
+        receipts = {record.route_receipt_sha256 for record in group}
+        if not (
+            len(run_ids) == 1
+            and len(claims) == 2
+            and len(binding_ids) == 2
+            and len(receipts) == 2
+        ):
+            errors += len(group) - 1
+    return errors
+
+
+def _training_pair_uniqueness_errors(
+    records: Sequence[VerifiedOutcomeRecord],
+    proofs: Mapping[str, VerifiedPairedEvidence],
+) -> dict[str, int]:
+    """Require one globally unique semantic item per complete training pair."""
+
+    by_item: dict[
+        str,
+        list[tuple[VerifiedOutcomeRecord, PairedOutcomeBinding]],
+    ] = {}
+    task_items: dict[str, set[str]] = {}
+    task_runs: dict[str, set[str]] = {}
+    run_items: dict[str, set[str]] = {}
+    nonce_items: dict[str, set[str]] = {}
+    missing_proofs = 0
+    for record in records:
+        proof = proofs.get(record.record_id)
+        if proof is None:
+            missing_proofs += 1
+            continue
+        binding = proof.paired_outcome_binding
+        item = binding.normalized_item_sha256
+        by_item.setdefault(item, []).append((record, binding))
+        task_items.setdefault(binding.task_fingerprint, set()).add(item)
+        task_runs.setdefault(binding.task_fingerprint, set()).add(binding.run_id)
+        run_items.setdefault(binding.run_id, set()).add(item)
+        nonce_items.setdefault(binding.run_instance_nonce, set()).add(item)
+
+    invalid_groups = 0
+    for item, group in by_item.items():
+        records_by_slot = {
+            binding.slot: (record, binding) for record, binding in group
+        }
+        tasks = {binding.task_fingerprint for _, binding in group}
+        run_ids = {binding.run_id for _, binding in group}
+        nonces = {binding.run_instance_nonce for _, binding in group}
+        cells = {
+            (
+                record.profile,
+                record.config_sha256,
+                record.signal_provider_config_sha256,
+                record.runtime_plan_sha256,
+                record.capabilities,
+                record.difficulty,
+            )
+            for record, _ in group
+        }
+        claims = {binding.claim_sha256 for _, binding in group}
+        bindings = {binding.binding_sha256 for _, binding in group}
+        record_ids = {record.record_id for record, _ in group}
+        structurally_complete = (
+            len(group) == 2
+            and len(records_by_slot) == 2
+            and set(records_by_slot) == {"A", "B"}
+            and len(tasks) == 1
+            and len(run_ids) == 1
+            and len(nonces) == 1
+            and len(cells) == 1
+            and len(claims) == 2
+            and len(bindings) == 2
+            and len(record_ids) == 2
+            and all(
+                binding.normalized_item_sha256 == item
+                and binding.task_fingerprint == record.task_fingerprint
+                and binding.route == record.planned_route
+                for record, binding in group
+            )
+        )
+        if not structurally_complete:
+            invalid_groups += 1
+            continue
+        _, baseline = records_by_slot["A"]
+        _, candidate = records_by_slot["B"]
+        first_record, first = min(group, key=lambda value: value[1].ordinal)
+        second_record, second = max(group, key=lambda value: value[1].ordinal)
+        if not (
+            baseline.arm == "baseline"
+            and baseline.route == baseline.baseline_route
+            and candidate.arm == "candidate"
+            and candidate.route == candidate.candidate_route
+            and baseline.baseline_route == candidate.baseline_route
+            and baseline.candidate_route == candidate.candidate_route
+            and baseline.order == candidate.order
+            and {first.ordinal, second.ordinal} == {0, 1}
+            and first.previous_record_id is None
+            and second.previous_record_id == first_record.record_id
+            and first_record.record_id != second_record.record_id
+        ):
+            invalid_groups += 1
+
+    return {
+        "records_without_paired_proof": missing_proofs,
+        "invalid_normalized_item_pairs": invalid_groups,
+        "tasks_with_multiple_items": sum(
+            len(items) != 1 for items in task_items.values()
+        ),
+        "tasks_with_multiple_runs": sum(
+            len(runs) != 1 for runs in task_runs.values()
+        ),
+        "runs_with_multiple_items": sum(
+            len(items) != 1 for items in run_items.values()
+        ),
+        "run_nonces_with_multiple_items": sum(
+            len(items) != 1 for items in nonce_items.values()
+        ),
+    }
+
+
+def _paired_lineage_matches_plan(
+    case: PromotionCase,
+    baseline: VerifiedOutcomeRecord,
+    candidate: VerifiedOutcomeRecord,
+    *,
+    plan_sha256: str,
+    pricing_contract: PricingContract | None,
+) -> bool:
+    if (
+        pricing_contract is None
+        or baseline.paired_run is None
+        or candidate.paired_run is None
+        or baseline.paired_cost is None
+        or candidate.paired_cost is None
+    ):
+        return False
+    try:
+        baseline_binding = PairedOutcomeBinding.from_payload(
+            baseline.paired_run
+        )
+        candidate_binding = PairedOutcomeBinding.from_payload(
+            candidate.paired_run
+        )
+        baseline_cost = PairedCostEvidence.from_payload(
+            baseline.payload()["paired_cost"],  # type: ignore[arg-type]
+            pricing=pricing_contract,
+        )
+        candidate_cost = PairedCostEvidence.from_payload(
+            candidate.payload()["paired_cost"],  # type: ignore[arg-type]
+            pricing=pricing_contract,
+        )
+    except VerifiedRoutingError:
+        return False
+    pricing_sha256 = pricing_contract.pricing_sha256
+    if (
+        baseline_cost.pricing_sha256 != pricing_sha256
+        or candidate_cost.pricing_sha256 != pricing_sha256
+        or not _paired_cost_matches_outcome(baseline_cost, baseline)
+        or not _paired_cost_matches_outcome(candidate_cost, candidate)
+    ):
+        return False
+    case_sha256 = sha256_json(case.payload())
+    shared_expected = (
+        plan_sha256,
+        case_sha256,
+        case.task_fingerprint,
+        case.normalized_item_sha256,
+        case.config_sha256,
+        case.order,
+        case.baseline_route,
+        case.candidate_route,
+    )
+    for binding in (baseline_binding, candidate_binding):
+        observed = (
+            binding.plan_sha256,
+            binding.case_sha256,
+            binding.task_fingerprint,
+            binding.normalized_item_sha256,
+            binding.bridge_config_sha256,
+            binding.order,
+            binding.baseline_route,
+            binding.candidate_route,
+        )
+        if observed != shared_expected:
+            return False
+    shared_lineage = (
+        baseline_binding.run_id,
+        baseline_binding.source_snapshot_sha256,
+        baseline_binding.executor_config_sha256,
+        baseline_binding.lifecycle_config_sha256,
+        baseline_binding.signals_sha256,
+        baseline_binding.runner_sha256,
+        baseline_binding.pricing_sha256,
+        baseline_binding.run_instance_nonce,
+    )
+    if baseline_binding.pricing_sha256 != pricing_sha256 or shared_lineage != (
+        candidate_binding.run_id,
+        candidate_binding.source_snapshot_sha256,
+        candidate_binding.executor_config_sha256,
+        candidate_binding.lifecycle_config_sha256,
+        candidate_binding.signals_sha256,
+        candidate_binding.runner_sha256,
+        candidate_binding.pricing_sha256,
+        candidate_binding.run_instance_nonce,
+    ):
+        return False
+    if (
+        baseline_binding.arm != "baseline"
+        or baseline_binding.slot != "A"
+        or baseline_binding.route != case.baseline_route
+        or candidate_binding.arm != "candidate"
+        or candidate_binding.slot != "B"
+        or candidate_binding.route != case.candidate_route
+        or baseline_binding.claim_sha256 == candidate_binding.claim_sha256
+    ):
+        return False
+    first, second = (
+        (baseline_binding, candidate_binding)
+        if case.order == "AB"
+        else (candidate_binding, baseline_binding)
+    )
+    first_record, second_record = (
+        (baseline, candidate)
+        if case.order == "AB"
+        else (candidate, baseline)
+    )
+    return (
+        first.ordinal == 0
+        and second.ordinal == 1
+        and first.previous_record_id is None
+        and second.previous_record_id == first_record.record_id
+        and second_record.record_id != first_record.record_id
+        and _timestamp(first_record.created_at)
+        <= _timestamp(second_record.created_at)
+    )
+
+
+def _paired_cost_matches_outcome(
+    cost: PairedCostEvidence,
+    record: VerifiedOutcomeRecord,
+) -> bool:
+    final_command = cost.commands[-1]
+    return (
+        sum(command.prompt_tokens for command in cost.commands)
+        == record.prompt_tokens
+        and sum(command.completion_tokens for command in cost.commands)
+        == record.completion_tokens
+        and final_command.provider_id == record.final_provider
+        and final_command.model == record.model
+        and final_command.provider_runtime_sha256
+        == record.provider_runtime_sha256
     )
 
 
@@ -1395,6 +2013,85 @@ def _failure_is_blocking(
     if record.failure_class in gate_policy.blocking_failure_classes:
         return True
     return record.failure_class not in gate_policy.non_blocking_failure_classes
+
+
+def _verify_concrete_paired_record(
+    verifier: PairedAttestationVerifier,
+    record: VerifiedOutcomeRecord,
+    *,
+    pricing: PricingContract,
+) -> VerifiedPairedEvidence:
+    """Narrow internal authority boundary, patched only by gate-isolation tests."""
+
+    return PairedAttestationVerifier.verify_record(
+        verifier,
+        record,
+        pricing=pricing,
+    )
+
+
+def _verify_paired_record_sets(
+    training: Sequence[VerifiedOutcomeRecord],
+    holdout: Sequence[VerifiedOutcomeRecord],
+    *,
+    verifier: PairedAttestationVerifier | None,
+    pricing: PricingContract | None,
+    expected_policy_sha256: str | None,
+    expected_execution_harness_sha256: str | None,
+    expected_runner_source_sha256: str | None,
+    evaluated_at_epoch: float,
+) -> tuple[dict[str, VerifiedPairedEvidence], tuple[str, ...], bool]:
+    """Rebuild every authoritative row from DSSE/CAS before gate decisions."""
+
+    if verifier is not None and type(verifier) is not PairedAttestationVerifier:
+        raise TypeError("paired_verifier must be PairedAttestationVerifier or None.")
+    if verifier is None or pricing is None:
+        return {}, ("paired-verifier-or-pricing-missing",), False
+    policy_matches = (
+        expected_policy_sha256 is not None
+        and expected_execution_harness_sha256 is not None
+        and expected_runner_source_sha256 is not None
+        and verifier.trust_config.policy.policy_sha256 == expected_policy_sha256
+        and verifier.runner_source_sha256 == expected_runner_source_sha256
+    )
+    proofs: dict[str, VerifiedPairedEvidence] = {}
+    errors: list[str] = []
+    for record in (*training, *holdout):
+        try:
+            proof = _verify_concrete_paired_record(
+                verifier,
+                record,
+                pricing=pricing,
+            )
+            if proof.latest_attestation_issued_at < proof.candidate_created_at:
+                raise VerifiedRoutingError(
+                    "Paired attestation predates its signed candidate binding."
+                )
+            if proof.latest_attestation_issued_at > evaluated_at_epoch:
+                raise VerifiedRoutingError(
+                    "Paired attestation was issued after evaluation time."
+                )
+            if (
+                proof.paired_outcome_binding.execution_harness_sha256
+                != expected_execution_harness_sha256
+                or proof.paired_outcome_binding.runner_source_sha256
+                != expected_runner_source_sha256
+            ):
+                raise VerifiedRoutingError(
+                    "Paired proof does not match the preregistered execution harness."
+                )
+            proofs[record.record_id] = proof
+        except (ValueError, OSError) as exc:
+            errors.append(
+                sha256_json(
+                    {
+                        "record_id": record.record_id,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+            )
+    return proofs, tuple(sorted(errors)), policy_matches
 
 
 def _normalize_records(
@@ -1490,6 +2187,19 @@ def _timestamp(value: str) -> datetime:
     )
 
 
+def _authoritative_candidate_time(
+    record: VerifiedOutcomeRecord,
+    proofs: Mapping[str, VerifiedPairedEvidence],
+) -> datetime:
+    proof = proofs.get(record.record_id)
+    if proof is None:
+        return _timestamp(record.created_at)
+    return datetime.fromtimestamp(
+        proof.candidate_created_at,
+        tz=timezone.utc,
+    )
+
+
 def _wilson_interval(
     successes: int,
     total: int,
@@ -1514,6 +2224,45 @@ def _wilson_interval(
 
 def _mean(values: Sequence[float | int]) -> float:
     return sum(float(value) for value in values) / len(values) if values else 0.0
+
+
+def _exact_paired_cost(record: VerifiedOutcomeRecord) -> Decimal | None:
+    if record.paired_cost is None:
+        return None
+    try:
+        evidence = PairedCostEvidence.from_payload(
+            record.payload()["paired_cost"]  # type: ignore[arg-type]
+        )
+    except VerifiedRoutingError:
+        return None
+    return Decimal(evidence.total_cost_usd)
+
+
+def _decimal_sum(values: Iterable[Decimal]) -> Decimal:
+    items = tuple(values)
+    with localcontext() as context:
+        context.prec = 160
+        return sum(items, Decimal(0))
+
+
+def _decimal_mean(total: Decimal, samples: int) -> Decimal:
+    if samples <= 0:
+        return Decimal(0)
+    with localcontext() as context:
+        context.prec = 160
+        return total / Decimal(samples)
+
+
+def _decimal_relative_improvement_at_least(
+    baseline: Decimal,
+    candidate: Decimal,
+    threshold: float,
+) -> bool:
+    if baseline <= 0:
+        return False
+    with localcontext() as context:
+        context.prec = 160
+        return baseline - candidate >= baseline * Decimal(str(threshold))
 
 
 def _p95(values: Sequence[float | int]) -> float:

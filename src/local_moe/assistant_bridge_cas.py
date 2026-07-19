@@ -115,6 +115,16 @@ def _regular_file_state(path: Path) -> os.stat_result:
 class ContentAddressedStore:
     """Immutable SHA-256 CAS with RFC 8785 structured artifacts."""
 
+    __slots__ = ("root", "_objects", "_sealed")
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError("ContentAddressedStore is final and cannot be subclassed.")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("ContentAddressedStore configuration is immutable.")
+        object.__setattr__(self, name, value)
+
     def __init__(
         self,
         root: str | Path,
@@ -159,6 +169,40 @@ class ContentAddressedStore:
                 "CAS object store is unavailable."
             )
         self._validate_internal_directory(self._objects)
+        object.__setattr__(self, "_sealed", True)
+
+    @property
+    def configuration_sha256(self) -> str:
+        """Bind callers to this immutable-store implementation and root."""
+
+        return sha256_bytes(
+            canonical_json_bytes(
+                {
+                    "schemaVersion": CAS_SCHEMA_VERSION,
+                    "contract": "ContentAddressedStoreConfig",
+                    "rootSha256": sha256_bytes(
+                        str(self.root).encode("utf-8")
+                    ),
+                    "objectAlgorithm": "sha256",
+                    "writePolicy": "atomic-no-replace-verified",
+                }
+            )
+        )
+
+    @property
+    def semantic_configuration_sha256(self) -> str:
+        """Identify CAS behavior without binding a machine-specific state path."""
+
+        return sha256_bytes(
+            canonical_json_bytes(
+                {
+                    "schemaVersion": CAS_SCHEMA_VERSION,
+                    "contract": "ContentAddressedStoreSemanticConfig",
+                    "objectAlgorithm": "sha256",
+                    "writePolicy": "atomic-no-replace-verified",
+                }
+            )
+        )
 
     def put_bytes(self, value: bytes, *, media_type: str) -> ArtifactDescriptor:
         if not isinstance(value, bytes):

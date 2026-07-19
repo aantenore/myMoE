@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from local_moe.assistant_bridge import load_assistant_bridge_config
+from local_moe.assistant_bridge_cas import ContentAddressedStore
 from local_moe.assistant_bridge_attestation import (
     ed25519_public_key_sha256,
     load_ed25519_public_key_pem,
@@ -21,6 +22,10 @@ from local_moe.assistant_bridge_integrity import (
     canonical_json_bytes,
     canonical_sha256,
 )
+from local_moe.assistant_bridge_two_phase_config import (
+    load_two_phase_lifecycle_config,
+)
+from local_moe.paired_evidence import PairedAttestationVerifier
 from local_moe.route_canary import (
     AUTHORIZATION_PAYLOAD_TYPE,
     VerifiedRoutingCanaryAuthorization,
@@ -60,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--training-records", required=True)
     parser.add_argument("--holdout-records", required=True)
     parser.add_argument("--assistant-bridge-config", required=True)
+    parser.add_argument("--attestation-config", required=True)
+    parser.add_argument("--evidence-cas", required=True)
     parser.add_argument("--runtime-config", required=True)
     parser.add_argument("--private-key", required=True)
     parser.add_argument("--activation-id", required=True)
@@ -84,6 +91,8 @@ def sign_authorization(
     training_records_path: str | Path,
     holdout_records_path: str | Path,
     assistant_bridge_config_path: str | Path,
+    attestation_config_path: str | Path,
+    evidence_cas_path: str | Path,
     runtime_config_path: str | Path,
     private_key_path: str | Path,
     activation_id: str,
@@ -153,17 +162,23 @@ def sign_authorization(
             "Manifest cells do not match the enabled assistant bridge configuration."
         )
 
+    first_plan = load_evidence_plan(plan_path)
+    first_gate = load_promotion_gate_policy(gate_policy_path)
+    first_training = load_promotion_outcome_payloads(training_records_path)
+    first_holdout = load_promotion_outcome_payloads(holdout_records_path)
+    first_verifier = _load_paired_verifier(
+        assistant_bridge_config_path=assistant_bridge_config_path,
+        attestation_config_path=attestation_config_path,
+        evidence_cas_path=evidence_cas_path,
+    )
     reconstructed_report, reconstructed_manifest = evaluate_route_promotion(
-        plan=load_evidence_plan(plan_path),
-        gate_policy=load_promotion_gate_policy(gate_policy_path),
+        plan=first_plan,
+        gate_policy=first_gate,
         route_policy=route_policy,
         scorecard=scorecard,
-        training_records=load_promotion_outcome_payloads(
-            training_records_path
-        ),
-        holdout_records=load_promotion_outcome_payloads(
-            holdout_records_path
-        ),
+        training_records=first_training,
+        holdout_records=first_holdout,
+        paired_verifier=first_verifier,
         evaluated_at=manifest.not_before,
     )
     if (
@@ -218,6 +233,57 @@ def sign_authorization(
             "Private signing key does not match the trusted runtime operator key."
         )
 
+    # Re-open every trust/config/CAS/input dependency immediately before signing.
+    # The first pass validates the supplied manifest; this independent second pass
+    # prevents stale in-memory qualification from becoming signing authority.
+    fresh_bridge = load_assistant_bridge_config(assistant_bridge_config_path)
+    fresh_runtime = load_verified_routing_runtime_config(
+        runtime_source,
+        expected_source_sha256=str(fresh_bridge.verified_routing.config_sha256),
+    )
+    fresh_route_policy = load_route_policy(fresh_runtime.route_policy_path)
+    fresh_scorecard = load_route_scorecard(
+        fresh_runtime.scorecard_path,
+        now=normalized_not_before,
+    )
+    fresh_plan = load_evidence_plan(plan_path)
+    fresh_gate = load_promotion_gate_policy(gate_policy_path)
+    fresh_training = load_promotion_outcome_payloads(training_records_path)
+    fresh_holdout = load_promotion_outcome_payloads(holdout_records_path)
+    fresh_verifier = _load_paired_verifier(
+        assistant_bridge_config_path=assistant_bridge_config_path,
+        attestation_config_path=attestation_config_path,
+        evidence_cas_path=evidence_cas_path,
+    )
+    fresh_report, fresh_manifest = evaluate_route_promotion(
+        plan=fresh_plan,
+        gate_policy=fresh_gate,
+        route_policy=fresh_route_policy,
+        scorecard=fresh_scorecard,
+        training_records=fresh_training,
+        holdout_records=fresh_holdout,
+        paired_verifier=fresh_verifier,
+        evaluated_at=manifest.not_before,
+    )
+    if (
+        fresh_manifest is None
+        or fresh_bridge.source_sha256 != bridge.source_sha256
+        or fresh_runtime.source_sha256 != runtime.source_sha256
+        or fresh_plan.plan_sha256 != first_plan.plan_sha256
+        or fresh_gate.digest != first_gate.digest
+        or _outcome_set_sha256(fresh_training)
+        != _outcome_set_sha256(first_training)
+        or _outcome_set_sha256(fresh_holdout)
+        != _outcome_set_sha256(first_holdout)
+        or fresh_report.digest != reconstructed_report.digest
+        or fresh_report.payload() != reconstructed_report.payload()
+        or fresh_manifest.digest != reconstructed_manifest.digest
+        or fresh_manifest.payload() != reconstructed_manifest.payload()
+    ):
+        raise CanarySigningError(
+            "Qualification evidence changed before authorization signing."
+        )
+
     payload = canonical_json_bytes(authorization.payload())
     signature = private_key.sign(_dsse_pae(AUTHORIZATION_PAYLOAD_TYPE, payload))
     envelope = canonical_json_bytes(
@@ -246,6 +312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             training_records_path=args.training_records,
             holdout_records_path=args.holdout_records,
             assistant_bridge_config_path=args.assistant_bridge_config,
+            attestation_config_path=args.attestation_config,
+            evidence_cas_path=args.evidence_cas,
             runtime_config_path=args.runtime_config,
             private_key_path=args.private_key,
             activation_id=args.activation_id,
@@ -264,8 +332,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         "operator_key_id": authorization.operator_key_id,
         "out": str(Path(args.out)),
     }
-    sys.stdout.buffer.write(canonical_json_bytes(summary) + b"\n")
+    sys.stdout.write(canonical_json_bytes(summary).decode("utf-8") + "\n")
     return 0
+
+
+def _load_paired_verifier(
+    *,
+    assistant_bridge_config_path: str | Path,
+    attestation_config_path: str | Path,
+    evidence_cas_path: str | Path,
+) -> PairedAttestationVerifier:
+    bridge = load_assistant_bridge_config(assistant_bridge_config_path)
+    lifecycle = load_two_phase_lifecycle_config(attestation_config_path)
+    requested = Path(evidence_cas_path).expanduser().resolve()
+    configured = Path(lifecycle.state.cas_path).expanduser().resolve()
+    if requested != configured:
+        raise CanarySigningError(
+            "Evidence CAS does not match the attestation lifecycle config."
+        )
+    return PairedAttestationVerifier(
+        trust_config=lifecycle.trust,
+        evidence_store=ContentAddressedStore(
+            requested,
+            create_if_missing=False,
+        ),
+        bridge_config=bridge,
+    )
+
+
+def _outcome_set_sha256(records: Sequence[dict[str, object]]) -> str:
+    ordered = sorted(records, key=lambda item: str(item.get("record_id", "")))
+    return canonical_sha256({"records": ordered})
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:

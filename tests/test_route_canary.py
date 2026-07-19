@@ -159,6 +159,70 @@ class RouteCanaryTests(unittest.TestCase):
         with self.assertRaisesRegex(RouteCanaryError, "less premium"):
             VerifiedRoutingCanaryManifest.from_payload(widening)
 
+    def test_legacy_manifest_without_pricing_lineage_loads_for_inspection(
+        self,
+    ) -> None:
+        payload = self._legacy_manifest_payload(APPLY_SECRET)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy-manifest.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            manifest = load_verified_routing_canary_manifest(path)
+
+        self.assertIsNone(manifest.pricing_sha256)
+        self.assertNotIn("pricing_sha256", manifest.lineage)
+        self.assertEqual(manifest.payload(), payload)
+
+    def test_validly_signed_legacy_manifest_is_refused_before_activation(
+        self,
+    ) -> None:
+        legacy = VerifiedRoutingCanaryManifest.from_payload(
+            self._legacy_manifest_payload(APPLY_SECRET)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public_key_path = self._write_public_key(root, self.private_key)
+            authorization_path = root / "authorization.json"
+            authorization_path.write_bytes(
+                self._authorization_envelope(legacy)
+            )
+            runtime_path = self._write_runtime_config(
+                root,
+                public_key_path=public_key_path,
+                manifest_path=root / "legacy-manifest.json",
+            )
+            runtime = load_verified_routing_runtime_config(runtime_path)
+
+            with self.assertRaisesRegex(RouteCanaryError, "pricing lineage"):
+                load_and_verify_canary_authorization(
+                    authorization_path,
+                    manifest=legacy,
+                    runtime=runtime,
+                    bridge_config_sha256=CONFIG_SHA256,
+                    now=NOW,
+                )
+
+            envelope = json.loads(
+                authorization_path.read_text(encoding="utf-8")
+            )
+            signature = bytearray(
+                base64.b64decode(envelope["signatures"][0]["sig"])
+            )
+            signature[0] ^= 1
+            envelope["signatures"][0]["sig"] = base64.b64encode(
+                bytes(signature)
+            ).decode("ascii")
+            authorization_path.write_bytes(canonical_json_bytes(envelope))
+            with self.assertRaisesRegex(RouteCanaryError, "signature"):
+                load_and_verify_canary_authorization(
+                    authorization_path,
+                    manifest=legacy,
+                    runtime=runtime,
+                    bridge_config_sha256=CONFIG_SHA256,
+                    now=NOW,
+                )
+
+            self.assertFalse(Path(runtime.chronology_path).exists())
+
     def test_authorization_verifies_dsse_key_time_and_every_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -399,6 +463,7 @@ class RouteCanaryTests(unittest.TestCase):
                 "scorecard_digest": selected.scorecard_digest,
                 "training_source_digest": "4" * 64,
                 "evaluator_sha256": "5" * 64,
+                "pricing_sha256": "6" * 64,
             },
             "enabled_cells": [
                 {
@@ -425,6 +490,18 @@ class RouteCanaryTests(unittest.TestCase):
             },
         }
         return {**content, "manifest_sha256": sha256_json(content)}
+
+    def _legacy_manifest_payload(
+        self,
+        secret: bytes,
+    ) -> dict[str, object]:
+        payload = self._manifest_payload(secret)
+        lineage = payload["lineage"]
+        assert isinstance(lineage, dict)
+        lineage.pop("pricing_sha256")
+        payload.pop("manifest_sha256")
+        payload["manifest_sha256"] = sha256_json(payload)
+        return payload
 
     def _authorization(self, manifest: VerifiedRoutingCanaryManifest):
         with tempfile.TemporaryDirectory() as tmp:

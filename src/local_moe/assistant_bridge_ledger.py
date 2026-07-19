@@ -587,6 +587,7 @@ def budget_key(
     task_fingerprint: str,
     config_sha256: str,
     workspace_fingerprint: str,
+    execution_discriminator_sha256: str | None = None,
 ) -> str:
     for label, value in (
         ("task fingerprint", task_fingerprint),
@@ -594,14 +595,24 @@ def budget_key(
         ("workspace fingerprint", workspace_fingerprint),
     ):
         _require_sha256(value, label)
+    if execution_discriminator_sha256 is not None:
+        _require_sha256(
+            execution_discriminator_sha256,
+            "execution discriminator",
+        )
+    payload = {
+        "namespace": namespace,
+        "task_fingerprint": task_fingerprint,
+        "config_sha256": config_sha256,
+        "workspace_fingerprint": workspace_fingerprint,
+    }
+    if execution_discriminator_sha256 is not None:
+        payload["execution_discriminator_sha256"] = (
+            execution_discriminator_sha256
+        )
     return _sha256_text(
         json.dumps(
-            {
-                "namespace": namespace,
-                "task_fingerprint": task_fingerprint,
-                "config_sha256": config_sha256,
-                "workspace_fingerprint": workspace_fingerprint,
-            },
+            payload,
             sort_keys=True,
             separators=(",", ":"),
         )

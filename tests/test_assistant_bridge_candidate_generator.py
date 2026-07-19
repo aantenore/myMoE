@@ -23,6 +23,17 @@ LIFECYCLE_CONFIG_SHA256 = "d" * 64
 
 
 class AssistantBridgeCandidateGeneratorTests(unittest.TestCase):
+    def test_codex_command_plan_requests_machine_readable_usage(self) -> None:
+        with _fake_bridge() as fixture:
+            task = build_assistant_task("Inspect one file.", profile="offline")
+            plan = fixture.runner.candidate_generator().plan_candidate(
+                task,
+                workspace=fixture.root,
+                expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+            )
+
+        self.assertIn("--json", plan["commands"][0]["argv_shape"])
+
     def test_candidate_request_preserves_existing_positional_field_order(self) -> None:
         task = build_assistant_task(
             "Change one file.",
@@ -321,6 +332,89 @@ class AssistantBridgeCandidateGeneratorTests(unittest.TestCase):
 
         self.assertEqual([item["mode"] for item in invocations], ["local"])
         self.assertEqual(source_content, "initial\n")
+
+    def test_paired_evidence_executes_exact_less_premium_route_without_apply(
+        self,
+    ) -> None:
+        with (
+            _fake_bridge() as fixture,
+            _fake_environment(
+                fixture,
+                local_output="VERIFIED local candidate",
+                write_relative="tracked.txt",
+                write_content="paired-candidate\n",
+            ),
+        ):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="balanced",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                allow_remote=True,
+                allow_remote_workspace=True,
+            )
+            source = snapshot_workspace(fixture.root, fixture.config.workspace.scope)
+            generator = fixture.runner.candidate_generator()
+            operation_sha256 = "7" * 64
+            plan = generator._plan_paired_evidence_arm(
+                task,
+                workspace=fixture.root,
+                expected_source_fingerprint=source.fingerprint,
+                expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                expected_baseline_route="local_then_verify",
+                route="local",
+                operation_sha256=operation_sha256,
+            )
+            with patch.object(
+                fixture.runner,
+                "_apply_verified_candidate",
+            ) as apply_candidate:
+                result = generator._run_paired_evidence_arm(
+                    task,
+                    source_workspace=fixture.root,
+                    expected_source_fingerprint=source.fingerprint,
+                    expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                    expected_baseline_route="local_then_verify",
+                    route="local",
+                    operation_sha256=operation_sha256,
+                    confirmation=str(plan["confirmation_id"]),
+                )
+                apply_candidate.assert_not_called()
+            invocations = _read_jsonl(fixture.log)
+            after = snapshot_workspace(fixture.root, fixture.config.workspace.scope)
+
+        self.assertEqual(plan["guarded_baseline_route"], "local_then_verify")
+        self.assertEqual(plan["evaluation_route"], "local")
+        self.assertEqual(result.receipt.route, "local")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual([item["mode"] for item in invocations], ["local"])
+        self.assertEqual(source, after)
+
+    def test_paired_evidence_never_expands_guarded_route(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(fixture):
+            task = build_assistant_task(
+                "Change the tracked file.",
+                profile="balanced",
+                required_capabilities=("code",),
+                risk_class="write_local",
+                allow_remote=True,
+                allow_remote_workspace=True,
+            )
+            source = snapshot_workspace(fixture.root, fixture.config.workspace.scope)
+            generator = fixture.runner.candidate_generator()
+
+            with self.assertRaisesRegex(AssistantBridgeError, "more-premium"):
+                generator._plan_paired_evidence_arm(
+                    task,
+                    workspace=fixture.root,
+                    expected_source_fingerprint=source.fingerprint,
+                    expected_config_sha256=LIFECYCLE_CONFIG_SHA256,
+                    expected_baseline_route="local_then_verify",
+                    route="premium",
+                    operation_sha256="8" * 64,
+                )
+
+        self.assertEqual(_read_jsonl(fixture.log), [])
 
     def test_missing_required_delta_is_not_stageable(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(fixture):

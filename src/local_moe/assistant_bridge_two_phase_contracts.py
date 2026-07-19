@@ -19,6 +19,10 @@ INDEPENDENT_PREDICATE_V1 = (
     "https://github.com/aantenore/myMoE/tree/main/docs/spec/"
     "independent-candidate-attestation/v1"
 )
+INDEPENDENT_EVALUATION_PREDICATE_V2 = (
+    "https://github.com/aantenore/myMoE/tree/main/docs/spec/"
+    "independent-candidate-evaluation/v2"
+)
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 WORKFLOW_STATES = frozenset(
     {
@@ -484,6 +488,61 @@ def build_attestation_statement(
     }
 
 
+def build_evaluation_attestation_statement(
+    binding: CandidateBinding,
+    requirement: VerifierRequirement,
+    *,
+    attestation_id: str,
+    issued_at: float,
+    expires_at: float,
+    checks: Sequence[AttestationCheck],
+) -> dict[str, object]:
+    """Build a signed evaluation predicate that preserves pass and fail results."""
+
+    require_safe_id(attestation_id, "attestation_id")
+    issued = _require_timestamp(issued_at, "attestation issued_at")
+    expires = _require_timestamp(expires_at, "attestation expires_at")
+    if issued >= expires or issued < binding.created_at or expires > binding.expires_at:
+        raise TwoPhaseContractError("Attestation lifetime is outside the workflow.")
+    if not all(isinstance(item, AttestationCheck) for item in checks):
+        raise TwoPhaseContractError("Evaluation checks are invalid.")
+    ordered = tuple(sorted(checks, key=lambda item: item.check_id))
+    if not ordered or len({item.check_id for item in ordered}) != len(ordered):
+        raise TwoPhaseContractError(
+            "Evaluation checks must be non-empty and unique."
+        )
+    return {
+        "_type": IN_TOTO_STATEMENT_V1,
+        "subject": [
+            {
+                "name": f"urn:mymoe:candidate:{binding.workflow_id}",
+                "digest": {"sha256": binding.candidate_fingerprint},
+            }
+        ],
+        "predicateType": INDEPENDENT_EVALUATION_PREDICATE_V2,
+        "predicate": {
+            "schemaVersion": TWO_PHASE_SCHEMA_VERSION,
+            "binding": binding.payload(),
+            "bindingSha256": binding.binding_sha256,
+            "attestation": {
+                "attestationId": attestation_id,
+                "verifierId": requirement.verifier_id,
+                "adapterId": requirement.adapter_id,
+                "keyId": requirement.key_id,
+                "publicKeySha256": requirement.public_key_sha256,
+                "specSha256": requirement.spec_sha256,
+                "trustPolicySha256": binding.verification_policy.policy_sha256,
+                "issuedAt": issued,
+                "expiresAt": expires,
+            },
+            "outcome": {
+                "passed": all(item.passed for item in ordered),
+                "checks": [item.payload() for item in ordered],
+            },
+        },
+    }
+
+
 @dataclass(frozen=True)
 class IndependentAttestation:
     """Immutable trusted-adapter output; raw evidence remains the external input."""
@@ -536,6 +595,116 @@ class IndependentAttestation:
             "statementSha256": canonical_sha256(self.statement()),
             "issuedAt": self.issued_at,
             "expiresAt": self.expires_at,
+        }
+
+
+@dataclass(frozen=True)
+class IndependentEvaluationAttestation:
+    """Authenticated evaluation evidence that cannot become apply authority."""
+
+    adapter_id: str
+    verifier_id: str
+    key_id: str
+    attestation_id: str
+    statement_bytes: bytes = field(repr=False)
+    envelope_bytes: bytes = field(repr=False)
+    evidence_sha256: str
+    issued_at: float
+    expires_at: float
+    passed: bool
+    checks: tuple[AttestationCheck, ...]
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.adapter_id, "attestation adapter_id"),
+            (self.verifier_id, "attestation verifier_id"),
+            (self.key_id, "attestation key_id"),
+            (self.attestation_id, "attestation_id"),
+        ):
+            require_safe_id(value, label)
+        if not isinstance(self.statement_bytes, bytes) or not isinstance(
+            self.envelope_bytes, bytes
+        ):
+            raise TwoPhaseContractError("Attestation evidence must be immutable bytes.")
+        require_sha256(self.evidence_sha256, "attestation evidence_sha256")
+        if sha256_bytes(self.envelope_bytes) != self.evidence_sha256:
+            raise TwoPhaseContractError("Attestation evidence digest is invalid.")
+        issued = _require_timestamp(self.issued_at, "attestation issued_at")
+        expires = _require_timestamp(self.expires_at, "attestation expires_at")
+        if issued >= expires:
+            raise TwoPhaseContractError("Attestation lifetime is invalid.")
+        if not isinstance(self.passed, bool):
+            raise TwoPhaseContractError("Evaluation outcome must be boolean.")
+        if not isinstance(self.checks, tuple) or not self.checks or not all(
+            isinstance(item, AttestationCheck) for item in self.checks
+        ):
+            raise TwoPhaseContractError(
+                "Evaluation checks must be immutable and non-empty."
+            )
+        check_ids = tuple(item.check_id for item in self.checks)
+        if check_ids != tuple(sorted(check_ids)) or len(check_ids) != len(
+            set(check_ids)
+        ):
+            raise TwoPhaseContractError(
+                "Evaluation checks must be ordered and unique."
+            )
+        if self.passed is not all(item.passed for item in self.checks):
+            raise TwoPhaseContractError(
+                "Evaluation outcome does not match its checks."
+            )
+        statement = self.statement()
+        predicate = statement.get("predicate")
+        outcome = predicate.get("outcome") if isinstance(predicate, Mapping) else None
+        metadata = (
+            predicate.get("attestation")
+            if isinstance(predicate, Mapping)
+            else None
+        )
+        if (
+            statement.get("predicateType") != INDEPENDENT_EVALUATION_PREDICATE_V2
+            or not isinstance(outcome, Mapping)
+            or outcome
+            != {
+                "passed": self.passed,
+                "checks": [item.payload() for item in self.checks],
+            }
+            or not isinstance(metadata, Mapping)
+            or metadata.get("adapterId") != self.adapter_id
+            or metadata.get("verifierId") != self.verifier_id
+            or metadata.get("keyId") != self.key_id
+            or metadata.get("attestationId") != self.attestation_id
+            or metadata.get("issuedAt") != issued
+            or metadata.get("expiresAt") != expires
+        ):
+            raise TwoPhaseContractError(
+                "Evaluation result does not match its signed statement."
+            )
+        object.__setattr__(self, "issued_at", issued)
+        object.__setattr__(self, "expires_at", expires)
+
+    def statement(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.statement_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TwoPhaseContractError(
+                "Verified statement bytes are not JSON."
+            ) from exc
+        if not isinstance(value, dict) or canonical_json_bytes(value) != self.statement_bytes:
+            raise TwoPhaseContractError("Verified statement bytes are not canonical.")
+        return value
+
+    def metadata_payload(self) -> dict[str, object]:
+        return {
+            "adapterId": self.adapter_id,
+            "verifierId": self.verifier_id,
+            "keyId": self.key_id,
+            "attestationId": self.attestation_id,
+            "evidenceSha256": self.evidence_sha256,
+            "statementSha256": canonical_sha256(self.statement()),
+            "issuedAt": self.issued_at,
+            "expiresAt": self.expires_at,
+            "passed": self.passed,
+            "checks": [item.payload() for item in self.checks],
         }
 
 

@@ -7,8 +7,9 @@ For the runtime lifecycle behind these commands, see [How myMoE works](how-it-wo
 
 Commands below use the POSIX virtual-environment path `.venv/bin/python`. On
 Windows, use `.venv\Scripts\python.exe` or the installed `mymoe` and
-`mymoe-web` entry points. Do not use an older system `python3`: the project
-requires Python 3.10 or newer, and the locked examples use Python 3.12.
+`mymoe-web` entry points. Verified paired evidence additionally uses the
+installed `mymoe-paired` entry point. Do not use an older system `python3`: the
+project requires Python 3.10 or newer, and the locked examples use Python 3.12.
 
 ## Supported Platforms
 
@@ -52,7 +53,10 @@ the `.venv/bin` path.
 `uv.lock` pins all optional dependency graphs. Use `--locked` for reproducible
 installs; update the lock deliberately when testing a newer runtime stack.
 
-Editable installs expose the `mymoe` and `mymoe-web` console scripts. The quality gate runs `scripts/run_packaging_smoke.py` to install the project in a temporary virtual environment and verify both entry points without relying on `PYTHONPATH`.
+Editable installs expose the `mymoe`, `mymoe-paired`, and `mymoe-web` console
+scripts. The quality gate runs `scripts/run_packaging_smoke.py` to install the
+project in a temporary virtual environment and verify all three entry points
+without relying on `PYTHONPATH`.
 
 Validated Apple Silicon MLX package profile:
 
@@ -70,7 +74,7 @@ generates with the configured Qwen and Gemma MLX servers.
 Optional extras:
 
 - `.[assistant-bridge]`: installs the dependencies required by the Hybrid
-  Assistant Bridge CLI and its two-phase lifecycle commands.
+  Assistant Bridge CLI, its two-phase lifecycle commands, and `mymoe-paired`.
 - `.[gguf]`: installs the Python-side downloader dependencies for llama.cpp/GGUF profiles. The `llama-server` binary is still installed from llama.cpp releases.
 - `.[mlx-current]`: tracks the latest `mlx-lm` stack for experiments.
 - `.[mlx-vlm]`: installs `mlx-vlm` for future multimodal server experiments. Do not use it as the default Gemma E4B path until the upstream compatibility issue is resolved.

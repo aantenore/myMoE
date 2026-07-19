@@ -44,7 +44,8 @@ The gate currently performs these steps:
    be absent only in offline CI.
 9. Refresh the hardware profile artifact.
 10. Run the packaging smoke test, which installs the project in a temporary
-   virtual environment and verifies the `mymoe` and `mymoe-web` console scripts.
+   virtual environment and verifies the `mymoe`, `mymoe-paired`, and
+   `mymoe-web` console scripts.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
 

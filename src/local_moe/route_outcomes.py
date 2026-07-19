@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -64,7 +66,12 @@ _RECORD_FIELDS = {
     "provider_runtime_sha256",
     "model",
 }
-_RECORD_OPTIONAL_FIELDS = {"route_canary"}
+_RECORD_OPTIONAL_FIELDS = {
+    "route_canary",
+    "paired_run",
+    "paired_cost",
+    "paired_evidence",
+}
 _RECORD_ALLOWED_FIELDS = _RECORD_FIELDS | _RECORD_OPTIONAL_FIELDS
 _BRIDGE_FIELDS = {
     "schema_version",
@@ -159,6 +166,9 @@ _CAPSULE_FIELDS = {
 }
 _OUTCOME_ID = re.compile(r"^outcome-[0-9a-f]{64}$")
 _OUTCOME_STORE_LOCK_TIMEOUT_SECONDS = 10.0
+_MAX_OUTCOME_RECORD_BYTES = 2 * 1024 * 1024
+_MAX_OUTCOME_STORE_BYTES = 128 * 1024 * 1024
+_MAX_OUTCOME_RECORDS = 100_000
 
 
 @dataclass(frozen=True)
@@ -193,6 +203,9 @@ class VerifiedOutcomeRecord:
     provider_runtime_sha256: str | None = None
     model: str | None = None
     route_canary: Mapping[str, object] | None = None
+    paired_run: Mapping[str, object] | None = None
+    paired_cost: Mapping[str, object] | None = None
+    paired_evidence: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != CONTRACT_VERSION:
@@ -284,6 +297,76 @@ class VerifiedOutcomeRecord:
                 "route_canary",
                 _freeze_json(canary.payload()),
             )
+        if self.paired_run is not None:
+            from .paired_execution_contracts import PairedOutcomeBinding
+
+            binding = PairedOutcomeBinding.from_payload(self.paired_run)
+            if (
+                binding.task_fingerprint != self.task_fingerprint
+                or binding.bridge_config_sha256 != self.config_sha256
+                or binding.route != self.planned_route
+            ):
+                raise VerifiedRoutingError(
+                    "Outcome paired-run binding is invalid."
+                )
+            object.__setattr__(
+                self,
+                "paired_run",
+                _freeze_json(binding.payload()),
+            )
+        if self.paired_cost is not None:
+            from decimal import Decimal
+
+            from .paired_execution_pricing import PairedCostEvidence
+
+            cost = PairedCostEvidence.from_payload(self.paired_cost)
+            if self.paired_run is None:
+                raise VerifiedRoutingError(
+                    "Paired cost evidence requires paired-run lineage."
+                )
+            pricing_sha256 = str(self.paired_run["pricing_sha256"])
+            if (
+                cost.pricing_sha256 != pricing_sha256
+                or self.estimated_cost_usd is None
+                # `estimated_cost_usd` is the legacy numeric projection used by
+                # aggregate scorecards. The paired payload remains the exact
+                # canonical Decimal source of truth and must reproduce that
+                # projection, rather than being rounded to match it.
+                or self.estimated_cost_usd
+                != float(Decimal(cost.total_cost_usd))
+            ):
+                raise VerifiedRoutingError(
+                    "Outcome paired cost evidence is invalid."
+                )
+            object.__setattr__(
+                self,
+                "paired_cost",
+                _freeze_json(cost.payload()),
+            )
+        if self.paired_evidence is not None:
+            from .assistant_bridge_two_phase_contracts import ArtifactDescriptor
+            from .paired_evidence import PAIRED_ATTESTATION_RECEIPT_MEDIA_TYPE
+
+            if self.paired_run is None:
+                raise VerifiedRoutingError(
+                    "Paired attestation evidence requires paired-run lineage."
+                )
+            try:
+                descriptor = ArtifactDescriptor.from_payload(self.paired_evidence)
+            except ValueError as exc:
+                raise VerifiedRoutingError(str(exc)) from exc
+            if (
+                descriptor.media_type != PAIRED_ATTESTATION_RECEIPT_MEDIA_TYPE
+                or descriptor.size_bytes <= 0
+            ):
+                raise VerifiedRoutingError(
+                    "Paired attestation receipt descriptor is invalid."
+                )
+            object.__setattr__(
+                self,
+                "paired_evidence",
+                _freeze_json(descriptor.payload()),
+            )
         if self.final_provider is None and (
             self.provider_runtime_sha256 is not None or self.model is not None
         ):
@@ -337,6 +420,12 @@ class VerifiedOutcomeRecord:
         }
         if self.route_canary is not None:
             payload["route_canary"] = _thaw_json(self.route_canary)
+        if self.paired_run is not None:
+            payload["paired_run"] = _thaw_json(self.paired_run)
+        if self.paired_cost is not None:
+            payload["paired_cost"] = _thaw_json(self.paired_cost)
+        if self.paired_evidence is not None:
+            payload["paired_evidence"] = _thaw_json(self.paired_evidence)
         return payload
 
     @classmethod
@@ -357,6 +446,9 @@ def build_verified_outcome(
     *,
     estimated_cost_usd: float | None = None,
     created_at: str | None = None,
+    paired_run: Mapping[str, object] | None = None,
+    paired_cost: Mapping[str, object] | None = None,
+    paired_evidence: Mapping[str, object] | None = None,
 ) -> VerifiedOutcomeRecord:
     if estimated_cost_usd is not None:
         estimated_cost_usd = require_finite_number(
@@ -532,6 +624,27 @@ def build_verified_outcome(
     }
     if route_canary is not None:
         unsigned["route_canary"] = route_canary
+    if paired_run is not None:
+        from .paired_execution_contracts import PairedOutcomeBinding
+
+        unsigned["paired_run"] = PairedOutcomeBinding.from_payload(
+            paired_run
+        ).payload()
+    if paired_cost is not None:
+        from .paired_execution_pricing import PairedCostEvidence
+
+        unsigned["paired_cost"] = PairedCostEvidence.from_payload(
+            paired_cost
+        ).payload()
+    if paired_evidence is not None:
+        from .assistant_bridge_two_phase_contracts import ArtifactDescriptor
+
+        try:
+            unsigned["paired_evidence"] = ArtifactDescriptor.from_payload(
+                paired_evidence
+            ).payload()
+        except ValueError as exc:
+            raise VerifiedRoutingError(str(exc)) from exc
     payload = dict(unsigned)
     payload["record_id"] = f"outcome-{sha256_json(unsigned)}"
     return VerifiedOutcomeRecord.from_payload(payload)
@@ -546,7 +659,18 @@ class OutcomeStore:
         *,
         lock_timeout_seconds: float = _OUTCOME_STORE_LOCK_TIMEOUT_SECONDS,
     ):
-        self.path = Path(path).expanduser()
+        declared = Path(path).expanduser()
+        try:
+            # Resolve only the parent so an existing final-component symlink is
+            # still visible to the no-follow validation below.  Pinning the
+            # parent also prevents an ancestor symlink from redirecting later
+            # reads or appends after construction.
+            parent = declared.parent.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise VerifiedRoutingError(
+                "Outcome store parent cannot be resolved safely."
+            ) from exc
+        self.path = parent / declared.name
         timeout = require_finite_number(
             lock_timeout_seconds,
             "outcome store lock_timeout_seconds",
@@ -562,6 +686,7 @@ class OutcomeStore:
         self._process_lock = FileLock(
             str(self.lock_path),
             timeout=self.lock_timeout_seconds,
+            mode=0o600,
         )
 
     def append(self, record: VerifiedOutcomeRecord) -> bool:
@@ -572,21 +697,9 @@ class OutcomeStore:
             if any(item.record_id == record.record_id for item in existing):
                 return False
             encoded = (canonical_json(record.payload()) + "\n").encode("utf-8")
-            descriptor = os.open(
-                self.path,
-                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-                0o600,
-            )
-            try:
-                view = memoryview(encoded)
-                while view:
-                    written = os.write(descriptor, view)
-                    if written <= 0:
-                        raise OSError("Outcome append did not make progress.")
-                    view = view[written:]
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+            if len(encoded) > _MAX_OUTCOME_RECORD_BYTES:
+                raise VerifiedRoutingError("Outcome record exceeds its size limit.")
+            _append_secure_outcome_file(self.path, encoded)
         return True
 
     def list_records(self) -> tuple[VerifiedOutcomeRecord, ...]:
@@ -599,9 +712,15 @@ class OutcomeStore:
     @contextmanager
     def _locked(self):
         with self._thread_lock:
+            acquired = False
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
+                _ensure_private_outcome_directory(self.path.parent)
+                lock_before = _ensure_secure_outcome_lock(self.lock_path)
+                parent_before = _validate_private_outcome_directory(
+                    self.path.parent
+                )
                 self._process_lock.acquire(timeout=self.lock_timeout_seconds)
+                acquired = True
             except Timeout as exc:
                 raise VerifiedRoutingError(
                     "Outcome store lock acquisition timed out."
@@ -611,33 +730,63 @@ class OutcomeStore:
                     "Outcome store lock acquisition failed."
                 ) from exc
             try:
+                parent_after = _validate_private_outcome_directory(
+                    self.path.parent
+                )
+                lock_after = _validate_outcome_regular_file(
+                    self.lock_path,
+                    "outcome store lock",
+                    maximum_bytes=4096,
+                )
+                if (
+                    _outcome_directory_identity(parent_before)
+                    != _outcome_directory_identity(parent_after)
+                    or _outcome_file_identity(lock_before)
+                    != _outcome_file_identity(lock_after)
+                ):
+                    raise VerifiedRoutingError(
+                        "Outcome store lock or parent changed during acquisition."
+                    )
                 yield
             finally:
-                try:
-                    self._process_lock.release()
-                except OSError as exc:
-                    raise VerifiedRoutingError(
-                        "Outcome store lock release failed."
-                    ) from exc
+                if acquired:
+                    try:
+                        self._process_lock.release()
+                    except OSError as exc:
+                        raise VerifiedRoutingError(
+                            "Outcome store lock release failed."
+                        ) from exc
 
     def _read_unlocked(self) -> tuple[VerifiedOutcomeRecord, ...]:
-        if not self.path.exists():
+        encoded = _read_secure_outcome_file(self.path)
+        if encoded is None or not encoded:
             return ()
+        try:
+            rendered = encoded.decode("utf-8")
+        except UnicodeError as exc:
+            raise VerifiedRoutingError("Outcome store is not valid UTF-8.") from exc
+        if not rendered.endswith("\n"):
+            raise VerifiedRoutingError("Outcome store is missing its final newline.")
+        lines = rendered.splitlines()
+        if len(lines) > _MAX_OUTCOME_RECORDS:
+            raise VerifiedRoutingError("Outcome store contains too many records.")
         records: list[VerifiedOutcomeRecord] = []
         seen: set[str] = set()
-        for line_number, line in enumerate(
-            self.path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        for line_number, line in enumerate(lines, start=1):
             if not line:
                 raise VerifiedRoutingError(
                     f"Outcome store contains an empty line at {line_number}."
+                )
+            if len(line.encode("utf-8")) > _MAX_OUTCOME_RECORD_BYTES:
+                raise VerifiedRoutingError(
+                    f"Outcome store record exceeds its size limit at line {line_number}."
                 )
             try:
                 raw = _strict_json_loads(line)
                 record = VerifiedOutcomeRecord.from_payload(
                     _mapping(raw, f"outcome line {line_number}")
                 )
-            except (json.JSONDecodeError, UnicodeError, VerifiedRoutingError) as exc:
+            except (UnicodeError, ValueError) as exc:
                 raise VerifiedRoutingError(
                     f"Outcome store is corrupt at line {line_number}: {exc}"
                 ) from exc
@@ -645,9 +794,351 @@ class OutcomeStore:
                 raise VerifiedRoutingError(
                     f"Outcome store contains duplicate record_id at line {line_number}."
                 )
+            if line != canonical_json(record.payload()):
+                raise VerifiedRoutingError(
+                    f"Outcome store is not canonical at line {line_number}."
+                )
             seen.add(record.record_id)
             records.append(record)
         return tuple(records)
+
+
+def _ensure_private_outcome_directory(path: Path) -> os.stat_result:
+    missing: list[Path] = []
+    cursor = path
+    while _outcome_lstat_optional(cursor) is None:
+        if cursor == cursor.parent:
+            raise VerifiedRoutingError(
+                "Outcome store parent cannot be created securely."
+            )
+        missing.append(cursor)
+        cursor = cursor.parent
+    _validate_outcome_directory_kind(cursor, "outcome store ancestor")
+    for directory in reversed(missing):
+        try:
+            os.mkdir(directory, 0o700)
+            if os.name != "nt":
+                os.chmod(directory, 0o700, follow_symlinks=False)
+            _fsync_outcome_directory(directory.parent)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise VerifiedRoutingError(
+                "Outcome store parent cannot be created securely."
+            ) from exc
+        _validate_private_outcome_directory(directory)
+    return _validate_private_outcome_directory(path)
+
+
+def _validate_outcome_directory_kind(
+    path: Path,
+    label: str,
+    metadata: os.stat_result | None = None,
+) -> os.stat_result:
+    inspected = (
+        _outcome_lstat_required(path, label) if metadata is None else metadata
+    )
+    if stat.S_ISLNK(inspected.st_mode) or not stat.S_ISDIR(inspected.st_mode):
+        raise VerifiedRoutingError(f"{label} must be a non-link directory.")
+    return inspected
+
+
+def _validate_private_outcome_directory(
+    path: Path,
+    metadata: os.stat_result | None = None,
+) -> os.stat_result:
+    inspected = _validate_outcome_directory_kind(
+        path,
+        "outcome store parent",
+        metadata,
+    )
+    if os.name != "nt" and stat.S_IMODE(inspected.st_mode) != 0o700:
+        raise VerifiedRoutingError("Outcome store parent permissions must be 0700.")
+    return inspected
+
+
+def _ensure_secure_outcome_lock(path: Path) -> os.stat_result:
+    metadata = _outcome_lstat_optional(path)
+    if metadata is None:
+        _create_secure_outcome_file(path, "outcome store lock")
+    return _validate_outcome_regular_file(
+        path,
+        "outcome store lock",
+        maximum_bytes=4096,
+    )
+
+
+def _create_secure_outcome_file(path: Path, label: str) -> None:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor: int | None = None
+    opened: os.stat_result | None = None
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        _validate_outcome_file_metadata(opened, label, maximum_bytes=4096)
+        os.fsync(descriptor)
+    except FileExistsError:
+        return
+    except OSError as exc:
+        raise VerifiedRoutingError(f"{label} cannot be created securely.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    current = _validate_outcome_regular_file(path, label, maximum_bytes=4096)
+    if opened is None or _outcome_file_identity(opened) != _outcome_file_identity(
+        current
+    ):
+        raise VerifiedRoutingError(f"{label} changed during creation.")
+    _fsync_outcome_directory(path.parent)
+
+
+def _append_secure_outcome_file(path: Path, encoded: bytes) -> None:
+    before = _outcome_lstat_optional(path)
+    created = before is None
+    flags = (
+        os.O_WRONLY
+        | os.O_APPEND
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if created:
+        flags |= os.O_CREAT | os.O_EXCL
+    else:
+        before = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            before,
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        if created and os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            opened,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        current = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        if _outcome_file_identity(opened) != _outcome_file_identity(current):
+            raise VerifiedRoutingError("Outcome store changed before append.")
+        if before is not None and (
+            _outcome_file_snapshot(before) != _outcome_file_snapshot(opened)
+            or _outcome_file_snapshot(before) != _outcome_file_snapshot(current)
+        ):
+            raise VerifiedRoutingError("Outcome store changed before append.")
+        expected_size = opened.st_size + len(encoded)
+        if expected_size > _MAX_OUTCOME_STORE_BYTES:
+            raise VerifiedRoutingError("Outcome store exceeds its size limit.")
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("Outcome append did not make progress.")
+            view = view[written:]
+        os.fsync(descriptor)
+        after = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            after,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        installed = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        if (
+            _outcome_file_identity(opened) != _outcome_file_identity(after)
+            or _outcome_file_identity(opened) != _outcome_file_identity(installed)
+            or after.st_size != expected_size
+            or installed.st_size != expected_size
+        ):
+            raise VerifiedRoutingError("Outcome store changed during append.")
+    except VerifiedRoutingError:
+        raise
+    except FileExistsError as exc:
+        raise VerifiedRoutingError("Outcome store creation lost a race.") from exc
+    except OSError as exc:
+        raise VerifiedRoutingError("Outcome store append failed securely.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    _fsync_outcome_directory(path.parent)
+
+
+def _read_secure_outcome_file(path: Path) -> bytes | None:
+    before = _outcome_lstat_optional(path)
+    if before is None:
+        return None
+    before = _validate_outcome_regular_file(
+        path,
+        "outcome store",
+        before,
+        maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+    )
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            opened,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        current = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        if (
+            _outcome_file_snapshot(before) != _outcome_file_snapshot(opened)
+            or _outcome_file_snapshot(before) != _outcome_file_snapshot(current)
+        ):
+            raise VerifiedRoutingError("Outcome store changed before read.")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(64 * 1024, _MAX_OUTCOME_STORE_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > _MAX_OUTCOME_STORE_BYTES:
+                raise VerifiedRoutingError("Outcome store exceeds its size limit.")
+        after = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            after,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+    except VerifiedRoutingError:
+        raise
+    except OSError as exc:
+        raise VerifiedRoutingError("Outcome store cannot be read safely.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    installed = _validate_outcome_regular_file(
+        path,
+        "outcome store",
+        maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+    )
+    if not (
+        _outcome_file_snapshot(before)
+        == _outcome_file_snapshot(opened)
+        == _outcome_file_snapshot(after)
+        == _outcome_file_snapshot(installed)
+    ):
+        raise VerifiedRoutingError("Outcome store changed while it was read.")
+    return b"".join(chunks)
+
+
+def _validate_outcome_regular_file(
+    path: Path,
+    label: str,
+    metadata: os.stat_result | None = None,
+    *,
+    maximum_bytes: int,
+) -> os.stat_result:
+    inspected = (
+        _outcome_lstat_required(path, label) if metadata is None else metadata
+    )
+    _validate_outcome_file_metadata(
+        inspected,
+        label,
+        maximum_bytes=maximum_bytes,
+    )
+    return inspected
+
+
+def _validate_outcome_file_metadata(
+    metadata: os.stat_result,
+    label: str,
+    *,
+    maximum_bytes: int,
+) -> None:
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise VerifiedRoutingError(f"{label} must be a regular non-link file.")
+    if metadata.st_nlink != 1:
+        raise VerifiedRoutingError(f"{label} must have exactly one hard link.")
+    if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise VerifiedRoutingError(f"{label} permissions must be 0600.")
+    if metadata.st_size < 0 or metadata.st_size > maximum_bytes:
+        raise VerifiedRoutingError(f"{label} exceeds its size limit.")
+
+
+def _outcome_lstat_optional(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise VerifiedRoutingError("Outcome store path cannot be inspected.") from exc
+
+
+def _outcome_lstat_required(path: Path, label: str) -> os.stat_result:
+    metadata = _outcome_lstat_optional(path)
+    if metadata is None:
+        raise VerifiedRoutingError(f"{label} is missing.")
+    return metadata
+
+
+def _outcome_directory_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _outcome_file_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _outcome_file_snapshot(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _fsync_outcome_directory(path: Path) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        os.fsync(descriptor)
+    except OSError as exc:
+        if exc.errno not in {errno.EACCES, errno.EINVAL, errno.EPERM}:
+            raise VerifiedRoutingError(
+                "Outcome store directory could not be synchronized."
+            ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _classify_outcome(

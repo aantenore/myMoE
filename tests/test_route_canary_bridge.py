@@ -223,6 +223,7 @@ class RouteCanaryBridgeIntegrationTests(unittest.TestCase):
                     "scorecard_digest": scorecard.digest,
                     "training_source_digest": scorecard.source_digest,
                     "evaluator_sha256": "4" * 64,
+                    "pricing_sha256": "5" * 64,
                 },
                 "enabled_cells": [
                     {

@@ -86,6 +86,7 @@ def main() -> None:
             raise SystemExit("Packaging smoke imported local_moe outside the wheel environment.")
 
         mymoe = _console_script(scripts_dir, "mymoe")
+        mymoe_paired = _console_script(scripts_dir, "mymoe-paired")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
         prompt = "Packaging smoke: summarize local MoE in one sentence."
         completed = subprocess.run(
@@ -116,6 +117,18 @@ def main() -> None:
         if "myMoE local web UI" not in help_result.stdout:
             raise SystemExit("mymoe-web console script did not expose the expected help output.")
 
+        paired_help_result = subprocess.run(
+            [str(mymoe_paired), "--help"],
+            cwd=temporary,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        if "claim-bound AB/BA evidence case" not in paired_help_result.stdout:
+            raise SystemExit(
+                "mymoe-paired console script did not expose the expected help output."
+            )
+
         web_result = subprocess.run(
             [
                 str(python),
@@ -139,7 +152,7 @@ def main() -> None:
                     "packaging_python": str(packaging_python),
                     "python": str(python),
                     "wheel": wheel.name,
-                    "scripts": [str(mymoe), str(mymoe_web)],
+                    "scripts": [str(mymoe), str(mymoe_paired), str(mymoe_web)],
                 },
                 indent=2,
             )

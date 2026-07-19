@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
+import io
 import json
 import os
 from pathlib import Path
@@ -10,10 +12,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from experiments.sign_verified_routing_canary import main as sign_main
 from local_moe.assistant_bridge import load_assistant_bridge_config
 from local_moe.assistant_bridge_attestation import ed25519_public_key_sha256
 from local_moe.assistant_bridge_integrity import canonical_json_bytes
@@ -33,6 +37,12 @@ from local_moe.route_promotion import (
 from local_moe.route_scorecard import build_route_scorecard, load_route_scorecard
 from local_moe.verified_routing_contracts import sha256_json
 from tests.test_route_promotion import (
+    ATTESTATION_POLICY_SHA256,
+    EXECUTION_HARNESS_SHA256,
+    PRICING,
+    RUNNER_SOURCE_SHA256,
+    _SyntheticPairedVerifier,
+    _synthetic_verify_record,
     _cases,
     _gate_policy,
     _holdout_records,
@@ -47,6 +57,12 @@ FIXTURES = ROOT / "tests" / "fixtures"
 
 class RouteCanarySignCliTests(unittest.TestCase):
     def setUp(self) -> None:
+        verifier_patch = patch(
+            "local_moe.route_promotion._verify_concrete_paired_record",
+            _synthetic_verify_record,
+        )
+        verifier_patch.start()
+        self.addCleanup(verifier_patch.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.config_dir = self.root / "configs"
@@ -108,16 +124,10 @@ class RouteCanarySignCliTests(unittest.TestCase):
         self.bridge_path.write_text(json.dumps(bridge), encoding="utf-8")
         bridge_config = load_assistant_bridge_config(self.bridge_path)
         self.bridge_config_sha256 = bridge_config.source_sha256
+        self.paired_verifier = _SyntheticPairedVerifier()
 
         policy = load_route_policy(self.policy_path)
-        training = [
-            self._with_config(record, bridge_config.source_sha256)
-            for record in _training_records()
-        ]
-        holdout = [
-            self._with_config(record, bridge_config.source_sha256)
-            for record in _holdout_records(20)
-        ]
+        training = _training_records(config_sha256=bridge_config.source_sha256)
         scorecard = build_route_scorecard(
             training,
             minimum_evidence_strength="independent",
@@ -139,6 +149,15 @@ class RouteCanarySignCliTests(unittest.TestCase):
             canary_basis_points=100,
             manifest_ttl_seconds=3_600,
             assignment_salt_sha256="4" * 64,
+            attestation_policy_sha256=ATTESTATION_POLICY_SHA256,
+            execution_harness_sha256=EXECUTION_HARNESS_SHA256,
+            runner_source_sha256=RUNNER_SOURCE_SHA256,
+            pricing_contract=PRICING,
+        )
+        holdout = _holdout_records(
+            20,
+            plan_sha256=plan.plan_sha256,
+            config_sha256=bridge_config.source_sha256,
         )
         report, manifest = evaluate_route_promotion(
             plan=plan,
@@ -147,6 +166,7 @@ class RouteCanarySignCliTests(unittest.TestCase):
             scorecard=scorecard,
             training_records=training,
             holdout_records=holdout,
+            paired_verifier=self.paired_verifier,
             evaluated_at="2026-07-19T02:00:00+00:00",
         )
         self.assertEqual(report.payload()["status"], "eligible")
@@ -333,10 +353,17 @@ class RouteCanarySignCliTests(unittest.TestCase):
         self.manifest_path.write_text(json.dumps(original), encoding="utf-8")
 
     def test_rejects_when_supplied_holdout_is_no_longer_eligible(self) -> None:
-        holdout = [
-            self._with_config(record, self.bridge_config_sha256)
-            for record in _holdout_records(20, candidate_latency_ms=1_200)
-        ]
+        plan_sha256 = str(
+            json.loads(self.plan_path.read_text(encoding="utf-8"))[
+                "plan_sha256"
+            ]
+        )
+        holdout = _holdout_records(
+            20,
+            plan_sha256=plan_sha256,
+            candidate_latency_ms=1_200,
+            config_sha256=self.bridge_config_sha256,
+        )
         self._write_records(self.holdout_records_path, holdout)
 
         completed = self._run()
@@ -378,6 +405,8 @@ class RouteCanarySignCliTests(unittest.TestCase):
             "--training-records": str(self.training_records_path),
             "--holdout-records": str(self.holdout_records_path),
             "--assistant-bridge-config": str(self.bridge_path),
+            "--attestation-config": str(self.work_dir / "attestation.json"),
+            "--evidence-cas": str(self.work_dir / "cas"),
             "--runtime-config": str(self.runtime_path),
             "--private-key": str(self.private_key_path),
             "--activation-id": "activation-test",
@@ -390,21 +419,28 @@ class RouteCanarySignCliTests(unittest.TestCase):
         if len(overrides) % 2:
             raise AssertionError("CLI overrides must be option/value pairs.")
         values.update(zip(overrides[::2], overrides[1::2]))
-        command = [sys.executable, str(SCRIPT)]
+        command = [str(SCRIPT)]
         for option, value in values.items():
             command.extend((option, value))
-        environment = os.environ.copy()
-        existing_pythonpath = environment.get("PYTHONPATH")
-        environment["PYTHONPATH"] = os.pathsep.join(
-            item for item in (str(ROOT / "src"), existing_pythonpath) if item
-        )
-        return subprocess.run(
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch(
+                "experiments.sign_verified_routing_canary._load_paired_verifier",
+                return_value=self.paired_verifier,
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            try:
+                returncode = sign_main(command[1:])
+            except SystemExit as exc:
+                returncode = int(exc.code or 0)
+        return subprocess.CompletedProcess(
             command,
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
+            returncode,
+            stdout.getvalue(),
+            stderr.getvalue(),
         )
 
     def _assert_private_material_absent(

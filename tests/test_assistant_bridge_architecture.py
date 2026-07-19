@@ -376,6 +376,10 @@ class AssistantBridgePackagingContractTests(unittest.TestCase):
             r"(?m)^\s*where\s*=\s*\[\s*[\"']src[\"']\s*\]\s*$",
         )
         self.assertIn('mymoe = "local_moe.cli:main"', scripts)
+        self.assertIn(
+            'mymoe-paired = "local_moe.paired_execution_cli:main"',
+            scripts,
+        )
         self.assertIn('mymoe-web = "local_moe.web:main"', scripts)
         self.assertIn("assistant_bridge", local_moe.__all__)
         self.assertTrue(MINIMUM_SEAM_MODULES.issubset(discovered_modules))

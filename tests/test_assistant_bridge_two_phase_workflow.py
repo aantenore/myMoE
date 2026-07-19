@@ -439,11 +439,25 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             )
             manifest_object.unlink()
 
+            load_candidate_calls = 0
+            real_load_candidate = ContentAddressedStore.load_candidate
+
+            def guarded_load_candidate(
+                store: ContentAddressedStore,
+                *args: object,
+                **kwargs: object,
+            ):
+                nonlocal load_candidate_calls
+                if store is context.service.cas:
+                    load_candidate_calls += 1
+                    raise AssertionError("recovery must not read candidate CAS")
+                return real_load_candidate(store, *args, **kwargs)  # type: ignore[arg-type]
+
             with patch.object(
-                context.service.cas,
+                ContentAddressedStore,
                 "load_candidate",
-                side_effect=AssertionError("recovery must not read candidate CAS"),
-            ) as load_candidate:
+                guarded_load_candidate,
+            ):
                 recovered = context.service.apply_resume(
                     receipt.workflow_id,
                     workspace=context.source,
@@ -454,7 +468,7 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
                     now=113,
                 )
 
-            load_candidate.assert_not_called()
+            self.assertEqual(load_candidate_calls, 0)
             self.assertEqual(recovered.status, "ready")
             self.assertEqual(recovered.code, "recovered_confirmation_required")
             self.assertTrue(recovered.idempotent_replay)

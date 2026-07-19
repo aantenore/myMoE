@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-moe-orchestrator"
-version = "0.3.0a1"
+version = "0.4.0a1"
 description = "Local-first system-level MoE orchestration runtime"
 readme = "README.md"
 license = "Apache-2.0"
@@ -49,6 +49,7 @@ ui-test = [
 
 [project.scripts]
 mymoe = "local_moe.cli:main"
+mymoe-paired = "local_moe.paired_execution_cli:main"
 mymoe-web = "local_moe.web:main"
 
 [tool.setuptools.packages.find]

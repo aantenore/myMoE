@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 import hashlib
 import json
@@ -2884,6 +2884,17 @@ with log_path.open("a", encoding="utf-8") as handle:
 stdout_bytes = int(os.environ.get("FAKE_STDOUT_BYTES", "0"))
 if stdout_bytes:
     sys.stdout.write("x" * stdout_bytes)
+elif os.environ.get("FAKE_CODEX_USAGE") == "1":
+    print(json.dumps({
+        "type": "turn.completed",
+        "usage": {
+            "input_tokens": 100,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 10,
+            "reasoning_output_tokens": 0,
+        },
+    }, separators=(",", ":")))
 else:
     print("fake diagnostic output")
 raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
@@ -2983,6 +2994,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         )
         allowed_env = [
             "FAKE_CODEX_LOG",
+            "FAKE_CODEX_USAGE",
             "FAKE_EXIT_CODE",
             "FAKE_LOCAL_OUTPUT",
             "FAKE_OUTPUT_BYTES",
@@ -3054,7 +3066,23 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         (auth_home / "auth.json").write_text(
             '{"fixture":"credential"}', encoding="utf-8"
         )
-        with patch.dict(os.environ, {"CODEX_HOME": str(auth_home)}):
+        # Every executable owned by this fixture is deliberately single-process:
+        # the optional proxy replaces itself with ``execv``.  Avoid repeatedly
+        # scanning the host process table while retaining the real psutil
+        # lifecycle and cleanup contract around the fixture process itself.
+        children_patch = (
+            patch.object(
+                assistant_bridge_runtime._psutil.Process,
+                "children",
+                return_value=[],
+            )
+            if assistant_bridge_runtime._psutil is not None
+            else nullcontext()
+        )
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(auth_home)}),
+            children_patch,
+        ):
             yield _FakeBridgeFixture(
                 root,
                 config_path,

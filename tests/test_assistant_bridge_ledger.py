@@ -23,6 +23,38 @@ DIGEST_C = "c" * 64
 
 
 class AssistantBridgeLedgerTests(unittest.TestCase):
+    def test_budget_discriminator_is_opt_in_and_separates_paired_arms(self) -> None:
+        legacy = budget_key(
+            namespace="test",
+            task_fingerprint=DIGEST_A,
+            config_sha256=DIGEST_B,
+            workspace_fingerprint=DIGEST_C,
+        )
+        explicit_legacy = budget_key(
+            namespace="test",
+            task_fingerprint=DIGEST_A,
+            config_sha256=DIGEST_B,
+            workspace_fingerprint=DIGEST_C,
+            execution_discriminator_sha256=None,
+        )
+        first_arm = budget_key(
+            namespace="test",
+            task_fingerprint=DIGEST_A,
+            config_sha256=DIGEST_B,
+            workspace_fingerprint=DIGEST_C,
+            execution_discriminator_sha256="d" * 64,
+        )
+        second_arm = budget_key(
+            namespace="test",
+            task_fingerprint=DIGEST_A,
+            config_sha256=DIGEST_B,
+            workspace_fingerprint=DIGEST_C,
+            execution_discriminator_sha256="e" * 64,
+        )
+
+        self.assertEqual(legacy, explicit_legacy)
+        self.assertEqual(len({legacy, first_arm, second_arm}), 3)
+
     def test_confirmation_is_binding_specific_expiring_and_one_shot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = BridgeStateLedger(Path(tmp) / "state.json", namespace="test")

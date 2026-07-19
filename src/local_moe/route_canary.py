@@ -81,7 +81,7 @@ _MANIFEST_FIELDS = {
     "invariants",
     "manifest_sha256",
 }
-_LINEAGE_FIELDS = {
+_LINEAGE_REQUIRED_FIELDS = {
     "plan_sha256",
     "report_sha256",
     "gate_policy_digest",
@@ -89,6 +89,14 @@ _LINEAGE_FIELDS = {
     "scorecard_digest",
     "training_source_digest",
     "evaluator_sha256",
+}
+_LINEAGE_ALLOWED_FIELDS = _LINEAGE_REQUIRED_FIELDS | {
+    "pricing_sha256",
+    "attestation_policy_sha256",
+    "execution_harness_sha256",
+    "runner_source_sha256",
+    "paired_attestation_verifier_sha256",
+    "paired_proof_set_sha256",
 }
 _CELL_FIELDS = {
     "profile",
@@ -327,8 +335,8 @@ class VerifiedRoutingCanaryManifest:
         object.__setattr__(self, "canary_basis_points", basis_points)
         require_sha256(self.assignment_salt_sha256, "assignment_salt_sha256")
         lineage = dict(self.lineage)
-        _reject_unknown(lineage, _LINEAGE_FIELDS, "canary lineage")
-        if set(lineage) != _LINEAGE_FIELDS:
+        _reject_unknown(lineage, _LINEAGE_ALLOWED_FIELDS, "canary lineage")
+        if not _LINEAGE_REQUIRED_FIELDS.issubset(lineage):
             raise RouteCanaryError("Canary lineage is incomplete.")
         for name, value in lineage.items():
             require_sha256(value, f"lineage {name}")
@@ -340,6 +348,10 @@ class VerifiedRoutingCanaryManifest:
             raise RouteCanaryError("Canary manifest repeats an enabled cell.")
         object.__setattr__(self, "enabled_cells", cells)
         require_sha256(self.manifest_sha256, "manifest_sha256")
+
+    @property
+    def pricing_sha256(self) -> str | None:
+        return self.lineage.get("pricing_sha256")
 
     def content_payload(self) -> dict[str, object]:
         return {
@@ -775,6 +787,10 @@ def load_and_verify_canary_authorization(
         raise RouteCanaryError("Canary authorization is not currently active.")
     if not _timestamp(manifest.not_before) <= current < _timestamp(manifest.expires_at):
         raise RouteCanaryError("Canary manifest is not currently active.")
+    if manifest.pricing_sha256 is None:
+        raise RouteCanaryError(
+            "Legacy canary manifest without pricing lineage cannot be activated."
+        )
     if (
         authorization.manifest_sha256 != manifest.manifest_sha256
         or authorization.bridge_config_sha256

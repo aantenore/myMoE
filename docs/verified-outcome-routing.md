@@ -109,6 +109,15 @@ Prompt text, response text, constraints, diffs, verifier output, and reasoning
 are not fields in this schema. Cost remains absent unless the caller supplies a
 versioned pricing contract or a measured amount.
 
+For Verified Hybrid Execution, the summary row is deliberately not a trust
+anchor. It points to a content-addressed receipt containing the original task
+signals, pre-attestation Bridge result metadata, candidate manifest and
+changeset, and independently signed evaluation envelopes. Qualification
+reloads those objects, verifies the signatures and policy, recomputes exact
+configured token cost, and requires the reconstructed row to match byte for
+byte. A signed negative evaluation is preserved as a failed outcome; missing,
+malformed, late, untrusted, or incomplete evidence is inconclusive instead.
+
 `route_canary` is an optional alpha extension to `RouteDecisionReceipt` 2.0 and
 `VerifiedOutcomeRecord` 1.0. Current readers accept legacy payloads that omit
 the field. Older strict readers reject canary-bearing payloads as having an
@@ -157,9 +166,12 @@ less premium use:
 
 The evaluator requires the supplied scorecard to rebuild byte-for-byte from
 the exact training outcome set, rejects task, record, or receipt overlap with
-the holdout, and evaluates every planned pair using intention-to-treat. Missing
-arms, weak evidence, stale records, incomplete planned coverage, or thin cells
-are `inconclusive`; they are never silently removed. Candidate-only failures,
+the holdout, rejects overlap of normalized intents even when their wording and
+task fingerprints differ, and evaluates every planned pair using
+intention-to-treat. Both training and holdout rows must reconstruct from the
+same preregistered public trust policy and execution harness. Missing arms,
+weak evidence, stale records, incomplete planned coverage, or thin cells are
+`inconclusive`; they are never silently removed. Candidate-only failures,
 hard-invariant failures, profile quality regressions, latency regressions, or
 increased premium calls, remote payload, or measured cost are `ineligible`.
 
@@ -301,7 +313,10 @@ list before executing the holdout. Training records, scorecard cells, and the
 planned holdout must use the exact enabled Bridge/runtime lineage frozen before
 evidence collection. The case list is a JSON array matching the `PromotionCase`
 contract. Set `ASSIGNMENT_SALT_SHA256` to the already-frozen assignment-secret
-digest, then freeze the content-addressed evidence plan:
+digest. Create `work/verified-routing-pricing.json` as a canonical
+`VerifiedPairedPricingContract` for every provider/model that either arm can
+invoke; rates are exact decimal USD strings and the file contains no
+credentials. Then freeze the content-addressed evidence plan:
 
 ```bash
 PYTHONPATH=src python3 experiments/freeze_verified_routing_plan.py \
@@ -313,13 +328,143 @@ PYTHONPATH=src python3 experiments/freeze_verified_routing_plan.py \
   --canary-basis-points 500 \
   --manifest-ttl-seconds 86400 \
   --assignment-salt-sha256 "$ASSIGNMENT_SALT_SHA256" \
+  --assistant-bridge-config configs/assistant-bridge.canary.local.json \
+  --attestation-config configs/assistant-bridge-workflow.local.json \
+  --attestation-exchange-dir /absolute/private/paired-attestation \
+  --pricing-contract work/verified-routing-pricing.json \
   --out work/verified-routing-evidence-plan.json
 ```
 
-Run both arms from equivalent disposable snapshots, honor the preregistered
-AB/BA order, use an independent verifier, and append every planned result to
-the holdout store. Do not stop early or discard timeout, blocked, abstained, or
-inconclusive outcomes. Then evaluate the complete set:
+The freeze command is provider-free. It opens the already initialized public
+trust, CAS, and directory-exchange configuration only to derive the exact
+attestation policy, runner source identity, and semantic execution-harness
+identity. It does not accept caller-written harness hashes. The same Bridge,
+workflow, sidecar protocol settings, clock contract, signal provider, and
+pricing lineage must be used during collection.
+
+Older schema-1.0 plans that omit these proof-preregistration extensions remain
+readable for inspection and diagnostic reports. They cannot execute a paired
+case, emit a canary manifest, or be signed; freeze a new plan from the inspected
+configuration instead of editing an old plan.
+
+Install the Assistant Bridge extra to expose the paired runner:
+
+```bash
+python -m pip install -e '.[assistant-bridge]'
+```
+
+The status command reads only the metadata-only paired journal; it does not load
+the task, application policy, Bridge configuration, or a provider:
+
+```bash
+install -d -m 700 /absolute/private/mymoe-paired
+mymoe-paired status \
+  --run-dir /absolute/private/mymoe-paired/case-0001 \
+  --json
+```
+
+Execution is available only after composing the built-in directory exchange
+with a separately operated signed verifier, its public-key trust policy, and a
+preinitialized immutable evidence store. Reuse a reviewed two-phase workflow
+configuration such as
+[`configs/assistant-bridge-workflow.example.json`](../configs/assistant-bridge-workflow.example.json),
+but replace the placeholder verifier digest and public-key path with the real
+independent verifier contract. The workflow file must contain public
+verification material only; the myMoE process must never receive the private
+signing key.
+
+Create the exchange outside both the source workspace and other paired state.
+It and its two child directories must already exist and be private before the
+CLI starts:
+
+```bash
+install -d -m 700 \
+  /absolute/private/paired-attestation \
+  /absolute/private/paired-attestation/requests \
+  /absolute/private/paired-attestation/responses
+```
+
+The CAS named by `state.cas_path` in the workflow configuration must also have
+been initialized by the two-phase lifecycle; `mymoe-paired` opens it without
+creating it. With those prerequisites, execute the one plan case whose
+fingerprint exactly matches the task:
+
+```bash
+mymoe-paired run \
+  --task work/assistant-task.json \
+  --plan work/verified-routing-evidence-plan.json \
+  --bridge-config configs/assistant-bridge.json \
+  --app-config configs/app.json \
+  --workflow-config configs/assistant-bridge-workflow.json \
+  --attestation-exchange-dir /absolute/private/paired-attestation \
+  --workspace /absolute/path/to/source-workspace \
+  --run-dir /absolute/private/mymoe-paired/case-0001 \
+  --outcome-store /absolute/private/mymoe-paired/holdout.jsonl \
+  --json
+```
+
+The runner accepts no caller-supplied pricing or lifecycle/operation digests;
+it consumes the pricing contract embedded in the frozen plan and derives the
+remaining bindings internally. The run directory and outcome store must be
+outside the governed source workspace and must not overlap each other. Exit
+code `0` means a complete or otherwise known status, `1` means an ambiguous
+uncheckpointed claim or unreadable state that cannot prove retry is safe, `2`
+means an invalid contract or configuration, and `3` means an operational
+failure while no ambiguous provider claim was present.
+
+Journal and outcome records omit task and response bodies, but stable task and
+objective hashes plus provider/runtime metadata are linkable and may be
+dictionary-guessed. They are sensitive artifacts and must never be published.
+The store enforces directory mode `0700` and file mode `0600` on POSIX; Windows
+ACL privacy remains an operator responsibility.
+
+`--workflow-config` and `--attestation-exchange-dir` are an inseparable pair.
+If either is omitted, `run` fails before creating journal/outcome state or
+calling a provider with `signed_verifier_required` (or an invalid-composition
+error) and exit code `2`. The CLI does not generate signing keys, self-sign
+evidence, or silently substitute a deterministic in-process check.
+
+### Directory attestation sidecar protocol
+
+The sidecar is an independently launched process, not an importable verifier
+inside myMoE. It cooperatively watches `requests/` for
+`request-<64-hex-id>.json`. Each request is canonical JSON, is atomically
+published without overwrite, and binds the complete `CandidateBinding`, its
+SHA-256 digest, the exact disposable verifier-workspace path, and an absolute
+deadline. On POSIX, the adapter accepts only owner-controlled `0700`
+directories and `0600`, single-link, non-symlink artifacts.
+
+For each request, the sidecar must independently validate the request contract,
+deadline, full binding, and workspace, run the declared verifier in that
+disposable workspace, and create signed DSSE evidence matching the public trust
+policy. It then atomically publishes one canonical
+`response-<same-id>.json` in `responses/` with exactly these fields:
+`schemaVersion`, `contract`, `requestId`, `bindingSha256`, and `envelopes`.
+`envelopes` is a non-empty bounded list of canonical base64-encoded DSSE bytes.
+The adapter rejects replayed IDs, wrong bindings, duplicate envelopes,
+noncanonical or oversized responses, links, permissive modes, and responses
+arriving after the configured deadline. Requests are retained on timeout so an
+operator can diagnose an indeterminate verification boundary; do not blindly
+retry them.
+
+No signing key or private verifier implementation belongs in this repository,
+workflow file, exchange request, or myMoE process. Public keys are loaded from
+the workflow trust configuration and only verified envelopes enter the CAS.
+Running the sidecar under the same OS account provides process and key
+separation, not a hostile-user security boundary; use a distinct OS principal,
+host, or hardware-backed signer when stronger trust is required. Request and
+response files include stable, linkable hashes and a workspace path, so keep
+the entire exchange private and never publish it. On Windows, restrictive ACLs
+remain an operator-managed prerequisite.
+
+The runner honors the preregistered AB/BA order, uses disposable snapshots, and
+appends every planned result to the holdout store. Do not stop early or discard
+timeout, blocked, abstained, or inconclusive outcomes. `mymoe-paired` does not
+fabricate an independent verifier attestation: evidence without the required
+independent verifier remains diagnostic and cannot qualify. An authentic
+signed failure is recorded as a failed arm and remains part of
+intention-to-treat; only a missing, invalid, timed-out, quorum-incomplete, or
+unreadable proof makes the arm indeterminate. Then evaluate the complete set:
 
 ```bash
 PYTHONPATH=src python3 experiments/qualify_verified_routing.py \
@@ -329,6 +474,9 @@ PYTHONPATH=src python3 experiments/qualify_verified_routing.py \
   --scorecard work/verified-routing-scorecard.json \
   --training-records work/verified-routing-training.jsonl \
   --holdout-records work/verified-routing-holdout.jsonl \
+  --assistant-bridge-config configs/assistant-bridge.canary.local.json \
+  --attestation-config configs/assistant-bridge-workflow.local.json \
+  --evidence-cas /absolute/private/two-phase-cas \
   --evaluated-at 2026-07-19T18:00:00+00:00 \
   --report work/verified-routing-promotion-report.json \
   --manifest work/verified-routing-canary-manifest.json
@@ -382,6 +530,8 @@ PYTHONPATH=src python3 experiments/sign_verified_routing_canary.py \
   --training-records work/verified-routing-training.jsonl \
   --holdout-records work/verified-routing-holdout.jsonl \
   --assistant-bridge-config configs/assistant-bridge.canary.local.json \
+  --attestation-config configs/assistant-bridge-workflow.local.json \
+  --evidence-cas /absolute/private/two-phase-cas \
   --runtime-config configs/verified-routing-runtime.local.json \
   --private-key /secure/offline/operator-private.pem \
   --activation-id canary-2026-07-19-01 \
@@ -496,18 +646,34 @@ no real paired Assistant Bridge holdout has yet met that contract.
 - There is no live weight mutation, online learning, exploration, or automatic
   broad policy activation.
 
-The plan records intended AB/BA order and normalized item hashes, but the
-current `VerifiedOutcomeRecord` does not itself attest workspace snapshot or
-execution order. The runner and independent verifier must preserve those
-properties externally until a future paired-run envelope binds them directly.
-Content addressing detects mutation but does not authenticate the evidence
-producer or provide a trusted timestamp. The runtime therefore requires a
-pinned operator signature, a contained activation window, and consistent local
-chronology in addition to the manifest. That signature authorizes a bounded
-deployment decision; it does not retroactively attest how the evidence was
-produced. The local chronology likewise detects discontinuity only relative to
-the state it can still read; deletion or replacement by a filesystem writer is
-outside its guarantee.
+`VerifiedPairedRunRoot` now freezes the plan, case, normalized item, guarded
+routes, AB/BA slots, one source snapshot, Bridge/runner lineage, and pricing
+contract before the first provider call. The metadata-only paired journal
+writes a durable claim before each invocation, links the second outcome to the
+first, and permits resume only after a complete first checkpoint. A recovered
+claim without a checkpoint is indeterminate and cannot be retried
+automatically.
+Each `VerifiedOutcomeRecord` carries that paired lineage, a CSPRNG run-instance
+nonce, exact derived cost evidence, and a receipt for the signed source
+artifacts. A legacy, replayed, reordered, cross-snapshot, normalized-intent
+overlap, or cost-incomplete holdout is never eligible.
+
+The paired journal and the signed receipt have different jobs. The journal is
+the operational authority for safe resume and exactly-once claims. The DSSE
+envelopes plus content-addressed receipt are the evaluation authority for
+integrity, provenance, and signed time. A crash after a row append but before
+its checkpoint can make a run permanently non-resumable; if both independently
+signed arms already exist, the pair can still be analyzed, but it never
+authorizes a retry. Neither content addressing nor a valid signature proves
+that benchmark inputs are representative or that the verifier's checks capture
+the right real-world quality.
+
+The runtime still requires a separate pinned operator signature, a contained
+activation window, and consistent local chronology in addition to an eligible
+manifest. That signature authorizes a bounded deployment decision; it does not
+change the meaning of the underlying evaluation. The local chronology detects
+discontinuity only relative to the state it can still read; deletion or
+replacement by a filesystem writer is outside its guarantee.
 
 The outcome loop is intentionally conservative: optimization starts only after
 authority and verifiability are already established.

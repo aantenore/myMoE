@@ -117,11 +117,20 @@ _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_GIT_BYTES = 16 * 1024 * 1024
 _MAX_STREAM_BYTES = 2 * 1024 * 1024
 _MAX_FINAL_BYTES = 1024 * 1024
+_MAX_CODEX_JSON_EVENTS = 16_384
+_MAX_CODEX_JSON_EVENT_BYTES = 1024 * 1024
+_MAX_CODEX_USAGE_TOKENS = 10**12
 _CODEX_ADAPTER_ID = "codex_cli"
 _CODEX_EPHEMERAL_ENVIRONMENT_KEYS = ("CODEX_HOME", "HOME")
 _DIRECT_APPLY_INTENT = "direct_apply"
 _CANDIDATE_GENERATION_INTENT = "candidate_generation"
-_EXECUTION_INTENTS = {_DIRECT_APPLY_INTENT, _CANDIDATE_GENERATION_INTENT}
+_PAIRED_EVIDENCE_INTENT = "paired_evidence"
+_EXECUTION_INTENTS = {
+    _DIRECT_APPLY_INTENT,
+    _CANDIDATE_GENERATION_INTENT,
+    _PAIRED_EVIDENCE_INTENT,
+}
+_EXECUTABLE_ROUTE_RANK = {"local": 0, "local_then_verify": 1, "premium": 2}
 _STANDALONE_CANDIDATE_OPERATION_SHA256 = hashlib.sha256(
     b"assistant-bridge-candidate-standalone/v1"
 ).hexdigest()
@@ -1722,6 +1731,11 @@ class BridgeRunResult:
     final_provider: str | None = None
     final_output: str = field(repr=False, default="")
     premium_calls_used: int = 0
+    paired_evidence: Mapping[str, object] | None = field(
+        default=None,
+        repr=False,
+    )
+    paired_evidence_created_at: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1731,6 +1745,34 @@ class BridgeRunResult:
         )
         object.__setattr__(self, "verification", tuple(self.verification))
         object.__setattr__(self, "commands", tuple(self.commands))
+        if self.paired_evidence is not None:
+            if not isinstance(self.paired_evidence, Mapping):
+                raise AssistantBridgeError(
+                    "Paired evidence descriptor must be an object."
+                )
+            object.__setattr__(
+                self,
+                "paired_evidence",
+                MappingProxyType(dict(self.paired_evidence)),
+            )
+        if self.paired_evidence_created_at is not None:
+            value = self.paired_evidence_created_at
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+            ):
+                raise AssistantBridgeError(
+                    "Paired evidence timestamp must be finite and non-negative."
+                )
+            object.__setattr__(self, "paired_evidence_created_at", float(value))
+        if (self.paired_evidence is None) != (
+            self.paired_evidence_created_at is None
+        ):
+            raise AssistantBridgeError(
+                "Paired evidence descriptor and timestamp must be present together."
+            )
 
     def metadata_payload(self) -> dict[str, object]:
         return {
@@ -2865,7 +2907,15 @@ def build_codex_command_plan(
     if web_enabled:
         argv.append("--search")
     argv.extend(provider.extra_args)
-    argv.extend(("exec", "--ephemeral", "--ignore-user-config", "--ignore-rules"))
+    argv.extend(
+        (
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+        )
+    )
     if not (Path(resolved_workspace) / ".git").exists():
         argv.append("--skip-git-repo-check")
     argv.extend(("--color", "never"))
@@ -3002,6 +3052,75 @@ def _blocked_command_result(plan: CommandPlan, code: str) -> CommandResult:
     )
 
 
+def _parse_codex_json_usage(stdout: bytes) -> tuple[int, int] | None:
+    """Extract complete v1 pricing usage from bounded Codex JSONL output.
+
+    Raw stdout remains process-private.  Any ambiguity, schema drift, truncation,
+    cache accounting, or malformed counter makes pricing incomplete rather than
+    inventing a billable total.
+    """
+
+    if not isinstance(stdout, bytes) or not stdout or len(stdout) > _MAX_STREAM_BYTES:
+        return None
+    lines = stdout.splitlines()
+    if not lines or len(lines) > _MAX_CODEX_JSON_EVENTS:
+        return None
+    completed: list[tuple[int, int, int, int]] = []
+    usage_fields = {
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+    }
+    for line in lines:
+        if not line or len(line) > _MAX_CODEX_JSON_EVENT_BYTES:
+            return None
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(event, dict)
+            or any(not isinstance(key, str) for key in event)
+            or not isinstance(event.get("type"), str)
+        ):
+            return None
+        if event["type"] != "turn.completed":
+            continue
+        if set(event) != {"type", "usage"} or not isinstance(
+            event["usage"], dict
+        ):
+            return None
+        usage = event["usage"]
+        if set(usage) != usage_fields:
+            return None
+        counters: dict[str, int] = {}
+        for field_name in usage_fields:
+            value = usage[field_name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= _MAX_CODEX_USAGE_TOKENS
+            ):
+                return None
+            counters[field_name] = value
+        completed.append(
+            (
+                counters["input_tokens"],
+                counters["output_tokens"],
+                counters["cached_input_tokens"],
+                counters["cache_write_input_tokens"],
+            )
+        )
+    if len(completed) != 1:
+        return None
+    prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens = completed[0]
+    if cached_tokens != 0 or cache_write_tokens != 0:
+        return None
+    return prompt_tokens, completion_tokens
+
+
 def execute_codex_command(
     plan: CommandPlan,
     *,
@@ -3102,6 +3221,11 @@ def execute_codex_command(
                     status, code = "failed", "final_output_limit_exceeded"
         except OSError:
             status, code = "failed", "final_output_unreadable"
+    usage = (
+        None
+        if outcome.stdout_truncated
+        else _parse_codex_json_usage(outcome.stdout)
+    )
     return CommandResult(
         provider_id=plan.provider_id,
         status=status,
@@ -3114,6 +3238,8 @@ def execute_codex_command(
         stderr_sha256=outcome.stderr_sha256,
         stderr_bytes=outcome.stderr_bytes,
         command_sha256=plan.command_sha256,
+        prompt_tokens=None if usage is None else usage[0],
+        completion_tokens=None if usage is None else usage[1],
     )
 
 
@@ -3766,6 +3892,7 @@ class _PreparedExecution:
     execution_intent: str
     expected_lifecycle_config_sha256: str | None
     candidate_operation_sha256: str | None
+    guarded_route: str
     receipt: RouteDecisionReceipt
     source_snapshot: WorkspaceSnapshot = field(repr=False)
     workspace_write_capability: WorkspaceWriteCapability
@@ -3915,10 +4042,15 @@ class AssistantBridgeRunner:
         execution_intent: str = _DIRECT_APPLY_INTENT,
         expected_lifecycle_config_sha256: str | None = None,
         candidate_operation_sha256: str | None = None,
+        paired_evidence_route: str | None = None,
     ) -> _PreparedExecution:
         if execution_intent not in _EXECUTION_INTENTS:
             raise AssistantBridgeError("Assistant execution intent is invalid.")
-        candidate_generation = execution_intent == _CANDIDATE_GENERATION_INTENT
+        paired_evidence = execution_intent == _PAIRED_EVIDENCE_INTENT
+        candidate_generation = execution_intent in {
+            _CANDIDATE_GENERATION_INTENT,
+            _PAIRED_EVIDENCE_INTENT,
+        }
         if candidate_generation:
             if expected_lifecycle_config_sha256 is None:
                 raise AssistantBridgeError(
@@ -3940,6 +4072,20 @@ class AssistantBridgeRunner:
         ):
             raise AssistantBridgeError(
                 "Direct execution cannot bind candidate lifecycle state."
+            )
+        if paired_evidence:
+            if paired_evidence_route not in _EXECUTABLE_ROUTE_RANK:
+                raise AssistantBridgeError(
+                    "Paired evidence requires an executable route."
+                )
+            if self.config.verified_routing.enabled:
+                raise AssistantBridgeError(
+                    "Paired evidence requires verified route canary authority "
+                    "to be disabled."
+                )
+        elif paired_evidence_route is not None:
+            raise AssistantBridgeError(
+                "Only paired evidence can request an exact evaluation route."
             )
         self._validate_verifier_selection(task)
         try:
@@ -4031,7 +4177,19 @@ class AssistantBridgeRunner:
                         route="blocked",
                         rationale_code="premium_auth_unavailable",
                     )
-        receipt = _apply_verified_route_canary(receipt, self.config)
+        # The paired baseline is the route that can actually execute after every
+        # normal guard, including remote-provider authority, has been applied.
+        # Capturing it earlier would let a local-first arm claim a premium
+        # baseline that was never executable in this process.
+        guarded_route = receipt.route
+        if paired_evidence:
+            assert paired_evidence_route is not None
+            receipt = _receipt_with_paired_evidence_route(
+                receipt,
+                route=paired_evidence_route,
+            )
+        else:
+            receipt = _apply_verified_route_canary(receipt, self.config)
         if receipt.route == "local":
             remote_binding = None
         bound_external = self._validate_external(
@@ -4131,6 +4289,7 @@ class AssistantBridgeRunner:
             execution_intent=execution_intent,
             expected_lifecycle_config_sha256=expected_lifecycle_config_sha256,
             candidate_operation_sha256=candidate_operation_sha256,
+            guarded_route=guarded_route,
             receipt=receipt,
             source_snapshot=source_snapshot,
             workspace_write_capability=write_capability,
@@ -4148,6 +4307,8 @@ class AssistantBridgeRunner:
         for verifier_id in task.required_verifier_ids:
             spec = catalog.get(verifier_id)
             if spec is None:
+                if verifier_id in self.config.external_verifiers:
+                    continue
                 raise AssistantBridgeError(
                     f"Unknown required task verifier {verifier_id!r}."
                 )
@@ -4860,6 +5021,11 @@ class AssistantBridgeRunner:
                 task_fingerprint=task.task_fingerprint,
                 config_sha256=prepared.receipt.config_sha256,
                 workspace_fingerprint=prepared.source_snapshot.fingerprint,
+                execution_discriminator_sha256=(
+                    prepared.candidate_operation_sha256
+                    if prepared.execution_intent == _PAIRED_EVIDENCE_INTENT
+                    else None
+                ),
             )
             return self.state_ledger.reserve_budget(
                 key,
@@ -4941,13 +5107,257 @@ class AssistantBridgeCandidateGenerator:
         return _sha256_text(
             _canonical_json(
                 {
-                    "contract": "assistant-bridge-candidate-generator/v2",
+                    "contract": "assistant-bridge-candidate-generator/v4",
                     "bridge_config_sha256": self._runner.config.source_sha256,
                     "registry_ids": list(self._runner._adapter_registry.ids),
                     "adapters": adapters,
                 }
             )
         )
+
+    def _plan_paired_evidence_arm(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        workspace: str | Path,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        expected_baseline_route: str,
+        route: str,
+        operation_sha256: str,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+    ) -> dict[str, object]:
+        """Plan one exact, disposable arm without granting source apply authority."""
+
+        _require_sha256(
+            expected_source_fingerprint,
+            "paired evidence source fingerprint",
+        )
+        _require_sha256(expected_config_sha256, "paired evidence configuration")
+        _require_sha256(operation_sha256, "paired evidence operation")
+        if expected_baseline_route not in _EXECUTABLE_ROUTE_RANK:
+            raise AssistantBridgeError(
+                "Paired evidence baseline route is unsupported."
+            )
+        prepared = self._runner._prepare_execution(
+            task,
+            workspace=workspace,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+            capsule_out=None,
+            execution_intent=_PAIRED_EVIDENCE_INTENT,
+            expected_lifecycle_config_sha256=expected_config_sha256,
+            candidate_operation_sha256=operation_sha256,
+            paired_evidence_route=route,
+        )
+        if prepared.source_snapshot.fingerprint != expected_source_fingerprint:
+            raise AssistantBridgeError(
+                "Source workspace does not match the frozen paired evidence run."
+            )
+        if prepared.guarded_route != expected_baseline_route:
+            raise AssistantBridgeError(
+                "Guarded baseline route does not match the paired evidence plan."
+            )
+        if prepared.receipt.route != route:
+            raise AssistantBridgeError(
+                "Exact paired evidence route is unavailable under current guards."
+            )
+        try:
+            ticket = self._runner.state_ledger.issue_confirmation(
+                prepared.confirmation_binding_sha256,
+                ttl_seconds=self._runner.config.state.confirmation_ttl_seconds,
+            )
+        except BridgeLedgerError as exc:
+            raise AssistantBridgeError(str(exc)) from None
+        return {
+            "schema_version": BRIDGE_SCHEMA_VERSION,
+            "mode": "assistant_bridge_paired_evidence_plan",
+            "execute": False,
+            "guarded_baseline_route": prepared.guarded_route,
+            "evaluation_route": prepared.receipt.route,
+            "source_snapshot_sha256": prepared.source_snapshot.fingerprint,
+            "route_receipt": prepared.receipt.payload(),
+            "confirmation_id": ticket.token,
+            "confirmation": ticket.metadata_payload(),
+            "generator_config_sha256": self.configuration_sha256,
+            "lifecycle_config_sha256": expected_config_sha256,
+            "operation_sha256": operation_sha256,
+            "commands": [command.payload() for command in prepared.commands],
+            "verifiers": [item.payload() for item in prepared.verifier_plans],
+            "authority": {
+                "process_execution": "requires_one_shot_confirmation_ticket",
+                "source_workspace": "read_only_snapshot",
+                "candidate_workspace": "temporary_write_only",
+                "source_apply": "forbidden",
+                "external_effects": "forbidden",
+                "route_expansion": "forbidden",
+            },
+            "privacy": "metadata_only",
+        }
+
+    def _run_paired_evidence_arm(
+        self,
+        task: AssistantTaskEnvelope,
+        *,
+        source_workspace: str | Path,
+        expected_source_fingerprint: str,
+        expected_config_sha256: str,
+        expected_baseline_route: str,
+        route: str,
+        operation_sha256: str,
+        confirmation: str,
+        local_provider_override: str | None = None,
+        external_evidence: Sequence[VerificationEvidence] = (),
+        include_diff: bool = False,
+        candidate_finalizer: Callable[..., Sequence[VerificationEvidence]]
+        | None = None,
+    ) -> BridgeRunResult:
+        """Execute one planned evidence arm in a disposable workspace.
+
+        The optional finalizer is an internal least-authority seam.  It sees only
+        a second disposable copy of the completed candidate and must return the
+        complete final verification sequence.  Source apply authority is never
+        available through this path.
+        """
+
+        _require_sha256(
+            expected_source_fingerprint,
+            "paired evidence source fingerprint",
+        )
+        _require_sha256(expected_config_sha256, "paired evidence configuration")
+        _require_sha256(operation_sha256, "paired evidence operation")
+        prepared = self._runner._prepare_execution(
+            task,
+            workspace=source_workspace,
+            local_provider_override=local_provider_override,
+            external_evidence=external_evidence,
+            include_diff=include_diff,
+            capsule_out=None,
+            execution_intent=_PAIRED_EVIDENCE_INTENT,
+            expected_lifecycle_config_sha256=expected_config_sha256,
+            candidate_operation_sha256=operation_sha256,
+            paired_evidence_route=route,
+        )
+        if prepared.source_snapshot.fingerprint != expected_source_fingerprint:
+            raise AssistantBridgeError(
+                "Source workspace no longer matches the frozen paired evidence run."
+            )
+        if prepared.guarded_route != expected_baseline_route:
+            raise AssistantBridgeError(
+                "Guarded baseline route no longer matches the paired evidence plan."
+            )
+        if prepared.receipt.route != route:
+            raise AssistantBridgeError(
+                "Prepared paired evidence route does not match the requested arm."
+            )
+        try:
+            self._runner.state_ledger.consume_confirmation(
+                confirmation,
+                prepared.confirmation_binding_sha256,
+            )
+        except BridgeLedgerError:
+            raise AssistantBridgeError(
+                "Paired evidence confirmation is invalid, expired, consumed, or "
+                "no longer bound."
+            ) from None
+        try:
+            with materialize_workspace(
+                prepared.source_snapshot,
+                self._runner.config.workspace.scope,
+            ) as candidate:
+                result = self._runner._generate_candidate_result(
+                    task,
+                    prepared,
+                    candidate,
+                    local_provider_override=local_provider_override,
+                    include_diff=include_diff,
+                )
+                if candidate_finalizer is not None:
+                    candidate_snapshot = snapshot_workspace(
+                        candidate.root,
+                        self._runner.config.workspace.scope,
+                    )
+                    candidate_files = candidate.snapshot()
+                    changes = build_changeset(
+                        candidate.baseline_files,
+                        candidate_files,
+                    )
+                    workspace_attestation = _receipt_workspace_attestation(
+                        candidate_snapshot
+                    )
+                    with _disposable_verifier_workspace(
+                        candidate.root,
+                        source_snapshot=candidate.source_snapshot,
+                        baseline_files=candidate.baseline_files,
+                        expected_snapshot=candidate_snapshot,
+                        candidate_files=candidate_files,
+                        changes=changes,
+                        policy=self._runner.config.workspace.scope,
+                    ) as verifier_workspace:
+                        verifier_before = snapshot_workspace(
+                            verifier_workspace,
+                            self._runner.config.workspace.scope,
+                        )
+                        final_verification = tuple(
+                            candidate_finalizer(
+                                result,
+                                verifier_workspace,
+                                workspace_attestation,
+                                candidate_snapshot,
+                                candidate_files,
+                                changes,
+                            )
+                        )
+                        if any(
+                            not isinstance(item, VerificationEvidence)
+                            for item in final_verification
+                        ):
+                            raise AssistantBridgeError(
+                                "Paired candidate finalizer returned invalid evidence."
+                            )
+                        if (
+                            final_verification[: len(result.verification)]
+                            != result.verification
+                        ):
+                            raise AssistantBridgeError(
+                                "Paired candidate finalizer changed prior verification."
+                            )
+                        if len({item.id for item in final_verification}) != len(
+                            final_verification
+                        ):
+                            raise AssistantBridgeError(
+                                "Paired candidate finalizer repeated an evidence id."
+                            )
+                        verifier_after = snapshot_workspace(
+                            verifier_workspace,
+                            self._runner.config.workspace.scope,
+                        )
+                        if verifier_after != verifier_before:
+                            raise AssistantBridgeError(
+                                "Paired verifier workspace changed during finalization."
+                            )
+                    candidate_after = snapshot_workspace(
+                        candidate.root,
+                        self._runner.config.workspace.scope,
+                    )
+                    if candidate_after != candidate_snapshot:
+                        raise AssistantBridgeError(
+                            "Paired candidate changed during signed finalization."
+                        )
+                    result = replace(
+                        result,
+                        verification=final_verification,
+                    )
+                _require_unchanged_source_snapshot(
+                    prepared.source_snapshot,
+                    self._runner.config.workspace.scope,
+                )
+                return result
+        except WorkspaceSecurityError as exc:
+            raise AssistantBridgeError(str(exc)) from None
 
     def plan_candidate(
         self,
@@ -7959,6 +8369,74 @@ def _receipt_with_route(
         premium_provider=None,
         rationale_codes=(*receipt.rationale_codes, rationale_code),
         expected_flow=expected_flow,
+    )
+    payload = candidate.payload()
+    payload.pop("receipt_id", None)
+    return replace(
+        candidate,
+        receipt_id=f"route-{_sha256_text(_canonical_json(payload))[:32]}",
+    )
+
+
+def _receipt_with_paired_evidence_route(
+    receipt: RouteDecisionReceipt,
+    *,
+    route: str,
+) -> RouteDecisionReceipt:
+    """Constrain a disposable evidence arm without expanding guarded authority."""
+
+    if receipt.route not in _EXECUTABLE_ROUTE_RANK:
+        raise AssistantBridgeError(
+            "The guarded baseline route is not executable for paired evidence."
+        )
+    if route not in _EXECUTABLE_ROUTE_RANK:
+        raise AssistantBridgeError("Paired evidence route is unsupported.")
+    if _EXECUTABLE_ROUTE_RANK[route] > _EXECUTABLE_ROUTE_RANK[receipt.route]:
+        raise AssistantBridgeError(
+            "Paired evidence cannot request a more-premium route than the "
+            "guarded baseline."
+        )
+    if route in {"local", "local_then_verify"} and receipt.local_gaps:
+        raise AssistantBridgeError(
+            "Paired evidence local route is not hard-eligible."
+        )
+    if route in {"local_then_verify", "premium"} and (
+        not receipt.remote_allowed
+        or receipt.premium_call_budget <= 0
+        or receipt.premium_gaps
+        or receipt.premium_provider is None
+    ):
+        raise AssistantBridgeError(
+            "Paired evidence premium route is not hard-eligible."
+        )
+    expected_flow = {
+        "local": ("local", "verify", "stop"),
+        "local_then_verify": (
+            "local",
+            "verify",
+            "stop_or_capsule",
+            "premium",
+            "verify",
+        ),
+        "premium": ("capsule", "premium", "verify"),
+    }[route]
+    premium_provider = (
+        receipt.premium_provider
+        if route in {"local_then_verify", "premium"}
+        else None
+    )
+    candidate = replace(
+        receipt,
+        receipt_id="",
+        route=route,
+        premium_provider=premium_provider,
+        rationale_codes=(
+            *receipt.rationale_codes,
+            "paired_evidence_guarded_baseline_" + receipt.route,
+            "paired_evidence_exact_route_" + route,
+        ),
+        expected_flow=expected_flow,
+        route_canary=None,
     )
     payload = candidate.payload()
     payload.pop("receipt_id", None)

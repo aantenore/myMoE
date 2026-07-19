@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from local_moe import route_outcomes as route_outcomes_module
 from local_moe.route_canary import CanaryRouteDecision
 from local_moe.route_outcomes import (
     OutcomeStore,
@@ -379,8 +382,175 @@ class RouteOutcomeTests(unittest.TestCase):
                 process.join(10.0)
                 if process.is_alive():
                     process.terminate()
-                    process.join(5.0)
+                process.join(5.0)
             self.assertEqual(process.exitcode, 0)
+
+    @unittest.skipIf(os.name == "nt", "POSIX link semantics")
+    def test_store_rejects_symlink_and_hardlink_outcome_paths(self) -> None:
+        record = _store_record()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.jsonl"
+            target.write_text("target-must-not-change\n", encoding="utf-8")
+            os.chmod(target, 0o600)
+            symlink = root / "symlink.jsonl"
+            symlink.symlink_to(target)
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "non-link"):
+                OutcomeStore(symlink).append(record)
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                "target-must-not-change\n",
+            )
+
+            source = root / "source.jsonl"
+            source.write_text(
+                canonical_json(record.payload()) + "\n",
+                encoding="utf-8",
+            )
+            os.chmod(source, 0o600)
+            hardlink = root / "hardlink.jsonl"
+            os.link(source, hardlink)
+            with self.assertRaisesRegex(VerifiedRoutingError, "one hard link"):
+                OutcomeStore(hardlink).list_records()
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
+    def test_store_pins_an_ancestor_symlink_without_following_the_target_file(self) -> None:
+        record = _store_record()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            os.chmod(private, 0o700)
+            alias = root / "alias"
+            alias.symlink_to(private, target_is_directory=True)
+
+            store = OutcomeStore(alias / "outcomes.jsonl")
+            self.assertEqual(store.path, private.resolve() / "outcomes.jsonl")
+            self.assertTrue(store.append(record))
+            self.assertEqual(store.list_records(), (record,))
+
+    @unittest.skipIf(os.name == "nt", "POSIX link semantics")
+    def test_store_rejects_symlink_and_hardlink_lock_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = OutcomeStore(root / "outcomes.jsonl")
+            target = root / "lock-target"
+            target.write_text("lock-must-not-change", encoding="utf-8")
+            os.chmod(target, 0o600)
+            store.lock_path.symlink_to(target)
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "non-link"):
+                store.list_records()
+            self.assertEqual(target.read_text(encoding="utf-8"), "lock-must-not-change")
+
+            store.lock_path.unlink()
+            source = root / "lock-source"
+            source.write_text("", encoding="utf-8")
+            os.chmod(source, 0o600)
+            os.link(source, store.lock_path)
+            with self.assertRaisesRegex(VerifiedRoutingError, "one hard link"):
+                store.list_records()
+
+    @unittest.skipIf(os.name == "nt", "POSIX FIFO semantics")
+    def test_store_rejects_directory_and_fifo_without_opening_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "directory.jsonl"
+            directory.mkdir(mode=0o700)
+            with self.assertRaisesRegex(VerifiedRoutingError, "regular non-link"):
+                OutcomeStore(directory).list_records()
+
+            fifo = root / "fifo.jsonl"
+            os.mkfifo(fifo, mode=0o600)
+            with self.assertRaisesRegex(VerifiedRoutingError, "regular non-link"):
+                OutcomeStore(fifo).list_records()
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission semantics")
+    def test_store_rejects_permissive_parent_file_and_lock_modes(self) -> None:
+        record = _store_record()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            permissive_parent = root / "permissive-parent"
+            permissive_parent.mkdir(mode=0o755)
+            os.chmod(permissive_parent, 0o755)
+            with self.assertRaisesRegex(VerifiedRoutingError, "0700"):
+                OutcomeStore(permissive_parent / "outcomes.jsonl").list_records()
+
+            outcome = root / "permissive-outcomes.jsonl"
+            outcome.write_text(
+                canonical_json(record.payload()) + "\n",
+                encoding="utf-8",
+            )
+            os.chmod(outcome, 0o644)
+            with self.assertRaisesRegex(VerifiedRoutingError, "0600"):
+                OutcomeStore(outcome).list_records()
+
+            lock_store = OutcomeStore(root / "lock-outcomes.jsonl")
+            lock_store.lock_path.write_text("", encoding="utf-8")
+            os.chmod(lock_store.lock_path, 0o644)
+            with self.assertRaisesRegex(VerifiedRoutingError, "0600"):
+                lock_store.list_records()
+
+    def test_store_rejects_oversized_file_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "oversized.jsonl"
+            with path.open("wb") as handle:
+                handle.truncate(route_outcomes_module._MAX_OUTCOME_STORE_BYTES + 1)
+            if os.name != "nt":
+                os.chmod(path, 0o600)
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "size limit"):
+                OutcomeStore(path).list_records()
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink replacement semantics")
+    def test_store_rejects_replacement_race_before_target_write(self) -> None:
+        record = _store_record()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "outcomes.jsonl"
+            path.touch(mode=0o600)
+            os.chmod(path, 0o600)
+            store = OutcomeStore(path)
+            original = root / "original.jsonl"
+            target = root / "replacement-target.jsonl"
+            target.write_text("target-must-not-change\n", encoding="utf-8")
+            os.chmod(target, 0o600)
+            real_open = os.open
+            swapped = False
+
+            def replace_before_append(
+                candidate: object,
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal swapped
+                if (
+                    not swapped
+                    and Path(candidate) == store.path
+                    and flags & os.O_APPEND
+                ):
+                    path.rename(original)
+                    path.symlink_to(target)
+                    swapped = True
+                if dir_fd is None:
+                    return real_open(candidate, flags, mode)
+                return real_open(candidate, flags, mode, dir_fd=dir_fd)
+
+            with patch.object(
+                route_outcomes_module.os,
+                "open",
+                side_effect=replace_before_append,
+            ), self.assertRaises(VerifiedRoutingError):
+                store.append(record)
+
+            self.assertTrue(swapped)
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                "target-must-not-change\n",
+            )
 
     def test_strict_parsing_rejects_leaks_tampering_and_non_finite_cost(self) -> None:
         metadata = _bridge_metadata(evidence=[])
@@ -413,8 +583,18 @@ class RouteOutcomeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "outcomes.jsonl"
             path.write_text(serialized + "\n", encoding="utf-8")
+            if os.name != "nt":
+                os.chmod(path, 0o600)
             with self.assertRaisesRegex(VerifiedRoutingError, "Non-finite"):
                 OutcomeStore(path).list_records()
+
+
+def _store_record() -> VerifiedOutcomeRecord:
+    return build_verified_outcome(
+        _bridge_metadata(evidence=[_evidence("check-a", passed=True)]),
+        _signals(),
+        created_at="2026-07-19T03:00:00+00:00",
+    )
 
 
 def _signals(*, provider_config_sha256: str = _DIGEST_E) -> TaskSignals:
@@ -631,7 +811,7 @@ def _run_concurrent_appends(
 def _hold_lock(lock_path: str, ready: object, release: object) -> None:
     from filelock import FileLock
 
-    with FileLock(lock_path, timeout=10.0):
+    with FileLock(lock_path, timeout=10.0, mode=0o600):
         ready.set()  # type: ignore[attr-defined]
         if not release.wait(15.0):  # type: ignore[attr-defined]
             raise RuntimeError("lock release gate timed out")

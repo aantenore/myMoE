@@ -20,13 +20,16 @@ from .assistant_bridge_two_phase_contracts import (
     AttestationCheck,
     CandidateBinding,
     DSSE_PAYLOAD_TYPE,
+    INDEPENDENT_EVALUATION_PREDICATE_V2,
     INDEPENDENT_PREDICATE_V1,
     IN_TOTO_STATEMENT_V1,
     IndependentAttestation,
+    IndependentEvaluationAttestation,
     TWO_PHASE_SCHEMA_VERSION,
     TwoPhaseContractError,
     VerifierRequirement,
     build_attestation_statement,
+    build_evaluation_attestation_statement,
     require_safe_id,
     require_sha256,
 )
@@ -127,6 +130,87 @@ class TrustedEd25519Verifier:
             expires_at=expires_at,
         )
 
+    def verify_evaluation(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+        *,
+        now: float,
+    ) -> IndependentEvaluationAttestation:
+        """Verify a currently live v2 evaluation without granting apply authority."""
+
+        return self._verify_evaluation(binding, envelope, now=_timestamp(now))
+
+    def verify_historical_evaluation(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+    ) -> IndependentEvaluationAttestation:
+        """Authenticate a v2 evaluation after expiry for offline analysis only."""
+
+        return self._verify_evaluation(binding, envelope, now=None)
+
+    def _verify_evaluation(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+        *,
+        now: float | None,
+    ) -> IndependentEvaluationAttestation:
+        canonical_envelope, statement_bytes, statement = _decode_envelope(
+            envelope,
+            expected_key_id=self.requirement.key_id,
+        )
+        if canonical_envelope != envelope:
+            raise AttestationVerificationError(
+                "Evaluation attestation envelope must use canonical JSON."
+            )
+        signature = _envelope_signature(canonical_envelope)
+        envelope_document = json.loads(canonical_envelope)
+        if (
+            envelope_document["payload"]
+            != base64.b64encode(statement_bytes).decode("ascii")
+            or envelope_document["signatures"][0]["sig"]
+            != base64.b64encode(signature).decode("ascii")
+        ):
+            raise AttestationVerificationError(
+                "Evaluation attestation must use canonical base64."
+            )
+        try:
+            self._public_key.verify(
+                signature,
+                _dsse_pae(DSSE_PAYLOAD_TYPE, statement_bytes),
+            )
+        except InvalidSignature as exc:
+            raise AttestationVerificationError(
+                "Independent evaluation signature is invalid."
+            ) from exc
+        (
+            attestation_id,
+            issued_at,
+            expires_at,
+            passed,
+            checks,
+        ) = _validate_evaluation_statement(
+            statement,
+            binding=binding,
+            requirement=self.requirement,
+            now=now,
+        )
+        return IndependentEvaluationAttestation(
+            adapter_id=self.requirement.adapter_id,
+            verifier_id=self.requirement.verifier_id,
+            key_id=self.requirement.key_id,
+            attestation_id=attestation_id,
+            statement_bytes=statement_bytes,
+            envelope_bytes=canonical_envelope,
+            evidence_sha256=sha256_bytes(canonical_envelope),
+            issued_at=issued_at,
+            expires_at=expires_at,
+            passed=passed,
+            checks=checks,
+        )
+
 
 class AttestationTrustStore:
     """Concrete registry of trusted verification-only adapters."""
@@ -167,6 +251,43 @@ class AttestationTrustStore:
             )
         return verifier.verify(binding, envelope, now=now)
 
+    def verify_evaluation(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+        *,
+        now: float,
+    ) -> IndependentEvaluationAttestation:
+        verifier = self._evaluation_verifier(binding, envelope)
+        return verifier.verify_evaluation(binding, envelope, now=now)
+
+    def verify_historical_evaluation(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+    ) -> IndependentEvaluationAttestation:
+        verifier = self._evaluation_verifier(binding, envelope)
+        return verifier.verify_historical_evaluation(binding, envelope)
+
+    def _evaluation_verifier(
+        self,
+        binding: CandidateBinding,
+        envelope: bytes,
+    ) -> TrustedEd25519Verifier:
+        verifier_id = _peek_signed_verifier_id(envelope)
+        try:
+            requirement = binding.verification_policy.requirement(verifier_id)
+            verifier = self._verifiers[verifier_id]
+        except (KeyError, TwoPhaseContractError) as exc:
+            raise AttestationVerificationError(
+                "Evaluation verifier is not trusted by this workflow."
+            ) from exc
+        if verifier.requirement != requirement:
+            raise AttestationVerificationError(
+                "Trust-store verifier does not match the signed workflow policy."
+            )
+        return verifier
+
 
 def create_ed25519_dsse_envelope(
     binding: CandidateBinding,
@@ -191,6 +312,50 @@ def create_ed25519_dsse_envelope(
             "Signing key does not match the workflow verifier requirement."
         )
     statement = build_attestation_statement(
+        binding,
+        requirement,
+        attestation_id=attestation_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        checks=checks,
+    )
+    payload = canonical_json_bytes(statement)
+    signature = private_key.sign(_dsse_pae(DSSE_PAYLOAD_TYPE, payload))
+    envelope = {
+        "payloadType": DSSE_PAYLOAD_TYPE,
+        "payload": base64.b64encode(payload).decode("ascii"),
+        "signatures": [
+            {
+                "keyid": requirement.key_id,
+                "sig": base64.b64encode(signature).decode("ascii"),
+            }
+        ],
+    }
+    return canonical_json_bytes(envelope)
+
+
+def create_ed25519_evaluation_dsse_envelope(
+    binding: CandidateBinding,
+    requirement: VerifierRequirement,
+    private_key: Ed25519PrivateKey,
+    *,
+    attestation_id: str,
+    issued_at: float,
+    expires_at: float,
+    checks: Sequence[AttestationCheck],
+) -> bytes:
+    """Create signed v2 pass-or-fail evidence in an independent evaluator."""
+
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise AttestationVerificationError("Signing key must be Ed25519.")
+    if (
+        ed25519_public_key_sha256(private_key.public_key())
+        != requirement.public_key_sha256
+    ):
+        raise AttestationVerificationError(
+            "Signing key does not match the workflow verifier requirement."
+        )
+    statement = build_evaluation_attestation_statement(
         binding,
         requirement,
         attestation_id=attestation_id,
@@ -416,6 +581,177 @@ def _validate_statement(
     if statement != expected:
         raise AttestationVerificationError("Attestation statement is not canonical.")
     return attestation_id, issued_at, expires_at
+
+
+def _validate_evaluation_statement(
+    statement: Mapping[str, Any],
+    *,
+    binding: CandidateBinding,
+    requirement: VerifierRequirement,
+    now: float | None,
+) -> tuple[str, float, float, bool, tuple[AttestationCheck, ...]]:
+    if set(statement) != {"_type", "subject", "predicateType", "predicate"}:
+        raise AttestationVerificationError(
+            "Evaluation attestation statement shape is invalid."
+        )
+    expected_subject = [
+        {
+            "name": f"urn:mymoe:candidate:{binding.workflow_id}",
+            "digest": {"sha256": binding.candidate_fingerprint},
+        }
+    ]
+    if (
+        statement.get("_type") != IN_TOTO_STATEMENT_V1
+        or statement.get("predicateType") != INDEPENDENT_EVALUATION_PREDICATE_V2
+        or statement.get("subject") != expected_subject
+    ):
+        raise AttestationVerificationError(
+            "Evaluation attestation subject binding is invalid."
+        )
+    predicate = statement.get("predicate")
+    if not isinstance(predicate, Mapping) or set(predicate) != {
+        "schemaVersion",
+        "binding",
+        "bindingSha256",
+        "attestation",
+        "outcome",
+    }:
+        raise AttestationVerificationError(
+            "Evaluation attestation predicate shape is invalid."
+        )
+    if (
+        predicate.get("schemaVersion") != TWO_PHASE_SCHEMA_VERSION
+        or predicate.get("binding") != binding.payload()
+        or predicate.get("bindingSha256") != binding.binding_sha256
+    ):
+        raise AttestationVerificationError(
+            "Evaluation attestation workflow binding is invalid."
+        )
+    try:
+        policy_requirement = binding.verification_policy.requirement(
+            requirement.verifier_id
+        )
+    except TwoPhaseContractError as exc:
+        raise AttestationVerificationError(
+            "Evaluation verifier is absent from the signed workflow policy."
+        ) from exc
+    if policy_requirement != requirement:
+        raise AttestationVerificationError(
+            "Evaluation verifier does not match the signed workflow policy."
+        )
+    metadata = predicate.get("attestation")
+    expected_metadata_fields = {
+        "attestationId",
+        "verifierId",
+        "adapterId",
+        "keyId",
+        "publicKeySha256",
+        "specSha256",
+        "trustPolicySha256",
+        "issuedAt",
+        "expiresAt",
+    }
+    if not isinstance(metadata, Mapping) or set(metadata) != expected_metadata_fields:
+        raise AttestationVerificationError(
+            "Signed evaluation attestation metadata is invalid."
+        )
+    expected_identity = {
+        "verifierId": requirement.verifier_id,
+        "adapterId": requirement.adapter_id,
+        "keyId": requirement.key_id,
+        "publicKeySha256": requirement.public_key_sha256,
+        "specSha256": requirement.spec_sha256,
+        "trustPolicySha256": binding.verification_policy.policy_sha256,
+    }
+    if any(metadata.get(name) != value for name, value in expected_identity.items()):
+        raise AttestationVerificationError(
+            "Signed evaluation identity, spec, or trust policy is invalid."
+        )
+    try:
+        attestation_id = require_safe_id(
+            metadata.get("attestationId"),
+            "attestation_id",
+        )
+    except TwoPhaseContractError as exc:
+        raise AttestationVerificationError(str(exc)) from exc
+    issued_at = _timestamp(metadata.get("issuedAt"))
+    expires_at = _timestamp(metadata.get("expiresAt"))
+    if (
+        issued_at >= expires_at
+        or issued_at < binding.created_at
+        or expires_at > binding.expires_at
+    ):
+        raise AttestationVerificationError(
+            "Independent evaluation lifetime is outside the workflow."
+        )
+    if now is not None and not issued_at <= now <= expires_at:
+        raise AttestationVerificationError(
+            "Independent evaluation is not currently valid."
+        )
+    outcome = predicate.get("outcome")
+    if not isinstance(outcome, Mapping) or set(outcome) != {"passed", "checks"}:
+        raise AttestationVerificationError(
+            "Evaluation attestation outcome shape is invalid."
+        )
+    passed = outcome.get("passed")
+    raw_checks = outcome.get("checks")
+    if not isinstance(passed, bool) or not isinstance(raw_checks, list) or not raw_checks:
+        raise AttestationVerificationError(
+            "Evaluation attestation outcome is invalid."
+        )
+    checks: list[AttestationCheck] = []
+    for raw in raw_checks:
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "id",
+            "passed",
+            "evidenceSha256",
+        }:
+            raise AttestationVerificationError(
+                "Evaluation attestation check shape is invalid."
+            )
+        if not isinstance(raw.get("passed"), bool):
+            raise AttestationVerificationError(
+                "Evaluation attestation check result is invalid."
+            )
+        try:
+            check = AttestationCheck(
+                check_id=require_safe_id(
+                    raw.get("id"),
+                    "attestation check_id",
+                ),
+                passed=raw["passed"],
+                evidence_sha256=require_sha256(
+                    raw.get("evidenceSha256"),
+                    "attestation check evidence_sha256",
+                ),
+            )
+        except TwoPhaseContractError as exc:
+            raise AttestationVerificationError(str(exc)) from exc
+        checks.append(check)
+    check_ids = tuple(item.check_id for item in checks)
+    if check_ids != tuple(sorted(check_ids)) or len(check_ids) != len(
+        set(check_ids)
+    ):
+        raise AttestationVerificationError(
+            "Evaluation attestation checks must be ordered and unique."
+        )
+    if passed is not all(item.passed for item in checks):
+        raise AttestationVerificationError(
+            "Evaluation outcome does not match its signed checks."
+        )
+    expected = build_evaluation_attestation_statement(
+        binding,
+        requirement,
+        attestation_id=attestation_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        checks=tuple(checks),
+    )
+    if statement != expected:
+        raise AttestationVerificationError(
+            "Evaluation attestation statement is not canonical."
+        )
+    return attestation_id, issued_at, expires_at, passed, tuple(checks)
 
 
 def _dsse_pae(payload_type: str, payload: bytes) -> bytes:

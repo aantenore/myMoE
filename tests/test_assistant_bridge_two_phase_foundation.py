@@ -288,20 +288,29 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             self.assertNotIn("candidateFingerprint", manifest_payload)
             self.assertEqual(manifest_payload["changeset"], changeset.payload())
             self.assertEqual(changeset_payload["changes"][0]["after"], after)
+            verified_calls: list[dict[str, object]] = []
+            real_read_verified_artifact = (
+                ContentAddressedStore._read_verified_artifact
+            )
+
+            def recording_read(*args: object, **kwargs: object) -> bytes | None:
+                verified_calls.append(dict(kwargs))
+                return real_read_verified_artifact(*args, **kwargs)  # type: ignore[arg-type]
+
             with mock.patch(
                 "local_moe.assistant_bridge_cas.tempfile.TemporaryDirectory"
             ) as temporary_directory:
                 with mock.patch.object(
-                    store,
+                    ContentAddressedStore,
                     "_read_verified_artifact",
-                    wraps=store._read_verified_artifact,
-                ) as verified:
+                    recording_read,
+                ):
                     validated_manifest, validated_changeset = (
                         store.validate_candidate_closure(manifest, changeset)
                     )
             temporary_directory.assert_not_called()
             self.assertTrue(
-                any(call.kwargs.get("collect") is False for call in verified.mock_calls)
+                any(call.get("collect") is False for call in verified_calls)
             )
             self.assertEqual(validated_manifest, manifest_payload)
             self.assertEqual(validated_changeset, changeset_payload)

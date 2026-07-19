@@ -325,6 +325,7 @@ class RouteCanarySecurityTests(unittest.TestCase):
                 "scorecard_digest": self.shadow.scorecard_digest,
                 "training_source_digest": self.scorecard.source_digest,
                 "evaluator_sha256": "5" * 64,
+                "pricing_sha256": "6" * 64,
             },
             "enabled_cells": [
                 {

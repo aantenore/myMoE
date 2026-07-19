@@ -930,7 +930,7 @@ wheels = [
 
 [[package]]
 name = "local-moe-orchestrator"
-version = "0.3.0a1"
+version = "0.4.0a1"
 source = { editable = "." }
 
 [package.optional-dependencies]

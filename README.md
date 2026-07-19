@@ -29,7 +29,8 @@ escalate only under explicit policy.**
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
 | Model lifecycle, diagnostics, and guarded fallbacks | Operators can see what is ready and recover from an unavailable expert through an explicit policy. |
 | Optional Hybrid Assistant Bridge | Local execution and mechanical checks can stop a task early; a premium assistant is considered only when capability, privacy, evidence, and budget rules allow it. |
-| Signed Route Canary Authority | After real tests pass and an operator approves it, myMoE can try a cheaper or fully local route for requests selected by a small, repeatable sampling rule and stop the trial through one setting. |
+| Verified Hybrid Execution | Runs baseline and less-premium candidate routes in both orders on one frozen snapshot, persists resumable claims, and verifies independently signed pass/fail evidence before admitting a bounded canary. |
+| Signed Route Canary Authority | After enough real paired tests pass and an operator signs a short trial, myMoE can try a less-premium route for a repeatable sample of matching requests and retain the current route on any authority or evidence failure. |
 
 > **Maturity and limits:** myMoE is an alpha workstation runtime and evaluation
 > harness, not a hosted multi-tenant service or an unrestricted autonomous agent.
@@ -41,6 +42,11 @@ escalate only under explicit policy.**
 > assignment buckets. That threshold samples hash space; it is not a hard quota
 > on observed requests. Any authority or evidence failure retains the guarded
 > baseline.
+
+> **Evidence boundary:** no real paired evidence has yet established lower
+> cost, lower latency, or equivalent quality. Signed evidence proves the
+> integrity and provenance of the recorded evaluation result, not the truth or
+> representativeness of its benchmark inputs.
 
 ## Technical overview
 
@@ -60,9 +66,27 @@ another model gateway.
 
 The Verified Outcome Routing Lab can then link each content-free route receipt
 to final verification and operational metrics, build a versioned scorecard,
-and replay alternative efficiency profiles offline. Its paired promotion gate
-can emit a short-lived, structural-eligibility manifest from preregistered,
-disjoint evidence. The optional Signed Route Canary Authority consumes that
+and replay alternative efficiency profiles offline. Verified Hybrid Execution
+runs preregistered baseline/candidate arms in AB/BA order from one frozen source
+snapshot and never applies either candidate. Each paired arm is claimed durably
+before that arm can issue any provider command, then its outcome is
+checkpointed through a metadata-only append-only journal. The files omit task
+and response bodies, but stable hashes and provider/runtime metadata remain
+linkable and potentially guessable; treat them as sensitive and never publish
+them. The store enforces `0700` directories and `0600` files on POSIX; Windows
+ACL privacy remains operator-managed. A crash after a claim but before its
+checkpoint is deliberately indeterminate and is never retried automatically.
+Each completed arm stores the original result metadata, task signals,
+manifest, changeset, and evaluation-only DSSE envelopes in a content-addressed
+store. Qualification reloads those objects, verifies the signed pass or fail
+result, recomputes exact configured token cost, and reconstructs the outcome;
+the JSONL row is only an index. The journal checkpoint remains the authority
+for safe resume, while the signed CAS receipt is the authority for evaluation
+evidence. A valid signed pair can therefore remain analyzable after a crash
+makes its journal permanently non-resumable, but it never authorizes a retry.
+The paired promotion gate can emit a short-lived, structural-eligibility
+manifest only from complete, disjoint, lineage- and pricing-bound evidence.
+The optional Signed Route Canary Authority consumes that
 manifest only after an operator signs an activation bound to the stable bridge
 configuration, route policy, scorecard, pinned public key, size, and expiry.
 Assignment is deterministic and secret-keyed; only monotone transitions toward
@@ -70,6 +94,11 @@ less premium use can apply. The shipped profile keeps this path disabled and
 the repository ships no empirical manifest or activation. Its configured basis
 points select assignment buckets, not a guaranteed percentage of live traffic:
 repeated or uneven task fingerprints can produce a different observed share.
+The optional directory attestation sidecar separates the signing key from the
+myMoE process, but this is process and key separation rather than hardware
+trust: an attacker controlling the same operating-system account can still
+delete or disrupt the exchange. Use a stronger service or hardware boundary
+when that threat is in scope.
 
 ![myMoE chat-first interface](docs/screenshots/dashboard.png)
 
@@ -160,6 +189,7 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
 | Run a bounded tool task | `.venv/bin/mymoe --agent-prompt "..." --agent-tool memory.search` | Separate CLI-only agent loop; only explicitly selected strict-schema tools are visible. |
 | Preflight local versus premium Codex | `.venv/bin/mymoe --assistant-task "..." --assistant-capability code` | Dry-run by default; plans local execution, verification, bounded escalation, or a policy block without exposing task text in the receipt. |
+| Inspect or collect one frozen paired case | `.venv/bin/mymoe-paired --help` | Status is provider-free. Execution composes a public-trust workflow and private directory sidecar; without both it fails closed instead of manufacturing evidence. |
 | Inspect readiness | `.venv/bin/mymoe --doctor` | Read-only setup, health, hardware, storage, process, extension, and cron checks. |
 
 ## Default Profile
