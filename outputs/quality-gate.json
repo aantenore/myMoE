@@ -133,14 +133,14 @@
       },
       "git_evidence": {
         "git_dirty_is_false": true,
-        "git_commit": "7d0dd19265ba30fce843e4032f6c0c5c8b340d20",
+        "git_commit": "5ce9cefdc30c2666fb218955c10f51cea5a24b68",
         "git_commit_format_valid": true,
         "runtime_dependency_paths_valid": true,
         "runtime_dependency_count": 14,
         "passed": true,
         "status": "passed",
         "repository_root": "/Users/antonioantenore/Documents/github/myMoE",
-        "current_head": "58baaf0b67a368098fe9f083fc6bde3dc9b54e16",
+        "current_head": "5ce9cefdc30c2666fb218955c10f51cea5a24b68",
         "repository_shallow": false,
         "commit_available": true,
         "ancestor_of_head": true,
@@ -206,8 +206,8 @@
             "matches": true
           },
           "src/local_moe/quality_benchmark.py": {
-            "current_head_sha256": "36fae419732d3c91c0ff94e8a537d34ace0860f3713c2698d80b322618b86600",
-            "benchmark_commit_sha256": "36fae419732d3c91c0ff94e8a537d34ace0860f3713c2698d80b322618b86600",
+            "current_head_sha256": "5aef4b340f7ea2204c97bd55f2ca824b1b1a65c1fbbab8f072b70ea7644f43d0",
+            "benchmark_commit_sha256": "5aef4b340f7ea2204c97bd55f2ca824b1b1a65c1fbbab8f072b70ea7644f43d0",
             "working_tree_clean": true,
             "matches": true
           },
