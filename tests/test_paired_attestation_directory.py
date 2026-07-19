@@ -431,6 +431,8 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary).resolve(strict=True)
+            descriptor_source = workspace / "descriptor-source"
+            descriptor_source.touch()
             observed = workspace.lstat()
             swapped = _metadata_with(observed, st_ino=observed.st_ino + 1)
             identity = _win32_identity(2)
@@ -438,7 +440,7 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
 
             def open_directory(path, **kwargs):
                 del path, kwargs
-                descriptor = os.open(workspace, os.O_RDONLY)
+                descriptor = os.open(descriptor_source, os.O_RDONLY)
                 descriptors.append(descriptor)
                 return descriptor, identity
 
@@ -462,6 +464,7 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     "identity_from_fd",
                     return_value=identity,
                 ),
+                patch.object(directory_adapter.os, "fstat", return_value=observed),
                 self.assertRaisesRegex(
                     DirectoryPairedAttestationError,
                     "identity changed during no-follow open",

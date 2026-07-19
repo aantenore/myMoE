@@ -442,9 +442,10 @@ class RouteOutcomeTests(unittest.TestCase):
             ) -> tuple[int, object]:
                 self.assertEqual(Path(candidate), path)
                 self.assertFalse(directory)
+                flags = os.O_RDWR if writable else os.O_RDONLY
                 descriptor = real_open(
                     candidate,
-                    os.O_RDWR if writable else os.O_RDONLY,
+                    flags | getattr(os, "O_BINARY", 0),
                 )
                 opened.append((descriptor, writable, share_delete))
                 return descriptor, identity
