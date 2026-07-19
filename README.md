@@ -1,12 +1,53 @@
 # myMoE
 
-myMoE is a local-first, system-level Mixture of Experts orchestration runtime. It routes each request to one or more independent models under an explicit execution-scope policy instead of training one large sparse MoE model from scratch.
+**Use the smallest suitable local AI expert, keep a stronger one available, and
+escalate only under explicit policy.**
 
-The project is currently an alpha local control plane with persistent chat,
-budget-aware context and memory, configurable routing, model lifecycle tools,
-diagnostics, evaluation, and a separate approval-gated agent loop. The current
-release evidence applies to the tested profile and workloads; it is not a claim
-that routing beats every single-model setup.
+## In plain English
+
+- **Problem:** using the largest model for every request can waste memory and
+  time, while keeping many specialist models active can be impractical on one
+  workstation. Sending everything to a paid remote assistant also gives up
+  local control when the task did not require it.
+- **What it does:** myMoE is a configurable local control plane that chooses an
+  eligible model for each request, assembles bounded chat context, applies safe
+  fallbacks, and records operational evidence. It orchestrates independent
+  models; it does not train a new sparse Mixture-of-Experts model.
+- **Who it is for:** developers and advanced users who run local models and want
+  an inspectable way to balance capability, device resources, privacy, and
+  optional premium escalation.
+- **Concrete example:** in the default profile, requests such as “rewrite this
+  message in a neutral tone” are configured for the smaller fast expert, while
+  broad reasoning stays with the resident general expert. If the fast expert is
+  offline, the configured fallback can use the resident model without widening
+  the default device-only execution scope.
+
+| Feature | Real-world benefit |
+| --- | --- |
+| Configuration-driven routing across independent models | Teams can change experts, weights, endpoints, budgets, and fallbacks without retraining one giant model. |
+| Execution Scope Guard before every model call | A local-only request fails closed instead of silently moving to a wider mesh or remote route. |
+| Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
+| Model lifecycle, diagnostics, and guarded fallbacks | Operators can see what is ready and recover from an unavailable expert through an explicit policy. |
+| Optional Hybrid Assistant Bridge | Local execution and mechanical checks can stop a task early; a premium assistant is considered only when capability, privacy, evidence, and budget rules allow it. |
+| Verified Outcome Routing Lab | Routing changes can be compared against final verification evidence offline before an operator activates a new policy. |
+
+> **Maturity and limits:** myMoE is an alpha workstation runtime and evaluation
+> harness, not a hosted multi-tenant service or an unrestricted autonomous agent.
+> Current results apply only to the documented hardware, models, profiles, and
+> workloads; they do not prove that routing always beats one strong model.
+> Automatic specialist cold-loading and automatic live routing-policy activation
+> are not implemented.
+
+## Technical overview
+
+myMoE is a local-first, system-level Mixture of Experts orchestration runtime. It
+routes each request to one or more independent models under an explicit
+execution-scope policy instead of training one large sparse MoE model from
+scratch.
+
+The project includes persistent chat, budget-aware context and memory,
+configurable routing, model lifecycle tools, diagnostics, evaluation, and a
+separate approval-gated agent loop.
 
 An optional Hybrid Assistant Bridge can preflight a task with local Codex, apply
 mechanical verification, and invoke premium Codex only when policy, evidence,
