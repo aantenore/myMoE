@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 import math
@@ -14,10 +15,12 @@ import stat
 import time
 from typing import Any
 
+from . import _win32_fs
 from .assistant_bridge_integrity import canonical_json_bytes, sha256_bytes
 from .assistant_bridge_two_phase_contracts import CandidateBinding
 
 
+_OS_NAME = os.name
 DIRECTORY_PAIRED_ATTESTATION_CONTRACT = "mymoe-directory-paired-attestation/v1"
 DIRECTORY_PAIRED_ATTESTATION_REQUEST_CONTRACT = (
     "DirectoryPairedAttestationRequest"
@@ -60,6 +63,7 @@ class _DirectoryIdentity:
     device: int
     inode: int
     mode: int
+    win32_file_id: tuple[int, bytes] | None = None
 
 
 class DirectoryPairedAttestationProducer:
@@ -186,14 +190,39 @@ class DirectoryPairedAttestationProducer:
     ) -> tuple[bytes, ...]:
         if not isinstance(binding, CandidateBinding):
             raise TypeError("binding must be a CandidateBinding.")
-        workspace_root = _pin_verifier_workspace(workspace)
         deadline_value = _finite_number(deadline, "attestation deadline")
         wait_seconds = deadline_value - time.time()
         if wait_seconds <= 0 or wait_seconds > self.maximum_wait_seconds:
             raise DirectoryPairedAttestationError(
                 "Attestation deadline is outside the configured wait bound."
             )
+        monotonic_deadline = time.monotonic() + wait_seconds
+
+        with ExitStack() as held_paths:
+            workspace_root = _pin_verifier_workspace(
+                workspace,
+                held_paths=held_paths,
+            )
+            self._hold_directories(held_paths)
+            return self._attest_pinned(
+                binding,
+                workspace_root,
+                deadline_value,
+                monotonic_deadline,
+            )
+
+    def _attest_pinned(
+        self,
+        binding: CandidateBinding,
+        workspace_root: Path,
+        deadline_value: float,
+        monotonic_deadline: float,
+    ) -> tuple[bytes, ...]:
         self._validate_directories()
+        if time.monotonic() >= monotonic_deadline:
+            raise DirectoryPairedAttestationTimeout(
+                "Timed out before publishing the signed attestation request."
+            )
 
         request_id = secrets.token_hex(_REQUEST_ID_BYTES)
         request_path = self.requests_dir / f"request-{request_id}.json"
@@ -231,7 +260,6 @@ class DirectoryPairedAttestationProducer:
                 "Attestation request changed after publication."
             )
 
-        monotonic_deadline = time.monotonic() + wait_seconds
         while True:
             remaining = monotonic_deadline - time.monotonic()
             if remaining <= 0:
@@ -250,8 +278,40 @@ class DirectoryPairedAttestationProducer:
                     binding_sha256=binding.binding_sha256,
                 )
                 self._validate_directories()
+                if time.monotonic() >= monotonic_deadline:
+                    raise DirectoryPairedAttestationTimeout(
+                        "Signed attestation response arrived after its deadline."
+                    )
                 return envelopes
             time.sleep(min(self.poll_interval_seconds, remaining))
+
+    def _hold_directories(self, held_paths: ExitStack) -> None:
+        for path, expected, label in (
+            (
+                self.root,
+                self._root_identity,
+                "attestation exchange directory",
+            ),
+            (
+                self.requests_dir,
+                self._requests_identity,
+                "attestation request directory",
+            ),
+            (
+                self.responses_dir,
+                self._responses_identity,
+                "attestation response directory",
+            ),
+        ):
+            current = _private_directory_identity(
+                path,
+                label,
+                held_paths=held_paths,
+            )
+            if current != expected:
+                raise DirectoryPairedAttestationError(
+                    f"{label} identity changed."
+                )
 
     def _validate_directories(self) -> None:
         _assert_directory_identity(
@@ -359,12 +419,20 @@ def _pin_existing_private_directory(value: str | Path, label: str) -> Path:
         raise DirectoryPairedAttestationError(
             f"{label} parent is unavailable."
         ) from exc
+    if _OS_NAME == "nt" and not _same_windows_path(declared.parent, parent):
+        raise DirectoryPairedAttestationError(
+            f"{label} parent cannot traverse a reparse point."
+        )
     target = parent / declared.name
     _private_directory_identity(target, label)
     return target
 
 
-def _pin_verifier_workspace(value: Path) -> Path:
+def _pin_verifier_workspace(
+    value: Path,
+    *,
+    held_paths: ExitStack | None = None,
+) -> Path:
     if not isinstance(value, Path):
         raise TypeError("workspace must be a Path.")
     declared = Path(os.path.abspath(os.fspath(value.expanduser())))
@@ -379,10 +447,27 @@ def _pin_verifier_workspace(value: Path) -> Path:
         raise DirectoryPairedAttestationError(
             "Verifier workspace must be a non-link directory."
         )
+    if _OS_NAME == "nt":
+        if not _same_windows_path(declared, resolved):
+            raise DirectoryPairedAttestationError(
+                "Verifier workspace cannot traverse a reparse point."
+            )
+        _windows_open_pinned_path(
+            declared,
+            details,
+            directory=True,
+            label="verifier workspace",
+            held_paths=held_paths,
+        )
     return resolved
 
 
-def _private_directory_identity(path: Path, label: str) -> _DirectoryIdentity:
+def _private_directory_identity(
+    path: Path,
+    label: str,
+    *,
+    held_paths: ExitStack | None = None,
+) -> _DirectoryIdentity:
     try:
         details = path.lstat()
     except OSError as exc:
@@ -391,16 +476,27 @@ def _private_directory_identity(path: Path, label: str) -> _DirectoryIdentity:
         raise DirectoryPairedAttestationError(
             f"{label} must be a non-link directory."
         )
-    if os.name == "posix" and (
+    if _OS_NAME == "posix" and (
         stat.S_IMODE(details.st_mode) != 0o700 or details.st_uid != os.getuid()
     ):
         raise DirectoryPairedAttestationError(
             f"{label} permissions must be owner-only."
         )
+    win32_identity: tuple[int, bytes] | None = None
+    if _OS_NAME == "nt":
+        details, identity, _ = _windows_open_pinned_path(
+            path,
+            details,
+            directory=True,
+            label=label,
+            held_paths=held_paths,
+        )
+        win32_identity = _win32_identity_key(identity)
     return _DirectoryIdentity(
         device=details.st_dev,
         inode=details.st_ino,
         mode=details.st_mode,
+        win32_file_id=win32_identity,
     )
 
 
@@ -414,7 +510,169 @@ def _assert_directory_identity(
         raise DirectoryPairedAttestationError(f"{label} identity changed.")
 
 
+def _windows_open_pinned_path(
+    path: Path,
+    before: os.stat_result,
+    *,
+    directory: bool,
+    label: str,
+    held_paths: ExitStack | None,
+) -> tuple[os.stat_result, Any, int]:
+    descriptor = -1
+    reopened = -1
+    retained = False
+    try:
+        descriptor, identity = _win32_fs.open_nofollow_fd(
+            path,
+            directory=directory,
+            share_delete=False,
+        )
+        opened = os.fstat(descriptor)
+        _validate_windows_handle(
+            opened,
+            identity,
+            directory=directory,
+            label=label,
+        )
+        observed_identity = _win32_fs.identity_from_fd(descriptor)
+        _validate_windows_handle(
+            opened,
+            observed_identity,
+            directory=directory,
+            label=label,
+        )
+        if (
+            not identity.same_file_as(observed_identity)
+            or not _same_file_id(before, opened)
+        ):
+            raise DirectoryPairedAttestationError(
+                f"{label} identity changed during no-follow open."
+            )
+
+        pathname = path.lstat()
+        _validate_windows_pathname(
+            pathname,
+            directory=directory,
+            label=label,
+        )
+        if not _same_file_id(opened, pathname):
+            raise DirectoryPairedAttestationError(
+                f"{label} pathname changed during no-follow open."
+            )
+
+        reopened, reopened_identity = _win32_fs.open_nofollow_fd(
+            path,
+            directory=directory,
+            share_delete=False,
+        )
+        reopened_metadata = os.fstat(reopened)
+        _validate_windows_handle(
+            reopened_metadata,
+            reopened_identity,
+            directory=directory,
+            label=label,
+        )
+        current_reopened_identity = _win32_fs.identity_from_fd(reopened)
+        _validate_windows_handle(
+            reopened_metadata,
+            current_reopened_identity,
+            directory=directory,
+            label=label,
+        )
+        if (
+            not reopened_identity.same_file_as(identity)
+            or not current_reopened_identity.same_file_as(observed_identity)
+            or not _same_file_id(opened, reopened_metadata)
+        ):
+            raise DirectoryPairedAttestationError(
+                f"{label} pathname no longer resolves to the pinned file ID."
+            )
+        os.close(reopened)
+        reopened = -1
+
+        if held_paths is None:
+            os.close(descriptor)
+            descriptor = -1
+        else:
+            held_paths.callback(os.close, descriptor)
+            retained = True
+        return opened, observed_identity, descriptor
+    except DirectoryPairedAttestationError:
+        raise
+    except Exception as exc:
+        raise DirectoryPairedAttestationError(
+            f"{label} failed Win32 no-follow identity pinning."
+        ) from exc
+    finally:
+        if reopened >= 0:
+            os.close(reopened)
+        if descriptor >= 0 and not retained:
+            os.close(descriptor)
+
+
+def _validate_windows_handle(
+    metadata: os.stat_result,
+    identity: Any,
+    *,
+    directory: bool,
+    label: str,
+) -> None:
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    if (
+        identity.is_reparse_point
+        or _is_link_or_reparse(metadata)
+        or not expected_type(metadata.st_mode)
+    ):
+        raise DirectoryPairedAttestationError(
+            f"{label} must be a non-reparse {'directory' if directory else 'file'}."
+        )
+
+
+def _validate_windows_pathname(
+    metadata: os.stat_result,
+    *,
+    directory: bool,
+    label: str,
+) -> None:
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    if _is_link_or_reparse(metadata) or not expected_type(metadata.st_mode):
+        raise DirectoryPairedAttestationError(
+            f"{label} pathname became a reparse point or changed type."
+        )
+
+
+def _same_file_id(first: os.stat_result, second: os.stat_result) -> bool:
+    return (
+        int(first.st_dev),
+        int(first.st_ino),
+    ) == (
+        int(second.st_dev),
+        int(second.st_ino),
+    ) and int(first.st_ino) != 0
+
+
+def _win32_identity_key(identity: Any) -> tuple[int, bytes]:
+    file_id = bytes(identity.file_id)
+    if len(file_id) != 16:
+        raise DirectoryPairedAttestationError(
+            "Win32 file identity must contain a 128-bit file ID."
+        )
+    return int(identity.volume_serial), file_id
+
+
+def _same_windows_path(first: Path, second: Path) -> bool:
+    return os.path.normcase(os.path.normpath(os.fspath(first))) == os.path.normcase(
+        os.path.normpath(os.fspath(second))
+    )
+
+
 def _read_secure_file(path: Path, *, maximum_bytes: int, label: str) -> bytes:
+    if _OS_NAME == "nt":
+        return _read_secure_file_windows(
+            path,
+            maximum_bytes=maximum_bytes,
+            label=label,
+        )
     try:
         before = path.lstat()
     except OSError as exc:
@@ -428,7 +686,7 @@ def _read_secure_file(path: Path, *, maximum_bytes: int, label: str) -> bytes:
         raise DirectoryPairedAttestationError(
             f"{label} is not a bounded single-link regular file."
         )
-    if os.name == "posix" and (
+    if _OS_NAME == "posix" and (
         stat.S_IMODE(before.st_mode) != 0o600 or before.st_uid != os.getuid()
     ):
         raise DirectoryPairedAttestationError(
@@ -480,6 +738,152 @@ def _read_secure_file(path: Path, *, maximum_bytes: int, label: str) -> bytes:
     return b"".join(chunks)
 
 
+def _read_secure_file_windows(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    label: str,
+) -> bytes:
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise DirectoryPairedAttestationError(f"{label} is unavailable.") from exc
+    if (
+        _is_link_or_reparse(before)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or not 0 < before.st_size <= maximum_bytes
+    ):
+        raise DirectoryPairedAttestationError(
+            f"{label} is not a bounded single-link regular file."
+        )
+
+    with ExitStack() as held_file:
+        opened, identity, descriptor = _windows_open_pinned_path(
+            path,
+            before,
+            directory=False,
+            label=label,
+            held_paths=held_file,
+        )
+        if descriptor < 0:
+            raise DirectoryPairedAttestationError(
+                f"{label} did not retain its Win32 no-follow handle."
+            )
+        if opened.st_nlink != 1 or not 0 < opened.st_size <= maximum_bytes:
+            raise DirectoryPairedAttestationError(
+                f"{label} is not a bounded single-link regular file."
+            )
+
+        try:
+            chunks: list[bytes] = []
+            remaining = opened.st_size
+            while remaining:
+                chunk = os.read(descriptor, min(64 * 1024, remaining))
+                if not chunk:
+                    raise DirectoryPairedAttestationError(
+                        f"{label} is truncated."
+                    )
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            if os.read(descriptor, 1):
+                raise DirectoryPairedAttestationError(
+                    f"{label} exceeds its size binding."
+                )
+
+            after = os.fstat(descriptor)
+            after_identity = _win32_fs.identity_from_fd(descriptor)
+        except OSError as exc:
+            raise DirectoryPairedAttestationError(
+                f"{label} could not be read."
+            ) from exc
+        _validate_windows_handle(
+            after,
+            after_identity,
+            directory=False,
+            label=label,
+        )
+        if (
+            not identity.same_file_as(after_identity)
+            or not _stable_file_metadata(opened, after)
+        ):
+            raise DirectoryPairedAttestationError(f"{label} changed while reading.")
+
+        try:
+            pathname = path.lstat()
+        except OSError as exc:
+            raise DirectoryPairedAttestationError(
+                f"{label} pathname changed after reading."
+            ) from exc
+        _validate_windows_pathname(
+            pathname,
+            directory=False,
+            label=label,
+        )
+        if not _stable_file_metadata(opened, pathname):
+            raise DirectoryPairedAttestationError(
+                f"{label} pathname changed after reading."
+            )
+
+        reopened = -1
+        try:
+            reopened, reopened_identity = _win32_fs.open_nofollow_fd(
+                path,
+                directory=False,
+                share_delete=False,
+            )
+            reopened_metadata = os.fstat(reopened)
+            _validate_windows_handle(
+                reopened_metadata,
+                reopened_identity,
+                directory=False,
+                label=label,
+            )
+            current_reopened_identity = _win32_fs.identity_from_fd(reopened)
+            _validate_windows_handle(
+                reopened_metadata,
+                current_reopened_identity,
+                directory=False,
+                label=label,
+            )
+            if (
+                not reopened_identity.same_file_as(identity)
+                or not current_reopened_identity.same_file_as(after_identity)
+                or not _stable_file_metadata(after, reopened_metadata)
+            ):
+                raise DirectoryPairedAttestationError(
+                    f"{label} pathname no longer resolves to the pinned file ID."
+                )
+        except DirectoryPairedAttestationError:
+            raise
+        except Exception as exc:
+            raise DirectoryPairedAttestationError(
+                f"{label} failed final Win32 pathname verification."
+            ) from exc
+        finally:
+            if reopened >= 0:
+                os.close(reopened)
+        return b"".join(chunks)
+
+
+def _stable_file_metadata(
+    first: os.stat_result,
+    second: os.stat_result,
+) -> bool:
+    fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_nlink",
+        "st_size",
+        "st_mtime_ns",
+    )
+    return all(
+        getattr(first, field, None) == getattr(second, field, None)
+        for field in fields
+    ) and int(first.st_ino) != 0
+
+
 def _atomic_no_clobber(path: Path, value: bytes) -> None:
     temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
     descriptor = -1
@@ -493,18 +897,19 @@ def _atomic_no_clobber(path: Path, value: bytes) -> None:
             raise DirectoryPairedAttestationError(
                 "Attestation request temporary file is unsafe."
             )
-        if os.name == "posix" and stat.S_IMODE(opened.st_mode) != 0o600:
+        if _OS_NAME == "posix" and stat.S_IMODE(opened.st_mode) != 0o600:
             raise DirectoryPairedAttestationError(
                 "Attestation request permissions must be owner-only."
             )
         os.close(descriptor)
         descriptor = -1
         try:
-            if os.name == "nt":
-                # Windows rename is an atomic move that refuses an existing
-                # destination.  Unlike the portable hard-link publication used
-                # below, it never exposes the final name while two links exist.
-                os.rename(temporary, path)
+            if _OS_NAME == "nt":
+                _win32_fs.move_no_replace(
+                    temporary,
+                    path,
+                    write_through=True,
+                )
             else:
                 os.link(temporary, path, follow_symlinks=False)
             linked = True
@@ -512,7 +917,7 @@ def _atomic_no_clobber(path: Path, value: bytes) -> None:
             raise DirectoryPairedAttestationError(
                 "Attestation request already exists; overwrite is forbidden."
             ) from exc
-        if os.name != "nt":
+        if _OS_NAME != "nt":
             os.unlink(temporary)
         _fsync_directory(path.parent)
         _read_secure_file(
@@ -549,7 +954,7 @@ def _write_all(descriptor: int, value: bytes) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
+    if _OS_NAME == "nt":
         return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     descriptor = os.open(path, flags)

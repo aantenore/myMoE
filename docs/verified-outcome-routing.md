@@ -416,7 +416,8 @@ Journal and outcome records omit task and response bodies, but stable task and
 objective hashes plus provider/runtime metadata are linkable and may be
 dictionary-guessed. They are sensitive artifacts and must never be published.
 The store enforces directory mode `0700` and file mode `0600` on POSIX; Windows
-ACL privacy remains an operator responsibility.
+ACL privacy remains an operator responsibility, and filesystems without stable
+`FileIdInfo` support are rejected fail-closed.
 
 `--workflow-config` and `--attestation-exchange-dir` are an inseparable pair.
 If either is omitted, `run` fails before creating journal/outcome state or

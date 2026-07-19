@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,7 @@ from local_moe.paired_attestation_directory import (
     DirectoryPairedAttestationTimeout,
     _atomic_no_clobber,
 )
+from local_moe import _win32_fs
 from local_moe import paired_attestation_directory as directory_adapter
 
 
@@ -157,40 +159,105 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     producer.attest(binding, workspace, time.time() + 0.5)
                 _finish_watcher(watcher, errors)
 
-    def test_windows_publication_never_exposes_a_two_link_target(self) -> None:
+    def test_windows_publication_is_single_link_and_first_writer_wins(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "response.json"
             observed_links: list[int] = []
+            winners: list[bytes] = []
+            failures: list[BaseException] = []
+            barrier = threading.Barrier(3)
+            move_lock = threading.Lock()
             real_rename = os.rename
 
-            def windows_rename(source, destination) -> None:
-                if os.path.exists(destination):
-                    raise FileExistsError(os.fspath(destination))
-                real_rename(source, destination)
-                observed_links.append(os.lstat(destination).st_nlink)
+            def windows_move(source, destination, *, write_through=True) -> None:
+                self.assertTrue(write_through)
+                with move_lock:
+                    if os.path.exists(destination):
+                        raise FileExistsError(os.fspath(destination))
+                    real_rename(source, destination)
+                    observed_links.append(os.lstat(destination).st_nlink)
+
+            def publish(value: bytes) -> None:
+                barrier.wait()
+                try:
+                    _atomic_no_clobber(target, value)
+                    winners.append(value)
+                except BaseException as exc:
+                    failures.append(exc)
 
             with (
-                patch.object(directory_adapter.os, "name", "nt"),
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
                 patch.object(
-                    directory_adapter.os,
-                    "rename",
-                    side_effect=windows_rename,
+                    _win32_fs,
+                    "move_no_replace",
+                    side_effect=windows_move,
                 ),
                 patch.object(
                     directory_adapter.os,
                     "link",
                     side_effect=AssertionError("Windows publication used a hard link"),
                 ),
+                patch.object(
+                    directory_adapter,
+                    "_read_secure_file",
+                    side_effect=lambda path, **_: path.read_bytes(),
+                ),
             ):
-                _atomic_no_clobber(target, b"first")
-                with self.assertRaisesRegex(
-                    DirectoryPairedAttestationError,
-                    "overwrite is forbidden",
-                ):
-                    _atomic_no_clobber(target, b"second")
+                threads = (
+                    threading.Thread(target=publish, args=(b"first",)),
+                    threading.Thread(target=publish, args=(b"second",)),
+                )
+                for thread in threads:
+                    thread.start()
+                barrier.wait()
+                for thread in threads:
+                    thread.join(timeout=2)
+                    self.assertFalse(thread.is_alive())
 
             self.assertEqual(observed_links, [1])
-            self.assertEqual(target.read_bytes(), b"first")
+            self.assertEqual(len(winners), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertIsInstance(failures[0], DirectoryPairedAttestationError)
+            self.assertIn("overwrite is forbidden", str(failures[0]))
+            self.assertEqual(target.read_bytes(), winners[0])
+
+    @unittest.skipUnless(os.name == "nt", "native Windows move semantics")
+    def test_native_windows_publication_has_exactly_one_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            winners: list[bytes] = []
+            failures: list[BaseException] = []
+            barrier = threading.Barrier(3)
+
+            def publish(value: bytes) -> None:
+                barrier.wait()
+                try:
+                    _atomic_no_clobber(target, value)
+                    winners.append(value)
+                except BaseException as exc:
+                    failures.append(exc)
+
+            threads = (
+                threading.Thread(target=publish, args=(b"first",)),
+                threading.Thread(target=publish, args=(b"second",)),
+            )
+            for thread in threads:
+                thread.start()
+            barrier.wait()
+            for thread in threads:
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+
+            self.assertEqual(len(winners), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertIsInstance(failures[0], DirectoryPairedAttestationError)
+            self.assertIn("overwrite is forbidden", str(failures[0]))
+            self.assertEqual(target.read_bytes(), winners[0])
+            self.assertEqual(target.stat().st_nlink, 1)
+            self.assertEqual(
+                tuple(target.parent.glob(f".{target.name}.*.tmp")),
+                (),
+            )
 
     def test_windows_reparse_response_is_rejected_before_open(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -214,7 +281,8 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
 
             with (
                 patch.object(Path, "lstat", return_value=reparse),
-                patch.object(directory_adapter.os, "open") as open_file,
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(_win32_fs, "open_nofollow_fd") as open_file,
                 self.assertRaisesRegex(
                     DirectoryPairedAttestationError,
                     "bounded single-link regular file",
@@ -226,6 +294,270 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     label="attestation response",
                 )
             open_file.assert_not_called()
+
+    def test_windows_response_path_reparse_after_read_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            target.write_bytes(b"response")
+            observed = target.lstat()
+            reparse = _metadata_with(
+                observed,
+                st_file_attributes=getattr(
+                    stat,
+                    "FILE_ATTRIBUTE_REPARSE_POINT",
+                    0x400,
+                ),
+            )
+            identity = _win32_identity(1)
+            descriptors: list[int] = []
+
+            def open_file(path, **kwargs):
+                del kwargs
+                descriptor = os.open(path, os.O_RDONLY)
+                descriptors.append(descriptor)
+                return descriptor, identity
+
+            with (
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(
+                    Path,
+                    "lstat",
+                    side_effect=(observed, observed, reparse),
+                ),
+                patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_file,
+                ),
+                patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    return_value=identity,
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "pathname became a reparse point",
+                ),
+            ):
+                directory_adapter._read_secure_file(
+                    target,
+                    maximum_bytes=1024,
+                    label="attestation response",
+                )
+
+            for descriptor in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
+    def test_windows_response_archive_bit_change_preserves_file_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            target.write_bytes(b"response")
+            original = _win32_identity(2)
+            archived = _win32_identity(2, attributes=0x20)
+
+            def open_file(path, **kwargs):
+                del kwargs
+                return os.open(path, os.O_RDONLY), original
+
+            with (
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_file,
+                ),
+                patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    return_value=archived,
+                ),
+            ):
+                observed = directory_adapter._read_secure_file(
+                    target,
+                    maximum_bytes=1024,
+                    label="attestation response",
+                )
+
+            self.assertEqual(observed, b"response")
+
+    def test_windows_response_file_id_swap_on_reopen_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "response.json"
+            target.write_bytes(b"response")
+            identities = (_win32_identity(3), _win32_identity(4))
+            descriptors: list[int] = []
+            identity_by_descriptor: dict[int, _win32_fs.Win32FileIdentity] = {}
+
+            def open_file(path, **kwargs):
+                del kwargs
+                descriptor = os.open(path, os.O_RDONLY)
+                identity = identities[len(descriptors)]
+                descriptors.append(descriptor)
+                identity_by_descriptor[descriptor] = identity
+                return descriptor, identity
+
+            with (
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_file,
+                ),
+                patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    side_effect=lambda descriptor: identity_by_descriptor[descriptor],
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "pathname no longer resolves to the pinned file ID",
+                ),
+            ):
+                directory_adapter._read_secure_file(
+                    target,
+                    maximum_bytes=1024,
+                    label="attestation response",
+                )
+
+            for descriptor in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
+    def test_windows_workspace_swap_between_lstat_and_open_fails_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary).resolve(strict=True)
+            observed = workspace.lstat()
+            swapped = _metadata_with(observed, st_ino=observed.st_ino + 1)
+            identity = _win32_identity(2)
+            descriptors: list[int] = []
+
+            def open_directory(path, **kwargs):
+                del path, kwargs
+                descriptor = os.open(workspace, os.O_RDONLY)
+                descriptors.append(descriptor)
+                return descriptor, identity
+
+            with (
+                ExitStack() as held_paths,
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(Path, "resolve", return_value=workspace),
+                patch.object(Path, "lstat", return_value=swapped),
+                patch.object(
+                    directory_adapter,
+                    "_same_windows_path",
+                    return_value=True,
+                ),
+                patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_directory,
+                ),
+                patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    return_value=identity,
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "identity changed during no-follow open",
+                ),
+            ):
+                directory_adapter._pin_verifier_workspace(
+                    workspace,
+                    held_paths=held_paths,
+                )
+
+            for descriptor in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
+    def test_windows_workspace_resolved_reparse_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "workspace"
+            workspace.mkdir()
+            resolved_elsewhere = Path(temporary) / "junction-target"
+            resolved_elsewhere.mkdir()
+            observed = workspace.lstat()
+
+            with (
+                patch.object(directory_adapter, "_OS_NAME", "nt"),
+                patch.object(Path, "lstat", return_value=observed),
+                patch.object(Path, "resolve", return_value=resolved_elsewhere),
+                patch.object(_win32_fs, "open_nofollow_fd") as open_file,
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "cannot traverse a reparse point",
+                ),
+            ):
+                directory_adapter._pin_verifier_workspace(workspace)
+
+            open_file.assert_not_called()
+
+    def test_attest_holds_all_pinned_handles_until_exchange_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exchange = _exchange(root / "exchange")
+            workspace = _private_directory(root / "workspace")
+            binding, _, _ = _binding()
+            producer = _producer(exchange)
+            markers = tuple(root / f"held-{index}" for index in range(4))
+            for marker in markers:
+                marker.write_bytes(b"pin")
+            descriptors: list[int] = []
+
+            def retain(marker: Path, held_paths: ExitStack) -> None:
+                descriptor = os.open(marker, os.O_RDONLY)
+                descriptors.append(descriptor)
+                held_paths.callback(os.close, descriptor)
+
+            def pin_workspace(value: Path, *, held_paths: ExitStack) -> Path:
+                self.assertEqual(value, workspace)
+                retain(markers[0], held_paths)
+                return workspace
+
+            def hold_directories(held_paths: ExitStack) -> None:
+                for marker in markers[1:]:
+                    retain(marker, held_paths)
+
+            def attest_pinned(*args) -> tuple[bytes, ...]:
+                del args
+                self.assertEqual(len(descriptors), 4)
+                for descriptor in descriptors:
+                    os.fstat(descriptor)
+                return (b"signed",)
+
+            with (
+                patch.object(
+                    directory_adapter,
+                    "_pin_verifier_workspace",
+                    side_effect=pin_workspace,
+                ),
+                patch.object(
+                    producer,
+                    "_hold_directories",
+                    side_effect=hold_directories,
+                ),
+                patch.object(
+                    producer,
+                    "_attest_pinned",
+                    side_effect=attest_pinned,
+                ),
+            ):
+                result = producer.attest(
+                    binding,
+                    workspace,
+                    time.time() + 0.5,
+                )
+
+            self.assertEqual(result, (b"signed",))
+            for descriptor in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
 
     def test_response_replaced_by_fifo_between_lstat_and_open_never_blocks(
         self,
@@ -358,6 +690,79 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             self.assertEqual(len(tuple((exchange / "requests").iterdir())), 1)
             self.assertEqual(len(tuple((exchange / "responses").iterdir())), 0)
 
+    def test_path_pinning_cannot_reset_the_absolute_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exchange = _exchange(root / "exchange")
+            workspace = _private_directory(root / "workspace")
+            binding, _, _ = _binding()
+            producer = DirectoryPairedAttestationProducer(
+                exchange,
+                maximum_wait_seconds=1.0,
+            )
+            real_pin = directory_adapter._pin_verifier_workspace
+
+            def delayed_pin(value: Path, *, held_paths: ExitStack) -> Path:
+                time.sleep(0.03)
+                return real_pin(value, held_paths=held_paths)
+
+            with (
+                patch.object(
+                    directory_adapter,
+                    "_pin_verifier_workspace",
+                    side_effect=delayed_pin,
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationTimeout,
+                    "before publishing",
+                ),
+            ):
+                producer.attest(binding, workspace, time.time() + 0.01)
+
+            self.assertEqual(tuple((exchange / "requests").iterdir()), ())
+
+    def test_response_read_after_deadline_is_not_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exchange = _exchange(root / "exchange")
+            workspace = _private_directory(root / "workspace")
+            binding, requirement, private_key = _binding()
+            producer = DirectoryPairedAttestationProducer(
+                exchange,
+                poll_interval_seconds=0.002,
+                maximum_wait_seconds=1.0,
+            )
+
+            def respond(request: dict[str, object]) -> None:
+                envelope = _envelope(binding, requirement, private_key)
+                _write_response(exchange, request, (envelope,))
+
+            real_read = directory_adapter._read_secure_file
+
+            def delayed_read(path: Path, *, maximum_bytes: int, label: str) -> bytes:
+                if label == "attestation response":
+                    time.sleep(0.15)
+                return real_read(
+                    path,
+                    maximum_bytes=maximum_bytes,
+                    label=label,
+                )
+
+            watcher, errors = _watch_once(exchange, respond)
+            with (
+                patch.object(
+                    directory_adapter,
+                    "_read_secure_file",
+                    side_effect=delayed_read,
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationTimeout,
+                    "after its deadline",
+                ),
+            ):
+                producer.attest(binding, workspace, time.time() + 0.1)
+            _finish_watcher(watcher, errors)
+
     def test_response_byte_and_envelope_bounds_are_enforced(self) -> None:
         for mode in ("bytes", "envelopes"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
@@ -426,6 +831,37 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     baseline.configuration_sha256,
                     variant.configuration_sha256,
                 )
+
+
+def _metadata_with(observed, **overrides):
+    values = {
+        "st_mode": observed.st_mode,
+        "st_nlink": observed.st_nlink,
+        "st_size": observed.st_size,
+        "st_uid": getattr(observed, "st_uid", 0),
+        "st_dev": observed.st_dev,
+        "st_ino": observed.st_ino,
+        "st_mtime_ns": observed.st_mtime_ns,
+        "st_file_attributes": int(
+            getattr(observed, "st_file_attributes", 0)
+        ),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _win32_identity(
+    marker: int,
+    *,
+    attributes: int = 0,
+    reparse_tag: int = 0,
+) -> _win32_fs.Win32FileIdentity:
+    return _win32_fs.Win32FileIdentity(
+        volume_serial=marker,
+        file_id=bytes([marker]) * 16,
+        attributes=attributes,
+        reparse_tag=reparse_tag,
+    )
 
 
 def _producer(exchange: Path) -> DirectoryPairedAttestationProducer:

@@ -74,16 +74,25 @@ def main() -> None:
                 str(python),
                 "-c",
                 "from pathlib import Path; import local_moe; "
-                "print(Path(local_moe.__file__).resolve())",
+                "from local_moe import _win32_fs; "
+                "print(Path(local_moe.__file__).resolve()); "
+                "print(Path(_win32_fs.__file__).resolve())",
             ],
             cwd=temporary,
             check=True,
             text=True,
             capture_output=True,
         )
-        package_location = Path(location_result.stdout.strip())
-        if not package_location.is_relative_to(venv_dir.resolve()):
-            raise SystemExit("Packaging smoke imported local_moe outside the wheel environment.")
+        package_locations = tuple(
+            Path(line) for line in location_result.stdout.splitlines() if line
+        )
+        if len(package_locations) != 2 or any(
+            not location.is_relative_to(venv_dir.resolve())
+            for location in package_locations
+        ):
+            raise SystemExit(
+                "Packaging smoke imported local_moe outside the wheel environment."
+            )
 
         mymoe = _console_script(scripts_dir, "mymoe")
         mymoe_paired = _console_script(scripts_dir, "mymoe-paired")

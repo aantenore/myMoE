@@ -5,7 +5,10 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import stat
+import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -526,68 +529,329 @@ class PairedExecutionStoreTests(unittest.TestCase):
                     store_module._atomic_install(target, b"{}\n")
             self.assertFalse(target.exists())
 
-    def test_windows_lock_identity_uses_stable_same_api_comparisons(self) -> None:
-        path_before = mock.Mock(
-            st_dev=1,
-            st_ino=10,
-            st_size=0,
-            st_mtime_ns=100,
-        )
-        path_after = mock.Mock(
-            st_dev=1,
-            st_ino=10,
-            st_size=0,
-            st_mtime_ns=100,
-        )
-        descriptor_opened = mock.Mock(
-            st_dev=2,
-            st_ino=20,
-            st_size=0,
-            st_mtime_ns=200,
-        )
-        descriptor_current = mock.Mock(
-            st_dev=2,
-            st_ino=20,
-            st_size=0,
-            st_mtime_ns=200,
-        )
+    def test_windows_lock_binds_path_to_locked_handle_without_delete_share(
+        self,
+    ) -> None:
+        from local_moe import _win32_fs
 
-        with mock.patch.object(store_module.os, "name", "nt"):
-            store_module._validate_locked_file_identity(
-                before_path=path_before,
-                opened_descriptor=descriptor_opened,
-                current_path=path_after,
-                current_descriptor=descriptor_current,
-            )
-            path_after.st_mtime_ns = 101
-            with self.assertRaisesRegex(VerifiedRoutingError, "changed"):
-                store_module._validate_locked_file_identity(
-                    before_path=path_before,
-                    opened_descriptor=descriptor_opened,
-                    current_path=path_after,
-                    current_descriptor=descriptor_current,
-                )
-            path_after.st_mtime_ns = 100
-            descriptor_current.st_mtime_ns = 201
-            with self.assertRaisesRegex(VerifiedRoutingError, "changed"):
-                store_module._validate_locked_file_identity(
-                    before_path=path_before,
-                    opened_descriptor=descriptor_opened,
-                    current_path=path_after,
-                    current_descriptor=descriptor_current,
-                )
-
-        descriptor_current.st_mtime_ns = 200
+        lock_path = Path("run.lock")
+        parent_identity = _windows_identity(1, attributes=0x00000010)
+        archived_parent_identity = _windows_identity(
+            1,
+            attributes=0x00000030,
+        )
+        lock_identity = _windows_identity(2)
+        archived_lock_identity = _windows_identity(2, attributes=0x20)
+        metadata = mock.Mock(
+            st_mode=stat.S_IFREG | 0o600,
+            st_nlink=1,
+        )
+        fake_msvcrt = _fake_msvcrt()
         with (
-            mock.patch.object(store_module.os, "name", "posix"),
-            self.assertRaisesRegex(VerifiedRoutingError, "changed"),
+            mock.patch.object(store_module, "_is_windows", return_value=True),
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[
+                    (70, parent_identity),
+                    (71, lock_identity),
+                    (72, parent_identity),
+                    (73, lock_identity),
+                ],
+            ) as open_nofollow,
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[
+                    parent_identity,
+                    archived_lock_identity,
+                    archived_parent_identity,
+                    archived_lock_identity,
+                    archived_parent_identity,
+                    archived_lock_identity,
+                ],
+            ),
+            mock.patch.object(store_module.os, "fstat", return_value=metadata),
+            mock.patch.object(store_module.os, "lseek"),
+            mock.patch.object(store_module.os, "close") as close,
+            mock.patch.object(store_module, "_ensure_lock_file") as ensure_lock,
         ):
-            store_module._validate_locked_file_identity(
-                before_path=path_before,
-                opened_descriptor=descriptor_opened,
-                current_path=path_after,
-                current_descriptor=descriptor_current,
-            )
+            with store_module._existing_file_lock(
+                lock_path,
+                timeout_seconds=1.0,
+                exclusive=True,
+                ensure_lock=True,
+            ):
+                self.assertEqual(
+                    close.call_args_list,
+                    [mock.call(73), mock.call(72)],
+                )
+
+        ensure_lock.assert_called_once_with(lock_path)
+        self.assertEqual(
+            open_nofollow.call_args_list,
+            [
+                mock.call(
+                    lock_path.parent,
+                    directory=True,
+                    writable=False,
+                    share_delete=False,
+                ),
+                mock.call(
+                    lock_path,
+                    directory=False,
+                    writable=True,
+                    share_delete=False,
+                ),
+                mock.call(
+                    lock_path.parent,
+                    directory=True,
+                    writable=False,
+                    share_delete=False,
+                ),
+                mock.call(
+                    lock_path,
+                    directory=False,
+                    writable=True,
+                    share_delete=False,
+                ),
+            ],
+        )
+        self.assertEqual(
+            close.call_args_list,
+            [mock.call(73), mock.call(72), mock.call(71), mock.call(70)],
+        )
+        self.assertEqual(
+            fake_msvcrt.locking.call_args_list,
+            [mock.call(71, 1, 1), mock.call(71, 2, 1)],
+        )
+
+    def test_windows_lock_rejects_split_brain_path_identity(self) -> None:
+        from local_moe import _win32_fs
+
+        lock_path = Path("run.lock")
+        parent_identity = _windows_identity(1, attributes=0x00000010)
+        locked_identity = _windows_identity(1)
+        replacement_identity = _windows_identity(2)
+        metadata = mock.Mock(
+            st_mode=stat.S_IFREG | 0o600,
+            st_nlink=1,
+        )
+        fake_msvcrt = _fake_msvcrt()
+        with (
+            mock.patch.object(store_module, "_is_windows", return_value=True),
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[
+                    (70, parent_identity),
+                    (71, locked_identity),
+                    (72, parent_identity),
+                    (73, replacement_identity),
+                ],
+            ),
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[
+                    parent_identity,
+                    locked_identity,
+                    parent_identity,
+                    locked_identity,
+                    parent_identity,
+                    replacement_identity,
+                ],
+            ),
+            mock.patch.object(store_module.os, "fstat", return_value=metadata),
+            mock.patch.object(store_module.os, "lseek"),
+            mock.patch.object(store_module.os, "close") as close,
+            self.assertRaisesRegex(
+                VerifiedRoutingError,
+                "no longer names the locked file",
+            ),
+        ):
+            with store_module._existing_file_lock(
+                lock_path,
+                timeout_seconds=1.0,
+                exclusive=True,
+            ):
+                self.fail("split-brain Windows lock must not yield")
+
+        self.assertEqual(
+            close.call_args_list,
+            [mock.call(73), mock.call(72), mock.call(71), mock.call(70)],
+        )
+        self.assertEqual(
+            fake_msvcrt.locking.call_args_list,
+            [mock.call(71, 1, 1), mock.call(71, 2, 1)],
+        )
+
+    def test_windows_lock_rejects_replaced_run_directory_identity(self) -> None:
+        from local_moe import _win32_fs
+
+        lock_path = Path("run.lock")
+        parent_identity = _windows_identity(1, attributes=0x00000010)
+        replacement_parent = _windows_identity(2, attributes=0x00000010)
+        lock_identity = _windows_identity(3)
+        metadata = mock.Mock(
+            st_mode=stat.S_IFREG | 0o600,
+            st_nlink=1,
+        )
+        fake_msvcrt = _fake_msvcrt()
+        with (
+            mock.patch.object(store_module, "_is_windows", return_value=True),
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[
+                    (70, parent_identity),
+                    (71, lock_identity),
+                    (72, replacement_parent),
+                    (73, lock_identity),
+                ],
+            ),
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[
+                    parent_identity,
+                    lock_identity,
+                    parent_identity,
+                    lock_identity,
+                    replacement_parent,
+                    lock_identity,
+                ],
+            ),
+            mock.patch.object(store_module.os, "fstat", return_value=metadata),
+            mock.patch.object(store_module.os, "lseek"),
+            mock.patch.object(store_module.os, "close") as close,
+            self.assertRaisesRegex(
+                VerifiedRoutingError,
+                "no longer names the pinned directory",
+            ),
+        ):
+            with store_module._existing_file_lock(
+                lock_path,
+                timeout_seconds=1.0,
+                exclusive=True,
+            ):
+                self.fail("a replaced Windows run directory must not yield")
+
+        self.assertEqual(
+            close.call_args_list,
+            [mock.call(73), mock.call(72), mock.call(71), mock.call(70)],
+        )
+        self.assertEqual(
+            fake_msvcrt.locking.call_args_list,
+            [mock.call(71, 1, 1), mock.call(71, 2, 1)],
+        )
+
+    def test_windows_lock_rejects_open_result_descriptor_split(self) -> None:
+        from local_moe import _win32_fs
+
+        lock_path = Path("run.lock")
+        parent_identity = _windows_identity(1, attributes=0x00000010)
+        path_identity = _windows_identity(1)
+        descriptor_identity = _windows_identity(2)
+        metadata = mock.Mock(
+            st_mode=stat.S_IFREG | 0o600,
+            st_nlink=1,
+        )
+        fake_msvcrt = _fake_msvcrt()
+        with (
+            mock.patch.object(store_module, "_is_windows", return_value=True),
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[(70, parent_identity), (71, path_identity)],
+            ),
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[parent_identity, descriptor_identity],
+            ),
+            mock.patch.object(store_module.os, "fstat", return_value=metadata),
+            mock.patch.object(store_module.os, "close") as close,
+            self.assertRaisesRegex(VerifiedRoutingError, "while it was opened"),
+        ):
+            with store_module._existing_file_lock(
+                lock_path,
+                timeout_seconds=1.0,
+                exclusive=True,
+            ):
+                self.fail("split path/descriptor identity must not yield")
+
+        self.assertEqual(close.call_args_list, [mock.call(71), mock.call(70)])
+        fake_msvcrt.locking.assert_not_called()
+
+    def test_windows_lock_rejects_reparse_identity_before_locking(self) -> None:
+        from local_moe import _win32_fs
+
+        lock_path = Path("run.lock")
+        parent_identity = _windows_identity(1, attributes=0x00000010)
+        reparse_identity = _windows_identity(
+            2,
+            attributes=0x00000400,
+            reparse_tag=0xA000000C,
+        )
+        fake_msvcrt = _fake_msvcrt()
+        with (
+            mock.patch.object(store_module, "_is_windows", return_value=True),
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[(70, parent_identity), (71, reparse_identity)],
+            ),
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                return_value=parent_identity,
+            ),
+            mock.patch.object(store_module.os, "close") as close,
+            self.assertRaisesRegex(VerifiedRoutingError, "reparse point"),
+        ):
+            with store_module._existing_file_lock(
+                lock_path,
+                timeout_seconds=1.0,
+                exclusive=True,
+            ):
+                self.fail("Windows reparse lock must not yield")
+
+        self.assertEqual(close.call_args_list, [mock.call(71), mock.call(70)])
+        fake_msvcrt.locking.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "native Windows lock semantics")
+    def test_native_windows_lock_path_persists_after_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = PairedExecutionStore(Path(temporary) / "run")
+            store.prepare(_root())
+            self.assertTrue(store.lock_path.is_file())
+            self.assertEqual(store.status().state, "ready")
+            self.assertTrue(store.lock_path.is_file())
+
+    @unittest.skipUnless(os.name == "nt", "native Windows reparse semantics")
+    def test_native_windows_lock_rejects_reparse_point(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            target = directory / "target.lock"
+            target.touch()
+            link = directory / "link.lock"
+            try:
+                link.symlink_to(target)
+            except OSError as exc:
+                self.skipTest(f"Windows symlink unavailable: {exc}")
+            with self.assertRaisesRegex(VerifiedRoutingError, "lock acquisition"):
+                with store_module._existing_file_lock(
+                    link,
+                    timeout_seconds=1.0,
+                    exclusive=True,
+                ):
+                    self.fail("Windows reparse lock must not yield")
 
     def test_json_file_descriptors_use_binary_mode_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -666,6 +930,30 @@ class PairedExecutionStoreTests(unittest.TestCase):
                 store.root_path.chmod(0o600)
             with self.assertRaisesRegex(VerifiedRoutingError, "not canonical"):
                 store.status()
+
+
+def _windows_identity(
+    value: int,
+    *,
+    attributes: int = 0,
+    reparse_tag: int = 0,
+):
+    from local_moe._win32_fs import Win32FileIdentity
+
+    return Win32FileIdentity(
+        volume_serial=7,
+        file_id=bytes([value]) * 16,
+        attributes=attributes,
+        reparse_tag=reparse_tag,
+    )
+
+
+def _fake_msvcrt() -> types.ModuleType:
+    module = types.ModuleType("msvcrt")
+    module.LK_NBLCK = 1  # type: ignore[attr-defined]
+    module.LK_UNLCK = 2  # type: ignore[attr-defined]
+    module.locking = mock.Mock()  # type: ignore[attr-defined]
+    return module
 
 
 def _root(**changes: str) -> PairedRunRoot:

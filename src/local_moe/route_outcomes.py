@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import stat
 import threading
+import time
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -712,10 +713,19 @@ class OutcomeStore:
     @contextmanager
     def _locked(self):
         with self._thread_lock:
+            _ensure_private_outcome_directory(self.path.parent)
+            lock_before = _ensure_secure_outcome_lock(self.lock_path)
+            if os.name == "nt":
+                with _locked_windows_outcome_paths(
+                    self.lock_path,
+                    self.path.parent,
+                    timeout_seconds=self.lock_timeout_seconds,
+                ):
+                    yield
+                return
+
             acquired = False
             try:
-                _ensure_private_outcome_directory(self.path.parent)
-                lock_before = _ensure_secure_outcome_lock(self.lock_path)
                 parent_before = _validate_private_outcome_directory(
                     self.path.parent
                 )
@@ -801,6 +811,204 @@ class OutcomeStore:
             seen.add(record.record_id)
             records.append(record)
         return tuple(records)
+
+
+@contextmanager
+def _locked_windows_outcome_paths(
+    lock_path: Path,
+    parent_path: Path,
+    *,
+    timeout_seconds: float,
+):
+    """Lock the exact Win32 object while pinning its containing directory."""
+
+    import msvcrt
+
+    from ._win32_fs import identity_from_fd, open_nofollow_fd
+
+    parent_descriptor: int | None = None
+    lock_descriptor: int | None = None
+    locked = False
+    try:
+        parent_descriptor, parent_identity = open_nofollow_fd(
+            parent_path,
+            directory=True,
+            writable=False,
+            share_delete=False,
+        )
+        _validate_windows_outcome_identity(parent_identity, directory=True)
+        opened_parent_identity = identity_from_fd(parent_descriptor)
+        _validate_windows_outcome_identity(
+            opened_parent_identity,
+            directory=True,
+        )
+        if not parent_identity.same_file_as(opened_parent_identity):
+            raise VerifiedRoutingError(
+                "Outcome store parent identity changed while it was opened."
+            )
+
+        lock_descriptor, lock_identity = open_nofollow_fd(
+            lock_path,
+            directory=False,
+            writable=True,
+            share_delete=False,
+        )
+        _validate_windows_outcome_identity(lock_identity, directory=False)
+        opened_lock_identity = identity_from_fd(lock_descriptor)
+        _validate_windows_outcome_identity(
+            opened_lock_identity,
+            directory=False,
+        )
+        if not lock_identity.same_file_as(opened_lock_identity):
+            raise VerifiedRoutingError(
+                "Outcome store lock identity changed while it was opened."
+            )
+
+        deadline = time.monotonic() + timeout_seconds
+        while not locked:
+            try:
+                os.lseek(lock_descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(lock_descriptor, msvcrt.LK_NBLCK, 1)
+                locked = True
+            except OSError as exc:
+                if exc.errno not in {
+                    errno.EACCES,
+                    errno.EAGAIN,
+                    getattr(errno, "EDEADLK", errno.EAGAIN),
+                    getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+                }:
+                    raise VerifiedRoutingError(
+                        "Outcome store lock acquisition failed."
+                    ) from exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise VerifiedRoutingError(
+                        "Outcome store lock acquisition timed out."
+                    ) from exc
+                time.sleep(min(0.05, remaining))
+
+        locked_parent_identity = identity_from_fd(parent_descriptor)
+        locked_lock_identity = identity_from_fd(lock_descriptor)
+        _validate_windows_outcome_identity(
+            locked_parent_identity,
+            directory=True,
+        )
+        _validate_windows_outcome_identity(
+            locked_lock_identity,
+            directory=False,
+        )
+        if (
+            not locked_parent_identity.same_file_as(parent_identity)
+            or not locked_lock_identity.same_file_as(lock_identity)
+        ):
+            raise VerifiedRoutingError(
+                "Outcome store lock or parent changed during acquisition."
+            )
+
+        verification_descriptors: list[int] = []
+        try:
+            current_parent_descriptor, current_parent_identity = (
+                open_nofollow_fd(
+                    parent_path,
+                    directory=True,
+                    writable=False,
+                    share_delete=False,
+                )
+            )
+            verification_descriptors.append(current_parent_descriptor)
+            _validate_windows_outcome_identity(
+                current_parent_identity,
+                directory=True,
+            )
+            current_lock_descriptor, current_lock_identity = open_nofollow_fd(
+                lock_path,
+                directory=False,
+                writable=True,
+                share_delete=False,
+            )
+            verification_descriptors.append(current_lock_descriptor)
+            _validate_windows_outcome_identity(
+                current_lock_identity,
+                directory=False,
+            )
+            observed_parent_identity = identity_from_fd(
+                current_parent_descriptor
+            )
+            observed_lock_identity = identity_from_fd(current_lock_descriptor)
+            _validate_windows_outcome_identity(
+                observed_parent_identity,
+                directory=True,
+            )
+            _validate_windows_outcome_identity(
+                observed_lock_identity,
+                directory=False,
+            )
+            if (
+                not current_parent_identity.same_file_as(
+                    observed_parent_identity
+                )
+                or not current_lock_identity.same_file_as(
+                    observed_lock_identity
+                )
+                or not current_parent_identity.same_file_as(parent_identity)
+                or not current_lock_identity.same_file_as(lock_identity)
+            ):
+                raise VerifiedRoutingError(
+                    "Outcome store lock or parent changed during acquisition."
+                )
+        finally:
+            for descriptor in reversed(verification_descriptors):
+                os.close(descriptor)
+        yield
+    except VerifiedRoutingError:
+        raise
+    except OSError as exc:
+        raise VerifiedRoutingError(
+            "Outcome store lock acquisition failed."
+        ) from exc
+    finally:
+        release_error: OSError | None = None
+        try:
+            if lock_descriptor is not None and locked:
+                try:
+                    os.lseek(lock_descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(lock_descriptor, msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    release_error = exc
+        finally:
+            try:
+                if lock_descriptor is not None:
+                    os.close(lock_descriptor)
+            finally:
+                if parent_descriptor is not None:
+                    os.close(parent_descriptor)
+        if release_error is not None:
+            raise VerifiedRoutingError(
+                "Outcome store lock release failed."
+            ) from release_error
+
+
+def _validate_windows_outcome_identity(
+    identity: object,
+    *,
+    directory: bool,
+) -> None:
+    from ._win32_fs import Win32FileIdentity
+
+    if not isinstance(identity, Win32FileIdentity):
+        raise VerifiedRoutingError("Outcome store Windows identity is invalid.")
+    if identity.is_reparse_point:
+        raise VerifiedRoutingError(
+            "Outcome store paths must not be Windows reparse points."
+        )
+    if len(identity.file_id) != 16 or not any(identity.file_id):
+        raise VerifiedRoutingError(
+            "Outcome store path has no stable 128-bit Windows file ID."
+        )
+    is_directory = bool(identity.attributes & 0x00000010)
+    if is_directory != directory:
+        kind = "directory" if directory else "regular file"
+        raise VerifiedRoutingError(f"Outcome store path must be a {kind}.")
 
 
 def _ensure_private_outcome_directory(path: Path) -> os.stat_result:
@@ -901,6 +1109,10 @@ def _create_secure_outcome_file(path: Path, label: str) -> None:
 
 
 def _append_secure_outcome_file(path: Path, encoded: bytes) -> None:
+    if os.name == "nt":
+        _append_secure_outcome_file_windows(path, encoded)
+        return
+
     before = _outcome_lstat_optional(path)
     created = before is None
     flags = (
@@ -983,6 +1195,9 @@ def _append_secure_outcome_file(path: Path, encoded: bytes) -> None:
 
 
 def _read_secure_outcome_file(path: Path) -> bytes | None:
+    if os.name == "nt":
+        return _read_secure_outcome_file_windows(path)
+
     before = _outcome_lstat_optional(path)
     if before is None:
         return None
@@ -1058,6 +1273,265 @@ def _read_secure_outcome_file(path: Path) -> bytes | None:
     return b"".join(chunks)
 
 
+def _append_secure_outcome_file_windows(path: Path, encoded: bytes) -> None:
+    before = _outcome_lstat_optional(path)
+    if before is None:
+        _create_secure_outcome_file(path, "outcome store")
+        before = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+    else:
+        before = _validate_outcome_regular_file(
+            path,
+            "outcome store",
+            before,
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+
+    descriptor: int | None = None
+    try:
+        descriptor, identity, opened = _open_windows_outcome_file(
+            path,
+            writable=True,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        if _outcome_file_snapshot(before) != _outcome_file_snapshot(opened):
+            raise VerifiedRoutingError("Outcome store changed before append.")
+        _recheck_windows_outcome_path(
+            path,
+            expected_identity=identity,
+            expected_metadata=opened,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+
+        current = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            current,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        current_identity = _windows_outcome_identity_from_fd(descriptor)
+        if (
+            not current_identity.same_file_as(identity)
+            or _outcome_file_snapshot(current) != _outcome_file_snapshot(opened)
+        ):
+            raise VerifiedRoutingError("Outcome store changed before append.")
+
+        offset = os.lseek(descriptor, 0, os.SEEK_END)
+        if offset != opened.st_size:
+            raise VerifiedRoutingError("Outcome store changed before append.")
+        expected_size = opened.st_size + len(encoded)
+        if expected_size > _MAX_OUTCOME_STORE_BYTES:
+            raise VerifiedRoutingError("Outcome store exceeds its size limit.")
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("Outcome append did not make progress.")
+            view = view[written:]
+        os.fsync(descriptor)
+
+        after = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            after,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        after_identity = _windows_outcome_identity_from_fd(descriptor)
+        if (
+            not after_identity.same_file_as(identity)
+            or after.st_size != expected_size
+        ):
+            raise VerifiedRoutingError("Outcome store changed during append.")
+        _recheck_windows_outcome_path(
+            path,
+            expected_identity=identity,
+            expected_metadata=after,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+            compare_mtime=False,
+        )
+    except VerifiedRoutingError:
+        raise
+    except OSError as exc:
+        raise VerifiedRoutingError("Outcome store append failed securely.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    _fsync_outcome_directory(path.parent)
+
+
+def _read_secure_outcome_file_windows(path: Path) -> bytes | None:
+    before = _outcome_lstat_optional(path)
+    if before is None:
+        return None
+    before = _validate_outcome_regular_file(
+        path,
+        "outcome store",
+        before,
+        maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+    )
+
+    descriptor: int | None = None
+    try:
+        descriptor, identity, opened = _open_windows_outcome_file(
+            path,
+            writable=False,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        if _outcome_file_snapshot(before) != _outcome_file_snapshot(opened):
+            raise VerifiedRoutingError("Outcome store changed before read.")
+        _recheck_windows_outcome_path(
+            path,
+            expected_identity=identity,
+            expected_metadata=opened,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                raise VerifiedRoutingError("Outcome store is truncated.")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise VerifiedRoutingError("Outcome store exceeds its size binding.")
+
+        after = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            after,
+            "outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        after_identity = _windows_outcome_identity_from_fd(descriptor)
+        if (
+            not after_identity.same_file_as(identity)
+            or _outcome_file_snapshot(after) != _outcome_file_snapshot(opened)
+        ):
+            raise VerifiedRoutingError("Outcome store changed while it was read.")
+        _recheck_windows_outcome_path(
+            path,
+            expected_identity=identity,
+            expected_metadata=after,
+            label="outcome store",
+            maximum_bytes=_MAX_OUTCOME_STORE_BYTES,
+        )
+        return b"".join(chunks)
+    except VerifiedRoutingError:
+        raise
+    except OSError as exc:
+        raise VerifiedRoutingError("Outcome store cannot be read safely.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _open_windows_outcome_file(
+    path: Path,
+    *,
+    writable: bool,
+    label: str,
+    maximum_bytes: int,
+) -> tuple[int, object, os.stat_result]:
+    from ._win32_fs import open_nofollow_fd
+
+    descriptor: int | None = None
+    try:
+        descriptor, identity = open_nofollow_fd(
+            path,
+            directory=False,
+            writable=writable,
+            share_delete=False,
+        )
+        _validate_windows_outcome_identity(identity, directory=False)
+        observed_identity = _windows_outcome_identity_from_fd(descriptor)
+        metadata = os.fstat(descriptor)
+        _validate_outcome_file_metadata(
+            metadata,
+            label,
+            maximum_bytes=maximum_bytes,
+        )
+        if not observed_identity.same_file_as(identity):
+            raise VerifiedRoutingError(
+                f"{label.capitalize()} identity changed while it was opened."
+            )
+        return descriptor, identity, metadata
+    except BaseException:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+
+
+def _windows_outcome_identity_from_fd(descriptor: int) -> object:
+    from ._win32_fs import identity_from_fd
+
+    identity = identity_from_fd(descriptor)
+    _validate_windows_outcome_identity(identity, directory=False)
+    return identity
+
+
+def _recheck_windows_outcome_path(
+    path: Path,
+    *,
+    expected_identity: object,
+    expected_metadata: os.stat_result,
+    label: str,
+    maximum_bytes: int,
+    compare_mtime: bool = True,
+) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor, current_identity, current_metadata = (
+            _open_windows_outcome_file(
+                path,
+                writable=False,
+                label=label,
+                maximum_bytes=maximum_bytes,
+            )
+        )
+        pathname_metadata = _validate_outcome_regular_file(
+            path,
+            label,
+            maximum_bytes=maximum_bytes,
+        )
+        snapshot = (
+            _outcome_file_snapshot
+            if compare_mtime
+            else _windows_outcome_structural_snapshot
+        )
+        if (
+            not current_identity.same_file_as(expected_identity)
+            or snapshot(current_metadata) != snapshot(expected_metadata)
+            or snapshot(pathname_metadata) != snapshot(expected_metadata)
+        ):
+            raise VerifiedRoutingError(
+                f"{label.capitalize()} pathname no longer names the opened file."
+            )
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _windows_outcome_structural_snapshot(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+    )
+
+
 def _validate_outcome_regular_file(
     path: Path,
     label: str,
@@ -1082,7 +1556,13 @@ def _validate_outcome_file_metadata(
     *,
     maximum_bytes: int,
 ) -> None:
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    attributes = int(getattr(metadata, "st_file_attributes", 0))
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or bool(attributes & reparse_flag)
+        or not stat.S_ISREG(metadata.st_mode)
+    ):
         raise VerifiedRoutingError(f"{label} must be a regular non-link file.")
     if metadata.st_nlink != 1:
         raise VerifiedRoutingError(f"{label} must have exactly one hard link.")

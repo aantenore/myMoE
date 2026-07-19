@@ -399,11 +399,11 @@ class PairedExecutionStore:
                 if metadata is None:
                     raise VerifiedRoutingError("Paired run is not prepared.")
                 _validate_run_directory(self.run_dir, metadata)
-            _ensure_lock_file(self.lock_path)
             with _existing_file_lock(
                 self.lock_path,
                 timeout_seconds=self.lock_timeout_seconds,
                 exclusive=True,
+                ensure_lock=True,
             ):
                 _validate_run_directory(self.run_dir)
                 _validate_regular_file(self.lock_path, "paired store lock")
@@ -782,9 +782,22 @@ def _existing_file_lock(
     *,
     timeout_seconds: float,
     exclusive: bool,
+    ensure_lock: bool = False,
 ):
     """Lock one existing inode without deleting or replacing its path."""
 
+    if _is_windows():
+        with _existing_windows_file_lock(
+            path,
+            timeout_seconds=timeout_seconds,
+            exclusive=exclusive,
+            ensure_lock=ensure_lock,
+        ):
+            yield
+        return
+
+    if ensure_lock:
+        _ensure_lock_file(path)
     before = _validate_regular_file(path, "paired store lock")
     flags = (
         (os.O_RDWR if exclusive or os.name == "nt" else os.O_RDONLY)
@@ -873,6 +886,219 @@ def _existing_file_lock(
                 ) from exc
             finally:
                 os.close(descriptor)
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+@contextmanager
+def _existing_windows_file_lock(
+    path: Path,
+    *,
+    timeout_seconds: float,
+    exclusive: bool,
+    ensure_lock: bool,
+):
+    """Pin the run directory and lock its exact no-follow Win32 file."""
+
+    import msvcrt
+
+    from ._win32_fs import identity_from_fd, open_nofollow_fd
+
+    parent_descriptor: int | None = None
+    descriptor: int | None = None
+    locked = False
+    try:
+        parent_descriptor, parent_identity = open_nofollow_fd(
+            path.parent,
+            directory=True,
+            writable=False,
+            share_delete=False,
+        )
+        _validate_windows_run_directory_identity(parent_identity)
+        opened_parent_identity = identity_from_fd(parent_descriptor)
+        _validate_windows_run_directory_identity(opened_parent_identity)
+        if not parent_identity.same_file_as(opened_parent_identity):
+            raise VerifiedRoutingError(
+                "Paired run directory identity changed while it was opened."
+            )
+
+        if ensure_lock:
+            _ensure_lock_file(path)
+        descriptor, opened_identity = open_nofollow_fd(
+            path,
+            directory=False,
+            writable=True,
+            share_delete=False,
+        )
+        _validate_windows_lock_descriptor(descriptor, opened_identity)
+        observed_lock_identity = identity_from_fd(descriptor)
+        _validate_windows_lock_descriptor(descriptor, observed_lock_identity)
+        if not opened_identity.same_file_as(observed_lock_identity):
+            raise VerifiedRoutingError(
+                "Paired store Windows lock identity changed while it was opened."
+            )
+        deadline = time.monotonic() + timeout_seconds
+        while not locked:
+            try:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                locked = True
+            except OSError as exc:
+                if exc.errno not in {
+                    errno.EACCES,
+                    errno.EAGAIN,
+                    getattr(errno, "EDEADLK", errno.EAGAIN),
+                    getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+                }:
+                    kind = "" if exclusive else " read"
+                    raise VerifiedRoutingError(
+                        f"Paired store{kind} lock acquisition failed."
+                    ) from exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise VerifiedRoutingError(
+                        "Paired store lock acquisition timed out."
+                    ) from exc
+                time.sleep(min(0.05, remaining))
+
+        locked_parent_identity = identity_from_fd(parent_descriptor)
+        locked_identity = identity_from_fd(descriptor)
+        _validate_windows_run_directory_identity(locked_parent_identity)
+        _validate_windows_lock_descriptor(descriptor, locked_identity)
+        if (
+            not locked_parent_identity.same_file_as(parent_identity)
+            or not locked_identity.same_file_as(opened_identity)
+        ):
+            raise VerifiedRoutingError(
+                "Paired run directory or lock identity changed during acquisition."
+            )
+
+        parent_path_descriptor: int | None = None
+        path_descriptor: int | None = None
+        try:
+            parent_path_descriptor, parent_path_identity = open_nofollow_fd(
+                path.parent,
+                directory=True,
+                writable=False,
+                share_delete=False,
+            )
+            _validate_windows_run_directory_identity(parent_path_identity)
+            observed_parent_path_identity = identity_from_fd(
+                parent_path_descriptor
+            )
+            _validate_windows_run_directory_identity(
+                observed_parent_path_identity
+            )
+            if not parent_path_identity.same_file_as(
+                observed_parent_path_identity
+            ):
+                raise VerifiedRoutingError(
+                    "Paired run directory pathname identity changed while opened."
+                )
+            path_descriptor, path_identity = open_nofollow_fd(
+                path,
+                directory=False,
+                writable=True,
+                share_delete=False,
+            )
+            _validate_windows_lock_descriptor(path_descriptor, path_identity)
+            observed_path_identity = identity_from_fd(path_descriptor)
+            _validate_windows_lock_descriptor(
+                path_descriptor,
+                observed_path_identity,
+            )
+            if not path_identity.same_file_as(observed_path_identity):
+                raise VerifiedRoutingError(
+                    "Paired store Windows pathname identity changed while opened."
+                )
+            if not parent_path_identity.same_file_as(locked_parent_identity):
+                raise VerifiedRoutingError(
+                    "Paired run pathname no longer names the pinned directory."
+                )
+            if not path_identity.same_file_as(locked_identity):
+                raise VerifiedRoutingError(
+                    "Paired store Windows pathname no longer names the locked file."
+                )
+        finally:
+            try:
+                if path_descriptor is not None:
+                    os.close(path_descriptor)
+            finally:
+                if parent_path_descriptor is not None:
+                    os.close(parent_path_descriptor)
+        yield
+    except VerifiedRoutingError:
+        raise
+    except OSError as exc:
+        kind = "" if exclusive else " read"
+        raise VerifiedRoutingError(
+            f"Paired store{kind} lock acquisition failed."
+        ) from exc
+    finally:
+        try:
+            if descriptor is not None:
+                try:
+                    if locked:
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    kind = "" if exclusive else " read"
+                    raise VerifiedRoutingError(
+                        f"Paired store{kind} lock release failed."
+                    ) from exc
+                finally:
+                    os.close(descriptor)
+        finally:
+            if parent_descriptor is not None:
+                os.close(parent_descriptor)
+
+
+def _validate_windows_run_directory_identity(identity: object) -> None:
+    from ._win32_fs import Win32FileIdentity
+
+    if not isinstance(identity, Win32FileIdentity):
+        raise VerifiedRoutingError(
+            "Paired run directory Windows identity is invalid."
+        )
+    if identity.is_reparse_point or identity.reparse_tag:
+        raise VerifiedRoutingError(
+            "Paired run directory must not be a Windows reparse point."
+        )
+    if len(identity.file_id) != 16 or not any(identity.file_id):
+        raise VerifiedRoutingError(
+            "Paired run directory has no stable 128-bit Windows file ID."
+        )
+    if not identity.attributes & 0x00000010:
+        raise VerifiedRoutingError(
+            "Paired run path must be a Windows directory."
+        )
+
+
+def _validate_windows_lock_descriptor(
+    descriptor: int,
+    identity: object,
+) -> None:
+    from ._win32_fs import Win32FileIdentity
+
+    if not isinstance(identity, Win32FileIdentity):
+        raise VerifiedRoutingError(
+            "Paired store Windows lock identity is invalid."
+        )
+    if identity.is_reparse_point or identity.reparse_tag:
+        raise VerifiedRoutingError(
+            "Paired store lock must not be a Windows reparse point."
+        )
+    if len(identity.file_id) != 16 or not any(identity.file_id):
+        raise VerifiedRoutingError(
+            "Paired store Windows lock has no stable 128-bit file ID."
+        )
+    if identity.attributes & 0x00000010:
+        raise VerifiedRoutingError(
+            "Paired store Windows lock must be a regular file."
+        )
+    _validate_file_metadata(os.fstat(descriptor), "paired store lock")
 
 
 def _ensure_lock_file(path: Path) -> None:

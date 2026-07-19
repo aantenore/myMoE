@@ -51,6 +51,7 @@ from .verified_routing_contracts import (
 )
 
 
+_OS_NAME = os.name
 _MAX_RUNNER_SOURCE_FILES = 512
 _MAX_RUNNER_SOURCE_BYTES = 32 * 1024 * 1024
 _MAX_RUNNER_SOURCE_FILE_BYTES = 4 * 1024 * 1024
@@ -663,7 +664,7 @@ def _validate_sensitive_state_path(path: Path) -> None:
         raise VerifiedRoutingError(
             "Paired executor state path cannot be hard-linked."
         )
-    if os.name == "posix" and (
+    if _OS_NAME == "posix" and (
         stat.S_IMODE(details.st_mode) != 0o600
         or details.st_uid != os.getuid()
     ):
@@ -708,7 +709,7 @@ def _validate_private_state_directory(
         raise VerifiedRoutingError(
             "Paired executor state parent must be a non-link directory."
         )
-    if os.name == "posix" and (
+    if _OS_NAME == "posix" and (
         stat.S_IMODE(details.st_mode) != 0o700
         or details.st_uid != os.getuid()
     ):
@@ -719,7 +720,28 @@ def _validate_private_state_directory(
 
 def _resolved_path(value: str | Path, label: str) -> Path:
     try:
-        return Path(value).expanduser().resolve(strict=False)
+        expanded = Path(value).expanduser()
+    except (OSError, RuntimeError) as exc:
+        raise VerifiedRoutingError(f"{label} cannot be resolved safely.") from exc
+    if _OS_NAME == "nt":
+        try:
+            details = expanded.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise VerifiedRoutingError(
+                f"{label} cannot be resolved safely."
+            ) from exc
+        else:
+            reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            attributes = int(getattr(details, "st_file_attributes", 0))
+            if stat.S_ISLNK(details.st_mode) or attributes & reparse_flag:
+                raise VerifiedRoutingError(
+                    f"{label} must be physically isolated and cannot be a "
+                    "symlink or Windows reparse point."
+                )
+    try:
+        return expanded.resolve(strict=False)
     except (OSError, RuntimeError) as exc:
         raise VerifiedRoutingError(f"{label} cannot be resolved safely.") from exc
 

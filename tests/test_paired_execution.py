@@ -6,9 +6,10 @@ import json
 import inspect
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from local_moe import assistant_bridge as assistant_bridge_module
 from local_moe import paired_execution as paired_execution_module
@@ -936,6 +937,24 @@ class PairedExecutionTests(unittest.TestCase):
                     self.assertFalse(store.root_path.exists())
 
             self.assertEqual(_read_jsonl(fixture.log), [])
+
+    def test_windows_resolved_path_rejects_final_reparse_before_resolve(
+        self,
+    ) -> None:
+        path = Path("outcomes.jsonl")
+        metadata = Mock(
+            st_mode=stat.S_IFREG | 0o600,
+            st_file_attributes=0x00000400,
+        )
+        with (
+            patch.object(paired_execution_module, "_OS_NAME", "nt"),
+            patch.object(Path, "lstat", return_value=metadata),
+            patch.object(Path, "resolve") as resolve,
+            self.assertRaisesRegex(VerifiedRoutingError, "physically isolated"),
+        ):
+            paired_execution_module._resolved_path(path, "outcome store")
+
+        resolve.assert_not_called()
 
     def test_signed_preflight_is_required_before_store_or_provider_authority(
         self,

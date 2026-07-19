@@ -74,7 +74,8 @@ checkpointed through a metadata-only append-only journal. The files omit task
 and response bodies, but stable hashes and provider/runtime metadata remain
 linkable and potentially guessable; treat them as sensitive and never publish
 them. The store enforces `0700` directories and `0600` files on POSIX; Windows
-ACL privacy remains operator-managed. A crash after a claim but before its
+ACL privacy remains operator-managed, and filesystems that cannot provide a
+stable file identity fail closed. A crash after a claim but before its
 checkpoint is deliberately indeterminate and is never retried automatically.
 Each completed arm stores the original result metadata, task signals,
 manifest, changeset, and evaluation-only DSSE envelopes in a content-addressed

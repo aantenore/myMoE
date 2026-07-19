@@ -4,8 +4,11 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 from local_moe import route_outcomes as route_outcomes_module
@@ -358,6 +361,10 @@ class RouteOutcomeTests(unittest.TestCase):
             self.assertEqual(OutcomeStore(path).list_records(), (record,))
             self.assertEqual(len(path.read_text(encoding="utf-8").splitlines()), 1)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Win32 payload descriptors are covered by test_win32_fs",
+    )
     def test_store_opens_payload_in_binary_mode_when_available(self) -> None:
         synthetic_binary_flag = 1 << 29
         native_binary_flag = getattr(os, "O_BINARY", 0)
@@ -407,6 +414,371 @@ class RouteOutcomeTests(unittest.TestCase):
         self.assertEqual(len(observed_flags), 2)
         self.assertTrue(
             all(flags & synthetic_binary_flag for flags in observed_flags)
+        )
+
+    def test_windows_payload_io_uses_one_pinned_nofollow_file_id(self) -> None:
+        from local_moe import _win32_fs
+
+        identity = _outcome_windows_identity(9, attributes=0)
+        archived_identity = _outcome_windows_identity(9, attributes=0x20)
+        real_open = os.open
+        real_read = os.read
+        real_write = os.write
+        opened: list[tuple[int, bool, bool]] = []
+        read_descriptors: list[int] = []
+        write_descriptors: list[int] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            path.write_bytes(b"first\n")
+            path.chmod(0o600)
+
+            def open_nofollow(
+                candidate: str | os.PathLike[str],
+                *,
+                directory: bool,
+                writable: bool,
+                share_delete: bool,
+            ) -> tuple[int, object]:
+                self.assertEqual(Path(candidate), path)
+                self.assertFalse(directory)
+                descriptor = real_open(
+                    candidate,
+                    os.O_RDWR if writable else os.O_RDONLY,
+                )
+                opened.append((descriptor, writable, share_delete))
+                return descriptor, identity
+
+            def tracked_read(descriptor: int, size: int) -> bytes:
+                read_descriptors.append(descriptor)
+                return real_read(descriptor, size)
+
+            def tracked_write(descriptor: int, value: object) -> int:
+                write_descriptors.append(descriptor)
+                return real_write(descriptor, value)  # type: ignore[arg-type]
+
+            with (
+                mock.patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_nofollow,
+                ) as nofollow,
+                mock.patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    return_value=archived_identity,
+                ),
+                mock.patch.object(
+                    route_outcomes_module.os,
+                    "read",
+                    side_effect=tracked_read,
+                ),
+                mock.patch.object(
+                    route_outcomes_module.os,
+                    "write",
+                    side_effect=tracked_write,
+                ),
+            ):
+                route_outcomes_module._append_secure_outcome_file_windows(
+                    path,
+                    b"second\n",
+                )
+                observed = (
+                    route_outcomes_module._read_secure_outcome_file_windows(path)
+                )
+
+            self.assertEqual(observed, b"first\nsecond\n")
+            self.assertEqual(path.read_bytes(), observed)
+
+        self.assertEqual(nofollow.call_count, 6)
+        self.assertTrue(opened[0][1])
+        self.assertTrue(all(not share_delete for _, _, share_delete in opened))
+        self.assertEqual(write_descriptors, [opened[0][0]])
+        self.assertTrue(read_descriptors)
+        self.assertEqual(set(read_descriptors), {opened[3][0]})
+
+    def test_windows_identity_validation_is_separate_from_continuity(self) -> None:
+        regular = _outcome_windows_identity(13, attributes=0x20)
+        reparse = _outcome_windows_identity(13, attributes=0x400)
+        directory = _outcome_windows_identity(13, attributes=0x10)
+
+        self.assertTrue(regular.same_file_as(reparse))
+        self.assertTrue(regular.same_file_as(directory))
+        with self.assertRaisesRegex(VerifiedRoutingError, "reparse"):
+            route_outcomes_module._validate_windows_outcome_identity(
+                reparse,
+                directory=False,
+            )
+        with self.assertRaisesRegex(VerifiedRoutingError, "regular file"):
+            route_outcomes_module._validate_windows_outcome_identity(
+                directory,
+                directory=False,
+            )
+
+    def test_windows_payload_file_id_swap_fails_before_write(self) -> None:
+        from local_moe import _win32_fs
+
+        original_identity = _outcome_windows_identity(10, attributes=0x20)
+        replacement_identity = _outcome_windows_identity(11, attributes=0x20)
+        real_open = os.open
+        identities = iter((original_identity, replacement_identity))
+        identity_by_descriptor: dict[int, object] = {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            path.write_bytes(b"stable\n")
+            path.chmod(0o600)
+
+            def open_nofollow(
+                candidate: str | os.PathLike[str],
+                *,
+                directory: bool,
+                writable: bool,
+                share_delete: bool,
+            ) -> tuple[int, object]:
+                self.assertFalse(directory)
+                self.assertFalse(share_delete)
+                descriptor = real_open(
+                    candidate,
+                    os.O_RDWR if writable else os.O_RDONLY,
+                )
+                identity = next(identities)
+                identity_by_descriptor[descriptor] = identity
+                return descriptor, identity
+
+            with (
+                mock.patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_nofollow,
+                ),
+                mock.patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    side_effect=lambda descriptor: identity_by_descriptor[descriptor],
+                ),
+                mock.patch.object(route_outcomes_module.os, "write") as write,
+                self.assertRaisesRegex(
+                    VerifiedRoutingError,
+                    "pathname no longer names",
+                ),
+            ):
+                route_outcomes_module._append_secure_outcome_file_windows(
+                    path,
+                    b"unsafe\n",
+                )
+
+            self.assertEqual(path.read_bytes(), b"stable\n")
+            write.assert_not_called()
+
+    def test_windows_payload_reparse_attribute_is_rejected_before_open(
+        self,
+    ) -> None:
+        from local_moe import _win32_fs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            path.write_bytes(b"stable\n")
+            observed = path.lstat()
+            reparse = types.SimpleNamespace(
+                st_mode=observed.st_mode,
+                st_nlink=observed.st_nlink,
+                st_size=observed.st_size,
+                st_dev=observed.st_dev,
+                st_ino=observed.st_ino,
+                st_mtime_ns=observed.st_mtime_ns,
+                st_file_attributes=0x00000400,
+            )
+
+            with (
+                mock.patch.object(Path, "lstat", return_value=reparse),
+                mock.patch.object(_win32_fs, "open_nofollow_fd") as nofollow,
+                self.assertRaisesRegex(VerifiedRoutingError, "regular non-link"),
+            ):
+                route_outcomes_module._read_secure_outcome_file_windows(path)
+
+            nofollow.assert_not_called()
+
+    def test_windows_post_append_recheck_accepts_deferred_mtime(self) -> None:
+        from local_moe import _win32_fs
+
+        identity = _outcome_windows_identity(12, attributes=0x20)
+        real_open = os.open
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            path.write_bytes(b"complete\n")
+            path.chmod(0o600)
+            observed = path.lstat()
+            writer_view = types.SimpleNamespace(
+                st_mode=observed.st_mode,
+                st_nlink=observed.st_nlink,
+                st_size=observed.st_size,
+                st_dev=observed.st_dev,
+                st_ino=observed.st_ino,
+                st_mtime_ns=observed.st_mtime_ns + 1,
+                st_file_attributes=0,
+            )
+
+            def open_nofollow(
+                candidate: str | os.PathLike[str],
+                *,
+                directory: bool,
+                writable: bool,
+                share_delete: bool,
+            ) -> tuple[int, object]:
+                self.assertFalse(directory)
+                self.assertFalse(writable)
+                self.assertFalse(share_delete)
+                return real_open(candidate, os.O_RDONLY), identity
+
+            with (
+                mock.patch.object(
+                    _win32_fs,
+                    "open_nofollow_fd",
+                    side_effect=open_nofollow,
+                ),
+                mock.patch.object(
+                    _win32_fs,
+                    "identity_from_fd",
+                    return_value=identity,
+                ),
+            ):
+                route_outcomes_module._recheck_windows_outcome_path(
+                    path,
+                    expected_identity=identity,
+                    expected_metadata=writer_view,
+                    label="outcome store",
+                    maximum_bytes=1024,
+                    compare_mtime=False,
+                )
+
+    def test_windows_lock_pins_parent_and_lock_by_handle_identity(self) -> None:
+        from local_moe import _win32_fs
+
+        parent = _outcome_windows_identity(1, attributes=0x10)
+        lock = _outcome_windows_identity(2, attributes=0x20)
+        fake_msvcrt = _outcome_fake_msvcrt()
+        with (
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[
+                    (71, parent),
+                    (72, lock),
+                    (73, parent),
+                    (74, lock),
+                ],
+            ) as open_nofollow,
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[parent, lock, parent, lock, parent, lock],
+            ),
+            mock.patch.object(route_outcomes_module.os, "lseek"),
+            mock.patch.object(route_outcomes_module.os, "close") as close,
+        ):
+            with route_outcomes_module._locked_windows_outcome_paths(
+                Path("outcomes.jsonl.lock"),
+                Path("store"),
+                timeout_seconds=1.0,
+            ):
+                self.assertEqual(
+                    close.call_args_list,
+                    [mock.call(74), mock.call(73)],
+                )
+
+        self.assertEqual(
+            open_nofollow.call_args_list,
+            [
+                mock.call(
+                    Path("store"),
+                    directory=True,
+                    writable=False,
+                    share_delete=False,
+                ),
+                mock.call(
+                    Path("outcomes.jsonl.lock"),
+                    directory=False,
+                    writable=True,
+                    share_delete=False,
+                ),
+                mock.call(
+                    Path("store"),
+                    directory=True,
+                    writable=False,
+                    share_delete=False,
+                ),
+                mock.call(
+                    Path("outcomes.jsonl.lock"),
+                    directory=False,
+                    writable=True,
+                    share_delete=False,
+                ),
+            ],
+        )
+        self.assertEqual(
+            close.call_args_list,
+            [mock.call(74), mock.call(73), mock.call(72), mock.call(71)],
+        )
+        self.assertEqual(
+            fake_msvcrt.locking.call_args_list,
+            [mock.call(72, 1, 1), mock.call(72, 2, 1)],
+        )
+
+    def test_windows_lock_rejects_split_path_identity(self) -> None:
+        from local_moe import _win32_fs
+
+        parent = _outcome_windows_identity(1, attributes=0x10)
+        lock = _outcome_windows_identity(2, attributes=0x20)
+        replacement = _outcome_windows_identity(3, attributes=0x20)
+        fake_msvcrt = _outcome_fake_msvcrt()
+        with (
+            mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
+            mock.patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                side_effect=[
+                    (71, parent),
+                    (72, lock),
+                    (73, parent),
+                    (74, replacement),
+                ],
+            ),
+            mock.patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=[
+                    parent,
+                    lock,
+                    parent,
+                    lock,
+                    parent,
+                    replacement,
+                ],
+            ),
+            mock.patch.object(route_outcomes_module.os, "lseek"),
+            mock.patch.object(route_outcomes_module.os, "close") as close,
+            self.assertRaisesRegex(
+                VerifiedRoutingError,
+                "changed during acquisition",
+            ),
+        ):
+            with route_outcomes_module._locked_windows_outcome_paths(
+                Path("outcomes.jsonl.lock"),
+                Path("store"),
+                timeout_seconds=1.0,
+            ):
+                self.fail("a replaced lock path must not yield")
+
+        self.assertEqual(
+            close.call_args_list,
+            [mock.call(74), mock.call(73), mock.call(72), mock.call(71)],
+        )
+        self.assertEqual(
+            fake_msvcrt.locking.call_args_list,
+            [mock.call(72, 1, 1), mock.call(72, 2, 1)],
         )
 
     def test_store_lock_timeout_fails_closed(self) -> None:
@@ -464,6 +836,22 @@ class RouteOutcomeTests(unittest.TestCase):
             os.link(source, hardlink)
             with self.assertRaisesRegex(VerifiedRoutingError, "one hard link"):
                 OutcomeStore(hardlink).list_records()
+
+    @unittest.skipUnless(os.name == "nt", "native Windows reparse semantics")
+    def test_native_windows_store_rejects_reparse_outcome_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.jsonl"
+            target.write_bytes(b"target-must-not-change\n")
+            link = root / "link.jsonl"
+            try:
+                link.symlink_to(target)
+            except OSError as exc:
+                self.skipTest(f"Windows symlink unavailable: {exc}")
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "non-link|reparse"):
+                OutcomeStore(link).list_records()
+            self.assertEqual(target.read_bytes(), b"target-must-not-change\n")
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
     def test_store_pins_an_ancestor_symlink_without_following_the_target_file(self) -> None:
@@ -866,6 +1254,29 @@ def _hold_lock(lock_path: str, ready: object, release: object) -> None:
         ready.set()  # type: ignore[attr-defined]
         if not release.wait(15.0):  # type: ignore[attr-defined]
             raise RuntimeError("lock release gate timed out")
+
+
+def _outcome_windows_identity(
+    value: int,
+    *,
+    attributes: int,
+):
+    from local_moe._win32_fs import Win32FileIdentity
+
+    return Win32FileIdentity(
+        volume_serial=7,
+        file_id=bytes([value]) * 16,
+        attributes=attributes,
+        reparse_tag=0,
+    )
+
+
+def _outcome_fake_msvcrt() -> types.ModuleType:
+    module = types.ModuleType("msvcrt")
+    module.LK_NBLCK = 1  # type: ignore[attr-defined]
+    module.LK_UNLCK = 2  # type: ignore[attr-defined]
+    module.locking = mock.Mock()  # type: ignore[attr-defined]
+    return module
 
 
 if __name__ == "__main__":
