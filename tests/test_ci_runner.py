@@ -37,6 +37,7 @@ class CiRunnerTests(unittest.TestCase):
                 "smoke eval",
                 "extended smoke eval",
                 "live routing holdout",
+                "verified routing shadow eval",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -68,6 +69,11 @@ class CiRunnerTests(unittest.TestCase):
         self.assertIn(
             "experiments/eval_set_live_general_holdout_v5.jsonl", holdout.command
         )
+        shadow_eval = next(
+            step for step in steps if step.name == "verified routing shadow eval"
+        )
+        self.assertIn("tests/fixtures/verified-routing-eval.json", shadow_eval.command)
+        self.assertIn("outputs/verified-routing-shadow-eval.json", shadow_eval.command)
         quality_gate = next(step for step in steps if step.name == "quality gate")
         self.assertIn("configs/quality-gate-ci.json", quality_gate.command)
 

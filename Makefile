@@ -1,4 +1,4 @@
-.PHONY: check test eval eval-holdout distill-router prepare-runtime models-status models-logs cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
+.PHONY: check test eval eval-holdout eval-verified-routing distill-router prepare-runtime models-status models-logs cron-status run-cron run-cron-writes ui cli doctor setup-models start-models benchmark-small benchmark-gemma
 
 check:
 	python3 scripts/run_ci_checks.py
@@ -18,6 +18,11 @@ eval-holdout:
 		--eval experiments/eval_set_live_general_holdout_v5.jsonl \
 		--training-labels experiments/route_labels_live_general.jsonl \
 		--out outputs/live-general-routing-holdout.json
+
+eval-verified-routing:
+	PYTHONPATH=src python3 experiments/eval_verified_routing.py \
+		--fixture tests/fixtures/verified-routing-eval.json \
+		--out outputs/verified-routing-shadow-eval.json
 
 distill-router:
 	PYTHONPATH=src python3 experiments/build_route_label_dataset.py \

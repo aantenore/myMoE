@@ -32,15 +32,18 @@ The gate currently performs these steps:
 4. Run the base synthetic routing smoke eval.
 5. Run the extended synthetic routing smoke eval.
 6. Regenerate the leakage-free 52-case live routing holdout report.
-7. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+7. Run the 64-case deterministic Verified Outcome Routing shadow simulation.
+   The fixture validates metrics, pairwise axis coverage, and privacy/cost
+   accounting; it is explicitly synthetic and makes no empirical quality claim.
+8. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-8. Refresh the hardware profile artifact.
-9. Run the packaging smoke test, which installs the project in a temporary
+9. Refresh the hardware profile artifact.
+10. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe` and `mymoe-web` console scripts.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.

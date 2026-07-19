@@ -89,6 +89,17 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "verified routing shadow eval",
+            [
+                python,
+                "experiments/eval_verified_routing.py",
+                "--fixture",
+                "tests/fixtures/verified-routing-eval.json",
+                "--out",
+                "outputs/verified-routing-shadow-eval.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,
