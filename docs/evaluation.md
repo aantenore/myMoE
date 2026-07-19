@@ -65,15 +65,15 @@ unseen set before making a fresh generalization claim.
   `outputs/live-general-routing-holdout.json`.
 - Current live answer-quality benchmark: 72 completed executions with zero
   response failures or truncation. Single-general and routed top-1 both
-  achieved `1.0` task success, `1.0` quality pass rate, and `1.0` quality
-  score. Mean latency was `2.5915 s` vs `2.4913 s`; the six fast-routed pairs
-  achieved median latency ratio `0.4231` while routing 25% of cases away from
+  achieved `1.0` task success, `1.0` quality pass rate, and `0.975` quality
+  score. Mean latency was `3.1942 s` vs `3.0137 s`; the six fast-routed pairs
+  achieved median latency ratio `0.4354` while routing 25% of cases away from
   the general model.
 - Top-2 remains diagnostic: it reported complete comparisons and disagreement,
-  but achieved `0.75` task success, `0.9437` quality score, and `3.0044 s` mean
+  but achieved `0.75` task success, `0.9188` quality score, and `3.6044 s` mean
   latency. It is not the value route and its result is not masked by top-1.
-- Current host evidence passed with `100%` sample coverage, `86.1555%` peak RAM
-  use, and `249,749,832` bytes swap growth.
+- Current host evidence passed with `100%` sample coverage, `86.2605%` peak RAM
+  use, and `753,076,798` bytes swap growth.
 - The release quality gate now passes with `release_ready = true`. The previous
   72-record evidence remains preserved as
   `outputs/quality-benchmark-2026-07-10.json` for historical comparison.

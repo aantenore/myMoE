@@ -68,16 +68,17 @@ Qwen3.6 OptiQ was retried with a tighter `2048` KV cache and still failed with M
 
 The provenance-bound 2026-07-19 run used the pinned Qwen3 4B and 1.7B MLX
 snapshots and completed all 72 planned executions. Single-general and routed
-top-1 both reached `1.0` task success and `1.0` deterministic quality score.
+top-1 both reached `1.0` task success, `1.0` quality pass rate, and `0.975`
+deterministic quality score.
 Top-1 routed 25% of cases to the smaller expert, reduced overall mean latency
-from `2.5915 s` to `2.4913 s`, and reached a median routed-pair latency ratio of
-`0.4231`. Host sampling covered every observation, peak RAM use was `86.1555%`,
-and swap grew by `249,749,832` bytes. The release quality gate passed and marked
+from `3.1942 s` to `3.0137 s`, and reached a median routed-pair latency ratio of
+`0.4354`. Host sampling covered every observation, peak RAM use was `86.2605%`,
+and swap grew by `753,076,798` bytes. The release quality gate passed and marked
 the artifact release-ready.
 
 Top-2 is intentionally diagnostic and did not outperform top-1: its task
-success was `0.75`, deterministic quality score `0.9437`, and mean latency
-`3.0044 s`. These results are bounded to the committed eight-case rubric and
+success was `0.75`, deterministic quality score `0.9188`, and mean latency
+`3.6044 s`. These results are bounded to the committed eight-case rubric and
 three repetitions; they do not establish general semantic superiority.
 
 ## Practical Requirements
