@@ -96,7 +96,11 @@ _ROUTE_RECEIPT_FIELDS = {
     "workspace",
     "local_runtime",
     "premium_runtime",
+    "route_canary",
 }
+_ROUTE_RECEIPT_REQUIRED_FIELDS = _ROUTE_RECEIPT_FIELDS.difference(
+    {"route_canary"}
+)
 _ROUTE_TASK_FIELDS = {
     "allow_remote",
     "allow_remote_workspace",
@@ -1072,7 +1076,7 @@ def _route_receipt_payload(receipt: object) -> dict[str, object]:
         raw = getattr(receipt, "raw_payload", None)
     payload = _strict_mapping(raw, "route receipt")
     reject_unknown(payload, _ROUTE_RECEIPT_FIELDS, "route receipt")
-    missing = sorted(_ROUTE_RECEIPT_FIELDS.difference(payload))
+    missing = sorted(_ROUTE_RECEIPT_REQUIRED_FIELDS.difference(payload))
     if missing:
         raise VerifiedRoutingError(
             f"Missing route receipt fields: {', '.join(missing)}."
@@ -1086,6 +1090,14 @@ def _route_receipt_payload(receipt: object) -> dict[str, object]:
     payload["task"] = _validated_route_task(payload["task"])
     _strict_mapping(payload["workspace"], "route receipt workspace")
     runtime_plan_sha256(payload)
+    if "route_canary" in payload:
+        from .route_canary import validate_canary_receipt_binding
+
+        canary = validate_canary_receipt_binding(
+            _strict_mapping(payload["route_canary"], "route canary"),
+            payload,
+        )
+        payload["route_canary"] = canary.payload()
     return payload
 
 

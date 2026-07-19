@@ -1,20 +1,37 @@
-# Verified Outcome Routing Lab
+# Verified Outcome Routing and Signed Canary Authority
 
-The Verified Outcome Routing Lab is a shadow-only feedback layer for the
-Hybrid Assistant Bridge. It answers a narrower question than semantic or
-complexity routing:
+## In Plain English
+
+- The lab first proves a narrower route against disjoint, verified evidence; it
+  does not learn from live prompts or silently change production behavior.
+- A manifest that passes that gate is still only evidence. A human operator
+  must sign a separate, short-lived authorization with a key the runtime
+  already trusts.
+- Even then, only task fingerprints assigned to at most 500 of 10,000
+  secret-keyed hash buckets can move, and only from a more-premium route to a
+  less-premium route. This is repeatable sampling, not a hard quota on live
+  requests. Every missing, changed, expired, mismatched, or ineligible input
+  keeps the existing guarded route.
+- The feature is disabled in the shipped configuration. This repository does
+  not include a real empirical manifest, operator key, assignment secret, or
+  signed activation.
+
+The Verified Outcome Routing Lab is the evidence layer for the Hybrid
+Assistant Bridge. It answers a narrower question than semantic or complexity
+routing:
 
 > For this capability and difficulty band, which policy would have delivered a
 > mechanically verified result with the best acceptable quality, cost,
 > latency, privacy, and premium-use profile?
 
-Version 1 never changes a live route. It records content-free outcomes, builds
-a versioned scorecard, replays alternative decisions offline, and can qualify a
-preregistered paired holdout. A passing qualification emits a short-lived,
-content-addressed canary manifest that is an eligibility prerequisite only; no
-runtime code consumes it. Activation remains deferred until the runtime can
-apply that manifest without bypassing an existing authority, budget,
-capability, or execution-scope guard.
+The lab records content-free outcomes, builds a versioned scorecard, replays
+alternative decisions offline, and can qualify a preregistered paired holdout.
+A passing qualification emits a short-lived, content-addressed canary manifest
+that is an eligibility prerequisite only. The separate Signed Route Canary
+Authority can consume it only when an operator-signed authorization, pinned
+public key, stable configuration, evidence lineage, deterministic assignment,
+and all existing authority, budget, capability, privacy, and execution-scope
+guards agree.
 
 ## Why This Is a Separate Layer
 
@@ -42,7 +59,11 @@ flowchart LR
   P --> Q{"Preregistered paired quality gate"}
   Q -->|"insufficient or regressed"| H["Keep current live policy"]
   Q -->|"eligible"| M["Short-lived eligibility manifest"]
-  M --> N["Not consumed by runtime in v1"]
+  M --> K{"Pinned operator signature<br/>and stable lineage"}
+  K -->|"missing, invalid, expired, or disabled"| H
+  K -->|"authorized"| B{"Secret-keyed hash bucket<br/>below configured threshold"}
+  B -->|"outside bucket set or cell"| H
+  B -->|"inside exact qualified cell"| N["Apply only a less-premium route"]
 ```
 
 This avoids building another provider gateway or another four-tier prompt
@@ -87,6 +108,12 @@ Each append-only record binds:
 Prompt text, response text, constraints, diffs, verifier output, and reasoning
 are not fields in this schema. Cost remains absent unless the caller supplies a
 versioned pricing contract or a measured amount.
+
+`route_canary` is an optional alpha extension to `RouteDecisionReceipt` 2.0 and
+`VerifiedOutcomeRecord` 1.0. Current readers accept legacy payloads that omit
+the field. Older strict readers reject canary-bearing payloads as having an
+unknown field, so producers and consumers must be upgraded together when this
+extension is used; it is not forward-compatible with older binaries.
 
 ### `RouteScorecard`
 
@@ -138,17 +165,78 @@ increased premium calls, remote payload, or measured cost are `ineligible`.
 
 `VerifiedRoutingPromotionReport` is always content-addressed and contains only
 aggregate metrics and lineage digests. `VerifiedRoutingCanaryManifest` is
-written only for an `eligible` report. It is capped by configuration to 5% and
-24 hours, lists exact enabled cells, preserves the hard-guard invariants, and
-sets `applied=false` plus `authority=structural_eligibility_only`. Neither
-artifact contains prompts, responses, diffs, verifier output, or task
-fingerprints.
+written only for an `eligible` report. It is capped by configuration to 500 of
+10,000 deterministic assignment buckets and 24 hours, lists exact enabled
+cells, preserves the hard-guard invariants, and sets `applied=false` plus
+`authority=structural_eligibility_only`. The bucket threshold is not a quota on
+the observed request share. Neither artifact contains prompts, responses,
+diffs, verifier output, or task fingerprints.
+
+The manifest never authorizes itself. `VerifiedRoutingCanaryAuthorization` is
+a separate canonical JSON payload in a one-signature Ed25519 DSSE envelope. It
+binds an activation id, manifest, effective Bridge configuration, route policy,
+scorecard, operator key id, maximum assignment-bucket threshold, and a time
+window contained inside the manifest window. The Bridge configuration in turn
+binds the exact runtime-configuration digest. Runtime code holds only the public
+key; signing material stays outside myMoE.
+
+For an authorized request, the runtime derives a stable bucket from an HMAC of
+the content-free task fingerprint using an environment secret. The secret's
+SHA-256 must match the salt digest frozen in the manifest, but the secret itself
+is never placed in configuration or an artifact. Repeated requests with the
+same fingerprint stay in the same bucket; as a result, the observed traffic
+share may be lower or higher than the configured basis points. A decision
+applies only when the shadow recommendation matches one exact qualified cell
+and moves monotonically toward less premium use. The decision and its lineage
+are bound back into the route receipt and verified outcome.
+
+## Freeze a Future Canary Before Collecting Its Evidence
+
+This preparation is required only if the evidence may later authorize a runtime
+canary. A shadow-only study can skip it and keep `verified_routing` disabled.
+
+The exact Bridge configuration is part of every scorecard cell and canary
+manifest. Enabling verified routing after training or qualification changes that
+digest and makes the earlier cells ineligible. Prepare the final identity before
+collecting training or holdout evidence:
+
+1. Generate the Ed25519 operator key outside the repository. Install only its
+   public key at the final runtime path and freeze the operator key id plus the
+   DER SubjectPublicKeyInfo digest returned by
+   `ed25519_public_key_sha256`. Keep the private key offline when possible.
+2. Generate and securely retain one random printable assignment secret of 32 to
+   1,024 UTF-8 bytes without line breaks. Freeze its SHA-256 as
+   `ASSIGNMENT_SALT_SHA256`; do not place the secret itself in configuration or
+   an evidence artifact.
+3. Create the final runtime configuration from
+   [`configs/verified-routing-runtime.example.json`](../configs/verified-routing-runtime.example.json).
+   Give it the stable route-policy path, future scorecard, manifest and
+   authorization paths, public-key path and digest, assignment-secret
+   environment-variable name, and chronology path. Paths for artifacts that do
+   not exist yet are intentional.
+4. Point the final Bridge configuration at that runtime file and set
+   `verified_routing.enabled=true`. Load this same configuration before
+   collecting promotion training and holdout records. A missing scorecard,
+   manifest, or authorization is not activation: runtime evaluation fails
+   closed and retains the guarded baseline.
+5. Keep the enabled Bridge/runtime values, public key, assignment secret, route
+   policy, signal provider, and runtime plan unchanged through training,
+   qualification, signing, and the canary window. Any change creates different
+   evidence lineage and requires fresh evidence and authorization.
+
+The secret need not be exposed to the Bridge process until activation, but its
+value and hash must already be fixed. This ordering avoids a configuration
+digest that changes only after the evidence has been collected.
 
 ## Run the Shadow Loop
 
 Start from a JSON export of `BridgeRunResult.metadata_payload()`. The export may
 contain route, verifier, command, and capsule metadata, but must not contain the
 user-facing `result.content` object.
+
+When preparing a future canary, every training export in this section must come
+from the final enabled configuration frozen above. With no valid authorization
+installed, the route remains the normal guarded baseline.
 
 Install the project with the `assistant-bridge` extra. It includes the
 cross-platform process lock used by the append-only outcome store while the
@@ -209,8 +297,11 @@ replace them with values appropriate to the measured environment.
 ## Qualify a Paired Holdout
 
 First commit or otherwise attest the training scorecard, gate policy, and case
-list before executing the holdout. The case list is a JSON array matching the
-`PromotionCase` contract. Freeze it into a content-addressed evidence plan:
+list before executing the holdout. Training records, scorecard cells, and the
+planned holdout must use the exact enabled Bridge/runtime lineage frozen before
+evidence collection. The case list is a JSON array matching the `PromotionCase`
+contract. Set `ASSIGNMENT_SALT_SHA256` to the already-frozen assignment-secret
+digest, then freeze the content-addressed evidence plan:
 
 ```bash
 PYTHONPATH=src python3 experiments/freeze_verified_routing_plan.py \
@@ -261,6 +352,80 @@ them as non-blocking verification or runtime failures; unknown real bridge
 codes therefore fail closed. Repeated executions of the same task remain
 diagnostic and do not increase the planned unique-task count.
 
+## Sign, Install, and Stop a Canary
+
+Treat activation as a controlled deployment, not as an automatic continuation
+of evaluation. The eligible manifest does not authorize itself.
+
+1. Verify that the final enabled Bridge/runtime configuration, public key,
+   assignment-secret hash, route policy, scorecard, and artifact paths are still
+   exactly the values frozen before evidence collection. Put the eligible
+   manifest at its already-declared runtime path. Do not edit configuration to
+   install it.
+2. Inspect the manifest's actual `not_before` and `expires_at`. Keep the Ed25519
+   private key outside the repository and runtime host when possible. The
+   signing command accepts a bounded, regular, non-link, unencrypted Ed25519 PEM
+   and reruns the paired promotion gate from the frozen plan, gate policy,
+   training outcomes, and holdout outcomes. It signs only when the reconstructed
+   eligible manifest exactly matches the installed manifest, including its
+   report, evaluator, cells, threshold, lineage, and window. Sign an activation
+   whose complete active window is inside the emitted manifest window. In the
+   example below, the requested expiry is one hour earlier than the maximum
+   24-hour expiry implied by the qualification example; use an earlier value if
+   the emitted manifest expires sooner:
+
+```bash
+PYTHONPATH=src python3 experiments/sign_verified_routing_canary.py \
+  --manifest work/verified-routing-canary-manifest.json \
+  --plan work/verified-routing-evidence-plan.json \
+  --gate-policy configs/verified-routing-promotion.example.json \
+  --training-records work/verified-routing-training.jsonl \
+  --holdout-records work/verified-routing-holdout.jsonl \
+  --assistant-bridge-config configs/assistant-bridge.canary.local.json \
+  --runtime-config configs/verified-routing-runtime.local.json \
+  --private-key /secure/offline/operator-private.pem \
+  --activation-id canary-2026-07-19-01 \
+  --issued-at 2026-07-19T18:55:00+00:00 \
+  --not-before 2026-07-19T19:00:00+00:00 \
+  --expires-at 2026-07-20T17:00:00+00:00 \
+  --maximum-canary-basis-points 500 \
+  --out work/verified-routing-canary-authorization.dsse.json
+```
+
+3. Confirm that `--out` is the unchanged authorization path declared by the
+   runtime configuration. The signing command writes the DSSE envelope there
+   and refuses to overwrite an existing authorization.
+4. Supply the pre-frozen assignment secret to the Bridge process through the
+   environment variable named by `assignment_secret_env` (the example uses
+   `MYMOE_ROUTE_CANARY_SECRET`), then reload the unchanged enabled
+   configuration. The loader rejects changed digests, symlinked or unstable
+   authority files, wrong keys, invalid signatures, stale evidence, unsafe
+   bucket thresholds, and time windows outside the manifest.
+5. Inspect route receipts and verified outcomes for `route_canary` lineage. A
+   request outside the configured hash buckets or exact enabled cell keeps its
+   baseline; this is expected, not an activation failure. Measure the observed
+   canary traffic directly because a 500-bucket threshold is not a 5% traffic
+   quota.
+
+The runtime also updates a locked, content-bound local chronology record
+and rejects clock rollback, activation rollback, or signed equivocation while
+that prior state remains intact. This detects discontinuity in one trusted local
+file; it is not tamper-resistant storage, an append-only external ledger, a
+cross-host consensus mechanism, or a trusted timestamp. A filesystem writer
+that can delete or replace the chronology can break that continuity.
+
+The configuration kill switch is
+`verified_routing.enabled=false` in the Bridge configuration. Reload the Bridge
+after changing it; no canary decision is then evaluated. Expiry also stops the
+canary automatically, while a missing authorization, public key, manifest,
+scorecard, policy, or assignment secret, or an invalid or unwritable chronology
+fails closed to the existing baseline. Disabling is a runtime pause, not by
+itself cryptographic revocation: returning to the identical enabled
+configuration before expiry can make the same authorization valid again. Remove
+or rotate the authorization for revocation. Re-enabling after any other
+configuration or evidence change requires a newly bound authorization and fresh
+qualified evidence for the changed lineage.
+
 ## Evidence Hierarchy
 
 Scorecards can set a minimum evidence strength. The supported order is:
@@ -303,11 +468,11 @@ latency, remote egress, Brier score, and expected calibration error. Results are
 stratified by capability, difficulty, language, and context band when those
 dimensions are available.
 
-Synthetic fixtures validate formulas and invariants; they are not product
-performance evidence. A live policy must be trained and evaluated on disjoint,
-versioned records from the target environment. The repository does not ship an
-empirical canary manifest because no real paired Assistant Bridge holdout has
-yet met that contract.
+Synthetic fixtures validate formulas, signatures, assignment, chronology, and
+invariants; they are not product-performance evidence. A live policy must be
+trained and evaluated on disjoint, versioned records from the target
+environment. The repository does not ship an empirical canary manifest because
+no real paired Assistant Bridge holdout has yet met that contract.
 
 ## Safety Invariants
 
@@ -316,18 +481,33 @@ yet met that contract.
 - Missing, stale, low-confidence, or statistically thin evidence returns the
   current baseline route and an abstention reason.
 - Scorecard generation never learns from prompt or response bodies.
-- A canary manifest is evidence, not runtime authority. No live weight
-  mutation, exploration, manifest consumption, or automatic policy activation
-  exists in version 1.
+- A canary manifest is evidence, not runtime authority. Only a separately
+  signed, bounded authorization can enable its exact cells.
+- Runtime canary application is limited to at most 500 of 10,000 secret-keyed
+  assignment buckets and to transitions toward less premium use. The bucket
+  threshold is deterministic but is not a quota on observed traffic. It never
+  adds a route, increases premium use, or weakens a hard guard.
+- Missing, malformed, changed, untrusted, expired, or mismatched activation
+  inputs retain the baseline route. The shipped configuration disables the
+  authority entirely.
+- The local durable chronology rejects clock rollback, activation rollback,
+  and signed equivocation only while its previous state remains intact. It is
+  not tamper-resistant storage or an external timestamp authority.
+- There is no live weight mutation, online learning, exploration, or automatic
+  broad policy activation.
 
 The plan records intended AB/BA order and normalized item hashes, but the
 current `VerifiedOutcomeRecord` does not itself attest workspace snapshot or
 execution order. The runner and independent verifier must preserve those
 properties externally until a future paired-run envelope binds them directly.
-Content addressing detects mutation but does not authenticate the producer or
-provide a trusted timestamp. A runtime consumer must additionally require a
-pinned signature and trusted chronology; schema 1.0 therefore remains
-non-authoritative and unapplied.
+Content addressing detects mutation but does not authenticate the evidence
+producer or provide a trusted timestamp. The runtime therefore requires a
+pinned operator signature, a contained activation window, and consistent local
+chronology in addition to the manifest. That signature authorizes a bounded
+deployment decision; it does not retroactively attest how the evidence was
+produced. The local chronology likewise detects discontinuity only relative to
+the state it can still read; deletion or replacement by a filesystem writer is
+outside its guarantee.
 
 The outcome loop is intentionally conservative: optimization starts only after
 authority and verifiability are already established.

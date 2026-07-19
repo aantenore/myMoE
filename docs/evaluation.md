@@ -86,7 +86,7 @@ endpoint is offline. The deterministic rubric does not establish broad
 semantic superiority, so future model/profile changes still require fresh live
 evidence.
 
-## Verified Outcome Routing Shadow Eval
+## Verified Outcome Routing and Signed Canary Eval
 
 The shadow lab has a separate evaluation contract because it predicts whether
 premium escalation is needed rather than which local expert best matches a
@@ -118,8 +118,45 @@ reconstruction from the supplied training set, zero training/holdout overlap,
 complete baseline/candidate arms for every planned task, per-cell sample floors,
 Wilson lower bounds, zero candidate-only failures, monotone premium/egress/cost
 usage, and bounded latency. A passing report may emit a short-lived canary
-manifest, but no runtime path consumes it. No empirical manifest is checked in
-because real paired Assistant Bridge evidence is not yet available.
+manifest. The disabled-by-default runtime can consume it only with a separate
+operator-signed authorization bound to the stable Bridge configuration, route
+policy, scorecard, pinned public key, assignment-bucket threshold, and contained
+time window. No empirical manifest or authorization is checked in because real
+paired Assistant Bridge evidence is not yet available.
+
+The Signed Route Canary Authority has a deterministic contract suite, not a
+product-savings benchmark. It verifies that:
+
+- the manifest alone has no authority and an invalid, wrong-key, expired, or
+  mismatched Ed25519 DSSE authorization preserves the baseline;
+- configuration, manifest, policy, scorecard, signal-provider, runtime-plan,
+  and route-receipt digests stay bound end to end;
+- HMAC assignment is stable for the same secret and task fingerprint, the
+  runtime rejects a secret whose SHA-256 does not match the manifest, and no
+  more than 500 of 10,000 deterministic hash buckets can be eligible. This is a
+  sampling threshold, not a guarantee that at most 5% of observed requests will
+  be routed through the canary;
+- only an exact qualified cell and a monotone transition toward less premium
+  use can apply; blocked, outside-bucket, wider, stale, or abstained decisions
+  retain the baseline;
+- the locked content-bound local chronology rejects local clock rollback,
+  activation rollback, and signed equivocation while its prior state remains
+  intact; it makes no tamper-resistance or external timestamp claim;
+- canary lineage is preserved in route receipts and verified outcome records;
+- `verified_routing.enabled=false` bypasses canary evaluation entirely.
+
+These tests establish structural safety only. A real canary still requires the
+disjoint empirical qualification above, an operator decision, monitoring of the
+same quality/latency/premium/egress/cost dimensions, and expiry or kill-switch
+rollback. Neither synthetic shadow metrics nor signature tests justify a claim
+of live savings.
+
+`route_canary` is an optional alpha extension to the existing
+`RouteDecisionReceipt` 2.0 and `VerifiedOutcomeRecord` 1.0 JSON shapes. Current
+readers accept legacy payloads that omit it. Older strict readers reject the new
+field, so producers and consumers that exchange canary-bearing payloads must be
+upgraded together; this is not a forward-compatible wire extension for older
+binaries.
 
 The benchmark contract lives in `configs/quality-benchmark.json`,
 `experiments/quality_benchmark_cases.jsonl`, and
@@ -172,6 +209,8 @@ The automated gate checks:
 - base and extended routing eval,
 - a disjoint live routing holdout regenerated on every run,
 - the 64-case Verified Outcome Routing shadow simulation,
+- deterministic Signed Route Canary authority, lineage, hash assignment, chronology,
+  fail-closed, and kill-switch tests,
 - artifact and report provenance freshness,
 - zero train/holdout id or normalized prompt-hash overlap,
 - minimum holdout routing accuracy of `0.90` across at least `50` cases,

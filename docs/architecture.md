@@ -69,6 +69,19 @@ and answer-quality benchmarks make offline CI or release decisions.
 - `Generation Run Log`: local JSONL metadata log for successful generations, intentionally excluding prompt and answer text while retaining route, model, latency, token, context, prompt-hash observations, and aggregate health summaries.
 - `Agent Loop`: provider-neutral OpenAI-compatible model/tool/observation loop with strict local tool schemas, approval-gated side effects, bounded redacted observations, and metadata-only traces.
 - `Quality Benchmark`: deterministic answer-quality comparison harness for single-general, routed top-1, and routed top-2 variants, with endpoint/model readiness checks and provenance-rich artifacts.
+- `Hybrid Assistant Bridge`: local-first task planner that preserves capability,
+  privacy, budget, verification, workspace, and provider-authority boundaries
+  before a premium route can be considered.
+- `Verified Outcome Routing Lab`: content-free offline scorecards, shadow
+  recommendations, and a preregistered paired gate that can emit a
+  structural-eligibility manifest but cannot authorize itself.
+- `Signed Route Canary Authority`: optional, disabled-by-default Bridge
+  boundary that verifies a pinned Ed25519 operator authorization, exact
+  evidence/configuration lineage, local durable chronology, and a secret-keyed
+  deterministic assignment before applying an exact less-premium transition.
+  At most 500 of 10,000 hash buckets are eligible; this samples task
+  fingerprints and is not a hard quota on observed requests. Any failed check
+  retains the guarded baseline.
 
 The scope policy is separate from model capability and semantic routing. A
 high-scoring expert is still ineligible when its execution evidence cannot
@@ -111,6 +124,43 @@ experts remain local.
 ### Mode 5: Distilled Student
 
 If system-level MoE is too slow, distill common expert behavior into one smaller local model.
+
+## Optional Signed Route Canary
+
+The canary authority is not another classifier and does not sit in front of the
+normal local expert router. It is a narrow post-baseline step inside the Hybrid
+Assistant Bridge:
+
+```mermaid
+flowchart LR
+  B["Guarded baseline route"] --> S["Offline shadow recommendation"]
+  S --> M{"Exact qualified manifest cell"}
+  M -->|"no"| B
+  M -->|"yes"| A{"Pinned operator signature,<br/>stable lineage and time window"}
+  A -->|"invalid or unavailable"| B
+  A -->|"valid"| C{"Secret-keyed bucket<br/>below configured threshold"}
+  C -->|"no"| B
+  C -->|"yes, less premium only"| R["Bound canary route receipt"]
+```
+
+The runtime configuration names stable policy, scorecard, manifest,
+authorization, public-key, and chronology paths. The Bridge configuration binds
+that file's digest. The operator's private key is used only by the separate
+signing command; runtime trust consists of the public key and its pinned DER
+digest. A strong environment secret makes hash-bucket assignment deterministic
+without putting the secret in an artifact. The locked, content-bound local
+chronology rejects clock rollback, activation rollback, and signed
+equivocation while the previous state remains intact. It is neither
+tamper-resistant storage nor an external timestamp authority: a filesystem
+writer that can delete or replace the chronology breaks that continuity.
+
+Setting `verified_routing.enabled=false` and reloading the Bridge is the
+configuration kill switch. Expiry and every missing, mutated, stale, or
+mismatched input also retain the baseline. The design supports a bounded
+operator-authorized trial; it does not provide online learning, exploration,
+automatic broad activation, or a path around existing hard guards. The switch
+pauses evaluation; remove or rotate the authorization when cryptographic
+revocation is required.
 
 ## Comparable Tool Pattern
 
@@ -174,6 +224,13 @@ The practical policy is:
 - Concatenation is not synthesis; compare mode exposes only lexical disagreement.
 - Local context limits differ per model; routing must know each expert context budget.
 - Model-specific chat templates can break answer quality if endpoints are not normalized.
+- Canary evidence may be statistically valid but operationally stale. Manifest
+  and authorization windows plus scorecard/evidence freshness fail closed;
+  policy and configuration are protected by exact digests rather than their own
+  time-to-live.
+- Local chronology detects rollback on one durable state path but does not
+  provide external time or cross-host consensus. Operators must not describe it
+  as third-party timestamp attestation.
 
 ## Validation Gates
 
@@ -198,3 +255,9 @@ The practical policy is:
     `0.0`, routed median latency ratio `0.6889`, and zero failures or
     truncation. Any response-contract change requires fresh live evidence before
     the release gate can return `release_ready: true` again.
+12. A route canary requires a content-addressed eligible manifest, stable
+    Bridge/runtime/policy/scorecard lineage, a pinned valid operator signature,
+    a current contained time window, consistent local chronology, an exact
+    enabled cell, and deterministic assignment below a configured threshold of
+    at most 500 of 10,000 hash buckets. This is not an observed-traffic quota.
+    It may only reduce premium use; every rejection preserves the baseline.

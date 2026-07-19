@@ -67,6 +67,7 @@ _RECEIPT_FIELDS = {
     "schema_version",
     "task",
     "workspace",
+    "route_canary",
 }
 
 
@@ -404,6 +405,13 @@ def signals_from_route_receipt(
         raise VerifiedRoutingError("route receipt contract is invalid.")
     if "task" not in receipt:
         raise VerifiedRoutingError("route receipt is missing task metadata.")
+    if "route_canary" in receipt:
+        from .route_canary import validate_canary_receipt_binding
+
+        validate_canary_receipt_binding(
+            _strict_mapping(receipt["route_canary"], "route canary"),
+            receipt,
+        )
     task = _strict_mapping(receipt["task"], "task metadata")
     selected = provider or MetadataTaskSignalProvider()
     signals = selected.signals_from_metadata(task, context_tokens=context_tokens)

@@ -454,7 +454,7 @@ MCP servers are disabled by default. An enabled stdio server still requires app-
 
 Implementation: [`scheduler.py`](../../src/local_moe/scheduler.py), [`extensions.py`](../../src/local_moe/extensions.py), [`mcp_client.py`](../../src/local_moe/mcp_client.py), and [`security_audit.py`](../../src/local_moe/security_audit.py).
 
-## 10. Offline Evaluation Is Not in the Request Path
+## 10. Offline Evaluation and the Optional Canary Boundary
 
 Quality and release gates do not run after every answer. They are offline workflows that evaluate configuration, routing, provider contracts, answer quality, latency, failure rate, provenance, packaging, and required artifacts.
 
@@ -471,9 +471,19 @@ flowchart LR
 
 The current release contract treats routed top-1 as the value variant and top-2 comparison as diagnostic evidence. Top-2 cannot compensate for a top-1 regression. Holdout integrity rejects duplicated or overlapping prompt IDs and normalized prompt hashes and binds reports to configuration, dataset, and artifact fingerprints.
 
-The optional [Verified Outcome Routing Lab](../verified-outcome-routing.md)
-extends this offline boundary with content-free decision-to-verification
-lineage and shadow policy replay. It does not participate in the request path.
+The [Verified Outcome Routing Lab](../verified-outcome-routing.md) extends this
+offline boundary with content-free decision-to-verification lineage, shadow
+policy replay, and preregistered qualification. The lab itself does not
+participate in the request path or authorize a route.
+
+A separate Signed Route Canary Authority can participate in the Hybrid
+Assistant Bridge request path when explicitly enabled. It runs only after the
+normal guarded baseline is known and can apply only an exact, qualified move
+toward less premium use. A pinned operator signature, stable evidence and
+configuration lineage, an active time window, and deterministic hash-bucket
+assignment must all agree; otherwise the guarded baseline remains unchanged.
+The shipped configuration disables this boundary and includes no empirical
+manifest or signed activation.
 
 See [Evaluation](../evaluation.md), [Tested Performance](../tested-performance.md), and [CI](../ci.md).
 
@@ -491,6 +501,7 @@ See [Evaluation](../evaluation.md), [Tested Performance](../tested-performance.m
 | Runtime preparation and processes | [`bootstrap.py`](../../src/local_moe/bootstrap.py), [`setup_runner.py`](../../src/local_moe/setup_runner.py), [`model_servers.py`](../../src/local_moe/model_servers.py), [`startup.py`](../../src/local_moe/startup.py) |
 | Extensions, MCP, and cron | [`extensions.py`](../../src/local_moe/extensions.py), [`mcp_client.py`](../../src/local_moe/mcp_client.py), [`scheduler.py`](../../src/local_moe/scheduler.py) |
 | Diagnostics and support | [`doctor.py`](../../src/local_moe/doctor.py), [`security_audit.py`](../../src/local_moe/security_audit.py), [`environment.py`](../../src/local_moe/environment.py), [`support_bundle.py`](../../src/local_moe/support_bundle.py) |
+| Verified outcome routing and signed canary | [`route_outcomes.py`](../../src/local_moe/route_outcomes.py), [`route_scorecard.py`](../../src/local_moe/route_scorecard.py), [`route_policy.py`](../../src/local_moe/route_policy.py), [`route_promotion.py`](../../src/local_moe/route_promotion.py), [`route_canary.py`](../../src/local_moe/route_canary.py) |
 
 ## Next Reading
 

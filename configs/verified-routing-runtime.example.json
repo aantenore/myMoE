@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "mode": "canary",
+  "route_policy_path": "configs/verified-routing-policy.example.json",
+  "scorecard_path": "work/verified-routing-scorecard.json",
+  "manifest_path": "work/verified-routing-canary-manifest.json",
+  "authorization_path": "work/verified-routing-canary-authorization.dsse.json",
+  "operator_key_id": "replace-with-operator-key-id",
+  "operator_public_key_path": "work/verified-routing-operator-public.pem",
+  "operator_public_key_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "assignment_secret_env": "MYMOE_ROUTE_CANARY_SECRET",
+  "chronology_path": "work/runtime/verified-routing-canary-chronology.json"
+}

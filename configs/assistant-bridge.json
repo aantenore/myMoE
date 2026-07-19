@@ -100,6 +100,10 @@
       "max_premium_calls": 0
     }
   },
+  "verified_routing": {
+    "enabled": false,
+    "config_path": "configs/verified-routing-runtime.example.json"
+  },
   "verification": {
     "isolation": {
       "required": true,

@@ -68,7 +68,8 @@ authorization from a model response.
   staged, unstaged, or untracked diff.
 - `RouteDecisionReceipt`: deterministic metadata-only proof of the chosen route,
   policy rules, effective model/adapter/sandbox, workspace fingerprint, budget,
-  and configuration digest.
+  and configuration digest. When the optional signed canary boundary evaluates
+  a request, the receipt may also carry content-free `route_canary` lineage.
 - `VerificationEvidence`: mechanical evidence bound to the exact task,
   workspace state, verifier contract, and artifact digest. It records no
   assistant output or hidden reasoning. Run telemetry separates `prior`
@@ -88,6 +89,19 @@ authorization from a model response.
 
 Routes are `local`, `premium`, `local_then_verify`, and `blocked`. Profiles are
 `economy`, `balanced`, `quality`, `privacy`, and `offline`.
+
+The Bridge always determines and guards the baseline route first. If
+`verified_routing.enabled=true`, the optional Signed Route Canary Authority may
+then replace that baseline only with an exact evidence-qualified route that
+uses less premium execution. Missing artifacts, an invalid or expired operator
+authorization, a cell mismatch, or an assignment outside the configured hash
+buckets retains the baseline. The shipped configuration disables this step and
+contains no empirical activation.
+
+`route_canary` is an alpha extension to the existing receipt shape. Current
+readers accept receipts that omit it, but older strict readers reject receipts
+that contain the new field. Upgrade payload producers and consumers together
+when enabling this boundary.
 
 | Profile | Initial behavior | Remote boundary |
 | --- | --- | --- |
@@ -127,6 +141,10 @@ Routes are `local`, `premium`, `local_then_verify`, and `blocked`. Profiles are
 12. Local Codex runs with isolated state, ignored user configuration/rules, a
     temporary home, a sanitized environment, no native web tool, and agent-tool
     network disabled.
+13. An enabled signed canary runs only after these guards, may only reduce
+    premium use for an exact qualified cell, and samples at most 500 of 10,000
+    secret-keyed assignment buckets. The threshold is not a request-volume
+    quota; every rejected check preserves the baseline route.
 
 Premium authentication is copied into that temporary home through an exclusive,
 no-follow file descriptor, restricted on the descriptor itself, synced, read

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import threading
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from filelock import FileLock, Timeout
@@ -63,6 +64,8 @@ _RECORD_FIELDS = {
     "provider_runtime_sha256",
     "model",
 }
+_RECORD_OPTIONAL_FIELDS = {"route_canary"}
+_RECORD_ALLOWED_FIELDS = _RECORD_FIELDS | _RECORD_OPTIONAL_FIELDS
 _BRIDGE_FIELDS = {
     "schema_version",
     "mode",
@@ -94,7 +97,9 @@ _RECEIPT_FIELDS = {
     "workspace",
     "local_runtime",
     "premium_runtime",
+    "route_canary",
 }
+_RECEIPT_REQUIRED_FIELDS = _RECEIPT_FIELDS.difference({"route_canary"})
 _TASK_FIELDS = {
     "task_id",
     "objective_sha256",
@@ -187,6 +192,7 @@ class VerifiedOutcomeRecord:
     estimated_cost_usd: float | None = None
     provider_runtime_sha256: str | None = None
     model: str | None = None
+    route_canary: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != CONTRACT_VERSION:
@@ -253,6 +259,31 @@ class VerifiedOutcomeRecord:
             )
         if self.model is not None:
             require_safe_id(self.model, "model")
+        if self.route_canary is not None:
+            from .route_canary import CanaryRouteDecision
+
+            canary = CanaryRouteDecision.from_payload(self.route_canary)
+            if (
+                canary.effective_route != self.planned_route
+                or canary.bridge_config_sha256 != self.config_sha256
+                or canary.task_fingerprint != self.task_fingerprint
+                or canary.profile != self.profile
+                or canary.capabilities != tuple(sorted(self.capabilities))
+                or canary.difficulty != self.difficulty
+                or (
+                    canary.signal_provider_config_sha256
+                    != self.signal_provider_config_sha256
+                )
+                or canary.runtime_plan_sha256 != self.runtime_plan_sha256
+            ):
+                raise VerifiedRoutingError(
+                    "Outcome route canary binding is invalid."
+                )
+            object.__setattr__(
+                self,
+                "route_canary",
+                _freeze_json(canary.payload()),
+            )
         if self.final_provider is None and (
             self.provider_runtime_sha256 is not None or self.model is not None
         ):
@@ -273,7 +304,7 @@ class VerifiedOutcomeRecord:
         return payload
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "record_id": self.record_id,
             "created_at": self.created_at,
@@ -304,11 +335,19 @@ class VerifiedOutcomeRecord:
             "provider_runtime_sha256": self.provider_runtime_sha256,
             "model": self.model,
         }
+        if self.route_canary is not None:
+            payload["route_canary"] = _thaw_json(self.route_canary)
+        return payload
 
     @classmethod
     def from_payload(cls, raw: Mapping[str, object]) -> "VerifiedOutcomeRecord":
         payload = _mapping(raw, "outcome record")
-        _require_exact_fields(payload, _RECORD_FIELDS, "outcome record")
+        reject_unknown(payload, _RECORD_ALLOWED_FIELDS, "outcome record")
+        missing = sorted(_RECORD_FIELDS.difference(payload))
+        if missing:
+            raise VerifiedRoutingError(
+                f"Missing outcome record fields: {', '.join(missing)}."
+            )
         return cls(**payload)  # type: ignore[arg-type]
 
 
@@ -337,7 +376,14 @@ def build_verified_outcome(
     require_safe_id(bridge["code"], "bridge code")
 
     receipt = _mapping(bridge["route_receipt"], "route receipt")
-    _require_exact_fields(receipt, _RECEIPT_FIELDS, "route receipt")
+    reject_unknown(receipt, _RECEIPT_FIELDS, "route receipt")
+    missing_receipt_fields = sorted(_RECEIPT_REQUIRED_FIELDS.difference(receipt))
+    if missing_receipt_fields:
+        raise VerifiedRoutingError(
+            "Missing route receipt fields: "
+            + ", ".join(missing_receipt_fields)
+            + "."
+        )
     if receipt["schema_version"] != "2.0" or receipt["contract"] != "RouteDecisionReceipt":
         raise VerifiedRoutingError("Route receipt contract is unsupported.")
     route_receipt_id = require_safe_id(receipt["receipt_id"], "route_receipt_id")
@@ -346,6 +392,15 @@ def build_verified_outcome(
         raise VerifiedRoutingError("Only executable route plans can record outcomes.")
     config_sha256 = require_sha256(receipt["config_sha256"], "config_sha256")
     runtime_plan_digest = runtime_plan_sha256(receipt)
+    route_canary: dict[str, object] | None = None
+    if "route_canary" in receipt:
+        from .route_canary import validate_canary_receipt_binding
+
+        canary = validate_canary_receipt_binding(
+            _mapping(receipt["route_canary"], "route canary"),
+            receipt,
+        )
+        route_canary = canary.payload()
 
     task = _mapping(receipt["task"], "route task")
     _require_exact_fields(task, _TASK_FIELDS, "route task")
@@ -372,6 +427,14 @@ def build_verified_outcome(
         raise VerifiedRoutingError("Signals do not belong to the routed task.")
     if tuple(signal.capabilities) != tuple(sorted(required_capabilities)):
         raise VerifiedRoutingError("Signals capabilities do not match the route receipt.")
+    if route_canary is not None and (
+        route_canary["difficulty"] != signal.difficulty
+        or route_canary["signal_provider_config_sha256"]
+        != signal.provider_config_sha256
+    ):
+        raise VerifiedRoutingError(
+            "Signals do not match the route canary decision."
+        )
 
     verification = _mapping(bridge["verification"], "verification")
     _require_exact_fields(verification, {"prior", "final"}, "verification")
@@ -467,6 +530,8 @@ def build_verified_outcome(
         "provider_runtime_sha256": provider_runtime_sha256,
         "model": model,
     }
+    if route_canary is not None:
+        unsigned["route_canary"] = route_canary
     payload = dict(unsigned)
     payload["record_id"] = f"outcome-{sha256_json(unsigned)}"
     return VerifiedOutcomeRecord.from_payload(payload)
@@ -743,6 +808,24 @@ def _mapping(value: object, label: str) -> dict[str, Any]:
     if any(not isinstance(key, str) for key in value):
         raise VerifiedRoutingError(f"{label} keys must be strings.")
     return dict(value)
+
+
+def _freeze_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 def _require_exact_fields(raw: dict[str, Any], fields: set[str], label: str) -> None:

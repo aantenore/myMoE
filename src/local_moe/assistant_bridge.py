@@ -1153,6 +1153,43 @@ class BridgeWorkspacePolicy:
 
 
 @dataclass(frozen=True)
+class VerifiedRoutingRuntimeReference:
+    """Reference to an optional, separately versioned route-canary policy."""
+
+    enabled: bool
+    config_path: str = field(repr=False, default="")
+    config_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise AssistantBridgeError("verified_routing.enabled must be boolean.")
+        if self.enabled:
+            if not self.config_path:
+                raise AssistantBridgeError(
+                    "verified_routing.config_path is required when enabled."
+                )
+            _require_sha256(
+                self.config_sha256,
+                "verified routing runtime config",
+            )
+        elif self.config_sha256 is not None:
+            raise AssistantBridgeError(
+                "Disabled verified routing cannot carry an active config digest."
+            )
+
+    def effective_descriptor(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "config_path_sha256": (
+                _sha256_text(str(Path(self.config_path).resolve()))
+                if self.config_path
+                else None
+            ),
+            "config_sha256": self.config_sha256,
+        }
+
+
+@dataclass(frozen=True)
 class AssistantBridgeConfig:
     local: ProviderSpec
     premium: ProviderSpec
@@ -1169,6 +1206,7 @@ class AssistantBridgeConfig:
     runtime: BridgeRuntimePolicy
     state: BridgeStatePolicy
     workspace: BridgeWorkspacePolicy
+    verified_routing: VerifiedRoutingRuntimeReference
     source_sha256: str
 
     def __post_init__(self) -> None:
@@ -1234,6 +1272,7 @@ class RouteDecisionReceipt:
     workspace: WorkspaceAttestation
     local_runtime: Mapping[str, object]
     premium_runtime: Mapping[str, object]
+    route_canary: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.route not in ROUTES:
@@ -1243,6 +1282,33 @@ class RouteDecisionReceipt:
         object.__setattr__(self, "task", _deep_freeze(self.task))
         object.__setattr__(self, "local_runtime", _deep_freeze(self.local_runtime))
         object.__setattr__(self, "premium_runtime", _deep_freeze(self.premium_runtime))
+        if self.route_canary is not None:
+            if not isinstance(self.route_canary, Mapping):
+                raise AssistantBridgeError(
+                    "RouteDecisionReceipt route_canary metadata is invalid."
+                )
+            try:
+                from .route_canary import (
+                    CanaryRouteDecision,
+                    validate_canary_receipt_binding,
+                )
+
+                canary_decision = CanaryRouteDecision.from_payload(
+                    self.route_canary
+                )
+                object.__setattr__(
+                    self,
+                    "route_canary",
+                    _deep_freeze(canary_decision.payload()),
+                )
+                validate_canary_receipt_binding(
+                    canary_decision,
+                    self.payload(),
+                )
+            except (ImportError, ValueError) as exc:
+                raise AssistantBridgeError(
+                    "RouteDecisionReceipt route_canary metadata is invalid."
+                ) from exc
         for name in (
             "local_gaps",
             "premium_gaps",
@@ -1252,7 +1318,7 @@ class RouteDecisionReceipt:
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": BRIDGE_SCHEMA_VERSION,
             "contract": "RouteDecisionReceipt",
             "receipt_id": self.receipt_id,
@@ -1271,6 +1337,9 @@ class RouteDecisionReceipt:
             "local_runtime": _deep_thaw(self.local_runtime),
             "premium_runtime": _deep_thaw(self.premium_runtime),
         }
+        if self.route_canary is not None:
+            payload["route_canary"] = _deep_thaw(self.route_canary)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -1841,6 +1910,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "schema_version",
             "state",
             "verification",
+            "verified_routing",
             "workspace",
         },
     )
@@ -2043,6 +2113,52 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
             "transaction_state_dir",
         },
     )
+    verified_routing_raw = _as_object(
+        raw.get("verified_routing", {}),
+        "verified_routing",
+    )
+    _reject_unknown(
+        "verified_routing",
+        verified_routing_raw,
+        {"config_path", "enabled"},
+    )
+    verified_routing_enabled = _bool_value(
+        verified_routing_raw.get("enabled", False),
+        "verified_routing.enabled",
+    )
+    verified_routing_declared_path = _string_value(
+        verified_routing_raw.get("config_path", ""),
+        "verified_routing.config_path",
+    )
+    verified_routing_path = Path(verified_routing_declared_path).expanduser()
+    if verified_routing_declared_path and not verified_routing_path.is_absolute():
+        verified_routing_path = source.parent.parent / verified_routing_path
+    if verified_routing_declared_path:
+        verified_routing_path = Path(os.path.abspath(verified_routing_path))
+    verified_routing_config_sha256: str | None = None
+    if verified_routing_enabled:
+        if not verified_routing_declared_path:
+            raise AssistantBridgeError(
+                "verified_routing.config_path is required when enabled."
+            )
+        from .route_canary import load_verified_routing_runtime_config
+
+        try:
+            verified_routing_config = load_verified_routing_runtime_config(
+                verified_routing_path,
+            )
+        except ValueError as exc:
+            raise AssistantBridgeError(str(exc)) from exc
+        verified_routing_config_sha256 = verified_routing_config.source_sha256
+    verified_routing_reference = VerifiedRoutingRuntimeReference(
+        enabled=verified_routing_enabled,
+        config_path=(
+            str(verified_routing_path)
+            if verified_routing_declared_path
+            else ""
+        ),
+        config_sha256=verified_routing_config_sha256,
+    )
     profiles = {
         name: _parse_profile(
             name, _as_object(profiles_raw.get(name), f"profiles.{name}")
@@ -2222,6 +2338,9 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
                 "workspace": workspace_policy.effective_descriptor(),
                 "runtime_policy": runtime_policy.payload(),
                 "runtime_capabilities": runtime_capabilities().payload(),
+                "verified_routing_runtime": (
+                    verified_routing_reference.effective_descriptor()
+                ),
                 "verifier_isolation_policy": verifier_isolation.payload(),
                 "verifier_isolation_capability": verifier_isolation_capability(
                     verifier_isolation
@@ -2306,6 +2425,7 @@ def load_assistant_bridge_config(path: str | Path) -> AssistantBridgeConfig:
         runtime=runtime_policy,
         state=state_policy,
         workspace=workspace_policy,
+        verified_routing=verified_routing_reference,
         source_sha256=effective_sha256,
     )
 
@@ -2546,6 +2666,9 @@ def _confirmation_binding_sha256(
     payload = {
         "contract": "AssistantBridgeExecutionConfirmation",
         "receipt_id": receipt.receipt_id,
+        "route_receipt_sha256": _sha256_text(
+            _canonical_json(receipt.payload())
+        ),
         "task_fingerprint": receipt.task["task_fingerprint"],
         "workspace_fingerprint": receipt.workspace.fingerprint,
         "config_sha256": receipt.config_sha256,
@@ -3908,6 +4031,9 @@ class AssistantBridgeRunner:
                         route="blocked",
                         rationale_code="premium_auth_unavailable",
                     )
+        receipt = _apply_verified_route_canary(receipt, self.config)
+        if receipt.route == "local":
+            remote_binding = None
         bound_external = self._validate_external(
             external_evidence,
             task,
@@ -7666,6 +7792,153 @@ def _command_authority_sha256(plan: CommandPlan) -> str:
                 ),
             }
         )
+    )
+
+
+def _apply_verified_route_canary(
+    receipt: RouteDecisionReceipt,
+    config: AssistantBridgeConfig,
+) -> RouteDecisionReceipt:
+    reference = config.verified_routing
+    if not reference.enabled:
+        return receipt
+    if receipt.route_canary is not None:
+        return receipt
+    if receipt.route == "blocked":
+        return _receipt_with_canary_status(receipt, "baseline_blocked")
+    try:
+        from .route_canary import (
+            assignment_secret_from_environment,
+            decide_route_canary,
+            load_and_verify_canary_authorization,
+            load_verified_routing_canary_manifest,
+            load_verified_routing_runtime_config,
+        )
+        from .route_policy import load_route_policy, recommend_shadow_route
+        from .route_scorecard import load_route_scorecard
+        from .route_signals import signals_from_route_receipt
+        from .verified_routing_contracts import now_utc
+
+        runtime = load_verified_routing_runtime_config(
+            reference.config_path,
+            expected_source_sha256=str(reference.config_sha256),
+        )
+        evaluated_at = now_utc()
+        route_policy = load_route_policy(runtime.route_policy_path)
+        scorecard = load_route_scorecard(
+            runtime.scorecard_path,
+            now=evaluated_at,
+        )
+        signals = signals_from_route_receipt(receipt)
+        shadow = recommend_shadow_route(
+            receipt,
+            signals,
+            scorecard,
+            route_policy,
+            profile=str(receipt.task["profile"]),
+            now=evaluated_at,
+        )
+        manifest = load_verified_routing_canary_manifest(runtime.manifest_path)
+        authorization = load_and_verify_canary_authorization(
+            runtime.authorization_path,
+            manifest=manifest,
+            runtime=runtime,
+            bridge_config_sha256=config.source_sha256,
+            now=evaluated_at,
+        )
+        decision = decide_route_canary(
+            shadow,
+            manifest=manifest,
+            authorization=authorization,
+            bridge_config_sha256=config.source_sha256,
+            assignment_secret=assignment_secret_from_environment(runtime),
+            evaluated_at=evaluated_at,
+        )
+        return _receipt_with_canary_decision(receipt, decision.payload())
+    except (ImportError, KeyError, OSError, TypeError, ValueError):
+        return _receipt_with_canary_status(receipt, "authority_unavailable")
+
+
+def _receipt_with_canary_status(
+    receipt: RouteDecisionReceipt,
+    status: str,
+) -> RouteDecisionReceipt:
+    candidate = replace(
+        receipt,
+        receipt_id="",
+        rationale_codes=(
+            *receipt.rationale_codes,
+            f"verified_route_canary_{_safe_code(status)}",
+        ),
+    )
+    payload = candidate.payload()
+    payload.pop("receipt_id", None)
+    return replace(
+        candidate,
+        receipt_id=f"route-{_sha256_text(_canonical_json(payload))[:32]}",
+    )
+
+
+def _receipt_with_canary_decision(
+    receipt: RouteDecisionReceipt,
+    decision_payload: Mapping[str, object],
+) -> RouteDecisionReceipt:
+    from .route_canary import CanaryRouteDecision
+
+    decision = CanaryRouteDecision.from_payload(decision_payload)
+    if (
+        decision.baseline_route != receipt.route
+        or decision.route_receipt_id != receipt.receipt_id
+        or decision.route_receipt_sha256
+        != _sha256_text(_canonical_json(receipt.payload()))
+    ):
+        raise AssistantBridgeError(
+            "Verified route canary does not match the guarded baseline route."
+        )
+    route = decision.effective_route
+    expected_flow = {
+        "local": ("local", "verify", "stop"),
+        "local_then_verify": (
+            "local",
+            "verify",
+            "stop_or_capsule",
+            "premium",
+            "verify",
+        ),
+        "premium": ("capsule", "premium", "verify"),
+    }[route]
+    premium_provider = (
+        receipt.premium_provider
+        if route in {"local_then_verify", "premium"}
+        else None
+    )
+    rationale_codes = (
+        *receipt.rationale_codes,
+        (
+            "verified_route_canary_applied"
+            if decision.applied
+            else "verified_route_canary_baseline_retained"
+        ),
+    )
+    payload = receipt.payload()
+    payload.pop("receipt_id", None)
+    payload.update(
+        {
+            "route": route,
+            "premium_provider": premium_provider,
+            "rationale_codes": list(rationale_codes),
+            "expected_flow": list(expected_flow),
+            "route_canary": decision.payload(),
+        }
+    )
+    return replace(
+        receipt,
+        receipt_id=f"route-{_sha256_text(_canonical_json(payload))[:32]}",
+        route=route,
+        premium_provider=premium_provider,
+        rationale_codes=rationale_codes,
+        expected_flow=expected_flow,
+        route_canary=decision.payload(),
     )
 
 

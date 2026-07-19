@@ -128,6 +128,81 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertNotIn("Configured Materializer", json.dumps(descriptor))
         self.assertNotIn("configured@localhost", json.dumps(descriptor))
 
+    def test_verified_routing_runtime_is_disabled_and_unloaded_by_default(self) -> None:
+        reference = self.config.verified_routing
+
+        self.assertFalse(reference.enabled)
+        self.assertIsNone(reference.config_sha256)
+        self.assertNotIn(
+            "verified-routing-runtime.example.json",
+            json.dumps(reference.effective_descriptor()),
+        )
+
+    def test_enabled_verified_routing_runtime_is_content_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "configs"
+            config_dir.mkdir()
+            bridge = json.loads(
+                (ROOT / "configs" / "assistant-bridge.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            bridge["verified_routing"] = {
+                "enabled": True,
+                "config_path": "configs/verified-routing-runtime.json",
+            }
+            runtime_path = config_dir / "verified-routing-runtime.json"
+            runtime = {
+                "schema_version": "1.0",
+                "mode": "canary",
+                "route_policy_path": "configs/policy.json",
+                "scorecard_path": "work/scorecard.json",
+                "manifest_path": "work/manifest.json",
+                "authorization_path": "work/authorization.json",
+                "operator_key_id": "operator-test",
+                "operator_public_key_path": "work/operator-public.pem",
+                "operator_public_key_sha256": "a" * 64,
+                "assignment_secret_env": "MYMOE_CANARY_SECRET_ONE",
+                "chronology_path": "work/chronology.json",
+            }
+            runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+            bridge_path = config_dir / "assistant-bridge.json"
+            bridge_path.write_text(json.dumps(bridge), encoding="utf-8")
+
+            first = load_assistant_bridge_config(bridge_path)
+            runtime["assignment_secret_env"] = "MYMOE_CANARY_SECRET_TWO"
+            runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+            second = load_assistant_bridge_config(bridge_path)
+
+        self.assertTrue(first.verified_routing.enabled)
+        self.assertEqual(len(first.verified_routing.config_sha256 or ""), 64)
+        self.assertNotEqual(
+            first.verified_routing.config_sha256,
+            second.verified_routing.config_sha256,
+        )
+        self.assertNotEqual(first.source_sha256, second.source_sha256)
+
+    def test_verified_routing_runtime_reference_is_strict(self) -> None:
+        for value, message in (
+            ({"enabled": True, "config_path": ""}, "config_path"),
+            (
+                {"enabled": False, "config_path": "", "unexpected": True},
+                "Unknown verified_routing",
+            ),
+        ):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                raw = json.loads(
+                    (ROOT / "configs" / "assistant-bridge.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                raw["verified_routing"] = value
+                path = Path(tmp) / "assistant-bridge.json"
+                path.write_text(json.dumps(raw), encoding="utf-8")
+                with self.assertRaisesRegex(AssistantBridgeError, message):
+                    load_assistant_bridge_config(path)
+
     def test_loads_task_and_strict_evidence_contract_fixtures(self) -> None:
         task = load_assistant_task(
             ROOT / "tests" / "fixtures" / "assistant-bridge.task.json"

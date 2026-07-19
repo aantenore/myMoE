@@ -29,14 +29,18 @@ escalate only under explicit policy.**
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
 | Model lifecycle, diagnostics, and guarded fallbacks | Operators can see what is ready and recover from an unavailable expert through an explicit policy. |
 | Optional Hybrid Assistant Bridge | Local execution and mechanical checks can stop a task early; a premium assistant is considered only when capability, privacy, evidence, and budget rules allow it. |
-| Verified Outcome Routing Lab | Routing changes can be compared against final verification evidence offline before an operator activates a new policy. |
+| Signed Route Canary Authority | After real tests pass and an operator approves it, myMoE can try a cheaper or fully local route for requests selected by a small, repeatable sampling rule and stop the trial through one setting. |
 
 > **Maturity and limits:** myMoE is an alpha workstation runtime and evaluation
 > harness, not a hosted multi-tenant service or an unrestricted autonomous agent.
 > Current results apply only to the documented hardware, models, profiles, and
 > workloads; they do not prove that routing always beats one strong model.
-> Automatic specialist cold-loading and automatic live routing-policy activation
-> are not implemented.
+> Automatic specialist cold-loading and automatic broad routing-policy
+> activation are not implemented. The optional signed canary path is disabled
+> by default, short-lived, and limited to at most 500 of 10,000 deterministic
+> assignment buckets. That threshold samples hash space; it is not a hard quota
+> on observed requests. Any authority or evidence failure retains the guarded
+> baseline.
 
 ## Technical overview
 
@@ -57,9 +61,15 @@ another model gateway.
 The Verified Outcome Routing Lab can then link each content-free route receipt
 to final verification and operational metrics, build a versioned scorecard,
 and replay alternative efficiency profiles offline. Its paired promotion gate
-can emit a short-lived, structural-eligibility canary manifest from preregistered,
-disjoint evidence. No manifest is consumed by the runtime in the current
-release, so the lab still never changes a live route.
+can emit a short-lived, structural-eligibility manifest from preregistered,
+disjoint evidence. The optional Signed Route Canary Authority consumes that
+manifest only after an operator signs an activation bound to the stable bridge
+configuration, route policy, scorecard, pinned public key, size, and expiry.
+Assignment is deterministic and secret-keyed; only monotone transitions toward
+less premium use can apply. The shipped profile keeps this path disabled and
+the repository ships no empirical manifest or activation. Its configured basis
+points select assignment buckets, not a guaranteed percentage of live traffic:
+repeated or uneven task fingerprints can produce a different observed share.
 
 ![myMoE chat-first interface](docs/screenshots/dashboard.png)
 
@@ -174,6 +184,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/assistant-bridge-workflow.example.json`](configs/assistant-bridge-workflow.example.json) | Example external durable-state paths and public-only independent verification policy for the two-phase stage/resume lifecycle. |
 | [`configs/verified-routing-policy.example.json`](configs/verified-routing-policy.example.json) | Shadow profile weights, quality floors, evidence counts, confidence thresholds, and normalization scales. |
 | [`configs/verified-routing-promotion.example.json`](configs/verified-routing-promotion.example.json) | Paired holdout size, statistical confidence, monotone transition, latency, cost-evidence, canary-size, and expiry guardrails. |
+| [`configs/verified-routing-runtime.example.json`](configs/verified-routing-runtime.example.json) | Disabled-by-default canary artifact and chronology paths, pinned operator public key, and environment-secret name for deterministic hash-bucket assignment. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
@@ -215,7 +226,7 @@ Start with the [documentation hub](docs/README.md).
 - [UI and CLI](docs/ui.md) — user workflows, HTTP endpoints, and screenshots.
 - [Agent Runtime](docs/agent-runtime.md) — tools, approvals, MCP, cron, plugins, and diagnostics.
 - [Hybrid Assistant Bridge](docs/hybrid-assistant-bridge.md) — local verification, premium escalation capsules, profiles, and CLI usage.
-- [Verified Outcome Routing Lab](docs/verified-outcome-routing.md) — content-free outcome lineage, scorecards, shadow recommendations, preregistered paired qualification, and structural-eligibility canary manifests.
+- [Verified Outcome Routing and Signed Canary Authority](docs/verified-outcome-routing.md) — content-free outcome lineage, paired qualification, operator-signed activation, deterministic hash-bucket sampling, and fail-closed rollback.
 - [Evaluation](docs/evaluation.md) — evaluation contracts and release evidence.
 
 ## Verification
@@ -238,9 +249,14 @@ only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant
 service, or an unrestricted autonomous agent platform. Automatic specialist
 cold-loading and automatic durable compaction are not implemented; both remain
-explicit operator decisions. Verified Outcome Routing remains observational at
-runtime: the offline paired gate can produce an eligibility manifest, but there
-is no online learning, exploration, or automatic activation.
+explicit operator decisions. Verified Outcome Routing does not learn or explore
+online and cannot activate a broad policy automatically. Its optional runtime
+authority can apply only an operator-signed, short-lived canary for an exact
+qualified cell and only when that moves toward less premium use. Eligibility is
+limited to at most 500 of 10,000 secret-keyed assignment buckets; this is a
+deterministic sampling threshold, not an observed-traffic quota. It is disabled
+by default, fails closed to the baseline, and ships without an empirical canary
+manifest.
 
 ## License
 

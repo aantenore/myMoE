@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from local_moe.route_canary import CanaryRouteDecision
 from local_moe.route_outcomes import (
     OutcomeStore,
     VerifiedOutcomeRecord,
@@ -13,7 +14,7 @@ from local_moe.route_outcomes import (
     runtime_plan_sha256,
 )
 from local_moe.route_scorecard import build_route_scorecard
-from local_moe.route_signals import TaskSignals
+from local_moe.route_signals import MetadataTaskSignalProvider, TaskSignals
 from local_moe.verified_routing_contracts import (
     VerifiedRoutingError,
     canonical_json,
@@ -108,6 +109,88 @@ class RouteOutcomeTests(unittest.TestCase):
             first.provider_runtime_sha256,
             second.provider_runtime_sha256,
         )
+
+    def test_canary_lineage_is_persisted_without_breaking_legacy_records(self) -> None:
+        metadata = _bridge_metadata(evidence=[_evidence("check-a", passed=True)])
+        receipt = metadata["route_receipt"]
+        receipt["expected_flow"] = [
+            "local",
+            "verify",
+            "stop_or_capsule",
+            "premium",
+            "verify",
+        ]
+        unsigned_baseline = dict(receipt)
+        unsigned_baseline.pop("receipt_id")
+        receipt["receipt_id"] = f"route-{sha256_json(unsigned_baseline)[:32]}"
+        baseline_receipt_id = receipt["receipt_id"]
+        baseline_receipt_sha256 = sha256_json(receipt)
+        canary_signals = MetadataTaskSignalProvider().signals_from_metadata(
+            receipt["task"]
+        )
+        decision = CanaryRouteDecision(
+            task_fingerprint=_DIGEST_A,
+            profile="balanced",
+            capabilities=("code", "tests"),
+            difficulty=canary_signals.difficulty,
+            baseline_route="local_then_verify",
+            effective_route="local_then_verify",
+            shadow_recommended_route="local",
+            applied=False,
+            abstained=True,
+            reason_codes=("outside_canary_cohort",),
+            route_receipt_id=baseline_receipt_id,
+            route_receipt_sha256=baseline_receipt_sha256,
+            runtime_plan_sha256=_RUNTIME_PLAN_SHA256,
+            signal_provider_config_sha256=(
+                canary_signals.provider_config_sha256
+            ),
+            shadow_decision_sha256=_DIGEST_E,
+            policy_digest=_DIGEST_A,
+            scorecard_digest=_DIGEST_B,
+            bridge_config_sha256=_DIGEST_C,
+            manifest_sha256=_DIGEST_D,
+            authorization_sha256=_DIGEST_E,
+            operator_key_id="operator-a",
+            assignment_bucket=700,
+            canary_basis_points=500,
+        )
+        receipt["rationale_codes"].append(
+            "verified_route_canary_baseline_retained"
+        )
+        receipt["route_canary"] = decision.payload()
+        unsigned_current = dict(receipt)
+        unsigned_current.pop("receipt_id")
+        receipt["receipt_id"] = f"route-{sha256_json(unsigned_current)[:32]}"
+
+        record = build_verified_outcome(
+            metadata,
+            canary_signals,
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        self.assertEqual(
+            record.route_canary["decision_sha256"],
+            decision.decision_sha256,
+        )
+        self.assertEqual(VerifiedOutcomeRecord.from_payload(record.payload()), record)
+
+        transplanted = record.payload()
+        transplanted["task_fingerprint"] = _DIGEST_F
+        unsigned_transplanted = dict(transplanted)
+        unsigned_transplanted.pop("record_id")
+        transplanted["record_id"] = (
+            f"outcome-{sha256_json(unsigned_transplanted)}"
+        )
+        with self.assertRaisesRegex(
+            VerifiedRoutingError,
+            "route canary binding",
+        ):
+            VerifiedOutcomeRecord.from_payload(transplanted)
+
+        self.assertNotIn("route_canary", _bridge_metadata(evidence=[])["route_receipt"])
+        with self.assertRaises(TypeError):
+            record.route_canary["reason_codes"][0] = "tampered"  # type: ignore[index]
 
     def test_failed_evidence_wins_and_external_evidence_is_independent(self) -> None:
         metadata = _bridge_metadata(

@@ -67,6 +67,15 @@ Build a local-first MoE in stages, validating each stage before adding complexit
 - [x] Generate route-label dataset with curated teacher labels.
 - [x] Train and enable a distilled local router artifact.
 - [x] Expand route evals and distilled labels to 50+ multilingual cases.
+- [x] Add content-free Verified Outcome Routing scorecards, shadow replay, and
+  preregistered paired promotion contracts.
+- [x] Add a disabled-by-default Signed Route Canary Authority with pinned
+  operator authorization, a threshold of at most 500 of 10,000 deterministic
+  assignment buckets, less-premium-only transitions, durable local chronology,
+  and a configuration kill switch. The bucket threshold is not a live-traffic
+  quota.
+- [ ] Produce a real disjoint paired Assistant Bridge holdout before installing
+  any empirical canary manifest or claiming live savings.
 
 ## Milestones
 
@@ -82,11 +91,13 @@ Status: complete with Qwen2.5-Coder-1.5B Q4_K_M smoke model.
 
 Run one local model server as the `coder`, `single`, or `general` expert. Synthetic experts remain only inside deterministic fixture tests.
 
-### M2: Two Resident Experts Plus Cold Specialists
+### M2: Two Resident Experts; Cold Specialists Deferred
 
-Status: complete for the default 24 GiB profile.
+Status: the two-resident-expert topology is complete for the default 24 GiB
+profile. Automatic specialist cold-loading is not implemented.
 
-Run the two measured resident experts on separate ports and cold-load larger specialists only when needed:
+Run the two measured resident experts on separate ports and keep larger
+specialists as explicit operator-selected profiles:
 
 - `primary-general`: Qwen3 4B MLX 4-bit.
 - `fallback-compaction`: Qwen3 1.7B MLX 4-bit.
