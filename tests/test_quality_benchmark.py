@@ -8,6 +8,7 @@ import threading
 import unittest
 from unittest import mock
 
+from local_moe import quality_benchmark
 from local_moe.config import ExpertConfig, MoEConfig, RoutingConfig, load_config
 from local_moe.orchestrator import LocalMoE
 from local_moe.quality_benchmark import (
@@ -43,6 +44,13 @@ class _Response:
 
 
 class QualityBenchmarkTests(unittest.TestCase):
+    def test_metric_aggregation_is_stable_across_supported_python_versions(
+        self,
+    ) -> None:
+        values = [1.0] * 21 + [0.55] * 3
+
+        self.assertEqual(quality_benchmark._mean(values), 0.9437)
+
     def test_loads_manifest_and_cases(self) -> None:
         spec = load_benchmark_spec("configs/quality-benchmark.json")
         cases = load_benchmark_cases(spec.dataset_path)

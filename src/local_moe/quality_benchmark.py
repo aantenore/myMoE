@@ -477,7 +477,7 @@ def summarize_records(
             "task_success_rate": round(sum(task_scores) / max(total, 1), 4),
             "task_success_rate_ci95": _wilson_interval(int(sum(task_scores)), total),
             "quality_pass_rate": round(sum(quality_passes) / max(total, 1), 4),
-            "quality_score": round(sum(quality_scores) / max(total, 1), 4),
+            "quality_score": round(math.fsum(quality_scores) / max(total, 1), 4),
             "non_general_route_rate": round(
                 sum(non_general_routes) / max(total, 1), 4
             ),
@@ -1857,7 +1857,10 @@ def _group_metrics(items: list[dict[str, Any]], key: str) -> dict[str, Any]:
                 4,
             ),
             "quality_score": round(
-                sum(float(item["quality_judgment"]["score"]) for item in group_items)
+                math.fsum(
+                    float(item["quality_judgment"]["score"])
+                    for item in group_items
+                )
                 / len(group_items),
                 4,
             ),
@@ -1968,7 +1971,7 @@ def _is_truncation_finish_reason(reason: Any) -> bool:
 def _mean(values: list[float]) -> float | None:
     if not values:
         return None
-    return round(sum(values) / len(values), 4)
+    return round(math.fsum(values) / len(values), 4)
 
 
 def _median(values: list[float]) -> float | None:
