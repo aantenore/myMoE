@@ -55,8 +55,9 @@ decision-to-verification loop while retaining its local-first authority model.
 
 The built-in provider uses only fields already present in the route receipt:
 capability identifiers, tool count, risk class, objective length, constraint
-count, and an optional context-token estimate. It never stores or classifies
-the objective text. The provider emits:
+count, and a deterministic context-token estimate derived from objective
+length. The decision path does not accept an unattested context override. It
+never stores or classifies the objective text. The provider emits:
 
 - a request fingerprint;
 - declared capabilities;
@@ -73,7 +74,8 @@ routes admitted by myMoE's hard guards.
 Each append-only record binds:
 
 - the route receipt and task fingerprints;
-- configuration and provider-runtime digests;
+- bridge configuration, signal-provider configuration, selected-runtime, and
+  complete runtime-plan digests;
 - planned route and final provider identifiers;
 - capability/difficulty signals and confidence;
 - verification status, evidence strength, evidence digest, and failure class;
@@ -85,23 +87,30 @@ versioned pricing contract or a measured amount.
 
 ### `RouteScorecard`
 
-The builder aggregates compatible records by configuration digest, route plan,
-the exact canonical capability set, and difficulty. Marginal evidence for
-`analysis` and `code` cannot be combined into evidence for an
-`analysis + code` request. Each cell contains sample counts, verified success,
-p95 latency, mean tokens, premium calls, remote payload, and cost when complete.
-Abstained signals are always excluded, and the artifact records the configured
-minimum confidence used to exclude weak signals. The artifact also binds its
-source digest and freshness window. Mixed configuration cohorts, stale
-artifacts, non-finite metrics, and insufficient evidence fail closed.
+The builder aggregates compatible records by bridge configuration digest,
+signal-provider configuration digest, the complete local-plus-premium runtime
+plan digest, route plan, the exact canonical capability set, and difficulty.
+Marginal evidence for `analysis` and `code` cannot be combined into evidence
+for an `analysis + code` request. Evidence gathered under different signal
+rules or runtime plans also remains in separate cells. Each cell contains
+sample counts, verified success, p95 latency, mean tokens, premium calls,
+remote payload, and cost when complete. Abstained signals are always excluded,
+and the artifact records the configured minimum confidence used to exclude
+weak signals. The artifact also binds its source digest and freshness window.
+Mixed cohorts, stale artifacts, non-finite metrics, and insufficient evidence
+fail closed.
 
 ### `ShadowRouteDecision`
 
 The shadow selector receives the current receipt, its hard-eligible routes,
 signals, a scorecard, and a replaceable profile policy. It reports the current
 route, recommendation, candidate exclusions, normalized utility components,
-policy digest, and scorecard digest. `applied` is always `false` in contract
-version 1.
+policy digest, and scorecard digest. The decision also binds the complete route
+receipt, runtime plan, task fingerprint, content-addressed signal artifact, and
+its own decision digest. Signal files are re-derived through the configured
+provider before lookup, so recomputing a digest after changing a difficulty or
+confidence value does not bypass the provider contract. `applied` is always
+`false` in contract version 1.
 
 ## Run the Shadow Loop
 

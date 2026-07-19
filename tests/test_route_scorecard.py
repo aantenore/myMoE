@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
 
 from local_moe.route_scorecard import (
+    RouteScorecard,
+    RouteScorecardEntry,
     RouteScorecardFreshnessError,
     build_route_scorecard,
     load_route_scorecard,
@@ -16,6 +19,12 @@ from local_moe.verified_routing_contracts import sha256_json
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG_SHA256 = "1" * 64
+SIGNAL_PROVIDER_CONFIG_SHA256 = (
+    "1e70396396e4f5f19552bbb04d938c7d3c7c5d490fb1a7220c528049f7ceb09c"
+)
+RUNTIME_PLAN_SHA256 = (
+    "5c3dfe530447050655c4b563df4baf261d32f1ef5564668800a0b3887fd558cd"
+)
 
 
 class RouteScorecardTests(unittest.TestCase):
@@ -76,12 +85,16 @@ class RouteScorecardTests(unittest.TestCase):
 
         empty = scorecard.conservative_entry(
             config_sha256=CONFIG_SHA256,
+            signal_provider_config_sha256=SIGNAL_PROVIDER_CONFIG_SHA256,
+            runtime_plan_sha256=RUNTIME_PLAN_SHA256,
             route="local",
             capabilities=(),
             difficulty="medium",
         )
         combined = scorecard.conservative_entry(
             config_sha256=CONFIG_SHA256,
+            signal_provider_config_sha256=SIGNAL_PROVIDER_CONFIG_SHA256,
+            runtime_plan_sha256=RUNTIME_PLAN_SHA256,
             route="local",
             capabilities=("analysis", "code"),
             difficulty="medium",
@@ -106,12 +119,16 @@ class RouteScorecardTests(unittest.TestCase):
 
         combined = scorecard.conservative_entry(
             config_sha256=CONFIG_SHA256,
+            signal_provider_config_sha256=SIGNAL_PROVIDER_CONFIG_SHA256,
+            runtime_plan_sha256=RUNTIME_PLAN_SHA256,
             route="local",
             capabilities=("analysis", "code"),
             difficulty="medium",
         )
         literal_plus = scorecard.conservative_entry(
             config_sha256=CONFIG_SHA256,
+            signal_provider_config_sha256=SIGNAL_PROVIDER_CONFIG_SHA256,
+            runtime_plan_sha256=RUNTIME_PLAN_SHA256,
             route="local",
             capabilities=("analysis+code",),
             difficulty="medium",
@@ -120,6 +137,39 @@ class RouteScorecardTests(unittest.TestCase):
         self.assertIsNone(combined)
         self.assertIsNotNone(literal_plus)
         self.assertEqual(literal_plus.capabilities, ("analysis+code",))
+
+    def test_signal_provider_and_runtime_plan_digests_are_exact_cohorts(self) -> None:
+        alternate_provider = "8" * 64
+        alternate_runtime_plan = "9" * 64
+        scorecard = build_route_scorecard(
+            [
+                _record("base"),
+                _record(
+                    "provider-change",
+                    signal_provider_config_sha256=alternate_provider,
+                ),
+                _record(
+                    "runtime-change",
+                    runtime_plan_sha256=alternate_runtime_plan,
+                ),
+            ],
+            generated_at="2026-07-19T00:00:00+00:00",
+        )
+
+        missing_cross_cohort = scorecard.conservative_entry(
+            config_sha256=CONFIG_SHA256,
+            signal_provider_config_sha256=alternate_provider,
+            runtime_plan_sha256=alternate_runtime_plan,
+            route="local",
+            capabilities=("analysis",),
+            difficulty="medium",
+        )
+
+        self.assertEqual(len(scorecard.entries), 3)
+        self.assertTrue(
+            all(entry.verified_samples == 1 for entry in scorecard.entries)
+        )
+        self.assertIsNone(missing_cross_cohort)
 
     def test_abstained_and_low_confidence_records_are_excluded(self) -> None:
         accepted = _record("accepted", confidence=0.7)
@@ -156,6 +206,14 @@ class RouteScorecardTests(unittest.TestCase):
         self.assertEqual(scorecard.minimum_confidence, 0.7)
         self.assertEqual(len(scorecard.entries), 3)
         self.assertEqual(scorecard.entries[0].capabilities, ("analysis",))
+        self.assertEqual(
+            scorecard.entries[0].signal_provider_config_sha256,
+            SIGNAL_PROVIDER_CONFIG_SHA256,
+        )
+        self.assertEqual(
+            scorecard.entries[0].runtime_plan_sha256,
+            RUNTIME_PLAN_SHA256,
+        )
 
         tampered = scorecard.payload()
         tampered["entries"][0]["success_rate"] = 1.0
@@ -164,6 +222,43 @@ class RouteScorecardTests(unittest.TestCase):
                 tampered,
                 now="2026-07-20T00:00:00+00:00",
             )
+
+    def test_direct_constructors_enforce_semantics_digest_and_immutability(self) -> None:
+        scorecard = load_route_scorecard(
+            FIXTURES / "verified-routing-scorecard.json",
+            now="2026-07-20T00:00:00+00:00",
+        )
+        entry = scorecard.entries[0]
+
+        with self.assertRaises(VerifiedRoutingError):
+            replace(entry, success_rate=2.0)
+        with self.assertRaises(VerifiedRoutingError):
+            replace(entry, verified_samples=-1)
+        with self.assertRaises(VerifiedRoutingError):
+            replace(entry, cost_sample_count=0, mean_cost_usd=1.0)
+        canonical = replace(entry, capabilities=["code", "analysis"])
+        self.assertEqual(canonical.capabilities, ("analysis", "code"))
+        self.assertIsInstance(canonical.capabilities, tuple)
+
+        with self.assertRaisesRegex(VerifiedRoutingError, "digest"):
+            replace(scorecard, digest="0" * 64)
+        with self.assertRaisesRegex(VerifiedRoutingError, "RouteScorecardEntry"):
+            replace(scorecard, entries=[object()])
+        with self.assertRaisesRegex(VerifiedRoutingError, "after generated_at"):
+            replace(scorecard, expires_at=scorecard.generated_at)
+        reconstructed = RouteScorecard(
+            generated_at=scorecard.generated_at,
+            expires_at=scorecard.expires_at,
+            minimum_evidence_strength=scorecard.minimum_evidence_strength,
+            minimum_confidence=scorecard.minimum_confidence,
+            source_digest=scorecard.source_digest,
+            entries=list(scorecard.entries),
+            digest=scorecard.digest,
+        )
+        self.assertIsInstance(reconstructed.entries, tuple)
+        self.assertTrue(
+            all(isinstance(item, RouteScorecardEntry) for item in reconstructed.entries)
+        )
 
     def test_loader_rejects_expired_future_and_over_age_scorecards(self) -> None:
         path = FIXTURES / "verified-routing-scorecard.json"
@@ -206,10 +301,14 @@ def _record(
     estimated_cost_usd: float | None = 0.0,
     confidence: float = 0.9,
     abstained: bool = False,
+    signal_provider_config_sha256: str = SIGNAL_PROVIDER_CONFIG_SHA256,
+    runtime_plan_sha256: str = RUNTIME_PLAN_SHA256,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "schema_version": "1.0",
         "config_sha256": CONFIG_SHA256,
+        "signal_provider_config_sha256": signal_provider_config_sha256,
+        "runtime_plan_sha256": runtime_plan_sha256,
         "route_receipt_id": f"receipt-{record_id}",
         "route_receipt_sha256": "2" * 64,
         "task_fingerprint": "3" * 64,

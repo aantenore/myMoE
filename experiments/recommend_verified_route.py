@@ -91,6 +91,8 @@ def _receipt_view(raw: dict[str, object]) -> SimpleNamespace:
     if not isinstance(task, dict):
         raise VerifiedRoutingError("Route receipt task must be an object.")
     return SimpleNamespace(
+        raw_payload=dict(raw),
+        receipt_id=raw.get("receipt_id"),
         config_sha256=require_sha256(raw["config_sha256"], "config_sha256"),
         local_gaps=_string_tuple(raw["local_gaps"], "local_gaps"),
         premium_call_budget=require_non_negative_int(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
@@ -7,6 +8,8 @@ from pathlib import Path
 import re
 import threading
 from typing import Any, Mapping
+
+from filelock import FileLock, Timeout
 
 from .route_signals import TaskSignals
 from .verified_routing_contracts import (
@@ -37,6 +40,8 @@ _RECORD_FIELDS = {
     "route_receipt_sha256",
     "task_fingerprint",
     "config_sha256",
+    "signal_provider_config_sha256",
+    "runtime_plan_sha256",
     "profile",
     "planned_route",
     "final_provider",
@@ -148,6 +153,7 @@ _CAPSULE_FIELDS = {
     "content_in_metadata",
 }
 _OUTCOME_ID = re.compile(r"^outcome-[0-9a-f]{64}$")
+_OUTCOME_STORE_LOCK_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -159,6 +165,8 @@ class VerifiedOutcomeRecord:
     route_receipt_sha256: str
     task_fingerprint: str
     config_sha256: str
+    signal_provider_config_sha256: str
+    runtime_plan_sha256: str
     profile: str
     planned_route: str
     final_provider: str | None
@@ -190,6 +198,11 @@ class VerifiedOutcomeRecord:
         require_sha256(self.route_receipt_sha256, "route_receipt_sha256")
         require_sha256(self.task_fingerprint, "task_fingerprint")
         require_sha256(self.config_sha256, "config_sha256")
+        require_sha256(
+            self.signal_provider_config_sha256,
+            "signal_provider_config_sha256",
+        )
+        require_sha256(self.runtime_plan_sha256, "runtime_plan_sha256")
         require_safe_id(self.profile, "profile")
         if self.planned_route not in ROUTE_PLANS:
             raise VerifiedRoutingError("planned_route is unsupported.")
@@ -268,6 +281,8 @@ class VerifiedOutcomeRecord:
             "route_receipt_sha256": self.route_receipt_sha256,
             "task_fingerprint": self.task_fingerprint,
             "config_sha256": self.config_sha256,
+            "signal_provider_config_sha256": self.signal_provider_config_sha256,
+            "runtime_plan_sha256": self.runtime_plan_sha256,
             "profile": self.profile,
             "planned_route": self.planned_route,
             "final_provider": self.final_provider,
@@ -330,6 +345,7 @@ def build_verified_outcome(
     if planned_route not in ROUTE_PLANS:
         raise VerifiedRoutingError("Only executable route plans can record outcomes.")
     config_sha256 = require_sha256(receipt["config_sha256"], "config_sha256")
+    runtime_plan_digest = runtime_plan_sha256(receipt)
 
     task = _mapping(receipt["task"], "route task")
     _require_exact_fields(task, _TASK_FIELDS, "route task")
@@ -428,6 +444,8 @@ def build_verified_outcome(
         "route_receipt_sha256": sha256_json(receipt),
         "task_fingerprint": task_fingerprint,
         "config_sha256": config_sha256,
+        "signal_provider_config_sha256": signal.provider_config_sha256,
+        "runtime_plan_sha256": runtime_plan_digest,
         "profile": profile,
         "planned_route": planned_route,
         "final_provider": final_provider,
@@ -457,18 +475,37 @@ def build_verified_outcome(
 class OutcomeStore:
     """Fail-closed append-only JSONL storage for metadata-only outcomes."""
 
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        lock_timeout_seconds: float = _OUTCOME_STORE_LOCK_TIMEOUT_SECONDS,
+    ):
         self.path = Path(path).expanduser()
-        self._lock = threading.Lock()
+        timeout = require_finite_number(
+            lock_timeout_seconds,
+            "outcome store lock_timeout_seconds",
+            minimum=0.0,
+        )
+        if timeout == 0.0:
+            raise VerifiedRoutingError(
+                "outcome store lock_timeout_seconds must be positive."
+            )
+        self.lock_timeout_seconds = timeout
+        self.lock_path = self.path.with_name(f"{self.path.name}.lock")
+        self._thread_lock = threading.Lock()
+        self._process_lock = FileLock(
+            str(self.lock_path),
+            timeout=self.lock_timeout_seconds,
+        )
 
     def append(self, record: VerifiedOutcomeRecord) -> bool:
         if not isinstance(record, VerifiedOutcomeRecord):
             raise TypeError("record must be a VerifiedOutcomeRecord.")
-        with self._lock:
+        with self._locked():
             existing = self._read_unlocked()
             if any(item.record_id == record.record_id for item in existing):
                 return False
-            self.path.parent.mkdir(parents=True, exist_ok=True)
             encoded = (canonical_json(record.payload()) + "\n").encode("utf-8")
             descriptor = os.open(
                 self.path,
@@ -488,11 +525,35 @@ class OutcomeStore:
         return True
 
     def list_records(self) -> tuple[VerifiedOutcomeRecord, ...]:
-        with self._lock:
+        with self._locked():
             return self._read_unlocked()
 
     def read_records(self) -> tuple[VerifiedOutcomeRecord, ...]:
         return self.list_records()
+
+    @contextmanager
+    def _locked(self):
+        with self._thread_lock:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._process_lock.acquire(timeout=self.lock_timeout_seconds)
+            except Timeout as exc:
+                raise VerifiedRoutingError(
+                    "Outcome store lock acquisition timed out."
+                ) from exc
+            except OSError as exc:
+                raise VerifiedRoutingError(
+                    "Outcome store lock acquisition failed."
+                ) from exc
+            try:
+                yield
+            finally:
+                try:
+                    self._process_lock.release()
+                except OSError as exc:
+                    raise VerifiedRoutingError(
+                        "Outcome store lock release failed."
+                    ) from exc
 
     def _read_unlocked(self) -> tuple[VerifiedOutcomeRecord, ...]:
         if not self.path.exists():
@@ -615,6 +676,27 @@ def _validate_evidence_list(
     return parsed
 
 
+def runtime_plan_sha256(receipt: Mapping[str, object] | object) -> str:
+    """Digest the complete attested local and premium runtime plan."""
+
+    if isinstance(receipt, Mapping):
+        local_raw = receipt.get("local_runtime")
+        premium_raw = receipt.get("premium_runtime")
+    else:
+        local_raw = getattr(receipt, "local_runtime", None)
+        premium_raw = getattr(receipt, "premium_runtime", None)
+    local_runtime = _validated_runtime_descriptor(local_raw, "local runtime")
+    premium_runtime = _validated_runtime_descriptor(
+        premium_raw, "premium runtime"
+    )
+    return sha256_json(
+        {
+            "local_runtime": local_runtime,
+            "premium_runtime": premium_runtime,
+        }
+    )
+
+
 def _selected_runtime(
     receipt: dict[str, Any], final_provider: str | None
 ) -> tuple[str | None, str | None]:
@@ -625,21 +707,30 @@ def _selected_runtime(
     if premium_provider is not None:
         premium_provider = require_safe_id(premium_provider, "premium_provider")
     if final_provider == local_provider:
-        runtime = _mapping(receipt["local_runtime"], "local runtime")
+        runtime = _validated_runtime_descriptor(
+            receipt["local_runtime"], "local runtime"
+        )
     elif final_provider == premium_provider:
-        runtime = _mapping(receipt["premium_runtime"], "premium runtime")
+        runtime = _validated_runtime_descriptor(
+            receipt["premium_runtime"], "premium runtime"
+        )
     else:
         raise VerifiedRoutingError("final_provider is not bound to the route receipt.")
-    runtime_sha256 = runtime.get("runtime_sha256")
     model = runtime.get("model")
-    if runtime_sha256 is None:
-        return None, require_safe_id(model, "runtime model") if model else None
-    digest = require_sha256(runtime_sha256, "provider_runtime_sha256")
+    digest = require_sha256(
+        runtime["runtime_sha256"], "provider_runtime_sha256"
+    )
+    return digest, require_safe_id(model, "runtime model") if model else None
+
+
+def _validated_runtime_descriptor(value: object, label: str) -> dict[str, Any]:
+    runtime = _mapping(value, label)
+    digest = require_sha256(runtime.get("runtime_sha256"), f"{label} digest")
     unsigned = dict(runtime)
     unsigned.pop("runtime_sha256", None)
     if sha256_json(unsigned) != digest:
-        raise VerifiedRoutingError("Provider runtime digest is invalid.")
-    return digest, require_safe_id(model, "runtime model") if model else None
+        raise VerifiedRoutingError(f"{label} digest is invalid.")
+    return runtime
 
 
 def _optional_non_negative_int(value: object, label: str) -> int:

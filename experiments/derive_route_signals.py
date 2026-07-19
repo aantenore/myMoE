@@ -19,7 +19,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--bridge-metadata",
         help="BridgeRunResult.metadata_payload JSON path.",
     )
-    parser.add_argument("--context-tokens", type=int)
     parser.add_argument("--out", required=True, help="Destination TaskSignals JSON path.")
     args = parser.parse_args(argv)
 
@@ -33,10 +32,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
     else:
         receipt = raw
-    signals = signals_from_route_receipt(
-        receipt,
-        context_tokens=args.context_tokens,
-    )
+    signals = signals_from_route_receipt(receipt)
     payload = signals.payload()
     destination = Path(args.out)
     destination.parent.mkdir(parents=True, exist_ok=True)

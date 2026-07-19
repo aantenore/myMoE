@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .verified_routing_contracts import (
@@ -14,6 +14,7 @@ from .verified_routing_contracts import (
     require_non_negative_int,
     require_safe_id,
     require_sha256,
+    sha256_json,
 )
 
 
@@ -26,8 +27,10 @@ _SIGNAL_FIELDS = {
     "contract",
     "difficulty",
     "objective_chars",
+    "provider_config_sha256",
     "request_fingerprint",
     "schema_version",
+    "signals_sha256",
     "source",
     "tool_count",
 }
@@ -79,6 +82,8 @@ class TaskSignals:
     context_tokens: int = 0
     constraint_count: int = 0
     tool_count: int = 0
+    provider_config_sha256: str = ""
+    signals_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -108,6 +113,18 @@ class TaskSignals:
         if not isinstance(self.abstained, bool):
             raise VerifiedRoutingError("abstained must be boolean.")
         object.__setattr__(self, "source", _safe_string(self.source, "source"))
+        provider_config_sha256 = self.provider_config_sha256 or sha256_json(
+            {
+                "schema_version": CONTRACT_VERSION,
+                "contract": "TaskSignalProviderReference",
+                "source": self.source,
+            }
+        )
+        object.__setattr__(
+            self,
+            "provider_config_sha256",
+            _sha256_string(provider_config_sha256, "provider_config_sha256"),
+        )
         for name in (
             "objective_chars",
             "context_tokens",
@@ -119,8 +136,9 @@ class TaskSignals:
                 name,
                 require_non_negative_int(getattr(self, name), name),
             )
+        object.__setattr__(self, "signals_sha256", sha256_json(self.content_payload()))
 
-    def payload(self) -> dict[str, object]:
+    def content_payload(self) -> dict[str, object]:
         return {
             "schema_version": CONTRACT_VERSION,
             "contract": "TaskSignals",
@@ -130,11 +148,17 @@ class TaskSignals:
             "confidence": self.confidence,
             "abstained": self.abstained,
             "source": self.source,
+            "provider_config_sha256": self.provider_config_sha256,
             "objective_chars": self.objective_chars,
             "context_tokens": self.context_tokens,
             "constraint_count": self.constraint_count,
             "tool_count": self.tool_count,
         }
+
+    def payload(self) -> dict[str, object]:
+        payload = self.content_payload()
+        payload["signals_sha256"] = self.signals_sha256
+        return payload
 
     @classmethod
     def from_payload(cls, raw: Mapping[str, object]) -> TaskSignals:
@@ -145,7 +169,7 @@ class TaskSignals:
             raise VerifiedRoutingError("TaskSignals contract is invalid.")
         if payload["schema_version"] != CONTRACT_VERSION:
             raise VerifiedRoutingError("TaskSignals schema_version is unsupported.")
-        return cls(
+        signals = cls(
             request_fingerprint=payload["request_fingerprint"],  # type: ignore[arg-type]
             capabilities=payload["capabilities"],  # type: ignore[arg-type]
             difficulty=payload["difficulty"],  # type: ignore[arg-type]
@@ -156,7 +180,12 @@ class TaskSignals:
             context_tokens=payload["context_tokens"],  # type: ignore[arg-type]
             constraint_count=payload["constraint_count"],  # type: ignore[arg-type]
             tool_count=payload["tool_count"],  # type: ignore[arg-type]
+            provider_config_sha256=payload["provider_config_sha256"],  # type: ignore[arg-type]
         )
+        claimed_digest = _sha256_string(payload["signals_sha256"], "signals_sha256")
+        if signals.signals_sha256 != claimed_digest:
+            raise VerifiedRoutingError("TaskSignals digest does not match its content.")
+        return signals
 
 
 class TaskSignalProvider(Protocol):
@@ -242,6 +271,33 @@ class MetadataTaskSignalProvider:
                 )
             object.__setattr__(self, name, value)
 
+    def config_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": CONTRACT_VERSION,
+            "contract": "MetadataTaskSignalProviderConfig",
+            "source": self.source,
+            "objective_char_maxima": list(self.objective_char_maxima),
+            "context_token_maxima": list(self.context_token_maxima),
+            "constraint_maxima": list(self.constraint_maxima),
+            "tool_maxima": list(self.tool_maxima),
+            "capability_maxima": list(self.capability_maxima),
+            "risk_difficulties": [list(item) for item in self.risk_difficulties],
+            "confidence_with_capabilities": self.confidence_with_capabilities,
+            "confidence_without_capabilities": self.confidence_without_capabilities,
+            "minimum_confidence": self.minimum_confidence,
+            "out_of_distribution_confidence": self.out_of_distribution_confidence,
+            "objective_chars_per_context_token": self.objective_chars_per_context_token,
+            "max_objective_chars": self.max_objective_chars,
+            "max_context_tokens": self.max_context_tokens,
+            "max_constraint_count": self.max_constraint_count,
+            "max_tool_count": self.max_tool_count,
+            "max_capability_count": self.max_capability_count,
+        }
+
+    @property
+    def config_sha256(self) -> str:
+        return sha256_json(self.config_payload())
+
     def signals_from_metadata(
         self,
         task_metadata: Mapping[str, object],
@@ -324,6 +380,7 @@ class MetadataTaskSignalProvider:
             context_tokens=effective_context,
             constraint_count=constraint_count,
             tool_count=len(tools),
+            provider_config_sha256=self.config_sha256,
         )
 
 

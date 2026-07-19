@@ -112,6 +112,20 @@ class TaskSignalsContractTests(unittest.TestCase):
         with self.assertRaisesRegex(VerifiedRoutingError, "Missing"):
             TaskSignals.from_payload(incomplete)
 
+    def test_payload_digest_rejects_content_tamper(self) -> None:
+        payload = TaskSignals(
+            request_fingerprint=_fingerprint(),
+            capabilities=("analysis",),
+            difficulty="simple",
+            confidence=0.9,
+            abstained=False,
+            source="metadata-test",
+        ).payload()
+        payload["confidence"] = 0.8
+
+        with self.assertRaisesRegex(VerifiedRoutingError, "digest"):
+            TaskSignals.from_payload(payload)
+
     def test_constructor_rejects_nan_boolean_numbers_and_invalid_enums(self) -> None:
         base = {
             "request_fingerprint": _fingerprint(),
@@ -155,6 +169,16 @@ class MetadataTaskSignalProviderTests(unittest.TestCase):
         self.assertEqual(first.context_tokens, 100)
         self.assertEqual(first.difficulty, "medium")
         self.assertFalse(first.abstained)
+
+    def test_provider_configuration_digest_changes_with_behavior(self) -> None:
+        default = MetadataTaskSignalProvider()
+        configured = MetadataTaskSignalProvider(constraint_maxima=(2, 4, 10))
+
+        self.assertNotEqual(default.config_sha256, configured.config_sha256)
+        self.assertEqual(
+            default.signals_from_metadata(_metadata()).provider_config_sha256,
+            default.config_sha256,
+        )
 
     def test_structural_thresholds_select_the_highest_difficulty_band(self) -> None:
         provider = MetadataTaskSignalProvider(

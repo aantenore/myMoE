@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from local_moe.route_outcomes import (
     OutcomeStore,
     VerifiedOutcomeRecord,
     build_verified_outcome,
+    runtime_plan_sha256,
 )
 from local_moe.route_scorecard import build_route_scorecard
 from local_moe.route_signals import TaskSignals
@@ -23,6 +25,11 @@ _DIGEST_A = "a" * 64
 _DIGEST_B = "b" * 64
 _DIGEST_C = "c" * 64
 _DIGEST_D = "d" * 64
+_DIGEST_E = "e" * 64
+_DIGEST_F = "f" * 64
+_RUNTIME_PLAN_SHA256 = (
+    "5c3dfe530447050655c4b563df4baf261d32f1ef5564668800a0b3887fd558cd"
+)
 
 
 class RouteOutcomeTests(unittest.TestCase):
@@ -34,9 +41,10 @@ class RouteOutcomeTests(unittest.TestCase):
             premium_calls=1,
         )
 
+        signals = _signals()
         record = build_verified_outcome(
             metadata,
-            _signals(),
+            signals,
             estimated_cost_usd=0.0125,
             created_at="2026-07-19T03:00:00+00:00",
         )
@@ -52,9 +60,54 @@ class RouteOutcomeTests(unittest.TestCase):
         self.assertEqual(record.remote_payload_chars, 321)
         self.assertEqual(record.model, "local/model-a")
         self.assertEqual(record.provider_runtime_sha256, metadata["route_receipt"]["local_runtime"]["runtime_sha256"])
+        self.assertEqual(
+            record.signal_provider_config_sha256,
+            signals.provider_config_sha256,
+        )
+        self.assertEqual(
+            record.runtime_plan_sha256,
+            runtime_plan_sha256(metadata["route_receipt"]),
+        )
+        self.assertEqual(record.runtime_plan_sha256, _RUNTIME_PLAN_SHA256)
         self.assertNotIn("reasoning", rendered.lower())
         self.assertNotIn("private-result-body", rendered)
         self.assertNotIn("content", record.payload())
+
+    def test_provider_config_and_complete_runtime_plan_are_content_bound(self) -> None:
+        metadata = _bridge_metadata(evidence=[_evidence("check-a", passed=True)])
+        first = build_verified_outcome(
+            metadata,
+            _signals(provider_config_sha256=_DIGEST_E),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        changed_runtime = _bridge_metadata(
+            evidence=[_evidence("check-a", passed=True)]
+        )
+        premium_runtime = changed_runtime["route_receipt"]["premium_runtime"]
+        premium_runtime["model"] = "premium/model-b"
+        premium_runtime["runtime_sha256"] = sha256_json(
+            {
+                key: value
+                for key, value in premium_runtime.items()
+                if key != "runtime_sha256"
+            }
+        )
+        second = build_verified_outcome(
+            changed_runtime,
+            _signals(provider_config_sha256=_DIGEST_F),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+
+        self.assertNotEqual(
+            first.signal_provider_config_sha256,
+            second.signal_provider_config_sha256,
+        )
+        self.assertNotEqual(first.runtime_plan_sha256, second.runtime_plan_sha256)
+        self.assertEqual(
+            first.provider_runtime_sha256,
+            second.provider_runtime_sha256,
+        )
 
     def test_failed_evidence_wins_and_external_evidence_is_independent(self) -> None:
         metadata = _bridge_metadata(
@@ -178,6 +231,74 @@ class RouteOutcomeTests(unittest.TestCase):
             with self.assertRaises(VerifiedRoutingError):
                 store.append(record)
 
+    def test_store_serializes_concurrent_process_appends(self) -> None:
+        records = [
+            build_verified_outcome(
+                _bridge_metadata(evidence=[_evidence("check-a", passed=True)]),
+                _signals(),
+                created_at=f"2026-07-19T03:00:0{index}+00:00",
+            )
+            for index in range(3)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            appended = _run_concurrent_appends(
+                path,
+                [record.payload() for record in records],
+            )
+
+            self.assertEqual(appended, [True, True, True])
+            stored = OutcomeStore(path).list_records()
+            self.assertEqual(
+                {record.record_id for record in stored},
+                {record.record_id for record in records},
+            )
+            self.assertEqual(len(path.read_text(encoding="utf-8").splitlines()), 3)
+
+    def test_store_same_record_is_idempotent_across_processes(self) -> None:
+        record = build_verified_outcome(
+            _bridge_metadata(evidence=[_evidence("check-a", passed=True)]),
+            _signals(),
+            created_at="2026-07-19T03:00:00+00:00",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            appended = _run_concurrent_appends(
+                path,
+                [record.payload(), record.payload(), record.payload()],
+            )
+
+            self.assertEqual(sorted(appended), [False, False, True])
+            self.assertEqual(OutcomeStore(path).list_records(), (record,))
+            self.assertEqual(len(path.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_store_lock_timeout_fails_closed(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outcomes.jsonl"
+            store = OutcomeStore(path, lock_timeout_seconds=0.05)
+            ready = context.Event()
+            release = context.Event()
+            process = context.Process(
+                target=_hold_lock,
+                args=(str(store.lock_path), ready, release),
+            )
+            process.start()
+            try:
+                self.assertTrue(ready.wait(10.0))
+                with self.assertRaisesRegex(
+                    VerifiedRoutingError,
+                    "lock acquisition timed out",
+                ):
+                    store.list_records()
+            finally:
+                release.set()
+                process.join(10.0)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(5.0)
+            self.assertEqual(process.exitcode, 0)
+
     def test_strict_parsing_rejects_leaks_tampering_and_non_finite_cost(self) -> None:
         metadata = _bridge_metadata(evidence=[])
         metadata["raw_output"] = "private-result-body"
@@ -187,6 +308,11 @@ class RouteOutcomeTests(unittest.TestCase):
         clean = _bridge_metadata(evidence=[])
         with self.assertRaisesRegex(VerifiedRoutingError, "finite"):
             build_verified_outcome(clean, _signals(), estimated_cost_usd=float("nan"))
+
+        invalid_plan = _bridge_metadata(evidence=[])
+        invalid_plan["route_receipt"]["premium_runtime"]["model"] = "tampered"
+        with self.assertRaisesRegex(VerifiedRoutingError, "premium runtime digest"):
+            build_verified_outcome(invalid_plan, _signals())
 
         record = build_verified_outcome(
             clean,
@@ -208,7 +334,7 @@ class RouteOutcomeTests(unittest.TestCase):
                 OutcomeStore(path).list_records()
 
 
-def _signals() -> TaskSignals:
+def _signals(*, provider_config_sha256: str = _DIGEST_E) -> TaskSignals:
     return TaskSignals(
         request_fingerprint=_DIGEST_A,
         capabilities=("tests", "code"),
@@ -220,6 +346,7 @@ def _signals() -> TaskSignals:
         context_tokens=400,
         constraint_count=2,
         tool_count=2,
+        provider_config_sha256=provider_config_sha256,
     )
 
 
@@ -357,6 +484,74 @@ def _capsule(characters: int) -> dict[str, object]:
         "truncated": False,
         "content_in_metadata": False,
     }
+
+
+def _append_record(
+    path: str,
+    payload: dict[str, object],
+    ready: object,
+    start: object,
+    results: object,
+) -> None:
+    try:
+        ready.put(True)  # type: ignore[attr-defined]
+        if not start.wait(15.0):  # type: ignore[attr-defined]
+            raise RuntimeError("concurrent append start gate timed out")
+        appended = OutcomeStore(path).append(
+            VerifiedOutcomeRecord.from_payload(payload)
+        )
+        results.put((True, appended))  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover - surfaced in the parent process
+        results.put((False, f"{type(exc).__name__}: {exc}"))  # type: ignore[attr-defined]
+
+
+def _run_concurrent_appends(
+    path: Path,
+    payloads: list[dict[str, object]],
+) -> list[bool]:
+    context = multiprocessing.get_context("spawn")
+    ready = context.Queue()
+    start = context.Event()
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_append_record,
+            args=(str(path), payload, ready, start, results),
+        )
+        for payload in payloads
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for _ in processes:
+            if ready.get(timeout=15.0) is not True:
+                raise AssertionError("concurrent append worker did not become ready")
+        start.set()
+        observed = [results.get(timeout=20.0) for _ in processes]
+        failures = [value for success, value in observed if not success]
+        if failures:
+            raise AssertionError(f"concurrent append worker failed: {failures[0]}")
+        return [bool(value) for success, value in observed if success]
+    finally:
+        start.set()
+        for process in processes:
+            process.join(10.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(5.0)
+        ready.close()
+        results.close()
+        ready.join_thread()
+        results.join_thread()
+
+
+def _hold_lock(lock_path: str, ready: object, release: object) -> None:
+    from filelock import FileLock
+
+    with FileLock(lock_path, timeout=10.0):
+        ready.set()  # type: ignore[attr-defined]
+        if not release.wait(15.0):  # type: ignore[attr-defined]
+            raise RuntimeError("lock release gate timed out")
 
 
 if __name__ == "__main__":

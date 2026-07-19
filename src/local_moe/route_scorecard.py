@@ -37,6 +37,8 @@ _ROOT_FIELDS = {
 }
 _ENTRY_FIELDS = {
     "config_sha256",
+    "signal_provider_config_sha256",
+    "runtime_plan_sha256",
     "route",
     "capabilities",
     "difficulty",
@@ -58,6 +60,8 @@ class RouteScorecardFreshnessError(VerifiedRoutingError):
 @dataclass(frozen=True)
 class RouteScorecardEntry:
     config_sha256: str
+    signal_provider_config_sha256: str
+    runtime_plan_sha256: str
     route: str
     capabilities: tuple[str, ...]
     difficulty: str
@@ -70,10 +74,83 @@ class RouteScorecardEntry:
     mean_premium_calls: float
     mean_egress_chars: float
 
+    def __post_init__(self) -> None:
+        for name in (
+            "config_sha256",
+            "signal_provider_config_sha256",
+            "runtime_plan_sha256",
+        ):
+            object.__setattr__(
+                self,
+                name,
+                require_sha256(getattr(self, name), name),
+            )
+        if self.route not in ROUTE_PLANS:
+            raise VerifiedRoutingError("Scorecard entry route is not supported.")
+        capabilities = _canonical_capability_set(
+            self.capabilities,
+            "scorecard entry capabilities",
+        )
+        object.__setattr__(self, "capabilities", capabilities)
+        if self.difficulty not in DIFFICULTIES:
+            raise VerifiedRoutingError("Scorecard entry difficulty is not supported.")
+        verified_samples = require_non_negative_int(
+            self.verified_samples,
+            "verified_samples",
+        )
+        if verified_samples == 0:
+            raise VerifiedRoutingError("verified_samples must be positive.")
+        object.__setattr__(self, "verified_samples", verified_samples)
+        object.__setattr__(
+            self,
+            "success_rate",
+            require_finite_number(
+                self.success_rate,
+                "success_rate",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+        )
+        for name in (
+            "p95_latency_ms",
+            "mean_tokens",
+            "mean_premium_calls",
+            "mean_egress_chars",
+        ):
+            object.__setattr__(
+                self,
+                name,
+                require_finite_number(
+                    getattr(self, name),
+                    name,
+                    minimum=0.0,
+                ),
+            )
+        cost_sample_count = require_non_negative_int(
+            self.cost_sample_count,
+            "cost_sample_count",
+        )
+        if cost_sample_count > verified_samples:
+            raise VerifiedRoutingError(
+                "cost_sample_count cannot exceed verified_samples."
+            )
+        object.__setattr__(self, "cost_sample_count", cost_sample_count)
+        mean_cost_usd = _optional_non_negative_number(
+            self.mean_cost_usd,
+            "mean_cost_usd",
+        )
+        if (cost_sample_count == 0) != (mean_cost_usd is None):
+            raise VerifiedRoutingError(
+                "mean_cost_usd must be present exactly when cost samples exist."
+            )
+        object.__setattr__(self, "mean_cost_usd", mean_cost_usd)
+
     @property
-    def key(self) -> tuple[str, str, tuple[str, ...], str]:
+    def key(self) -> tuple[str, str, str, str, tuple[str, ...], str]:
         return (
             self.config_sha256,
+            self.signal_provider_config_sha256,
+            self.runtime_plan_sha256,
             self.route,
             self.capabilities,
             self.difficulty,
@@ -82,6 +159,8 @@ class RouteScorecardEntry:
     def payload(self) -> dict[str, object]:
         return {
             "config_sha256": self.config_sha256,
+            "signal_provider_config_sha256": self.signal_provider_config_sha256,
+            "runtime_plan_sha256": self.runtime_plan_sha256,
             "route": self.route,
             "capabilities": list(self.capabilities),
             "difficulty": self.difficulty,
@@ -107,6 +186,60 @@ class RouteScorecard:
     digest: str
     schema_version: str = CONTRACT_VERSION
 
+    def __post_init__(self) -> None:
+        if self.schema_version != CONTRACT_VERSION:
+            raise VerifiedRoutingError("Unsupported route scorecard schema_version.")
+        generated_at = require_utc_timestamp(self.generated_at, "generated_at")
+        expires_at = require_utc_timestamp(self.expires_at, "expires_at")
+        if _parse_timestamp(expires_at) <= _parse_timestamp(generated_at):
+            raise VerifiedRoutingError("expires_at must be after generated_at.")
+        object.__setattr__(self, "generated_at", generated_at)
+        object.__setattr__(self, "expires_at", expires_at)
+        object.__setattr__(
+            self,
+            "minimum_evidence_strength",
+            _require_evidence_strength(
+                self.minimum_evidence_strength,
+                "minimum_evidence_strength",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "minimum_confidence",
+            require_finite_number(
+                self.minimum_confidence,
+                "minimum_confidence",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "source_digest",
+            require_sha256(self.source_digest, "source_digest"),
+        )
+        if not isinstance(self.entries, (list, tuple)):
+            raise VerifiedRoutingError("entries must be a list or tuple.")
+        entries = tuple(self.entries)
+        if not entries:
+            raise VerifiedRoutingError("entries must be non-empty.")
+        if any(not isinstance(entry, RouteScorecardEntry) for entry in entries):
+            raise VerifiedRoutingError(
+                "entries must contain only RouteScorecardEntry values."
+            )
+        keys = [entry.key for entry in entries]
+        if keys != sorted(keys):
+            raise VerifiedRoutingError("entries must be sorted by their compound key.")
+        if len(keys) != len(set(keys)):
+            raise VerifiedRoutingError("entries must have unique compound keys.")
+        object.__setattr__(self, "entries", entries)
+        digest = require_sha256(self.digest, "digest")
+        object.__setattr__(self, "digest", digest)
+        if sha256_json(self.content_payload()) != digest:
+            raise VerifiedRoutingError(
+                "Route scorecard digest does not match its content."
+            )
+
     def payload(self) -> dict[str, object]:
         body = self.content_payload()
         body["digest"] = self.digest
@@ -127,13 +260,30 @@ class RouteScorecard:
         self,
         *,
         config_sha256: str,
+        signal_provider_config_sha256: str,
+        runtime_plan_sha256: str,
         route: str,
         capabilities: Iterable[str],
         difficulty: str,
     ) -> tuple[RouteScorecardEntry, ...]:
         requested = _canonical_capability_set(tuple(capabilities), "capabilities")
+        config_sha256 = require_sha256(config_sha256, "config_sha256")
+        signal_provider_config_sha256 = require_sha256(
+            signal_provider_config_sha256,
+            "signal_provider_config_sha256",
+        )
+        runtime_plan_sha256 = require_sha256(
+            runtime_plan_sha256, "runtime_plan_sha256"
+        )
         index = {entry.key: entry for entry in self.entries}
-        key = (config_sha256, route, requested, difficulty)
+        key = (
+            config_sha256,
+            signal_provider_config_sha256,
+            runtime_plan_sha256,
+            route,
+            requested,
+            difficulty,
+        )
         entry = index.get(key)
         return () if entry is None else (entry,)
 
@@ -141,12 +291,16 @@ class RouteScorecard:
         self,
         *,
         config_sha256: str,
+        signal_provider_config_sha256: str,
+        runtime_plan_sha256: str,
         route: str,
         capabilities: Iterable[str],
         difficulty: str,
     ) -> RouteScorecardEntry | None:
         matches = self.entries_for(
             config_sha256=config_sha256,
+            signal_provider_config_sha256=signal_provider_config_sha256,
+            runtime_plan_sha256=runtime_plan_sha256,
             route=route,
             capabilities=capabilities,
             difficulty=difficulty,
@@ -194,7 +348,8 @@ def build_route_scorecard(
 
     minimum_rank = EVIDENCE_STRENGTHS.index(minimum_evidence_strength)
     grouped: dict[
-        tuple[str, str, tuple[str, ...], str], list[dict[str, object]]
+        tuple[str, str, str, str, tuple[str, ...], str],
+        list[dict[str, object]],
     ] = {}
     for record in normalized:
         if EVIDENCE_STRENGTHS.index(str(record["evidence_strength"])) < minimum_rank:
@@ -210,6 +365,8 @@ def build_route_scorecard(
         )
         key = (
             str(record["config_sha256"]),
+            str(record["signal_provider_config_sha256"]),
+            str(record["runtime_plan_sha256"]),
             str(record["planned_route"]),
             capabilities,
             str(record["difficulty"]),
@@ -270,48 +427,22 @@ def route_scorecard_from_payload(
 ) -> RouteScorecard:
     data = dict(raw)
     reject_unknown(data, _ROOT_FIELDS, "route scorecard")
-    if data.get("schema_version") != CONTRACT_VERSION:
-        raise VerifiedRoutingError("Unsupported route scorecard schema_version.")
-    generated_at = require_utc_timestamp(data.get("generated_at"), "generated_at")
-    expires_at = require_utc_timestamp(data.get("expires_at"), "expires_at")
-    generated = _parse_timestamp(generated_at)
-    expires = _parse_timestamp(expires_at)
-    if expires <= generated:
-        raise VerifiedRoutingError("expires_at must be after generated_at.")
-    minimum_evidence_strength = _require_evidence_strength(
-        data.get("minimum_evidence_strength"),
-        "minimum_evidence_strength",
-    )
-    minimum_confidence = require_finite_number(
-        data.get("minimum_confidence"),
-        "minimum_confidence",
-        minimum=0.0,
-        maximum=1.0,
-    )
-    source_digest = require_sha256(data.get("source_digest"), "source_digest")
-    digest = require_sha256(data.get("digest"), "digest")
 
     entries_raw = data.get("entries")
     if not isinstance(entries_raw, list) or not entries_raw:
         raise VerifiedRoutingError("entries must be a non-empty list.")
     entries = tuple(_entry_from_payload(item) for item in entries_raw)
-    keys = [entry.key for entry in entries]
-    if keys != sorted(keys):
-        raise VerifiedRoutingError("entries must be sorted by their compound key.")
-    if len(keys) != len(set(keys)):
-        raise VerifiedRoutingError("entries must have unique compound keys.")
 
     scorecard = RouteScorecard(
-        generated_at=generated_at,
-        expires_at=expires_at,
-        minimum_evidence_strength=minimum_evidence_strength,
-        minimum_confidence=minimum_confidence,
-        source_digest=source_digest,
+        generated_at=data.get("generated_at"),  # type: ignore[arg-type]
+        expires_at=data.get("expires_at"),  # type: ignore[arg-type]
+        minimum_evidence_strength=data.get("minimum_evidence_strength"),  # type: ignore[arg-type]
+        minimum_confidence=data.get("minimum_confidence"),  # type: ignore[arg-type]
+        source_digest=data.get("source_digest"),  # type: ignore[arg-type]
         entries=entries,
-        digest=digest,
+        digest=data.get("digest"),  # type: ignore[arg-type]
+        schema_version=data.get("schema_version"),  # type: ignore[arg-type]
     )
-    if sha256_json(scorecard.content_payload()) != digest:
-        raise VerifiedRoutingError("Route scorecard digest does not match its content.")
     _validate_freshness(
         scorecard,
         now=now,
@@ -364,7 +495,7 @@ def load_outcome_payloads(path: str | Path) -> list[dict[str, object]]:
 
 
 def _aggregate_entry(
-    key: tuple[str, str, tuple[str, ...], str],
+    key: tuple[str, str, str, str, tuple[str, ...], str],
     records: list[dict[str, object]],
 ) -> RouteScorecardEntry:
     samples = len(records)
@@ -375,9 +506,11 @@ def _aggregate_entry(
     ]
     return RouteScorecardEntry(
         config_sha256=key[0],
-        route=key[1],
-        capabilities=key[2],
-        difficulty=key[3],
+        signal_provider_config_sha256=key[1],
+        runtime_plan_sha256=key[2],
+        route=key[3],
+        capabilities=key[4],
+        difficulty=key[5],
         verified_samples=samples,
         success_rate=_mean(
             [1.0 if record["outcome"] == "passed" else 0.0 for record in records]
@@ -427,62 +560,29 @@ def _entry_from_payload(raw: object) -> RouteScorecardEntry:
         raise VerifiedRoutingError(
             f"Missing route scorecard entry fields: {', '.join(missing)}."
         )
-    route = str(raw["route"])
-    if route not in ROUTE_PLANS:
-        raise VerifiedRoutingError("Scorecard entry route is not supported.")
-    capabilities = _canonical_capability_set(
-        raw["capabilities"], "scorecard entry capabilities"
+    if not isinstance(raw["capabilities"], list):
+        raise VerifiedRoutingError("Scorecard entry capabilities must be a list.")
+    entry = RouteScorecardEntry(
+        config_sha256=raw["config_sha256"],  # type: ignore[arg-type]
+        signal_provider_config_sha256=raw["signal_provider_config_sha256"],  # type: ignore[arg-type]
+        runtime_plan_sha256=raw["runtime_plan_sha256"],  # type: ignore[arg-type]
+        route=raw["route"],  # type: ignore[arg-type]
+        capabilities=tuple(raw["capabilities"]),  # type: ignore[arg-type]
+        difficulty=raw["difficulty"],  # type: ignore[arg-type]
+        verified_samples=raw["verified_samples"],  # type: ignore[arg-type]
+        success_rate=raw["success_rate"],  # type: ignore[arg-type]
+        p95_latency_ms=raw["p95_latency_ms"],  # type: ignore[arg-type]
+        mean_tokens=raw["mean_tokens"],  # type: ignore[arg-type]
+        cost_sample_count=raw["cost_sample_count"],  # type: ignore[arg-type]
+        mean_cost_usd=raw["mean_cost_usd"],  # type: ignore[arg-type]
+        mean_premium_calls=raw["mean_premium_calls"],  # type: ignore[arg-type]
+        mean_egress_chars=raw["mean_egress_chars"],  # type: ignore[arg-type]
     )
-    if list(capabilities) != raw["capabilities"]:
+    if list(entry.capabilities) != raw["capabilities"]:
         raise VerifiedRoutingError(
             "Scorecard entry capabilities must be sorted canonically."
         )
-    difficulty = str(raw["difficulty"])
-    if difficulty not in DIFFICULTIES:
-        raise VerifiedRoutingError("Scorecard entry difficulty is not supported.")
-    verified_samples = require_non_negative_int(
-        raw["verified_samples"], "verified_samples"
-    )
-    if verified_samples == 0:
-        raise VerifiedRoutingError("verified_samples must be positive.")
-    cost_sample_count = require_non_negative_int(
-        raw["cost_sample_count"], "cost_sample_count"
-    )
-    if cost_sample_count > verified_samples:
-        raise VerifiedRoutingError(
-            "cost_sample_count cannot exceed verified_samples."
-        )
-    mean_cost_usd = _optional_non_negative_number(
-        raw["mean_cost_usd"], "mean_cost_usd"
-    )
-    if (cost_sample_count == 0) != (mean_cost_usd is None):
-        raise VerifiedRoutingError(
-            "mean_cost_usd must be present exactly when cost samples exist."
-        )
-    return RouteScorecardEntry(
-        config_sha256=require_sha256(raw["config_sha256"], "config_sha256"),
-        route=route,
-        capabilities=capabilities,
-        difficulty=difficulty,
-        verified_samples=verified_samples,
-        success_rate=require_finite_number(
-            raw["success_rate"], "success_rate", minimum=0.0, maximum=1.0
-        ),
-        p95_latency_ms=require_finite_number(
-            raw["p95_latency_ms"], "p95_latency_ms", minimum=0.0
-        ),
-        mean_tokens=require_finite_number(
-            raw["mean_tokens"], "mean_tokens", minimum=0.0
-        ),
-        cost_sample_count=cost_sample_count,
-        mean_cost_usd=mean_cost_usd,
-        mean_premium_calls=require_finite_number(
-            raw["mean_premium_calls"], "mean_premium_calls", minimum=0.0
-        ),
-        mean_egress_chars=require_finite_number(
-            raw["mean_egress_chars"], "mean_egress_chars", minimum=0.0
-        ),
-    )
+    return entry
 
 
 def _validate_freshness(
@@ -517,6 +617,10 @@ def _require_evidence_strength(value: object, label: str) -> str:
 
 
 def _canonical_capability_set(value: object, label: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise VerifiedRoutingError(f"{label} must contain only strings.")
     return tuple(sorted(require_identifier_tuple(value, label)))
 
 

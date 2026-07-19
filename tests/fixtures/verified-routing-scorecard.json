@@ -1,11 +1,13 @@
 {
-  "digest": "55dfc83e13fe100f69d746a7e5bd438ef74b12c0d0c80ad81407079e04378c1b",
+  "digest": "bcd2ea38abf1595c5a229c7fc3691fda547aedf5e84caf786e3f3e9d63d2dd80",
   "entries": [
     {
       "capabilities": [
         "analysis"
       ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "signal_provider_config_sha256": "1e70396396e4f5f19552bbb04d938c7d3c7c5d490fb1a7220c528049f7ceb09c",
+      "runtime_plan_sha256": "5c3dfe530447050655c4b563df4baf261d32f1ef5564668800a0b3887fd558cd",
       "cost_sample_count": 20,
       "difficulty": "medium",
       "mean_cost_usd": 0.0,
@@ -22,6 +24,8 @@
         "analysis"
       ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "signal_provider_config_sha256": "1e70396396e4f5f19552bbb04d938c7d3c7c5d490fb1a7220c528049f7ceb09c",
+      "runtime_plan_sha256": "5c3dfe530447050655c4b563df4baf261d32f1ef5564668800a0b3887fd558cd",
       "cost_sample_count": 20,
       "difficulty": "medium",
       "mean_cost_usd": 0.02,
@@ -38,6 +42,8 @@
         "analysis"
       ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "signal_provider_config_sha256": "1e70396396e4f5f19552bbb04d938c7d3c7c5d490fb1a7220c528049f7ceb09c",
+      "runtime_plan_sha256": "5c3dfe530447050655c4b563df4baf261d32f1ef5564668800a0b3887fd558cd",
       "cost_sample_count": 20,
       "difficulty": "medium",
       "mean_cost_usd": 0.05,
