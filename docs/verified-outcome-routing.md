@@ -86,11 +86,14 @@ versioned pricing contract or a measured amount.
 ### `RouteScorecard`
 
 The builder aggregates compatible records by configuration digest, route plan,
-capability, and difficulty. Each cell contains sample counts, verified success,
+the exact canonical capability set, and difficulty. Marginal evidence for
+`analysis` and `code` cannot be combined into evidence for an
+`analysis + code` request. Each cell contains sample counts, verified success,
 p95 latency, mean tokens, premium calls, remote payload, and cost when complete.
-The artifact binds its source digest and freshness window. Mixed configuration
-cohorts, stale artifacts, non-finite metrics, and insufficient evidence fail
-closed.
+Abstained signals are always excluded, and the artifact records the configured
+minimum confidence used to exclude weak signals. The artifact also binds its
+source digest and freshness window. Mixed configuration cohorts, stale
+artifacts, non-finite metrics, and insufficient evidence fail closed.
 
 ### `ShadowRouteDecision`
 
@@ -130,6 +133,7 @@ Build a scorecard from deterministic and independently attested evidence:
 PYTHONPATH=src python3 experiments/build_route_scorecard.py \
   --records work/verified-routing-outcomes.jsonl \
   --minimum-evidence-strength independent \
+  --minimum-confidence 0.70 \
   --ttl-seconds 2592000 \
   --out work/verified-routing-scorecard.json
 ```

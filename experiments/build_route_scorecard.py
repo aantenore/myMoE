@@ -21,6 +21,12 @@ def main() -> None:
         default="independent",
         help="Lowest evidence strength accepted into binary aggregates.",
     )
+    parser.add_argument(
+        "--minimum-confidence",
+        type=float,
+        default=0.7,
+        help="Lowest non-abstained signal confidence accepted into aggregates.",
+    )
     parser.add_argument("--ttl-seconds", type=int, default=86_400)
     parser.add_argument(
         "--generated-at",
@@ -32,6 +38,7 @@ def main() -> None:
     scorecard = build_route_scorecard(
         records,
         minimum_evidence_strength=args.minimum_evidence_strength,
+        minimum_confidence=args.minimum_confidence,
         generated_at=args.generated_at,
         ttl_seconds=args.ttl_seconds,
     )
@@ -41,6 +48,7 @@ def main() -> None:
             {
                 "digest": scorecard.digest,
                 "entries": len(scorecard.entries),
+                "minimum_confidence": scorecard.minimum_confidence,
                 "minimum_evidence_strength": scorecard.minimum_evidence_strength,
                 "source_digest": scorecard.source_digest,
             },

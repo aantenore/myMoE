@@ -1,8 +1,10 @@
 {
-  "digest": "1a8baac934977cb2dee1f73f7def558294cb6a6965e0f9986a1d6c17cde50ec1",
+  "digest": "55dfc83e13fe100f69d746a7e5bd438ef74b12c0d0c80ad81407079e04378c1b",
   "entries": [
     {
-      "capability": "analysis",
+      "capabilities": [
+        "analysis"
+      ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "cost_sample_count": 20,
       "difficulty": "medium",
@@ -16,7 +18,9 @@
       "verified_samples": 20
     },
     {
-      "capability": "analysis",
+      "capabilities": [
+        "analysis"
+      ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "cost_sample_count": 20,
       "difficulty": "medium",
@@ -30,7 +34,9 @@
       "verified_samples": 20
     },
     {
-      "capability": "analysis",
+      "capabilities": [
+        "analysis"
+      ],
       "config_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "cost_sample_count": 20,
       "difficulty": "medium",
@@ -46,6 +52,7 @@
   ],
   "expires_at": "2030-01-01T00:00:00+00:00",
   "generated_at": "2026-07-19T00:00:00+00:00",
+  "minimum_confidence": 0.7,
   "minimum_evidence_strength": "independent",
   "schema_version": "1.0",
   "source_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

@@ -17,8 +17,8 @@ from .verified_routing_contracts import (
     now_utc,
     reject_unknown,
     require_finite_number,
+    require_identifier_tuple,
     require_non_negative_int,
-    require_safe_id,
     require_sha256,
     require_utc_timestamp,
     sha256_json,
@@ -30,6 +30,7 @@ _ROOT_FIELDS = {
     "generated_at",
     "expires_at",
     "minimum_evidence_strength",
+    "minimum_confidence",
     "source_digest",
     "entries",
     "digest",
@@ -37,7 +38,7 @@ _ROOT_FIELDS = {
 _ENTRY_FIELDS = {
     "config_sha256",
     "route",
-    "capability",
+    "capabilities",
     "difficulty",
     "verified_samples",
     "success_rate",
@@ -58,7 +59,7 @@ class RouteScorecardFreshnessError(VerifiedRoutingError):
 class RouteScorecardEntry:
     config_sha256: str
     route: str
-    capability: str
+    capabilities: tuple[str, ...]
     difficulty: str
     verified_samples: int
     success_rate: float
@@ -70,11 +71,11 @@ class RouteScorecardEntry:
     mean_egress_chars: float
 
     @property
-    def key(self) -> tuple[str, str, str, str]:
+    def key(self) -> tuple[str, str, tuple[str, ...], str]:
         return (
             self.config_sha256,
             self.route,
-            self.capability,
+            self.capabilities,
             self.difficulty,
         )
 
@@ -82,7 +83,7 @@ class RouteScorecardEntry:
         return {
             "config_sha256": self.config_sha256,
             "route": self.route,
-            "capability": self.capability,
+            "capabilities": list(self.capabilities),
             "difficulty": self.difficulty,
             "verified_samples": self.verified_samples,
             "success_rate": self.success_rate,
@@ -100,6 +101,7 @@ class RouteScorecard:
     generated_at: str
     expires_at: str
     minimum_evidence_strength: str
+    minimum_confidence: float
     source_digest: str
     entries: tuple[RouteScorecardEntry, ...]
     digest: str
@@ -116,6 +118,7 @@ class RouteScorecard:
             "generated_at": self.generated_at,
             "expires_at": self.expires_at,
             "minimum_evidence_strength": self.minimum_evidence_strength,
+            "minimum_confidence": self.minimum_confidence,
             "source_digest": self.source_digest,
             "entries": [entry.payload() for entry in self.entries],
         }
@@ -128,16 +131,11 @@ class RouteScorecard:
         capabilities: Iterable[str],
         difficulty: str,
     ) -> tuple[RouteScorecardEntry, ...]:
-        requested = tuple(capabilities) or ("*",)
+        requested = _canonical_capability_set(tuple(capabilities), "capabilities")
         index = {entry.key: entry for entry in self.entries}
-        matches: list[RouteScorecardEntry] = []
-        for capability in requested:
-            key = (config_sha256, route, capability, difficulty)
-            entry = index.get(key)
-            if entry is None:
-                return ()
-            matches.append(entry)
-        return tuple(matches)
+        key = (config_sha256, route, requested, difficulty)
+        entry = index.get(key)
+        return () if entry is None else (entry,)
 
     def conservative_entry(
         self,
@@ -155,39 +153,26 @@ class RouteScorecard:
         )
         if not matches:
             return None
-        capability = "*" if len(matches) == 1 and matches[0].capability == "*" else "+".join(
-            sorted(entry.capability for entry in matches)
-        )
-        return RouteScorecardEntry(
-            config_sha256=config_sha256,
-            route=route,
-            capability=capability,
-            difficulty=difficulty,
-            verified_samples=min(entry.verified_samples for entry in matches),
-            success_rate=min(entry.success_rate for entry in matches),
-            p95_latency_ms=max(entry.p95_latency_ms for entry in matches),
-            mean_tokens=max(entry.mean_tokens for entry in matches),
-            cost_sample_count=min(entry.cost_sample_count for entry in matches),
-            mean_cost_usd=(
-                None
-                if any(entry.mean_cost_usd is None for entry in matches)
-                else max(float(entry.mean_cost_usd) for entry in matches)
-            ),
-            mean_premium_calls=max(entry.mean_premium_calls for entry in matches),
-            mean_egress_chars=max(entry.mean_egress_chars for entry in matches),
-        )
+        return matches[0]
 
 
 def build_route_scorecard(
     records: Iterable[object],
     *,
     minimum_evidence_strength: str = "independent",
+    minimum_confidence: float = 0.7,
     generated_at: str | None = None,
     ttl_seconds: int = 86_400,
 ) -> RouteScorecard:
     minimum_evidence_strength = _require_evidence_strength(
         minimum_evidence_strength,
         "minimum_evidence_strength",
+    )
+    minimum_confidence = require_finite_number(
+        minimum_confidence,
+        "minimum_confidence",
+        minimum=0.0,
+        maximum=1.0,
     )
     ttl_seconds = require_non_negative_int(ttl_seconds, "ttl_seconds")
     if ttl_seconds == 0:
@@ -208,24 +193,31 @@ def build_route_scorecard(
     source_digest = sha256_json({"records": normalized})
 
     minimum_rank = EVIDENCE_STRENGTHS.index(minimum_evidence_strength)
-    grouped: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
+    grouped: dict[
+        tuple[str, str, tuple[str, ...], str], list[dict[str, object]]
+    ] = {}
     for record in normalized:
         if EVIDENCE_STRENGTHS.index(str(record["evidence_strength"])) < minimum_rank:
             continue
+        if bool(record["abstained"]):
+            continue
+        if float(record["confidence"]) < minimum_confidence:
+            continue
         if record["outcome"] == "inconclusive":
             continue
-        capabilities = tuple(record["capabilities"]) or ("*",)
-        for capability in capabilities:
-            key = (
-                str(record["config_sha256"]),
-                str(record["planned_route"]),
-                str(capability),
-                str(record["difficulty"]),
-            )
-            grouped.setdefault(key, []).append(record)
+        capabilities = _canonical_capability_set(
+            record["capabilities"], "record capabilities"
+        )
+        key = (
+            str(record["config_sha256"]),
+            str(record["planned_route"]),
+            capabilities,
+            str(record["difficulty"]),
+        )
+        grouped.setdefault(key, []).append(record)
     if not grouped:
         raise VerifiedRoutingError(
-            "No binary outcomes satisfy the minimum evidence strength."
+            "No non-abstained binary outcomes satisfy the evidence and confidence floors."
         )
 
     entries = tuple(
@@ -236,6 +228,7 @@ def build_route_scorecard(
         "generated_at": generated_at,
         "expires_at": expires_at,
         "minimum_evidence_strength": minimum_evidence_strength,
+        "minimum_confidence": minimum_confidence,
         "source_digest": source_digest,
         "entries": [entry.payload() for entry in entries],
     }
@@ -243,6 +236,7 @@ def build_route_scorecard(
         generated_at=generated_at,
         expires_at=expires_at,
         minimum_evidence_strength=minimum_evidence_strength,
+        minimum_confidence=minimum_confidence,
         source_digest=source_digest,
         entries=entries,
         digest=sha256_json(content),
@@ -288,6 +282,12 @@ def route_scorecard_from_payload(
         data.get("minimum_evidence_strength"),
         "minimum_evidence_strength",
     )
+    minimum_confidence = require_finite_number(
+        data.get("minimum_confidence"),
+        "minimum_confidence",
+        minimum=0.0,
+        maximum=1.0,
+    )
     source_digest = require_sha256(data.get("source_digest"), "source_digest")
     digest = require_sha256(data.get("digest"), "digest")
 
@@ -305,6 +305,7 @@ def route_scorecard_from_payload(
         generated_at=generated_at,
         expires_at=expires_at,
         minimum_evidence_strength=minimum_evidence_strength,
+        minimum_confidence=minimum_confidence,
         source_digest=source_digest,
         entries=entries,
         digest=digest,
@@ -363,7 +364,7 @@ def load_outcome_payloads(path: str | Path) -> list[dict[str, object]]:
 
 
 def _aggregate_entry(
-    key: tuple[str, str, str, str],
+    key: tuple[str, str, tuple[str, ...], str],
     records: list[dict[str, object]],
 ) -> RouteScorecardEntry:
     samples = len(records)
@@ -375,7 +376,7 @@ def _aggregate_entry(
     return RouteScorecardEntry(
         config_sha256=key[0],
         route=key[1],
-        capability=key[2],
+        capabilities=key[2],
         difficulty=key[3],
         verified_samples=samples,
         success_rate=_mean(
@@ -429,9 +430,13 @@ def _entry_from_payload(raw: object) -> RouteScorecardEntry:
     route = str(raw["route"])
     if route not in ROUTE_PLANS:
         raise VerifiedRoutingError("Scorecard entry route is not supported.")
-    capability = str(raw["capability"])
-    if capability != "*":
-        capability = require_safe_id(capability, "capability")
+    capabilities = _canonical_capability_set(
+        raw["capabilities"], "scorecard entry capabilities"
+    )
+    if list(capabilities) != raw["capabilities"]:
+        raise VerifiedRoutingError(
+            "Scorecard entry capabilities must be sorted canonically."
+        )
     difficulty = str(raw["difficulty"])
     if difficulty not in DIFFICULTIES:
         raise VerifiedRoutingError("Scorecard entry difficulty is not supported.")
@@ -457,7 +462,7 @@ def _entry_from_payload(raw: object) -> RouteScorecardEntry:
     return RouteScorecardEntry(
         config_sha256=require_sha256(raw["config_sha256"], "config_sha256"),
         route=route,
-        capability=capability,
+        capabilities=capabilities,
         difficulty=difficulty,
         verified_samples=verified_samples,
         success_rate=require_finite_number(
@@ -509,6 +514,10 @@ def _require_evidence_strength(value: object, label: str) -> str:
     if rendered not in EVIDENCE_STRENGTHS:
         raise VerifiedRoutingError(f"{label} is not supported.")
     return rendered
+
+
+def _canonical_capability_set(value: object, label: str) -> tuple[str, ...]:
+    return tuple(sorted(require_identifier_tuple(value, label)))
 
 
 def _mean(values: list[float]) -> float:
