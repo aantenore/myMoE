@@ -365,7 +365,7 @@ def build_verified_outcome(
     final_evidence = _validate_evidence_list(
         verification["final"], task_fingerprint, "final evidence"
     )
-    outcome, failure_class = _classify_outcome(
+    outcome, failure_class, evidence_strength = _classify_outcome(
         bridge_status=str(bridge["status"]),
         bridge_code=str(bridge["code"]),
         prior_evidence=prior_evidence,
@@ -373,7 +373,6 @@ def build_verified_outcome(
         required_verifier_ids=required_verifier_ids,
     )
     all_evidence = {"prior": prior_evidence, "final": final_evidence}
-    evidence_strength = _evidence_strength([*prior_evidence, *final_evidence])
 
     commands = bridge["commands"]
     if not isinstance(commands, list):
@@ -532,7 +531,7 @@ def _classify_outcome(
     prior_evidence: list[dict[str, object]],
     final_evidence: list[dict[str, object]],
     required_verifier_ids: tuple[str, ...],
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     successful_bridge_codes = {
         "completed",
         "local_candidate_generated",
@@ -541,30 +540,34 @@ def _classify_outcome(
         "premium_verification_passed",
     }
     if bridge_status != "completed" or bridge_code not in successful_bridge_codes:
-        return "failed", bridge_code
+        return "failed", bridge_code, "deterministic"
 
     final_by_id = {str(item["id"]): item for item in final_evidence}
     missing = [item for item in required_verifier_ids if item not in final_by_id]
     if missing:
-        return "failed", "required_verifier_missing"
+        return "failed", "required_verifier_missing", "deterministic"
     failed_required = [
         final_by_id[item]
         for item in required_verifier_ids
         if final_by_id[item]["passed"] is not True
     ]
     if failed_required:
-        return "failed", _failure_class(failed_required)
+        return (
+            "failed",
+            _failure_class(failed_required),
+            _evidence_strength(failed_required),
+        )
 
     failed_final = [item for item in final_evidence if item["passed"] is False]
     if failed_final:
-        return "failed", _failure_class(failed_final)
+        return "failed", _failure_class(failed_final), _evidence_strength(failed_final)
     if final_evidence and all(item["passed"] is True for item in final_evidence):
-        return "passed", "none"
+        return "passed", "none", _evidence_strength(final_evidence)
 
     failed_prior = [item for item in prior_evidence if item["passed"] is False]
     if failed_prior:
-        return "failed", _failure_class(failed_prior)
-    return "inconclusive", "verification_missing"
+        return "failed", _failure_class(failed_prior), _evidence_strength(failed_prior)
+    return "inconclusive", "verification_missing", "implicit"
 
 
 def _failure_class(evidence: list[dict[str, object]]) -> str:

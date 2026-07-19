@@ -10,6 +10,7 @@ from local_moe.route_outcomes import (
     VerifiedOutcomeRecord,
     build_verified_outcome,
 )
+from local_moe.route_scorecard import build_route_scorecard
 from local_moe.route_signals import TaskSignals
 from local_moe.verified_routing_contracts import (
     VerifiedRoutingError,
@@ -118,7 +119,10 @@ class RouteOutcomeTests(unittest.TestCase):
     def test_prior_failure_does_not_override_verified_final_recovery(self) -> None:
         metadata = _bridge_metadata(
             evidence=[_evidence("check-a", passed=True)],
-            prior_evidence=[_evidence("local-check", passed=False)],
+            prior_evidence=[
+                _evidence("local-check", passed=False, kind="external")
+            ],
+            code="premium_verification_passed",
         )
 
         record = build_verified_outcome(
@@ -129,6 +133,14 @@ class RouteOutcomeTests(unittest.TestCase):
 
         self.assertEqual(record.outcome, "passed")
         self.assertEqual(record.failure_class, "none")
+        self.assertEqual(record.evidence_strength, "deterministic")
+        scorecard = build_route_scorecard(
+            [record],
+            minimum_evidence_strength="deterministic",
+            generated_at="2026-07-19T03:01:00+00:00",
+        )
+        self.assertEqual(scorecard.entries[0].verified_samples, 1)
+        self.assertEqual(scorecard.entries[0].success_rate, 1.0)
 
     def test_capability_comparison_is_order_independent(self) -> None:
         metadata = _bridge_metadata(evidence=[])
