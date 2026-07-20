@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+import errno
 import hashlib
 import json
 import math
@@ -122,6 +123,8 @@ _MAX_CODEX_JSON_EVENT_BYTES = 1024 * 1024
 _MAX_CODEX_USAGE_TOKENS = 10**12
 _CODEX_ADAPTER_ID = "codex_cli"
 _CODEX_EPHEMERAL_ENVIRONMENT_KEYS = ("CODEX_HOME", "HOME")
+_CODEX_PERMISSION_PROFILE_READ = "mymoe_workspace_read"
+_CODEX_PERMISSION_PROFILE_WRITE = "mymoe_workspace_write"
 _DIRECT_APPLY_INTENT = "direct_apply"
 _CANDIDATE_GENERATION_INTENT = "candidate_generation"
 _PAIRED_EVIDENCE_INTENT = "paired_evidence"
@@ -481,7 +484,7 @@ class ProviderSpec:
             )
         if self.mode == "local" and self.network_access:
             raise AssistantBridgeError(
-                "Local providers must disable agent-tool network access; model traffic stays loopback."
+                "Local providers must disable native web access; model traffic stays loopback."
             )
         if not 1 <= self.timeout_seconds <= 86_400:
             raise AssistantBridgeError(
@@ -1363,7 +1366,12 @@ class CommandPlan:
     output_path: str = field(repr=False)
     command_sha256: str
     sandbox: str
+    permission_profile: str
+    permission_profile_effective_attested: bool
+    permission_workspace_rule: str
     network_access: bool
+    shell_network_access: bool
+    web_search_mode: str
     workspace_access: str
     model: str
     local_provider: str
@@ -1396,6 +1404,28 @@ class CommandPlan:
             raise AssistantBridgeError(
                 "Command plan adapter_id must contain safe identifier characters."
             )
+        if _SAFE_ID.fullmatch(self.permission_profile) is None:
+            raise AssistantBridgeError(
+                "Command plan permission profile must be a safe identifier."
+            )
+        if self.permission_profile_effective_attested is not False:
+            raise AssistantBridgeError(
+                "Command plan cannot claim an unattested effective permission profile."
+            )
+        if self.permission_workspace_rule not in {"read", "write"}:
+            raise AssistantBridgeError(
+                "Command plan workspace permission rule is invalid."
+            )
+        if self.web_search_mode not in {"disabled", "cached"}:
+            raise AssistantBridgeError("Command plan web-search mode is invalid.")
+        if self.network_access != (self.web_search_mode != "disabled"):
+            raise AssistantBridgeError(
+                "Command plan native-web authority is inconsistent."
+            )
+        if self.shell_network_access:
+            raise AssistantBridgeError(
+                "Command plan cannot grant network access to spawned commands."
+            )
         if len(set(self.ephemeral_environment_keys)) != len(
             self.ephemeral_environment_keys
         ):
@@ -1427,7 +1457,14 @@ class CommandPlan:
             ),
             "command_sha256": self.command_sha256,
             "sandbox": self.sandbox,
+            "permission_profile": self.permission_profile,
+            "permission_profile_effective_attested": (
+                self.permission_profile_effective_attested
+            ),
+            "permission_workspace_rule": self.permission_workspace_rule,
             "network_access": self.network_access,
+            "shell_network_access": self.shell_network_access,
+            "web_search_mode": self.web_search_mode,
             "workspace_access": self.workspace_access,
             "model": self.model,
             "local_provider": self.local_provider or None,
@@ -2851,6 +2888,7 @@ def build_codex_command_plan(
 ) -> CommandPlan:
     _validate_codex_provider(provider)
     demand = demand or CapabilityDemand()
+    _validate_provider_command_demand(provider, demand)
     selected_runtime_policy = runtime_policy or BridgeRuntimePolicy()
     resolved_workspace = str(Path(workspace).expanduser().resolve())
     if not Path(resolved_workspace).is_dir():
@@ -2867,7 +2905,13 @@ def build_codex_command_plan(
         ) from None
     runtime = runtime_capabilities().payload()
     selected_local = ""
-    argv = [executable_identity.resolved_path, *provider.launcher_args]
+    argv = [
+        executable_identity.resolved_path,
+        *_materialized_codex_launcher_args(
+            provider,
+            workspace=resolved_workspace,
+        ),
+    ]
     argv.append("--strict-config")
     if provider.mode == "local":
         selected_local = local_provider_override or provider.local_provider
@@ -2885,27 +2929,37 @@ def build_codex_command_plan(
         demand,
         allow_remote_workspace=False,
     )
+    _validate_command_workspace_access(
+        provider,
+        demand,
+        effective_workspace_access,
+    )
+    if effective_workspace_access == "capsule_only" and not ephemeral_workspace:
+        raise AssistantBridgeError(
+            "Capsule-only command access requires an explicitly ephemeral workspace."
+        )
     web_enabled = _requires_web(demand)
     if web_enabled and not provider.network_access:
         raise AssistantBridgeError(
             "Selected provider cannot materialize required web access."
         )
+    (
+        permission_profile,
+        permission_workspace_rule,
+        permission_overrides,
+    ) = _codex_permission_profile(sandbox)
+    web_search_mode = "cached" if web_enabled else "disabled"
+    argv.extend(("--cd", resolved_workspace, "--ask-for-approval", "never"))
+    for override in permission_overrides:
+        argv.extend(("--config", override))
     argv.extend(
         (
-            "--sandbox",
-            sandbox,
-            "--cd",
-            resolved_workspace,
-            "--ask-for-approval",
-            "never",
             "--config",
-            f"sandbox_workspace_write.network_access={'true' if web_enabled else 'false'}",
+            f'web_search="{web_search_mode}"',
             "--config",
-            "shell_environment_policy.inherit=none",
+            'shell_environment_policy.inherit="none"',
         )
     )
-    if web_enabled:
-        argv.append("--search")
     argv.extend(provider.extra_args)
     argv.extend(
         (
@@ -2924,9 +2978,7 @@ def build_codex_command_plan(
         resolved_output = str(Path(output_path).expanduser().resolve())
         argv.extend(("--output-last-message", resolved_output))
     argv.append("-")
-    effective_ephemeral_workspace = (
-        ephemeral_workspace or effective_workspace_access == "capsule_only"
-    )
+    effective_ephemeral_workspace = ephemeral_workspace
     try:
         launcher_chain = _build_bridge_launcher_chain(
             executable_identity,
@@ -2970,7 +3022,12 @@ def build_codex_command_plan(
             else _sha256_text(resolved_workspace)
         ),
         "sandbox": sandbox,
+        "permission_profile": permission_profile,
+        "permission_profile_effective_attested": False,
+        "permission_workspace_rule": permission_workspace_rule,
         "network_access": web_enabled,
+        "shell_network_access": False,
+        "web_search_mode": web_search_mode,
         "workspace_access": effective_workspace_access,
         "model": provider.model,
         "local_provider": selected_local,
@@ -2994,7 +3051,12 @@ def build_codex_command_plan(
         output_path=resolved_output,
         command_sha256=_sha256_text(_canonical_json(command_payload)),
         sandbox=sandbox,
+        permission_profile=permission_profile,
+        permission_profile_effective_attested=False,
+        permission_workspace_rule=permission_workspace_rule,
         network_access=web_enabled,
+        shell_network_access=False,
+        web_search_mode=web_search_mode,
         workspace_access=effective_workspace_access,
         model=provider.model,
         local_provider=selected_local,
@@ -5620,14 +5682,13 @@ def _write_capsule_atomic(target: str | Path, payload: bytes) -> None:
     path = Path(os.path.abspath(os.fspath(raw)))
     if path.name in {"", ".", ".."}:
         raise AssistantBridgeError("Capsule output must name a regular file.")
-    parent = path.parent
     try:
-        parent.mkdir(parents=True, exist_ok=True)
-        _validate_capsule_parent(parent)
         if os.name == "nt":
-            _write_capsule_windows(path, payload)
+            with _pin_capsule_parent_windows(path.parent):
+                _write_capsule_windows(path, payload)
         else:
-            _write_capsule_posix(path, payload)
+            with _open_capsule_parent_posix(path.parent) as parent_fd:
+                _write_capsule_posix(path.name, payload, directory_fd=parent_fd)
     except AssistantBridgeError:
         raise
     except OSError as exc:
@@ -5636,42 +5697,101 @@ def _write_capsule_atomic(target: str | Path, payload: bytes) -> None:
         ) from exc
 
 
-def _validate_capsule_parent(parent: Path) -> None:
+@contextmanager
+def _open_capsule_parent_posix(parent: Path) -> Iterator[int]:
+    """Create and open a POSIX parent without re-resolving an ancestor path.
+
+    Every child is inspected and opened relative to the already pinned parent.
+    All directory descriptors remain open until publication completes, so an
+    ancestor rename cannot redirect any subsequent filesystem operation.
+    """
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
     try:
-        resolved = parent.resolve(strict=True)
-    except OSError as exc:
-        raise AssistantBridgeError("Capsule output parent is unavailable.") from exc
-    if not resolved.is_dir():
-        raise AssistantBridgeError("Capsule output parent is not a directory.")
-    current = parent
-    while True:
-        try:
-            details = current.lstat()
-        except OSError as exc:
-            raise AssistantBridgeError(
-                "Capsule output parent could not be attested."
-            ) from exc
-        if _is_link_or_reparse(details):
-            if not _trusted_system_path_alias(current, details):
+        root = Path(parent.anchor or os.sep)
+        root_fd = os.open(root, directory_flags | nofollow)
+        descriptors.append(root_fd)
+        root_details = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_details.st_mode):
+            raise AssistantBridgeError("Capsule output root is not a directory.")
+
+        current_fd = root_fd
+        for component in parent.parts[1:]:
+            try:
+                observed = os.stat(
+                    component,
+                    dir_fd=current_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, 0o700, dir_fd=current_fd)
+                except FileExistsError:
+                    pass
+                else:
+                    os.fsync(current_fd)
+                observed = os.stat(
+                    component,
+                    dir_fd=current_fd,
+                    follow_symlinks=False,
+                )
+
+            is_trusted_alias = _trusted_system_path_alias_at(
+                current_fd,
+                observed,
+            )
+            if _is_link_or_reparse(observed) and not is_trusted_alias:
                 raise AssistantBridgeError(
                     "Capsule output parent cannot traverse a symbolic link or reparse point."
                 )
-        elif not stat.S_ISDIR(details.st_mode):
-            raise AssistantBridgeError(
-                "Capsule output parent must contain only real directories."
-            )
-        if current == current.parent:
-            break
-        current = current.parent
+            if not _is_link_or_reparse(observed) and not stat.S_ISDIR(
+                observed.st_mode
+            ):
+                raise AssistantBridgeError(
+                    "Capsule output parent must contain only real directories."
+                )
+
+            child_flags = directory_flags
+            if not is_trusted_alias:
+                child_flags |= nofollow
+            child_fd = os.open(component, child_flags, dir_fd=current_fd)
+            descriptors.append(child_fd)
+            opened = os.fstat(child_fd)
+            if not stat.S_ISDIR(opened.st_mode):
+                raise AssistantBridgeError(
+                    "Capsule output parent is not a directory."
+                )
+            if not is_trusted_alias and (
+                opened.st_dev,
+                opened.st_ino,
+            ) != (
+                observed.st_dev,
+                observed.st_ino,
+            ):
+                raise AssistantBridgeError(
+                    "Capsule output parent changed while it was opened."
+                )
+            current_fd = child_fd
+
+        yield current_fd
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
-def _trusted_system_path_alias(path: Path, details: os.stat_result) -> bool:
-    """Allow only root-managed POSIX aliases such as macOS ``/var``."""
+def _trusted_system_path_alias_at(
+    parent_fd: int,
+    details: os.stat_result,
+) -> bool:
+    """Allow only a root-managed POSIX alias in a pinned root-managed parent."""
 
     if os.name != "posix" or not stat.S_ISLNK(details.st_mode):
         return False
     try:
-        container = path.parent.lstat()
+        container = os.fstat(parent_fd)
     except OSError:
         return False
     return (
@@ -5681,41 +5801,138 @@ def _trusted_system_path_alias(path: Path, details: os.stat_result) -> bool:
     )
 
 
-def _write_capsule_posix(path: Path, payload: bytes) -> None:
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
-    parent_fd = os.open(path.parent, directory_flags)
+@contextmanager
+def _pin_capsule_parent_windows(parent: Path) -> Iterator[None]:
+    """Pin every Win32 parent prefix without delete sharing.
+
+    Win32 has no general ``dir_fd`` API. Holding each prefix without
+    ``FILE_SHARE_DELETE`` keeps the absolute path stable while the existing
+    write-through backend creates and publishes its peer temporary file.
+    """
+
+    from . import _win32_fs
+
+    descriptors: list[int] = []
+    try:
+        root = type(parent)(parent.anchor)
+        if not parent.is_absolute() or not parent.anchor:
+            raise AssistantBridgeError("Capsule output parent must be absolute.")
+        candidates = [root]
+        current = root
+        for component in parent.parts[1:]:
+            current = current / component
+            candidates.append(current)
+
+        for index, candidate in enumerate(candidates):
+            try:
+                descriptor, expected_identity = _win32_fs.open_nofollow_fd(
+                    candidate,
+                    directory=True,
+                    share_delete=False,
+                )
+            except FileNotFoundError:
+                if index == 0:
+                    raise AssistantBridgeError(
+                        "Capsule output root is unavailable."
+                    ) from None
+                try:
+                    os.mkdir(candidate, 0o700)
+                except FileExistsError:
+                    pass
+                try:
+                    descriptor, expected_identity = _win32_fs.open_nofollow_fd(
+                        candidate,
+                        directory=True,
+                        share_delete=False,
+                    )
+                except OSError as exc:
+                    if exc.errno == errno.ELOOP:
+                        raise AssistantBridgeError(
+                            "Capsule output parent cannot traverse a symbolic link or reparse point."
+                        ) from None
+                    raise
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise AssistantBridgeError(
+                        "Capsule output parent cannot traverse a symbolic link or reparse point."
+                    ) from None
+                raise
+
+            descriptors.append(descriptor)
+            opened_identity = _win32_fs.identity_from_fd(descriptor)
+            if (
+                expected_identity.is_reparse_point
+                or opened_identity.is_reparse_point
+                or not expected_identity.same_file_as(opened_identity)
+                or expected_identity.volume_serial <= 0
+                or not any(expected_identity.file_id)
+            ):
+                raise AssistantBridgeError(
+                    "Capsule output parent changed while it was opened."
+                )
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode):
+                raise AssistantBridgeError(
+                    "Capsule output parent must contain only real directories."
+                )
+
+        yield
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _write_capsule_posix(
+    name: str,
+    payload: bytes,
+    *,
+    directory_fd: int,
+) -> None:
     temporary_name = ""
     try:
-        before = _capsule_target_state(path.name, directory_fd=parent_fd)
+        before = _capsule_target_state(name, directory_fd=directory_fd)
         temporary_name, temporary_fd = _open_capsule_temp(
-            path.name,
-            directory_fd=parent_fd,
+            name,
+            directory_fd=directory_fd,
         )
         try:
             _write_and_sync_file(temporary_fd, payload)
         finally:
             os.close(temporary_fd)
-        after = _capsule_target_state(path.name, directory_fd=parent_fd)
+        after = _capsule_target_state(name, directory_fd=directory_fd)
         if before != after:
             raise AssistantBridgeError(
                 "Capsule output changed while the atomic write was prepared."
             )
-        os.replace(
-            temporary_name,
-            path.name,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
+        if before is None:
+            try:
+                os.link(
+                    temporary_name,
+                    name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                raise AssistantBridgeError(
+                    "Capsule output changed while the atomic write was prepared."
+                ) from None
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        else:
+            os.replace(
+                temporary_name,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
         temporary_name = ""
-        os.fsync(parent_fd)
+        os.fsync(directory_fd)
     finally:
         if temporary_name:
             try:
-                os.unlink(temporary_name, dir_fd=parent_fd)
+                os.unlink(temporary_name, dir_fd=directory_fd)
             except FileNotFoundError:
                 pass
-        os.close(parent_fd)
 
 
 def _write_capsule_windows(path: Path, payload: bytes) -> None:
@@ -5746,7 +5963,6 @@ def _write_capsule_windows(path: Path, payload: bytes) -> None:
         _write_and_sync_file(descriptor, payload)
         os.close(descriptor)
         descriptor = -1
-        _validate_capsule_parent(path.parent)
         after = _capsule_target_state(path)
         if before != after:
             raise AssistantBridgeError(
@@ -6137,13 +6353,21 @@ def _attested_provider_runtime_descriptor(
         raise AssistantBridgeError(
             "Provider adapter runtime descriptor identity is invalid."
         )
-    for name in ("workspace_access", "sandbox"):
+    for name in (
+        "workspace_access",
+        "sandbox",
+        "permission_profile",
+        "permission_workspace_rule",
+        "web_search_mode",
+    ):
         if not isinstance(runtime.get(name), str):
             raise AssistantBridgeError(
                 "Provider adapter runtime descriptor is incomplete."
             )
     for name in (
         "agent_tool_network_access",
+        "permission_profile_effective_attested",
+        "shell_network_access",
         "web_search_materialized",
         "user_config_ignored",
         "rules_ignored",
@@ -6152,6 +6376,34 @@ def _attested_provider_runtime_descriptor(
             raise AssistantBridgeError(
                 "Provider adapter runtime descriptor is incomplete."
             )
+    if runtime["permission_profile"] != "not_authorized" and _SAFE_ID.fullmatch(
+        runtime["permission_profile"]
+    ) is None:
+        raise AssistantBridgeError(
+            "Provider adapter runtime permission profile is invalid."
+        )
+    if runtime["permission_workspace_rule"] not in {
+        "read",
+        "write",
+        "not_authorized",
+    }:
+        raise AssistantBridgeError(
+            "Provider adapter workspace permission rule is invalid."
+        )
+    if runtime["web_search_mode"] not in {"disabled", "cached"}:
+        raise AssistantBridgeError(
+            "Provider adapter native-web mode is invalid."
+        )
+    if runtime["web_search_materialized"] != (
+        runtime["web_search_mode"] != "disabled"
+    ):
+        raise AssistantBridgeError(
+            "Provider adapter native-web authority is inconsistent."
+        )
+    if runtime["agent_tool_network_access"] or runtime["shell_network_access"]:
+        raise AssistantBridgeError(
+            "Provider adapter cannot grant network access to spawned commands."
+        )
     declared_sha256 = runtime.get("runtime_sha256")
     unsigned = dict(runtime)
     unsigned.pop("runtime_sha256", None)
@@ -6179,6 +6431,7 @@ def _codex_provider_runtime_descriptor(
             )
     authorized = (
         RISK_LEVELS[task.capability_demand.risk_class] <= RISK_LEVELS["write_local"]
+        and not provider_gaps(provider, task)
     )
     workspace_access = (
         _effective_workspace_access(
@@ -6189,7 +6442,23 @@ def _codex_provider_runtime_descriptor(
         if authorized
         else "not_authorized"
     )
-    web_materialized = _requires_web(task.capability_demand) and provider.network_access
+    web_materialized = (
+        authorized
+        and _requires_web(task.capability_demand)
+        and provider.network_access
+    )
+    if authorized:
+        sandbox = _effective_sandbox(provider, task.capability_demand)
+        (
+            permission_profile,
+            permission_workspace_rule,
+            _,
+        ) = _codex_permission_profile(sandbox)
+    else:
+        sandbox = "not_authorized"
+        permission_profile = "not_authorized"
+        permission_workspace_rule = "not_authorized"
+    web_search_mode = "cached" if web_materialized else "disabled"
     runtime = {
         "provider_id": provider.id,
         "adapter": provider.adapter,
@@ -6197,13 +6466,14 @@ def _codex_provider_runtime_descriptor(
         "model": provider.model,
         "codex_profile": provider.codex_profile or None,
         "local_provider": local_provider or None,
-        "sandbox": (
-            _effective_sandbox(provider, task.capability_demand)
-            if authorized
-            else "not_authorized"
-        ),
+        "sandbox": sandbox,
+        "permission_profile": permission_profile,
+        "permission_profile_effective_attested": False,
+        "permission_workspace_rule": permission_workspace_rule,
         "workspace_access": workspace_access,
-        "agent_tool_network_access": web_materialized,
+        "agent_tool_network_access": False,
+        "shell_network_access": False,
+        "web_search_mode": web_search_mode,
         "web_search_materialized": web_materialized,
         "user_config_ignored": True,
         "rules_ignored": True,
@@ -6212,6 +6482,90 @@ def _codex_provider_runtime_descriptor(
     }
     runtime["runtime_sha256"] = _sha256_text(_canonical_json(runtime))
     return runtime
+
+
+def _validate_provider_command_demand(
+    provider: ProviderSpec,
+    demand: CapabilityDemand,
+) -> None:
+    """Reject direct adapter plans that exceed declared provider authority."""
+
+    gaps = [
+        f"capability:{item}"
+        for item in demand.required
+        if item not in provider.capabilities
+    ]
+    gaps.extend(f"tool:{item}" for item in demand.tools if item not in provider.tools)
+    if RISK_LEVELS[demand.risk_class] > RISK_LEVELS[provider.max_risk]:
+        gaps.append(f"risk:{demand.risk_class}")
+    if _requires_web(demand) and not provider.network_access:
+        gaps.append("network:web")
+    if gaps:
+        raise AssistantBridgeError(
+            f"Provider {provider.id} command demand exceeds declared authority: "
+            + ", ".join(sorted(set(gaps)))
+            + "."
+        )
+
+
+def _validate_command_workspace_access(
+    provider: ProviderSpec,
+    demand: CapabilityDemand,
+    workspace_access: str,
+) -> None:
+    """Keep an explicit workspace override within provider and task ceilings."""
+
+    if workspace_access not in {"capsule_only", "read_only", "read_write"}:
+        raise AssistantBridgeError("Command workspace access is unsupported.")
+    if workspace_access == "read_write":
+        if provider.workspace_access != "read_write":
+            raise AssistantBridgeError(
+                "Command workspace access exceeds the provider workspace ceiling."
+            )
+        if demand.risk_class != "write_local":
+            raise AssistantBridgeError(
+                "Read-only demand cannot receive read-write workspace access."
+            )
+    if workspace_access == "read_only" and provider.workspace_access not in {
+        "read_only",
+        "read_write",
+    }:
+        raise AssistantBridgeError(
+            "Command workspace access exceeds the provider workspace ceiling."
+        )
+    if provider.mode == "local":
+        expected = "read_write" if demand.risk_class == "write_local" else "read_only"
+        if workspace_access != expected:
+            raise AssistantBridgeError(
+                "Local command workspace access does not match task authority."
+            )
+
+
+def _codex_permission_profile(
+    sandbox: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    """Materialize one strict Codex permission profile from logical authority."""
+
+    if sandbox == "read-only":
+        profile = _CODEX_PERMISSION_PROFILE_READ
+        workspace_rule = "read"
+    elif sandbox == "workspace-write":
+        profile = _CODEX_PERMISSION_PROFILE_WRITE
+        workspace_rule = "write"
+    else:
+        raise AssistantBridgeError("Command sandbox authority is unsupported.")
+    return (
+        profile,
+        workspace_rule,
+        (
+            f'default_permissions="{profile}"',
+            (
+                f'permissions.{profile}.filesystem={{":minimal"="read",'
+                f'":workspace_roots"={{"."="{workspace_rule}"}}}}'
+            ),
+            f"permissions.{profile}.network.enabled=false",
+        ),
+    )
 
 
 def _effective_sandbox(provider: ProviderSpec, demand: CapabilityDemand) -> str:
@@ -7784,7 +8138,40 @@ def _validate_codex_provider(provider: ProviderSpec) -> None:
             f"Provider {provider.id} codex_profile is incompatible with "
             "isolated execution; use a trusted executable adapter instead."
         )
+    _validate_safe_launcher_args(provider)
     _validate_safe_extra_args(provider.extra_args, provider_id=provider.id)
+
+
+def _validate_safe_launcher_args(provider: ProviderSpec) -> None:
+    """Allow only launcher artifacts that are explicitly bound into authority.
+
+    ``launcher_args`` precede every Codex permission override.  Passing an
+    unbound option there could select Codex's legacy sandbox mode (or another
+    authority-bearing global option) while the resulting receipt continued to
+    describe the named permission profile.  A wrapper/interpreter chain remains
+    supported, but every prefix argument must be an attested entrypoint or
+    companion artifact; wrapper-specific options belong in a dedicated trusted
+    adapter instead of this Codex boundary.
+    """
+
+    if not provider.launcher_args:
+        return
+    declared_artifacts = {
+        value
+        for value in (
+            provider.launcher_entrypoint,
+            *provider.launcher_companions,
+        )
+        if value
+    }
+    if not declared_artifacts or any(
+        value not in declared_artifacts for value in provider.launcher_args
+    ):
+        raise AssistantBridgeError(
+            f"Provider {provider.id} launcher_args contain unbound authority "
+            "without launcher artifact attestation; only declared launcher "
+            "artifacts are allowed."
+        )
 
 
 def _validate_safe_extra_args(values: Sequence[str], *, provider_id: str) -> None:
@@ -7799,6 +8186,25 @@ def _bridge_launcher_path(value: str, *, workspace: str | Path) -> Path:
     if not candidate.is_absolute():
         candidate = Path(workspace) / candidate
     return Path(os.path.abspath(os.fspath(candidate)))
+
+
+def _materialized_codex_launcher_args(
+    provider: ProviderSpec,
+    *,
+    workspace: str | Path,
+) -> tuple[str, ...]:
+    """Bind launcher artifact arguments to the exact paths that were attested.
+
+    Relative prefix arguments must never be left for ``PATH`` lookup or
+    subcommand parsing.  The provider-level validator has already limited the
+    prefix to declared entrypoint/companion artifacts; this step materializes
+    each declaration against the inspected workspace before it enters argv.
+    """
+
+    return tuple(
+        str(_bridge_launcher_path(value, workspace=workspace))
+        for value in provider.launcher_args
+    )
 
 
 def _validate_bridge_launcher_declarations(
@@ -8187,7 +8593,14 @@ def _command_authority_sha256(plan: CommandPlan) -> str:
                 "mode": plan.mode,
                 "argv": list(semantic_argv),
                 "sandbox": plan.sandbox,
+                "permission_profile": plan.permission_profile,
+                "permission_profile_effective_attested": (
+                    plan.permission_profile_effective_attested
+                ),
+                "permission_workspace_rule": plan.permission_workspace_rule,
                 "network_access": plan.network_access,
+                "shell_network_access": plan.shell_network_access,
+                "web_search_mode": plan.web_search_mode,
                 "workspace_access": plan.workspace_access,
                 "model": plan.model,
                 "local_provider": plan.local_provider,

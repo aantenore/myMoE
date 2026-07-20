@@ -129,9 +129,19 @@ class _MymoeArgumentParser(argparse.ArgumentParser):
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["assistant-probe"]:
+        from .assistant_provider_probe import main as run_assistant_provider_probe
+
+        raise SystemExit(run_assistant_provider_probe(sys.argv[2:]))
+
     parser = _MymoeArgumentParser(
         description="Local MoE orchestrator",
         allow_abbrev=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "commands:\n"
+            "  assistant-probe  Check local Codex tool compatibility in a disposable workspace."
+        ),
     )
     parser.add_argument("--config")
     parser.add_argument("--app-config", default="configs/app.json")

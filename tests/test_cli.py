@@ -28,6 +28,20 @@ def _env() -> dict[str, str]:
 
 
 class CliTests(unittest.TestCase):
+    def test_root_help_discovers_assistant_probe(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-m", "local_moe.cli", "--help"],
+            cwd=ROOT,
+            env=_env(),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("commands:", completed.stdout)
+        self.assertIn("assistant-probe", completed.stdout)
+        self.assertIn("--assistant-task", completed.stdout)
+
     def test_eval_mode_prints_router_metrics(self) -> None:
         completed = subprocess.run(
             [

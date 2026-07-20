@@ -11,19 +11,12 @@
       "codex_profile": "",
       "model": "qwen3:4b",
       "capabilities": [
-        "analysis",
-        "code",
-        "filesystem",
-        "shell",
-        "tests"
+        "analysis"
       ],
-      "tools": [
-        "filesystem",
-        "shell"
-      ],
-      "max_risk": "write_local",
-      "sandbox": "workspace-write",
-      "workspace_access": "read_write",
+      "tools": [],
+      "max_risk": "read_only",
+      "sandbox": "read-only",
+      "workspace_access": "read_only",
       "network_access": false,
       "timeout_seconds": 900,
       "launcher_args": [],

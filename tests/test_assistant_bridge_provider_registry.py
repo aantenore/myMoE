@@ -70,8 +70,13 @@ class _ProbeAdapter:
                 if authorized
                 else "not_authorized"
             ),
+            "permission_profile": "not_authorized",
+            "permission_profile_effective_attested": False,
+            "permission_workspace_rule": "not_authorized",
             "workspace_access": workspace_access,
             "agent_tool_network_access": False,
+            "shell_network_access": False,
+            "web_search_mode": "disabled",
             "web_search_materialized": False,
             "user_config_ignored": True,
             "rules_ignored": True,

@@ -5,7 +5,7 @@ from dataclasses import replace
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import stat
 import subprocess
@@ -20,6 +20,7 @@ import local_moe.assistant_bridge_runtime as assistant_bridge_runtime
 from local_moe.assistant_bridge import (
     AssistantBridgeError,
     AssistantBridgeRunner,
+    CapabilityDemand,
     GitIdentity,
     ProviderAdapterRegistry,
     VerificationEvidence,
@@ -498,15 +499,64 @@ class AssistantBridgeContractTests(unittest.TestCase):
             allow_remote=True,
         )
         prompt = json.dumps({"objective": "bounded"})
-        plan = build_codex_command_plan(
-            self.config.premium,
-            prompt=prompt,
-            workspace=ROOT,
-            demand=task.capability_demand,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = build_codex_command_plan(
+                self.config.premium,
+                prompt=prompt,
+                workspace=tmp,
+                demand=task.capability_demand,
+                ephemeral_workspace=True,
+            )
 
-        self.assertIn("--search", plan.argv)
+        self.assertNotIn("--search", plan.argv)
+        self.assertIn('web_search="cached"', plan.argv)
         self.assertTrue(plan.network_access)
+        self.assertFalse(plan.shell_network_access)
+        self.assertEqual(plan.web_search_mode, "cached")
+
+    def test_runtime_descriptor_separates_native_web_from_shell_network(self) -> None:
+        receipt = plan_assistant_route(
+            build_assistant_task(
+                "Research a public source.",
+                profile="quality",
+                required_capabilities=("web",),
+                required_tools=("web",),
+                allow_remote=True,
+            ),
+            self.config,
+            workspace=ROOT,
+        )
+        runtime = receipt.premium_runtime
+
+        self.assertEqual(receipt.route, "premium")
+        self.assertEqual(runtime["permission_profile"], "mymoe_workspace_read")
+        self.assertEqual(runtime["permission_workspace_rule"], "read")
+        self.assertEqual(runtime["web_search_mode"], "cached")
+        self.assertTrue(runtime["web_search_materialized"])
+        self.assertFalse(runtime["agent_tool_network_access"])
+        self.assertFalse(runtime["shell_network_access"])
+        self.assertFalse(runtime["permission_profile_effective_attested"])
+
+    def test_blocked_runtime_never_claims_native_web_materialization(self) -> None:
+        receipt = plan_assistant_route(
+            build_assistant_task(
+                "Research and use an unavailable capability.",
+                profile="quality",
+                required_capabilities=("web", "unavailable_capability"),
+                required_tools=("web",),
+                allow_remote=True,
+            ),
+            self.config,
+            workspace=ROOT,
+        )
+        runtime = receipt.premium_runtime
+
+        self.assertEqual(receipt.route, "blocked")
+        self.assertEqual(runtime["sandbox"], "not_authorized")
+        self.assertEqual(runtime["permission_profile"], "not_authorized")
+        self.assertEqual(runtime["web_search_mode"], "disabled")
+        self.assertFalse(runtime["web_search_materialized"])
+        self.assertFalse(runtime["shell_network_access"])
 
     def test_command_plan_materializes_sandbox_and_keeps_prompt_out_of_argv(
         self,
@@ -526,7 +576,60 @@ class AssistantBridgeContractTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", plan.argv)
         self.assertIn("--ignore-rules", plan.argv)
         self.assertEqual(plan.sandbox, "read-only")
-        self.assertIn("sandbox_workspace_write.network_access=false", plan.argv)
+        self.assertNotIn("--sandbox", plan.argv)
+        self.assertNotIn("sandbox_workspace_write.network_access=false", plan.argv)
+        self.assertEqual(plan.permission_profile, "mymoe_workspace_read")
+        self.assertFalse(plan.permission_profile_effective_attested)
+        self.assertEqual(plan.permission_workspace_rule, "read")
+        self.assertIn('default_permissions="mymoe_workspace_read"', plan.argv)
+        self.assertIn(
+            'permissions.mymoe_workspace_read.filesystem={":minimal"="read",'
+            '":workspace_roots"={"."="read"}}',
+            plan.argv,
+        )
+        self.assertIn(
+            "permissions.mymoe_workspace_read.network.enabled=false",
+            plan.argv,
+        )
+        self.assertIn('web_search="disabled"', plan.argv)
+        self.assertFalse(plan.network_access)
+        self.assertFalse(plan.shell_network_access)
+        self.assertEqual(plan.web_search_mode, "disabled")
+
+    def test_write_demand_uses_write_profile_even_for_ephemeral_capsule(self) -> None:
+        demand = CapabilityDemand(
+            required=("code",),
+            tools=("filesystem",),
+            risk_class="write_local",
+        )
+        with self.assertRaisesRegex(AssistantBridgeError, "ephemeral workspace"):
+            build_codex_command_plan(
+                self.config.premium,
+                prompt="bounded",
+                workspace=ROOT,
+                demand=demand,
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = build_codex_command_plan(
+                self.config.premium,
+                prompt="bounded",
+                workspace=tmp,
+                demand=demand,
+                ephemeral_workspace=True,
+            )
+
+        self.assertEqual(plan.workspace_access, "capsule_only")
+        self.assertTrue(plan.ephemeral_workspace)
+        self.assertEqual(plan.sandbox, "workspace-write")
+        self.assertEqual(plan.permission_profile, "mymoe_workspace_write")
+        self.assertEqual(plan.permission_workspace_rule, "write")
+        self.assertIn('default_permissions="mymoe_workspace_write"', plan.argv)
+        self.assertIn(
+            'permissions.mymoe_workspace_write.filesystem={":minimal"="read",'
+            '":workspace_roots"={"."="write"}}',
+            plan.argv,
+        )
+        self.assertNotIn("--sandbox", plan.argv)
 
     def test_command_plan_binds_adapter_and_ephemeral_environment_contract(
         self,
@@ -559,6 +662,29 @@ class AssistantBridgeContractTests(unittest.TestCase):
             baseline.ephemeral_environment_keys,
             ("CODEX_HOME", "HOME"),
         )
+        self.assertNotEqual(baseline.command_sha256, alternate.command_sha256)
+        self.assertNotEqual(
+            assistant_bridge_module._command_authority_sha256(baseline),
+            assistant_bridge_module._command_authority_sha256(alternate),
+        )
+
+    def test_command_and_authority_bind_permission_profile_identity(self) -> None:
+        baseline = build_codex_command_plan(
+            self.config.local,
+            prompt="bounded",
+            workspace=ROOT,
+        )
+        with patch.object(
+            assistant_bridge_module,
+            "_CODEX_PERMISSION_PROFILE_READ",
+            "alternate_workspace_read",
+        ):
+            alternate = build_codex_command_plan(
+                self.config.local,
+                prompt="bounded",
+                workspace=ROOT,
+            )
+
         self.assertNotEqual(baseline.command_sha256, alternate.command_sha256)
         self.assertNotEqual(
             assistant_bridge_module._command_authority_sha256(baseline),
@@ -758,6 +884,36 @@ class AssistantBridgeContractTests(unittest.TestCase):
             drifted.launcher_authority_sha256,
         )
 
+    def test_launcher_artifact_arguments_use_exact_attested_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize_git(root)
+            for name in ("codex", "--dangerously-bypass-approvals-and-sandbox"):
+                with self.subTest(name=name):
+                    launcher = root / name
+                    launcher.write_text("raise SystemExit(0)\n", encoding="utf-8")
+                    provider = replace(
+                        self.config.local,
+                        executable=sys.executable,
+                        launcher_args=(name,),
+                        launcher_entrypoint=name,
+                        launcher_companions=(),
+                    )
+
+                    plan = build_codex_command_plan(
+                        provider,
+                        prompt="bounded",
+                        workspace=root,
+                        runtime_policy=self.config.runtime,
+                    )
+
+                    self.assertEqual(plan.argv[1], str(launcher.resolve()))
+                    self.assertEqual(
+                        plan.launcher_chain.entrypoint.resolved_path,
+                        str(launcher.resolve()),
+                    )
+                    self.assertFalse(plan.argv[1].startswith("-"))
+
     def test_launcher_chain_policy_and_declarations_fail_closed(self) -> None:
         self.assertTrue(self.config.runtime.require_launcher_chain)
         self.assertTrue(
@@ -956,6 +1112,44 @@ class AssistantBridgeContractTests(unittest.TestCase):
             ):
                 build_codex_command_plan(
                     replace(self.config.local, extra_args=(value,)),
+                    prompt="bounded",
+                    workspace=ROOT,
+                )
+
+    def test_codex_adapter_rejects_unbound_launcher_authority(self) -> None:
+        for launcher_args in (
+            ("--sandbox", "danger-full-access"),
+            ("--config", 'default_permissions="danger_full_access"'),
+            ("exec",),
+        ):
+            with (
+                self.subTest(launcher_args=launcher_args),
+                self.assertRaisesRegex(AssistantBridgeError, "authority"),
+            ):
+                build_codex_command_plan(
+                    replace(self.config.local, launcher_args=launcher_args),
+                    prompt="bounded",
+                    workspace=ROOT,
+                )
+
+    def test_codex_adapter_rejects_options_after_attested_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper = Path(tmp) / "trusted-wrapper.py"
+            wrapper.write_text("raise SystemExit(0)\n", encoding="utf-8")
+            provider = replace(
+                self.config.local,
+                executable=sys.executable,
+                launcher_args=(
+                    str(wrapper),
+                    "--sandbox",
+                    "danger-full-access",
+                ),
+                launcher_entrypoint=str(wrapper),
+            )
+
+            with self.assertRaisesRegex(AssistantBridgeError, "authority"):
+                build_codex_command_plan(
+                    provider,
                     prompt="bounded",
                     workspace=ROOT,
                 )
@@ -1336,6 +1530,235 @@ class AssistantBridgeContractTests(unittest.TestCase):
 
         self.assertEqual(preserved, "do-not-overwrite")
         self.assertEqual(parent_contents, [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX dir_fd traversal semantics")
+    def test_capsule_output_creates_missing_parents_from_pinned_descriptors(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            created = root / "first" / "second" / "third"
+            target = created / "capsule.json"
+
+            assistant_bridge_module._write_capsule_atomic(target, b"bounded")
+
+            content = target.read_bytes()
+            modes = [
+                stat.S_IMODE(path.stat().st_mode)
+                for path in (root / "first", root / "first" / "second", created)
+            ]
+
+        self.assertEqual(content, b"bounded")
+        self.assertTrue(all(mode & 0o077 == 0 for mode in modes))
+
+    @unittest.skipIf(os.name == "nt", "POSIX dir_fd traversal semantics")
+    def test_capsule_output_ancestor_swap_cannot_redirect_publication(self) -> None:
+        real_open = os.open
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stable = root / "stable"
+            original = stable / "nested"
+            original.mkdir(parents=True)
+            held = root / "stable-held"
+            external = root / "external"
+            external.mkdir()
+            target = original / "capsule.json"
+            swapped = False
+
+            def open_then_swap(raw_path, flags, *args, **kwargs):
+                nonlocal swapped
+                descriptor = real_open(raw_path, flags, *args, **kwargs)
+                if (
+                    not swapped
+                    and os.fspath(raw_path) == "stable"
+                    and kwargs.get("dir_fd") is not None
+                ):
+                    stable.rename(held)
+                    stable.symlink_to(external, target_is_directory=True)
+                    swapped = True
+                return descriptor
+
+            with patch.object(
+                assistant_bridge_module.os,
+                "open",
+                side_effect=open_then_swap,
+            ):
+                assistant_bridge_module._write_capsule_atomic(target, b"ours")
+
+            held_content = (held / "nested" / "capsule.json").read_bytes()
+            redirected_target_exists = (external / "nested" / "capsule.json").exists()
+
+        self.assertTrue(swapped)
+        self.assertEqual(held_content, b"ours")
+        self.assertFalse(redirected_target_exists)
+
+    @unittest.skipIf(os.name == "nt", "POSIX hard-link publication semantics")
+    def test_capsule_output_does_not_clobber_target_created_before_publish(
+        self,
+    ) -> None:
+        real_link = os.link
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "capsule.json"
+            injected = False
+
+            def create_competitor_then_link(source, destination, *args, **kwargs):
+                nonlocal injected
+                if not injected:
+                    target.write_bytes(b"competitor")
+                    injected = True
+                return real_link(source, destination, *args, **kwargs)
+
+            with (
+                patch.object(
+                    assistant_bridge_module.os,
+                    "link",
+                    side_effect=create_competitor_then_link,
+                ),
+                self.assertRaisesRegex(AssistantBridgeError, "changed"),
+            ):
+                assistant_bridge_module._write_capsule_atomic(target, b"ours")
+
+            preserved = target.read_bytes()
+            leftovers = sorted(path.name for path in root.iterdir())
+
+        self.assertTrue(injected)
+        self.assertEqual(preserved, b"competitor")
+        self.assertEqual(leftovers, ["capsule.json"])
+
+    def test_windows_capsule_parent_pins_every_prefix_until_exit(self) -> None:
+        from local_moe import _win32_fs
+
+        parent = PureWindowsPath("C:/volume/missing/leaf")
+        missing = {
+            os.fspath(PureWindowsPath("C:/volume/missing")),
+            os.fspath(parent),
+        }
+        created: set[str] = set()
+        opened: list[tuple[str, bool, bool]] = []
+        next_descriptor = 100
+        identities = {}
+
+        def open_prefix(raw_path, *, directory, writable=False, share_delete):
+            nonlocal next_descriptor
+            rendered = os.fspath(raw_path)
+            opened.append((rendered, directory, share_delete))
+            if rendered in missing and rendered not in created:
+                raise FileNotFoundError(rendered)
+            descriptor = next_descriptor
+            next_descriptor += 1
+            identity = _win32_fs.Win32FileIdentity(
+                volume_serial=1,
+                file_id=descriptor.to_bytes(16, "little"),
+                attributes=0,
+                reparse_tag=0,
+            )
+            identities[descriptor] = identity
+            return descriptor, identity
+
+        def create_prefix(raw_path, mode):
+            self.assertEqual(mode, 0o700)
+            created.add(os.fspath(raw_path))
+
+        with (
+            patch.object(_win32_fs, "open_nofollow_fd", side_effect=open_prefix),
+            patch.object(
+                _win32_fs,
+                "identity_from_fd",
+                side_effect=lambda descriptor: identities[descriptor],
+            ),
+            patch.object(assistant_bridge_module.os, "mkdir", side_effect=create_prefix),
+            patch.object(
+                assistant_bridge_module.os,
+                "fstat",
+                return_value=SimpleNamespace(st_mode=stat.S_IFDIR),
+            ),
+            patch.object(assistant_bridge_module.os, "close") as close,
+        ):
+            with assistant_bridge_module._pin_capsule_parent_windows(parent):
+                close.assert_not_called()
+            closed = [call.args[0] for call in close.call_args_list]
+
+        self.assertEqual(
+            opened,
+            [
+                (os.fspath(PureWindowsPath("C:/")), True, False),
+                (os.fspath(PureWindowsPath("C:/volume")), True, False),
+                (os.fspath(PureWindowsPath("C:/volume/missing")), True, False),
+                (os.fspath(PureWindowsPath("C:/volume/missing")), True, False),
+                (os.fspath(parent), True, False),
+                (os.fspath(parent), True, False),
+            ],
+        )
+        self.assertEqual(created, missing)
+        self.assertEqual(closed, [103, 102, 101, 100])
+
+    def test_windows_capsule_parent_rejects_handle_identity_drift(self) -> None:
+        from local_moe import _win32_fs
+
+        expected = _win32_fs.Win32FileIdentity(
+            volume_serial=1,
+            file_id=b"a" * 16,
+            attributes=0,
+            reparse_tag=0,
+        )
+        changed = _win32_fs.Win32FileIdentity(
+            volume_serial=1,
+            file_id=b"b" * 16,
+            attributes=0,
+            reparse_tag=0,
+        )
+        with (
+            patch.object(
+                _win32_fs,
+                "open_nofollow_fd",
+                return_value=(100, expected),
+            ),
+            patch.object(_win32_fs, "identity_from_fd", return_value=changed),
+            patch.object(assistant_bridge_module.os, "close") as close,
+            self.assertRaisesRegex(AssistantBridgeError, "changed"),
+        ):
+            with assistant_bridge_module._pin_capsule_parent_windows(
+                PureWindowsPath("C:/volume")
+            ):
+                self.fail("identity drift must fail before yielding")
+
+        close.assert_called_once_with(100)
+
+    @unittest.skipUnless(os.name == "nt", "native Win32 sharing semantics")
+    def test_windows_capsule_pins_ancestor_through_write_through_publish(self) -> None:
+        real_replace = assistant_bridge_module._windows_replace_write_through
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ancestor = root / "ancestor"
+            parent = ancestor / "parent"
+            parent.mkdir(parents=True)
+            target = parent / "capsule.json"
+            parked = root / "parked"
+            rename_blocked = False
+
+            def verify_pinned_then_replace(source, destination, *, replace):
+                nonlocal rename_blocked
+                try:
+                    ancestor.rename(parked)
+                except OSError:
+                    rename_blocked = True
+                else:
+                    self.fail("Win32 ancestor rename succeeded while handles were pinned")
+                real_replace(source, destination, replace=replace)
+
+            with patch.object(
+                assistant_bridge_module,
+                "_windows_replace_write_through",
+                side_effect=verify_pinned_then_replace,
+            ):
+                assistant_bridge_module._write_capsule_atomic(target, b"bounded")
+
+            content = target.read_bytes()
+            ancestor.rename(parked)
+
+        self.assertTrue(rename_blocked)
+        self.assertEqual(content, b"bounded")
 
     def test_evidence_file_rejects_raw_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2930,6 +3353,21 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
         raw = json.loads(
             (ROOT / "configs" / "assistant-bridge.json").read_text(encoding="utf-8")
         )
+        raw["providers"]["local"].update(
+            {
+                "capabilities": [
+                    "analysis",
+                    "code",
+                    "filesystem",
+                    "shell",
+                    "tests",
+                ],
+                "tools": ["filesystem", "shell"],
+                "max_risk": "write_local",
+                "sandbox": "workspace-write",
+                "workspace_access": "read_write",
+            }
+        )
         for command_verifier in raw["verification"]["command_verifiers"]:
             if command_verifier["id"] == "project-test-suite":
                 command_verifier["workspace_python_paths"] = []
@@ -3166,7 +3604,15 @@ def _load_test_assistant_bridge_config():
     executable = str(Path(sys.executable).resolve(strict=True))
     return replace(
         config,
-        local=replace(config.local, executable=executable),
+        local=replace(
+            config.local,
+            executable=executable,
+            capabilities=("analysis", "code", "filesystem", "shell", "tests"),
+            tools=("filesystem", "shell"),
+            max_risk="write_local",
+            sandbox="workspace-write",
+            workspace_access="read_write",
+        ),
         premium=replace(config.premium, executable=executable),
     )
 
