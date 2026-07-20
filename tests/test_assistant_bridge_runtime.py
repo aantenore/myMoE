@@ -701,6 +701,10 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
             popen.assert_not_called()
 
     def test_companion_replacement_during_popen_is_rejected_and_reaped(self) -> None:
+        # Keep the spawned process outside the disposable tree. On Windows, a
+        # directory just used as a process cwd may remain briefly unavailable
+        # to TemporaryDirectory even after the process has terminated.
+        launch_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             entrypoint = root / "wrapper.py"
@@ -716,7 +720,7 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 (str(entrypoint),),
                 entrypoint=entrypoint,
                 companions=(companion,),
-                cwd=root,
+                cwd=launch_cwd,
             )
             spawned: list[object] = []
             real_popen = bridge_runtime.subprocess.Popen
@@ -741,7 +745,7 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                     execute_process(
                         identity,
                         (str(entrypoint),),
-                        cwd=root,
+                        cwd=launch_cwd,
                         timeout_seconds=2.0,
                         launcher_chain=chain,
                         policy=ProcessExecutionPolicy(require_launcher_chain=True),
@@ -753,9 +757,12 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 self.assertFalse(raised.exception.details["verified"])
 
             self.assertEqual(len(spawned), 1)
-            self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
+            process = spawned.pop()
+            self.assertIsNotNone(process.poll())  # type: ignore[attr-defined]
+            del process
 
     def test_entrypoint_replacement_during_popen_is_rejected_and_reaped(self) -> None:
+        launch_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             entrypoint = root / "wrapper.py"
@@ -768,7 +775,7 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 identity,
                 (str(entrypoint),),
                 entrypoint=entrypoint,
-                cwd=root,
+                cwd=launch_cwd,
             )
             spawned: list[object] = []
             real_popen = bridge_runtime.subprocess.Popen
@@ -793,7 +800,7 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                     execute_process(
                         identity,
                         (str(entrypoint),),
-                        cwd=root,
+                        cwd=launch_cwd,
                         timeout_seconds=2.0,
                         launcher_chain=chain,
                         policy=ProcessExecutionPolicy(require_launcher_chain=True),
@@ -805,7 +812,9 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 self.assertFalse(raised.exception.details["verified"])
 
             self.assertEqual(len(spawned), 1)
-            self.assertIsNotNone(spawned[0].poll())  # type: ignore[attr-defined]
+            process = spawned.pop()
+            self.assertIsNotNone(process.poll())  # type: ignore[attr-defined]
+            del process
 
     @unittest.skipIf(os.name == "nt", "POSIX shebang interpreter fixture")
     def test_shebang_interpreter_replacement_is_rejected_before_launch(self) -> None:
