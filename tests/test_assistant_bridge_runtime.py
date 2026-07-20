@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -588,6 +589,50 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                     declared=(),
                 ),
                 "undeclared-helper.py",
+            )
+
+    def test_invalid_windows_path_at_inspection_is_data_not_an_executable(self) -> None:
+        invalid_name = OSError(errno.EINVAL, "invalid Windows path syntax")
+        invalid_name.winerror = 123
+        with (
+            patch.object(
+                bridge_runtime,
+                "_open_regular_file_descriptor",
+                side_effect=invalid_name,
+            ),
+            patch.object(Path, "lstat", side_effect=invalid_name),
+        ):
+            self.assertIsNone(
+                bridge_runtime._undeclared_executable_argument(
+                    ('web_search="disabled"',),
+                    cwd=Path.cwd(),
+                    declared=(),
+                )
+            )
+            self.assertEqual(
+                bridge_runtime._undeclared_executable_argument(
+                    ("undeclared-helper.py",),
+                    cwd=Path.cwd(),
+                    declared=(),
+                ),
+                "undeclared-helper.py",
+            )
+
+    def test_uninspectable_nonpath_launcher_value_remains_fail_closed(self) -> None:
+        access_denied = OSError(errno.EACCES, "access denied")
+        with (
+            patch.object(
+                bridge_runtime,
+                "_open_regular_file_descriptor",
+                side_effect=access_denied,
+            ),
+            patch.object(Path, "lstat", side_effect=access_denied),
+            self.assertRaisesRegex(LauncherChainError, "cannot be inspected"),
+        ):
+            bridge_runtime._undeclared_executable_argument(
+                ("opaque-value",),
+                cwd=Path.cwd(),
+                declared=(),
             )
 
     def test_declared_helper_drift_fails_before_reservation(self) -> None:

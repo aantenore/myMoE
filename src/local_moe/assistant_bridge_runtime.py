@@ -2128,6 +2128,13 @@ def _argv_artifact_values(argv: Sequence[str]) -> Iterator[tuple[str, str]]:
         yield argument, argument
 
 
+def _is_unusable_windows_path_syntax(error: OSError) -> bool:
+    """Return whether Windows rejected a value before it could name a path."""
+
+    winerror = getattr(error, "winerror", None)
+    return winerror in {123, 161} or (os.name == "nt" and error.errno == errno.EINVAL)
+
+
 def _undeclared_executable_argument(
     argv: Sequence[str],
     *,
@@ -2161,10 +2168,14 @@ def _undeclared_executable_argument(
                 if known_executable_suffix:
                     return argument
                 continue
-            except OSError:
+            except OSError as inspection_error:
+                if _is_unusable_windows_path_syntax(inspection_error):
+                    if known_executable_suffix:
+                        return argument
+                    continue
                 raise LauncherChainError(
                     "Path-shaped launcher argument cannot be inspected"
-                ) from exc
+                ) from inspection_error
             if stat.S_ISDIR(metadata.st_mode):
                 continue
             raise LauncherChainError(
