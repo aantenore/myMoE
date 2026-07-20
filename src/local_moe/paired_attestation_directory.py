@@ -266,7 +266,15 @@ class DirectoryPairedAttestationProducer:
                 raise DirectoryPairedAttestationTimeout(
                     "Timed out waiting for the signed attestation sidecar."
                 )
-            if _lstat_optional(response_path) is not None:
+            response_metadata = _lstat_optional(response_path)
+            if response_metadata is not None:
+                if _posix_atomic_publication_pending(
+                    response_path,
+                    response_metadata,
+                    maximum_bytes=self.maximum_response_bytes,
+                ):
+                    time.sleep(min(self.poll_interval_seconds, remaining))
+                    continue
                 response_bytes = _read_secure_file(
                     response_path,
                     maximum_bytes=self.maximum_response_bytes,
@@ -649,6 +657,53 @@ def _same_file_id(first: os.stat_result, second: os.stat_result) -> bool:
         int(second.st_dev),
         int(second.st_ino),
     ) and int(first.st_ino) != 0
+
+
+def _posix_atomic_publication_pending(
+    path: Path,
+    metadata: os.stat_result,
+    *,
+    maximum_bytes: int,
+) -> bool:
+    """Recognize only this adapter's brief link-before-unlink publish state."""
+
+    if (
+        _OS_NAME != "posix"
+        or _is_link_or_reparse(metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 2
+        or not 0 < metadata.st_size <= maximum_bytes
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_uid != os.getuid()
+    ):
+        return False
+    prefix = f".{path.name}."
+    suffix = ".tmp"
+    try:
+        candidates = tuple(path.parent.glob(f"{prefix}*{suffix}"))
+    except OSError:
+        return False
+    if len(candidates) != 1:
+        return False
+    temporary = candidates[0]
+    token = temporary.name[len(prefix) : -len(suffix)]
+    if len(token) != 32 or any(
+        character not in "0123456789abcdef" for character in token
+    ):
+        return False
+    try:
+        temporary_metadata = temporary.lstat()
+    except OSError:
+        return False
+    return bool(
+        not _is_link_or_reparse(temporary_metadata)
+        and stat.S_ISREG(temporary_metadata.st_mode)
+        and temporary_metadata.st_nlink == 2
+        and temporary_metadata.st_size == metadata.st_size
+        and stat.S_IMODE(temporary_metadata.st_mode) == 0o600
+        and temporary_metadata.st_uid == os.getuid()
+        and _same_file_id(metadata, temporary_metadata)
+    )
 
 
 def _win32_identity_key(identity: Any) -> tuple[int, bytes]:

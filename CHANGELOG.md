@@ -54,6 +54,9 @@ All notable changes to myMoE are documented in this file.
 
 ### Changed
 
+- POSIX directory-sidecar consumers now wait only for the adapter's exact
+  link-before-unlink publication state. Persistent hard links remain rejected,
+  and response content is never read before the final path has one link.
 - The shipped local Assistant Bridge provider now advertises read-only
   `analysis` and no tools because filesystem/tool compatibility was not
   demonstrated by the bounded live probe. Its sandbox and workspace ceilings

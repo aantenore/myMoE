@@ -103,6 +103,129 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             self.assertEqual(producer.state_paths, (exchange,))
             self.assertEqual(len(producer.configuration_sha256), 64)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX link publication semantics")
+    def test_reader_waits_for_atomic_response_link_to_settle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exchange = _exchange(root / "exchange")
+            workspace = _private_directory(root / "verifier-workspace")
+            binding, requirement, private_key = _binding()
+            producer = DirectoryPairedAttestationProducer(
+                exchange,
+                poll_interval_seconds=0.005,
+                maximum_wait_seconds=1.0,
+            )
+            publication_observed = threading.Event()
+            real_unlink = os.unlink
+            real_pending = directory_adapter._posix_atomic_publication_pending
+
+            def delayed_response_unlink(path, *args, **kwargs) -> None:
+                candidate = Path(path)
+                if (
+                    candidate.parent == exchange / "responses"
+                    and candidate.name.startswith(".response-")
+                    and candidate.name.endswith(".tmp")
+                ):
+                    if not publication_observed.wait(timeout=1.0):
+                        raise AssertionError(
+                            "reader did not observe the linked publication state"
+                        )
+                real_unlink(path, *args, **kwargs)
+
+            def observe_pending(path, metadata, *, maximum_bytes):
+                pending = real_pending(
+                    path,
+                    metadata,
+                    maximum_bytes=maximum_bytes,
+                )
+                if pending:
+                    publication_observed.set()
+                return pending
+
+            def respond(request: dict[str, object]) -> None:
+                envelope = _envelope(binding, requirement, private_key)
+                _write_response(exchange, request, (envelope,))
+
+            watcher, errors = _watch_once(exchange, respond)
+            with (
+                patch.object(
+                    directory_adapter.os,
+                    "unlink",
+                    side_effect=delayed_response_unlink,
+                ),
+                patch.object(
+                    directory_adapter,
+                    "_posix_atomic_publication_pending",
+                    side_effect=observe_pending,
+                ),
+            ):
+                envelopes = producer.attest(
+                    binding,
+                    workspace,
+                    time.time() + 0.5,
+                )
+            _finish_watcher(watcher, errors)
+
+            self.assertTrue(publication_observed.is_set())
+            self.assertEqual(len(envelopes), 1)
+            response_path = next((exchange / "responses").iterdir())
+            self.assertEqual(response_path.stat().st_nlink, 1)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX link publication semantics")
+    def test_matching_temporary_hardlink_times_out_without_being_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            exchange = _exchange(root / "exchange")
+            workspace = _private_directory(root / "verifier-workspace")
+            binding, requirement, private_key = _binding()
+            producer = DirectoryPairedAttestationProducer(
+                exchange,
+                poll_interval_seconds=0.005,
+                maximum_wait_seconds=1.0,
+            )
+            response_reads: list[Path] = []
+            real_read = directory_adapter._read_secure_file
+
+            def respond(request: dict[str, object]) -> None:
+                envelope = _envelope(binding, requirement, private_key)
+                response = _response(request, (envelope,))
+                target = (
+                    exchange
+                    / "responses"
+                    / f"response-{request['requestId']}.json"
+                )
+                source = target.parent / f".{target.name}.{'a' * 32}.tmp"
+                source.write_bytes(response)
+                source.chmod(0o600)
+                os.link(source, target, follow_symlinks=False)
+
+            def record_read(path: Path, *, maximum_bytes: int, label: str) -> bytes:
+                if path.parent == exchange / "responses":
+                    response_reads.append(path)
+                return real_read(
+                    path,
+                    maximum_bytes=maximum_bytes,
+                    label=label,
+                )
+
+            watcher, errors = _watch_once(exchange, respond)
+            with (
+                patch.object(
+                    directory_adapter,
+                    "_read_secure_file",
+                    side_effect=record_read,
+                ),
+                self.assertRaises(DirectoryPairedAttestationTimeout),
+            ):
+                producer.attest(
+                    binding,
+                    workspace,
+                    time.time() + 0.1,
+                )
+            _finish_watcher(watcher, errors)
+
+            self.assertEqual(response_reads, [])
+
     def test_replayed_response_for_another_request_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
