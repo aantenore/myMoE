@@ -21,7 +21,7 @@ from .chat_runtime import (
     route_payload,
 )
 from .compaction import LocalCompactionProvider
-from .config import load_config
+from .config import load_config, runtime_config_sha256
 from .config_profiles import discover_config_profiles, recommend_config_profile
 from .context import ConversationTurn
 from .context_policy import load_context_policy
@@ -2441,6 +2441,7 @@ def _config_payload(config_path: str, config: object, app_config: object) -> dic
     return {
         "app": app_config_payload(app_config),
         "config_path": config_path,
+        "runtime_config_sha256": runtime_config_sha256(config),
         "requires_model": True,
         "routing": _routing_payload(config.routing),
         "execution": {

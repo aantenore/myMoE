@@ -9,6 +9,7 @@ from urllib.error import HTTPError
 from urllib import request
 import unittest
 
+from local_moe.config import load_config, runtime_config_sha256
 from local_moe.web import _download_disposition, build_server
 from tests.mcp_test_utils import write_fake_mcp_server, write_temp_mcp_app_config
 
@@ -17,11 +18,13 @@ HTTP_TEST_TIMEOUT_SECONDS = 15
 
 class WebTests(unittest.TestCase):
     def test_serves_config_and_generates_with_synthetic_provider(self) -> None:
+        config_path = "tests/fixtures/moe.synthetic.json"
+        expected_runtime_digest = runtime_config_sha256(load_config(config_path))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             app_config = _write_temp_app_config(root)
             server = build_server(
-                "tests/fixtures/moe.synthetic.json",
+                config_path,
                 port=0,
                 app_config_path=str(app_config),
             )
@@ -45,6 +48,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("distilled", config["routing"])
         self.assertEqual(config["execution"]["max_scope"], "device_only")
         self.assertEqual(config["experts"][0]["execution"]["scope"], "device_only")
+        self.assertEqual(config["runtime_config_sha256"], expected_runtime_digest)
         self.assertIn("[general:synthetic-general]", result["content"])
         self.assertEqual(result["route"]["selected"][0]["expert_id"], "general")
         self.assertIn("context", result)

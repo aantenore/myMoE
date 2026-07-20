@@ -73,6 +73,8 @@ generates with the configured Qwen and Gemma MLX servers.
 
 Optional extras:
 
+- `.[coding-canary]`: installs the canonical-JSON dependency required by the
+  isolated Cline coding-cell qualification command.
 - `.[assistant-bridge]`: installs the dependencies required by the Hybrid
   Assistant Bridge CLI, its two-phase lifecycle commands, and `mymoe-paired`.
 - `.[gguf]`: installs the Python-side downloader dependencies for llama.cpp/GGUF profiles. The `llama-server` binary is still installed from llama.cpp releases.
@@ -85,6 +87,13 @@ locked dependency graph with uv, or install the same project extra with pip:
 ```bash
 uv sync --locked --extra assistant-bridge
 pip install '.[assistant-bridge]'
+```
+
+Install the coding canary independently when you need that command:
+
+```bash
+uv sync --locked --extra coding-canary
+pip install '.[coding-canary]'
 ```
 
 Or let the bootstrap script run the safe install commands:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import hashlib
+from importlib import import_module
 import json
 from pathlib import Path
 import re
@@ -87,6 +88,24 @@ _ASSISTANT_BRIDGE_EXTRA_MODULES = frozenset(
         "rfc8785",
     }
 )
+_CODING_CANARY_EXTRA_MODULES = frozenset({"rfc8785"})
+
+
+def _run_coding_canary_command(argv: list[str]) -> int:
+    try:
+        module = import_module(".coding_canary", package=__package__)
+    except ModuleNotFoundError as exc:
+        missing = (exc.name or "").split(".", 1)[0]
+        if missing not in _CODING_CANARY_EXTRA_MODULES:
+            raise
+        print(
+            "The coding-canary extra is required. Install it with "
+            "`uv sync --extra coding-canary` or "
+            "`pip install 'local-moe-orchestrator[coding-canary]'`.",
+            file=sys.stderr,
+        )
+        return 2
+    return int(module.main(argv))
 
 
 class _MymoeArgumentParser(argparse.ArgumentParser):
@@ -129,6 +148,9 @@ class _MymoeArgumentParser(argparse.ArgumentParser):
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["coding-canary"]:
+        raise SystemExit(_run_coding_canary_command(sys.argv[2:]))
+
     if sys.argv[1:2] == ["assistant-probe"]:
         from .assistant_provider_probe import main as run_assistant_provider_probe
 
@@ -140,7 +162,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "commands:\n"
-            "  assistant-probe  Check local Codex tool compatibility in a disposable workspace."
+            "  assistant-probe  Check local Codex tool compatibility in a disposable workspace.\n"
+            "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
         ),
     )
     parser.add_argument("--config")

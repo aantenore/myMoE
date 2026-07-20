@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +12,9 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
+import local_moe.cli as cli
 from local_moe.agent_tools import ApprovalRequest, arguments_sha256
 from local_moe.cli import _agent_approval_handler
 from local_moe.run_log import RunLogStore
@@ -28,6 +31,19 @@ def _env() -> dict[str, str]:
 
 
 class CliTests(unittest.TestCase):
+    def test_coding_canary_missing_extra_is_explicit(self) -> None:
+        error = ModuleNotFoundError("missing optional dependency", name="rfc8785")
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "import_module", side_effect=error),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli._run_coding_canary_command(["--help"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("coding-canary extra is required", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_root_help_discovers_assistant_probe(self) -> None:
         completed = subprocess.run(
             [sys.executable, "-m", "local_moe.cli", "--help"],
@@ -40,6 +56,7 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("commands:", completed.stdout)
         self.assertIn("assistant-probe", completed.stdout)
+        self.assertIn("coding-canary", completed.stdout)
         self.assertIn("--assistant-task", completed.stdout)
 
     def test_eval_mode_prints_router_metrics(self) -> None:

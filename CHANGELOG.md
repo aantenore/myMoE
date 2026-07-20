@@ -4,6 +4,50 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0-alpha.1] - 2026-07-20
+
+### Added
+
+- `mymoe coding-canary`, a metadata-only macOS qualification for one exact
+  Cline CLI 3.0.46, myMoE gateway, pinned local model, runtime configuration,
+  hardware fingerprint, disposable single-file edit, and pristine test cell.
+- A separate `coding-canary` package extra and a bounded missing-extra error,
+  keeping the base distribution dependency-free and avoiding import tracebacks.
+- A Cline `PreToolUse` policy gate, independent NDJSON tool-input validation,
+  parent-owned authenticated inference broker, exact model and route pinning,
+  stable workspace attestation, and a separately isolated pristine verifier.
+- A canonical digest of the complete effective myMoE runtime configuration,
+  including routing, timeouts, provider parameters, execution declarations,
+  and rules. The loopback `/api/config` endpoint exposes only the digest for
+  declared-versus-live binding.
+- Deterministic tests for hook ordering, Cline event lifecycles, exact tool
+  inputs, late hardlinks, wrong executable digests, gateway drift, proxy races,
+  metadata privacy, and fail-closed result classification.
+- Exact handling for Cline 3.0.46's fixed AI SDK warning banner while every
+  other non-NDJSON stdout line remains fail-closed.
+
+### Security
+
+- The canary hashes and rejects an untrusted Cline executable before running
+  its bounded version probe, and rechecks its identity after the agent run.
+- Its generated `sandbox-exec` policy denies host-file writes by default,
+  re-allows only isolated state, temporary data, and the exact source edit,
+  blocks general network and network bind, and is exercised by a live policy
+  probe before the agent starts.
+- Proxy handler threads are joined before evidence is frozen, candidate bytes
+  must still equal the exact attested fix before verification, and reports omit
+  prompts, tool inputs, outputs, credentials, and raw filesystem paths.
+
+### Known limitations
+
+- The canary is diagnostic-only, macOS-only, and pinned to one Cline version
+  and one narrow edit-and-test contract. It never authorizes routing and does
+  not qualify real repositories, unrestricted terminal use, browser or desktop
+  control, MCP, Git publication, or general autonomy.
+- The measured Apple M5 Pro / 24 GiB Qwen3 Coder 30B-A3B 4-bit cell returned
+  `incompatible`: the isolation and binding gates passed, but the pre-tool gate
+  rejected an editor request outside the exact fixture contract.
+
 ## [0.5.0-alpha.1] - 2026-07-20
 
 ### Added

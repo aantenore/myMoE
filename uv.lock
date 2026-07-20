@@ -930,7 +930,7 @@ wheels = [
 
 [[package]]
 name = "local-moe-orchestrator"
-version = "0.5.0a1"
+version = "0.6.0a1"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -940,6 +940,9 @@ assistant-bridge = [
     { name = "filelock" },
     { name = "platformdirs" },
     { name = "psutil" },
+    { name = "rfc8785" },
+]
+coding-canary = [
     { name = "rfc8785" },
 ]
 gguf = [
@@ -990,9 +993,10 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'mlx-current'" },
     { name = "psutil", marker = "extra == 'mlx-vlm'" },
     { name = "rfc8785", marker = "extra == 'assistant-bridge'", specifier = ">=0.1.4,<0.2" },
+    { name = "rfc8785", marker = "extra == 'coding-canary'", specifier = ">=0.1.4,<0.2" },
     { name = "transformers", marker = "extra == 'mlx'", specifier = "==5.12.1" },
 ]
-provides-extras = ["assistant-bridge", "gguf", "mlx", "mlx-current", "mlx-vlm", "ui-test"]
+provides-extras = ["coding-canary", "assistant-bridge", "gguf", "mlx", "mlx-current", "mlx-vlm", "ui-test"]
 
 [[package]]
 name = "markdown-it-py"

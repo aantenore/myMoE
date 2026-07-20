@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-moe-orchestrator"
-version = "0.5.0a1"
+version = "0.6.0a1"
 description = "Local-first system-level MoE orchestration runtime"
 readme = "README.md"
 license = "Apache-2.0"
@@ -13,6 +13,9 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+coding-canary = [
+  "rfc8785>=0.1.4,<0.2"
+]
 assistant-bridge = [
   "cryptography>=48.0.1,<49",
   "detect-secrets>=1.5,<1.6",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -106,6 +107,95 @@ class MoEConfig:
     @property
     def experts_by_id(self) -> dict[str, ExpertConfig]:
         return {expert.id: expert for expert in self.experts}
+
+
+def runtime_config_sha256(config: MoEConfig) -> str:
+    """Return a canonical digest of the complete effective runtime config.
+
+    Object keys are sorted, while the order of runtime sequences is preserved.
+    The serialized configuration remains internal so callers receive no model
+    parameters or endpoint details beyond the one-way digest.
+    """
+
+    payload = {
+        "execution": {
+            "max_scope": config.execution_policy.max_scope.value,
+            "allowed_scopes": [
+                scope.value for scope in config.execution_policy.allowed_scopes
+            ],
+            "allow_scope_widening": config.execution_policy.allow_scope_widening,
+        },
+        "routing": {
+            "top_k": config.routing.top_k,
+            "fallback_order": list(config.routing.fallback_order),
+            "aggregation": config.routing.aggregation,
+            "strategy": config.routing.strategy,
+            "semantic": {
+                "enabled": config.routing.semantic.enabled,
+                "method": config.routing.semantic.method,
+                "min_score": config.routing.semantic.min_score,
+                "margin": config.routing.semantic.margin,
+                "weight": config.routing.semantic.weight,
+                "ngram_min": config.routing.semantic.ngram_min,
+                "ngram_max": config.routing.semantic.ngram_max,
+                "examples": [
+                    {
+                        "expert_id": example.expert_id,
+                        "utterances": list(example.utterances),
+                        "weight": example.weight,
+                    }
+                    for example in config.routing.semantic.examples
+                ],
+            },
+            "distilled": {
+                "enabled": config.routing.distilled.enabled,
+                "artifact_path": config.routing.distilled.artifact_path,
+                "min_confidence": config.routing.distilled.min_confidence,
+                "weight": config.routing.distilled.weight,
+            },
+        },
+        "experts": [
+            {
+                "id": expert.id,
+                "provider": expert.provider,
+                "model": expert.model,
+                "role": expert.role,
+                "weight": expert.weight,
+                "timeout_seconds": expert.timeout_seconds,
+                "base_url": expert.base_url,
+                "params": expert.params,
+                "execution": {
+                    "scope": (
+                        expert.execution.scope.value
+                        if expert.execution.scope is not None
+                        else None
+                    ),
+                    "transport": (
+                        expert.execution.transport.value
+                        if expert.execution.transport is not None
+                        else None
+                    ),
+                },
+            }
+            for expert in config.experts
+        ],
+        "rules": [
+            {
+                "expert_id": rule.expert_id,
+                "keywords": list(rule.keywords),
+                "weight": rule.weight,
+            }
+            for rule in config.rules
+        ],
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def load_config(path: str | Path) -> MoEConfig:

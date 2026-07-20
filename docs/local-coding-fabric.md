@@ -2,26 +2,27 @@
 
 ## What this gives you
 
-myMoE can be the local inference layer for a coding agent in VS Code. The first
-integration target is [Cline](https://github.com/cline/cline): Cline reads and
-edits the workspace, runs terminal and Git commands, opens a browser, and calls
-MCP tools; myMoE receives the model requests on localhost and sends them only
-to an eligible model from the active local profile.
+myMoE lets a coding agent use models running on your computer without a
+per-token model fee. Its first integration target is
+[Cline](https://github.com/cline/cline): Cline supplies the agent harness, while
+myMoE receives model requests on loopback and forwards them only to the pinned,
+device-only expert selected for the qualification.
 
-The intended practical result is an agent workflow without a per-token API
-bill:
+Before trusting a local model with real code, `mymoe coding-canary` tests one
+exact Cline/runtime/model/hardware cell. The disposable task is deliberately
+small: read two fixture files, make one exact fix in one source file, and run
+one exact test. The canary checks the tool sequence, workspace change, live
+gateway binding, model alias, process result, and an independent rerun of the
+pristine test.
 
-> Ask Cline to inspect a repository, implement a change, run the tests, explain
-> the diff, and check the local web page. Cline performs those actions in VS
-> Code, while one or more local models provide the reasoning through myMoE.
+This split avoids building another editor or agent UI. It also keeps the claim
+narrow: passing proves only that exact disposable edit-and-test cell. It does
+not qualify work on a real repository, browser or desktop control, MCP, Git
+publication, unrestricted terminal use, or general autonomy.
 
-This split is intentional. myMoE is the configurable inference control plane;
-Cline is the mature coding harness. It avoids duplicating file editors,
-terminal sessions, browser automation, approval UX, and the MCP ecosystem. In
-this alpha, the OpenAI-compatible protocol, a real local model tool loop, and
-an isolated read-only task through the Cline extension are validated. A
-representative write, terminal, browser, or MCP task driven through the Cline
-UI is still a release canary, so the whole integration remains experimental.
+> No per-token model fee does not mean zero cost. You still provide hardware,
+> electricity, storage, and any obligations imposed by the model and tool
+> licenses.
 
 ## What is implemented now
 
@@ -31,10 +32,12 @@ UI is still a release canary, so the whole integration remains experimental.
 | `POST /v1/chat/completions` | myMoE | Implemented for regular and streaming OpenAI-compatible requests, including tool definitions and tool-call payloads supported by the selected model endpoint. |
 | Routed model alias `mymoe` | myMoE | Implemented. The configured router chooses one eligible expert from the request text. |
 | Pinned aliases such as `mymoe/coder` | myMoE | Implemented when that expert ID exists in the active profile. Unknown aliases fail explicitly. |
-| File search, reads, patches, and edits | Cline | Isolated file reads passed end to end through myMoE; search, patches, and edits remain pending. |
-| Terminal, tests, and Git | Cline | Provided by Cline; keep approvals enabled during the integration canary. |
-| Browser actions | Cline | Provided by Cline. Network access is a separate policy boundary described below, and the integration canary is pending. |
-| MCP tools | Cline or the separate myMoE CLI agent | Available, but the two registries are independent. Installing or enabling an MCP server grants executable capability and requires review. |
+| `mymoe coding-canary` | myMoE + Cline CLI | Implemented for Cline CLI 3.0.46 on macOS. Qualifies one pinned, disposable single-file edit and pristine-test contract. |
+| File reads, one exact edit, and one exact test command | Cline under the canary gate | Implemented only inside the disposable fixture. The hook gate permits the expected sequence and the targeted sandbox permits only the source-file write. |
+| Independent verification | myMoE | Implemented. A separate isolated verifier receives the candidate source and the pristine embedded test; it has no network access. |
+| Real repository edits, unrestricted terminal, and Git | Cline | Cline can provide these capabilities, but the current canary does not qualify or contain them. |
+| Browser actions | Cline | Not qualified. Browser-connected use is a separate egress and credential boundary. |
+| MCP tools | Cline or the separate myMoE CLI agent | Not qualified by this canary. The registries are independent, and every MCP server is executable capability. |
 | General desktop control outside the editor/browser | Future native sidecar | Not implemented. The accessibility-first design is documented in the roadmap below. |
 
 The gateway does not silently call a paid provider. Its configured experts,
@@ -45,37 +48,43 @@ if a future gateway policy permits remote clients. Remote inference requires a
 separate, gateway-only authenticated listener; that listener is not implemented
 in this alpha.
 
-## Validated Cline canary
+## What the canary actually contains
 
-On 2026-07-20, an isolated Cline 4.0.10 extension instance completed a bounded
-read-only task through myMoE `0.5.0a1` and the local MLX Qwen3-4B model:
+The canary is pinned to Cline CLI `3.0.46` and requires the exact SHA-256 of its
+direct native executable. It also requires a canonical numeric loopback gateway
+URL, a device-only myMoE configuration, and a pinned `mymoe/<expert-id>` alias. It
+compares the declared configuration with the live `/v1/models` and `/api/config`
+identity before and after execution. The comparison uses a canonical digest of
+the complete effective runtime configuration, including routing, timeouts, and
+all provider-facing expert parameters; it does not expose those parameters.
 
-- Cline read only `README.md` and `pyproject.toml`, then reported the project
-  purpose and version `0.5.0a1` correctly.
-- The Cline task recorded three file-read events. It invoked no write,
-  terminal, browser, Git, MCP, or subagent tool.
-- The myMoE gateway audit recorded four successful streamed requests with
-  `requested_model=mymoe/general` and `route_selected=[general]`; the local
-  model server returned HTTP 200 for all four.
-- The two-file workspace remained byte-identical after the task.
-- Cline emitted its XML-style file-tool protocol even with native tool calls
-  enabled. The gateway's OpenAI `tool_calls` fidelity is covered separately by
-  HTTP integration tests, not by this specific Cline canary.
+For the disposable run, myMoE creates isolated Cline state and configuration,
+disables MCP and unrelated Cline tools, and installs a `PreToolUse` hook. The
+hook accepts only the expected `read_files` -> `editor` -> `run_commands`
+contract. A generated macOS `sandbox-exec` profile is live-probed before Cline
+starts; it restricts writes in the disposable workspace to the exact source
+file, denies other host-file writes, denies network bind, and permits outbound
+network only to a random, parent-owned loopback inference broker. The broker
+accepts only the expected model and chat-completions path.
 
-The canary used temporary home, Cline data, extension, VS Code user-data, and
-workspace directories. VS Code sync, telemetry, and updates were disabled, as
-were Cline browser, MCP, hooks, checkpoints, and subagents. It proves this exact
-read-only combination, not general write safety or reliable browser/desktop
-autonomy.
+After the run, myMoE rejects extra, missing, renamed, linked, or special files
+and compares Cline's event lifecycle with the hook evidence. Only an expected
+single-file change reaches a separate verifier, which reruns the pristine test
+without network access.
 
-## Five-minute Cline setup
+This is a hook policy gate plus targeted host-data and egress sandbox. It is
+not a VM, container, different operating-system user, or general Cline
+containment boundary. The report explicitly records
+`process_tree=observed_cleanup_not_vm_containment`.
+
+## Start and qualify one local coding cell
 
 ### 1. Install and start a local model
 
 For the default Apple Silicon profile:
 
 ```bash
-uv sync --locked --python 3.12 --extra mlx
+uv sync --locked --python 3.12 --extra mlx --extra coding-canary
 PYTHONPATH=src .venv/bin/python scripts/bootstrap_runtime.py --download-models
 PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 ```
@@ -114,32 +123,109 @@ curl http://127.0.0.1:8089/v1/models
 The response should contain `mymoe`. It contains `mymoe/coder` only when the
 active profile has an expert whose ID is `coder`.
 
-### 3. Configure Cline in VS Code
+### 3. Pin the trusted Cline CLI
 
-The extension surface checked for this alpha is
-`saoudrizwan.claude-dev@4.0.10`. On a connected machine, install and verify that
-exact version before opening its settings:
+The automated contract currently supports exactly Cline CLI `3.0.46`. Obtain
+that version through your trusted software-admission process and record the
+SHA-256 of the direct compiled Mach-O executable in an inventory separate from
+the canary run. The npm package's small `bin/cline` JavaScript file is only a
+resolver and is rejected because its digest does not bind the binary it starts.
+Use the native target it resolves, commonly `bin/.cline` on macOS. Verify both
+before continuing:
 
 ```bash
-code --install-extension saoudrizwan.claude-dev@4.0.10 --force
-code --list-extensions --show-versions
+CLINE_BIN=/absolute/path/to/native/.cline
+shasum -a 256 "$CLINE_BIN"
+"$CLINE_BIN" --version
 ```
 
-For an air-gapped machine, download that specific VSIX on a connected machine,
-record its SHA-256 digest (`shasum -a 256 cline.vsix` on macOS), transfer both
-the file and expected digest through the approved channel, verify the digest,
-then install it with `code --install-extension /path/to/cline.vsix`. A VSIX is
-executable extension code: keep the version and digest in the environment's
-software inventory.
+Compare the first command's digest with the trusted 64-character lowercase
+value before executing the file. The second command must then report `3.0.46`.
+The canary enforces this order internally: it verifies the digest and rejects
+scripts or indirect launchers before running the bounded version probe.
+Calculating a digest after a suspected compromise does not establish
+provenance.
 
-Then configure:
+The command is packaged as an optional surface. If this checkout was installed
+without it, add `uv sync --locked --extra coding-canary` (or install
+`local-moe-orchestrator[coding-canary]`) before running the canary.
+
+### 4. Run the automated coding canary
+
+Use the same gateway configuration that started the live model and gateway.
+The alias must pin one expert; the routed alias `mymoe` is intentionally
+rejected.
+
+```bash
+mymoe coding-canary \
+  --cline "$CLINE_BIN" \
+  --cline-sha256 "$TRUSTED_CLINE_SHA256" \
+  --base-url http://127.0.0.1:8089/v1 \
+  --gateway-config configs/moe.live.qwen3-coder-mlx.example.json \
+  --model mymoe/coder \
+  --timeout-seconds 180 \
+  --json \
+  --out coding-canary.json
+```
+
+`--base-url` accepts only a canonical numeric IPv4 loopback HTTP URL. The
+canary authenticates its isolated Cline state itself; it does not reuse your
+normal Cline settings, MCP registry, home directory, or API key.
+
+The command has three diagnostic outcomes plus one caller-contract error:
+
+| Exit | Report status | Meaning |
+| --- | --- | --- |
+| `0` | `qualified` | Every gate passed for this exact disposable Cline/runtime/model/hardware cell. |
+| `1` | `incompatible` | The run completed well enough to conclude that the exact cell did not satisfy the edit-and-test contract. |
+| `2` | `error` | Caller input or the pinned contract is invalid, including a wrong Cline version/digest, gateway URL, model alias, or configuration. |
+| `3` | `indeterminate` | The host, process, timeout, gateway, or evidence stream prevented a trustworthy compatibility judgment. |
+
+Do not convert `indeterminate` into `incompatible`, and do not treat
+`incompatible` as a statement about every task the model can perform. Every
+report, even `qualified`, contains `diagnostic_only=true` and
+`authorizes_routing=false`; the command never changes a profile or enables
+traffic. A passing report adds only
+`qualified_scope=single_disposable_file_edit_and_pristine_test`.
+The JSON is metadata-only: it records hashes, counters, status codes, and
+bounded process evidence rather than prompts, model output, credentials, or
+raw filesystem paths.
+
+Cline 3.0.46 can emit one fixed AI SDK warning banner on stdout before its
+NDJSON events. The parser recognizes only those exact constant bytes, records
+the ignored-banner count, and continues to reject every other non-JSON line as
+ambiguous evidence.
+
+### Current measured coding-cell result
+
+On 2026-07-20, the Apple M5 Pro / 24 GiB cell using Cline CLI `3.0.46`, the
+device-only Qwen3 Coder 30B-A3B 4-bit profile, and the local MLX runtime returned
+`incompatible` with `tool_request_denied`:
+
+- the Cline executable digest, full live runtime-config digest, pinned model,
+  loopback broker, and before/after gateway identity checks passed;
+- the generated sandbox passed its live host-read, host-write, scratch-write,
+  protected-file, network-bind, allowed-port, and denied-port probes;
+- the model completed the fixture read, then requested an editor operation that
+  did not match the exact allowed patch, so the pre-tool gate stopped it;
+- the source and pristine test remained unchanged, and the report retained
+  `authorizes_routing=false`.
+
+This is a negative result for that exact model/runtime/hardware/agent-harness
+cell. It is not evidence that the model cannot help with other coding tasks, and
+it is not converted into a routing policy.
+
+### 5. Optionally connect Cline in VS Code
+
+After qualification, you can configure the Cline editor interface for manual
+experiments:
 
 | Cline setting | Value |
 | --- | --- |
 | API Provider | `OpenAI Compatible` |
 | Base URL | `http://127.0.0.1:8089/v1` |
 | API Key | `local` if the form requires a value |
-| Model ID | `mymoe`, or `mymoe/coder` with the coder profile |
+| Model ID | Prefer the qualified pinned alias, such as `mymoe/coder` |
 | Context window | `16384` for the first 24 GiB coder canary |
 
 The default myMoE gateway configuration does not require a key because it
@@ -151,20 +237,10 @@ environment variable and enter the exact same value in Cline instead.
 Cline's current setup screen and terminology are documented in its official
 [OpenAI Compatible provider guide](https://docs.cline.bot/provider-config/openai-compatible).
 
-### 4. Run a read-only canary first
-
-Start with a bounded request:
-
-```text
-Read README.md without changing files or running network commands. Summarize
-what this repository does, then show which files you inspected.
-```
-
-Check that Cline proposes the expected file tools, receives valid tool-call
-results, and stops. Then try a disposable repository task that runs one local
-test and shows the diff. Keep write and terminal approvals enabled until that
-exact model, quantization, runtime, context size, and Cline version have passed
-your own canary.
+An ordinary editor session is not launched through the canary's hook gate,
+loopback broker, or sandbox profile. Keep Cline's own approvals enabled, begin
+with a disposable repository, inspect the diff, and apply independent host
+controls appropriate to the tools you enable.
 
 If the model answers with prose instead of calling a tool, emits malformed tool
 arguments, loops, or loses the task after an observation, the HTTP connection
@@ -192,11 +268,11 @@ Use this mode when the machine must not send project data to the Internet:
 - enforce the network boundary with the operating system or an external
   sandbox, not with prompt instructions.
 
-myMoE currently enforces its inference endpoint policy, but it does not attest
-or firewall Cline's browser, terminal, extension telemetry, or MCP processes.
-An enforceable whole-agent egress broker is roadmap work. Until then, describe
-this mode as air-gapped only when the host network boundary is independently
-enforced.
+The automated canary restricts only its own Cline CLI process to its random
+loopback broker. myMoE does not attest or firewall an ordinary Cline editor
+session, browser, terminal, extension telemetry, or MCP process. An enforceable
+whole-agent egress broker is roadmap work. Until then, describe this mode as
+air-gapped only when the host network boundary is independently enforced.
 
 ### Browser-connected, inference-local
 
@@ -243,9 +319,12 @@ The responsibilities are deliberately separate:
 - **The local model owns tool-call quality:** a compatible API shape does not
   prove that a model can plan, emit strict arguments, interpret observations,
   or finish a multi-step coding task.
+- **The canary owns one diagnostic contract:** its pre-tool hook, loopback
+  broker, targeted sandbox, fixture inspection, and independent verifier apply
+  only to the disposable process it starts.
 - **Cline owns agent execution:** workspace selection, file changes, terminal
   processes, browser sessions, MCP connections, approvals, and conversation
-  state.
+  state in ordinary editor sessions.
 - **The operating system owns the hard boundary:** filesystem permissions,
   process isolation, network firewalling, keychain access, and desktop privacy
   consent.
@@ -269,7 +348,7 @@ quality-first candidate that must run alone:
 | Shape | Use it for | Evidence | Advice |
 | --- | --- | --- | --- |
 | Qwen3 4B + Qwen3 1.7B | Responsive chat, routing, summaries, and initial coding canaries | 2.49 GiB + 1.09 GiB model memory in isolated measurements | This is the default resident pair. Start only the first model when maximum headroom matters. |
-| Qwen3 Coder 30B-A3B 4-bit | Quality-first coding experiments | Approximately 17.2 GB of model artifacts; runtime memory, swap, latency, 16K context, and multi-step tool use are not yet validated | Candidate only. Run alone, close memory-heavy apps, keep decode and prompt concurrency at `1`, use a 16K client context, and watch swap. |
+| Qwen3 Coder 30B-A3B 4-bit | Quality-first coding experiments | Approximately 17.2 GB of model artifacts; the first strict Cline edit-and-test cell was incompatible after an out-of-contract editor request, while broader runtime memory, swap, latency, and 16K-context evidence remain incomplete | Candidate only. Run alone, close memory-heavy apps, keep decode and prompt concurrency at `1`, use a 16K client context, and watch swap. |
 
 The similarly sized measured Qwen3 30B general model used 17.29 GiB. Prior
 joint-residency experiments with a 30B model caused severe swap pressure on the
@@ -344,22 +423,24 @@ credentials, purchases, messages, or destructive actions.
 ## Delivery roadmap
 
 - **Now:** loopback OpenAI-compatible gateway, routed and pinned aliases,
-  streaming proxy, experimental Cline setup, explicit network semantics, and
-  evidence-qualified per-profile resource guidance.
-- **Next:** a capability broker and execution receipts for filesystem,
-  terminal, Git, and browser actions, a representative Cline-driven canary,
-  plus repeatable local coding-agent evaluations across model/runtime
-  combinations.
-- **Then:** resource admission, session-sticky model selection, guarded
-  specialist cold-loading, and measurable multi-model scheduling.
-- **Later:** the accessibility-first desktop sidecar and replaceable platform
-  adapters.
+  streaming proxy, and the macOS-only Cline CLI 3.0.46 qualification for one
+  disposable single-file edit and pristine test.
+- **Next:** repeat the coding-cell evaluation across selected local
+  model/runtime/hardware combinations, publish comparable metadata-only
+  evidence, and add explicit resource admission before concurrent local-model
+  runs.
+- **Then:** design separate, bounded qualification contracts and receipts for
+  real-repository filesystem, terminal, and Git operations; browser and MCP
+  remain distinct capability and egress cells rather than inherited promises.
+- **Later:** guarded specialist cold-loading, session-sticky multi-model
+  scheduling, browser/MCP qualification, and an accessibility-first desktop
+  sidecar with replaceable platform adapters.
 
 The release criterion is not "the endpoint answered." This alpha releases the
-gateway layer, not a claim that the entire Cline fabric is production-ready.
-That stronger claim requires representative Cline-driven repository tasks,
-preserved sandbox and network policy, valid multi-step tool calls, controlled
-swap, and an inspectable diff and test result.
+gateway and one narrow diagnostic contract, not a claim that the entire Cline
+fabric is production-ready. Browser, desktop, MCP, Git publication, real
+repositories, and general autonomy require their own policies, representative
+tasks, independent verification, resource evidence, and explicit authority.
 
 ## Related documentation
 

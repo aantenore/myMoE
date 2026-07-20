@@ -1,47 +1,68 @@
 # myMoE
 
-**Use local AI to chat or code, choose the smallest suitable expert, and keep
-every wider execution boundary explicit.**
+**Run coding agents with local models, then test each exact
+Cline/runtime/model/hardware combination before trusting it with code.**
 
-## A private coding agent without per-token fees
+## Local coding without per-token model fees
 
-myMoE can power [Cline](https://github.com/cline/cline) from models running on
-your own computer. Cline stays in VS Code and provides the coding-agent
-experience; myMoE gives it one OpenAI-compatible local endpoint, chooses or
-pins a configured model, and prevents an implicit cloud fallback.
+myMoE can supply [Cline](https://github.com/cline/cline) with models running on
+your own computer. Cline provides the coding-agent harness; myMoE provides one
+OpenAI-compatible local endpoint, configurable model selection, and an
+explicit device-only path with no implicit paid-model fallback.
 
-In practical terms, you can ask the agent to understand a repository, edit
-files, run terminal and Git commands, inspect a local web app in a browser, and
-use configured MCP tools. The model inference remains on your machine; the
-file, terminal, browser, and MCP actions are performed by Cline under its own
-tool and approval settings.
+The automated coding-cell check is `mymoe coding-canary`. It runs one pinned
+Cline CLI 3.0.46 executable against one pinned `mymoe/<expert>` alias in a
+disposable workspace. The agent must read two tiny files, make one exact
+single-file fix, and run one exact test. A pre-tool hook gates that sequence, a
+targeted macOS sandbox restricts workspace writes and network access, and a
+separate verifier reruns the pristine test. The report binds the observed
+Cline executable digest, complete effective gateway-configuration digest,
+pinned model, and hardware fingerprint.
 
 ```text
-Cline in VS Code -> http://127.0.0.1:8089/v1 -> myMoE -> local model(s)
-      |                                                   no API bill
-      +-> files / terminal / Git / browser / MCP
+Cline CLI -> parent-owned loopback broker -> myMoE -> pinned local model
+     |                                        |
+     +-> disposable edit + test               +-> no per-token model fee
 ```
 
-Start myMoE, select **OpenAI Compatible** in Cline, and use:
+With the matching model server and myMoE gateway already running, invoke the
+qualification with a SHA-256 recorded when the trusted direct native Cline
+executable was admitted. Do not pass Cline's npm `bin/cline` JavaScript wrapper;
+use the compiled Mach-O binary it resolves (commonly `bin/.cline`) so the digest
+binds the process that actually runs:
 
-- Base URL: `http://127.0.0.1:8089/v1`
-- API key: `local` if the Cline form requires a value
-- Model: `mymoe` for configured routing, or `mymoe/coder` when the active
-  profile contains the `coder` expert
+```bash
+uv sync --locked --extra coding-canary
+```
+
+```bash
+mymoe coding-canary \
+  --cline /absolute/path/to/native/.cline \
+  --cline-sha256 "$TRUSTED_CLINE_SHA256" \
+  --base-url http://127.0.0.1:8089/v1 \
+  --gateway-config configs/moe.live.qwen3-coder-mlx.example.json \
+  --model mymoe/coder \
+  --out coding-canary.json
+```
 
 See the [Local Coding Fabric guide](docs/local-coding-fabric.md) for the exact
-setup, 24 GiB model advice, offline modes, security boundary, and current
-limitations.
+setup, result meanings, 24 GiB model advice, offline modes, and security
+boundary.
 
-> **Honest boundary:** this removes per-token cloud charges, not hardware,
-> electricity, or model-license obligations. myMoE provides local inference;
-> Cline is the external agent harness. Browser or networked MCP actions are not
-> air-gapped, and reliable tool use still depends on the selected local model.
-> This alpha validates the gateway, a real local-model tool loop, and an
-> isolated read-only Cline 4.0.10 canary through myMoE and Qwen3-4B. A
-> UI-driven write, terminal, browser, or MCP workflow is still pending. Run the
-> documented read-only canary before allowing those capabilities for a new
-> model/runtime combination.
+> **Honest boundary:** this removes per-token cloud-model charges, not hardware,
+> electricity, or model-license obligations. The current canary is a
+> macOS-only diagnostic for one disposable single-file edit-and-test contract.
+> Its hook gate and targeted `sandbox-exec` policy are not VM containment. It
+> does not qualify real repositories, browser or desktop control, MCP, Git
+> publication, unrestricted terminal use, or general autonomy. Every report,
+> including a passing one, sets `diagnostic_only=true` and
+> `authorizes_routing=false`.
+
+The current Apple M5 Pro / 24 GiB Qwen3 Coder 30B cell is **not qualified**:
+the live canary passed its isolation, executable, gateway, and model-binding
+checks, then rejected an editor request outside the exact fixture contract. That
+is a useful negative result for this exact cell, not a claim that the model
+cannot perform other coding tasks.
 
 ## In plain English
 
@@ -51,8 +72,10 @@ limitations.
   local control when the task did not require it.
 - **What it does:** myMoE is a configurable local control plane that chooses an
   eligible model for each request, assembles bounded chat context, applies safe
-  fallbacks, and records operational evidence. It orchestrates independent
-  models; it does not train a new sparse Mixture-of-Experts model.
+  fallbacks, and records operational evidence. Its coding canary separately
+  tests whether one exact local coding cell can complete a controlled edit and
+  test before you try it on real code. It orchestrates independent models; it
+  does not train a new sparse Mixture-of-Experts model.
 - **Who it is for:** developers and advanced users who run local models and want
   an inspectable way to balance capability, device resources, privacy, and
   optional premium escalation.
@@ -65,6 +88,7 @@ limitations.
 | Feature | Real-world benefit |
 | --- | --- |
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
+| Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
 | Configuration-driven routing across independent models | Teams can change experts, weights, endpoints, budgets, and fallbacks without retraining one giant model. |
 | Execution Scope Guard before every model call | A local-only request fails closed instead of silently moving to a wider mesh or remote route. |
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
@@ -226,8 +250,10 @@ Open `http://127.0.0.1:8089`.
 
 Starting only the first model keeps memory use low. If a request is routed to the offline fast expert, the default bidirectional fallback order retries the resident general expert.
 
-To use the same runtime from Cline, follow the
-[five-minute local coding setup](docs/local-coding-fabric.md#five-minute-cline-setup).
+To qualify one exact local Cline coding cell, follow the
+[coding canary runbook](docs/local-coding-fabric.md#4-run-the-automated-coding-canary).
+The same guide also explains how to connect the Cline editor interface after
+qualification.
 
 For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startup runbook, use the [installation guide](docs/installation.md).
 
@@ -235,7 +261,8 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 
 | Goal | Entry point | Persistence and tools |
 | --- | --- | --- |
-| Code from VS Code with a local model | Cline with Base URL `http://127.0.0.1:8089/v1` and model `mymoe` | Cline owns workspace, terminal, browser, and MCP tools; myMoE supplies local inference and model selection. |
+| Qualify one local coding cell | `mymoe coding-canary --cline … --cline-sha256 … --model mymoe/coder` | Disposable macOS-only single-file edit and pristine test; metadata-only diagnostic with no routing authority. |
+| Experiment from VS Code with a local model | Cline with Base URL `http://127.0.0.1:8089/v1` and a pinned model such as `mymoe/coder` | Cline owns workspace and tools; browser, desktop, MCP, Git publication, and general autonomy are not qualified by the current canary. |
 | Use the chat application | `.venv/bin/mymoe-web --port 8089` | Persistent chats, memory retrieval, streaming, and metadata-only run logging. |
 | Use persistent terminal chat | `.venv/bin/mymoe --interactive` | Uses the same chat, memory, context, and run-log stores as the web app. |
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
@@ -285,7 +312,7 @@ response or tool metadata cannot create a new executable implementation.
 ## Safety and Local Data
 
 - Normal chat never runs tools automatically. Tool-calling is a separate CLI path with an explicit tool selection.
-- The Cline gateway is a separate path: myMoE forwards OpenAI-compatible model requests, while Cline owns file, terminal, browser, and MCP execution. Cline permissions and third-party MCP servers remain separate trust boundaries.
+- The Cline gateway is a separate path: myMoE forwards OpenAI-compatible model requests, while Cline owns file and tool execution. The coding canary adds a narrow pre-tool hook policy and targeted macOS sandbox only for its disposable fixture; ordinary Cline sessions, browser/desktop actions, MCP servers, Git, and real repositories remain separate, unqualified trust boundaries.
 - The Execution Scope Guard applies to every local-orchestration generation entry point. The default is `device_only`, fallback scope widening is disabled, and missing or contradictory evidence fails with `scope_blocked` before an ineligible provider call.
 - A loopback URL proves only the first network hop. Mesh and gateway transports require an external attestor even when they listen on `127.0.0.1`; the current Mesh adapter is disabled and fail-closed.
 - Read-only and compute-only agent tools may run automatically; risky calls pause and require an approval bound to the canonical tool name and exact argument SHA-256.
@@ -331,6 +358,8 @@ Current measured results and their limits are documented in [Tested Performance]
 myMoE is primarily a local workstation orchestration runtime and evaluation harness. Its
 OpenAI-compatible gateway can supply local inference to an external coding
 harness such as Cline, but Cline owns its workspace tools and permissions. The
+coding canary qualifies only one pinned, macOS, disposable edit-and-test cell;
+it is not a production sandbox and never grants routing authority. The
 Hybrid Assistant Bridge may start a separately configured premium Codex process
 only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant

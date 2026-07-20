@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 
-from local_moe.config import ConfigError, parse_config
+from local_moe.config import ConfigError, parse_config, runtime_config_sha256
 
 
 def _base_config() -> dict[str, object]:
@@ -37,6 +38,48 @@ def _base_config() -> dict[str, object]:
 
 
 class ConfigTests(unittest.TestCase):
+    def test_runtime_config_digest_covers_timeout_and_all_params(self) -> None:
+        raw = _base_config()
+        raw["experts"][0]["timeout_seconds"] = 45.0  # type: ignore[index]
+        raw["experts"][0]["params"] = {  # type: ignore[index]
+            "temperature": 0.2,
+            "nested": {"alpha": 1, "beta": ["x", "y"]},
+        }
+        baseline = runtime_config_sha256(parse_config(raw))
+
+        timeout_changed = deepcopy(raw)
+        timeout_changed["experts"][0]["timeout_seconds"] = 46.0  # type: ignore[index]
+        params_changed = deepcopy(raw)
+        params = params_changed["experts"][0]["params"]  # type: ignore[index]
+        params["nested"]["beta"] = ["x", "z"]  # type: ignore[index]
+
+        self.assertRegex(baseline, r"\A[0-9a-f]{64}\Z")
+        self.assertNotEqual(
+            baseline,
+            runtime_config_sha256(parse_config(timeout_changed)),
+        )
+        self.assertNotEqual(
+            baseline,
+            runtime_config_sha256(parse_config(params_changed)),
+        )
+
+    def test_runtime_config_digest_canonicalizes_parameter_key_order(self) -> None:
+        first = _base_config()
+        first["experts"][0]["params"] = {  # type: ignore[index]
+            "z": 1,
+            "a": {"y": 2, "b": 3},
+        }
+        second = deepcopy(first)
+        second["experts"][0]["params"] = {  # type: ignore[index]
+            "a": {"b": 3, "y": 2},
+            "z": 1,
+        }
+
+        self.assertEqual(
+            runtime_config_sha256(parse_config(first)),
+            runtime_config_sha256(parse_config(second)),
+        )
+
     def test_rejects_missing_experts(self) -> None:
         raw = _base_config()
         raw["experts"] = []
