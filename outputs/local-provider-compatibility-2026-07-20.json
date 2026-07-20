@@ -1,0 +1,195 @@
+{
+  "authorizes_routing": false,
+  "binding": {
+    "bridge_config_declared_bytes_sha256": "c055e6a5455fb2ff8cb96fe168eca28dc665e87f3f92e74e7b024058a7f665f6",
+    "bridge_config_effective_sha256": "b11ff955e2cb28a4d32f1afd063a838d3dbc0fbd07483eac923d24a8c80bbc34",
+    "command_sha256": "f703c730a513fc74b0d8b7b791a9837bff3c2ff4eda5c18337bb517851bfc188",
+    "probe_contract": "codex-disposable-workspace-read/v1",
+    "probe_contract_sha256": "064bf6b6f30c5b76f66489ea14645b2ebf65598f37aa75958256aee2294e10ad"
+  },
+  "checked_at": "2026-07-20T05:15:09.754937+00:00",
+  "diagnostic_only": true,
+  "execution_identity": {
+    "command_plan": {
+      "adapter_id": "codex_cli",
+      "argv_sha256": "f723f1756f5f204e3596e0a370952679a3ee03b0939de4e5a8f5bc9786ca870b",
+      "argv_shape": [
+        "<executable>",
+        "--strict-config",
+        "--oss",
+        "--local-provider",
+        "<value>",
+        "--model",
+        "<value>",
+        "--cd",
+        "<value>",
+        "--ask-for-approval",
+        "<launcher-arg>",
+        "--config",
+        "<value>",
+        "--config",
+        "<value>",
+        "--config",
+        "<value>",
+        "--config",
+        "<value>",
+        "--config",
+        "<value>",
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--skip-git-repo-check",
+        "--color",
+        "<launcher-arg>",
+        "--output-last-message",
+        "<value>",
+        "-"
+      ],
+      "command_sha256": "f703c730a513fc74b0d8b7b791a9837bff3c2ff4eda5c18337bb517851bfc188",
+      "environment_keys": [],
+      "environment_sha256": "391bd3b2fe860610a2ed61941f3e631bfab7c036b4847452ffdef9837fb3e0f5",
+      "ephemeral_environment_keys": [
+        "CODEX_HOME",
+        "HOME"
+      ],
+      "executable": {
+        "launch_path_sha256": "d3712054caa326dc142bbb3e63a8bf48febadab5cac36b5e76414112707a5029",
+        "metadata_sha256": "8cdcc75b0e913f071551ea25c18e82270d0cc4710e55832745a23e8d189558ff",
+        "requested_sha256": "57de4cf40144bdf7d00010f2f5557a7d642c2b9705309bfade167dd313e2ca93",
+        "resolution_environment": {
+          "key_semantics": "case-sensitive",
+          "schema_version": "assistant-bridge-environment/v1",
+          "sha256": "391bd3b2fe860610a2ed61941f3e631bfab7c036b4847452ffdef9837fb3e0f5",
+          "variable_count": 6
+        },
+        "resolved_path_sha256": "d3712054caa326dc142bbb3e63a8bf48febadab5cac36b5e76414112707a5029",
+        "sha256": "5589325247117acfd2181ec5cf1daad3b88ca46abbeaf6dc43f19c65c07727c6",
+        "size_bytes": 264898656,
+        "version": null
+      },
+      "launcher_artifact_sha256": [],
+      "launcher_authority_sha256": "83c9344b1cfd37cb6315e7e43a7a9ef16585acf196084b2e5dfbdb58f5c10091",
+      "launcher_chain": {
+        "companions": [],
+        "entrypoint": null,
+        "env_launcher": null,
+        "environment": {
+          "key_semantics": "case-sensitive",
+          "schema_version": "assistant-bridge-environment/v1",
+          "sha256": "391bd3b2fe860610a2ed61941f3e631bfab7c036b4847452ffdef9837fb3e0f5",
+          "variable_count": 6
+        },
+        "fingerprint": "d8c723c8c4710ed219bcc36aa7368e82df06517bd6c9ed30a15acf65200f1158",
+        "interpreter": null,
+        "schema_version": "assistant-bridge-launcher-chain/v1",
+        "strict": true
+      },
+      "local_provider": "ollama",
+      "mode": "local",
+      "model": "qwen3:4b",
+      "network_access": false,
+      "output_path_sha256": "272377d037f65902d312b40f6723b1dd0cd45337b686b890a3fa8d2d24ea946c",
+      "permission_profile": "mymoe_workspace_read",
+      "permission_profile_effective_attested": false,
+      "permission_workspace_rule": "read",
+      "provider_id": "codex-oss-local",
+      "runtime": {
+        "detached_descendant_contract": "psutil recursively observes descendants while their ancestry is visible; already observed processes remain cleanup targets after detaching",
+        "hard_containment_supported": false,
+        "launch_change_detection": "pre_and_post_process_creation",
+        "observed_tree_cleanup_supported": true,
+        "platform": "Darwin",
+        "posix_process_groups": true,
+        "psutil_available": true,
+        "race_free_launch_binding": false,
+        "schema_version": "assistant-bridge-runtime-capabilities/v1",
+        "strict_tree_supported": true
+      },
+      "runtime_policy": {
+        "cleanup_grace_seconds": 0.25,
+        "cleanup_kill_seconds": 0.75,
+        "require_launcher_chain": true,
+        "require_psutil": true,
+        "require_tree_isolation": true,
+        "stderr_limit_bytes": 2097152,
+        "stdin_limit_bytes": 8388608,
+        "stdout_limit_bytes": 2097152
+      },
+      "sandbox": "read-only",
+      "shell_network_access": false,
+      "stdin": {
+        "characters": 276,
+        "content_in_argv": false,
+        "sha256": "ef3189d5b6eb1338af487b972cf9f629f29610f3bb285477c0feec6dc6d505ec",
+        "transport": "stdin"
+      },
+      "web_search_mode": "disabled",
+      "workspace_access": "read_only",
+      "workspace_sha256": "52bc1aed5ee79c624c93fe4cae48fa786fba153157b4d27eb661ec5afd1a8814"
+    },
+    "model": {
+      "digest": "sha256:359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+      "reference": "qwen3:4b",
+      "size_bytes": 2497293931,
+      "source": "ollama_loopback_tags_api",
+      "stable_during_probe": true,
+      "status": "content_addressed"
+    }
+  },
+  "observed_capabilities": [],
+  "probe_authority": {
+    "capabilities": [
+      "filesystem"
+    ],
+    "ephemeral": true,
+    "max_risk": "read_only",
+    "sandbox": "read-only",
+    "tools": [
+      "shell"
+    ],
+    "workspace_access": "read_only"
+  },
+  "probe_id": "f719e35c796a148899165b851a3d88d402db439f2cb500e9fccf45caec8bfd28",
+  "provider": {
+    "adapter": "codex_cli",
+    "declared_capabilities": [
+      "analysis"
+    ],
+    "declared_max_risk": "read_only",
+    "declared_sandbox": "read-only",
+    "declared_tools": [],
+    "declared_workspace_access": "read_only",
+    "execution_scope": "device_only",
+    "id": "codex-oss-local",
+    "local_provider": "ollama",
+    "mode": "local",
+    "model": "qwen3:4b"
+  },
+  "reason_codes": [
+    "launcher_timed_out"
+  ],
+  "result": {
+    "code": "launcher_timed_out",
+    "command_sha256": "f703c730a513fc74b0d8b7b791a9837bff3c2ff4eda5c18337bb517851bfc188",
+    "duration_ms": 30329,
+    "output_chars": 0,
+    "output_sha256": null,
+    "provider_id": "codex-oss-local",
+    "returncode": -15,
+    "status": "failed",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_bytes": 9957,
+    "stdout_sha256": "fe2f1d51817f4aab269743f5c987e9e73fdfe98cb9ea1195a41abd2c08106249",
+    "usage": {
+      "completion_tokens": null,
+      "cost": null,
+      "cost_status": "not_computed_without_pricing_contract",
+      "prompt_tokens": null
+    }
+  },
+  "schema_version": "assistant-provider-compatibility/v1",
+  "status": "indeterminate"
+}

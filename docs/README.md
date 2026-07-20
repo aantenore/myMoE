@@ -14,6 +14,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | Understand chat context, memory, and persistence | [Context and Memory Architecture](context-architecture.md) |
 | Run a tool-calling task safely | [Agent Runtime](agent-runtime.md) |
 | Use local Codex first and escalate only after verification | [Hybrid Assistant Bridge](hybrid-assistant-bridge.md) |
+| Check whether a local model can really use Codex workspace tools | [Hybrid Assistant Bridge: Local Provider Compatibility](hybrid-assistant-bridge.md#local-provider-compatibility-probe) |
 | Learn from verified local/premium outcomes and optionally run a signed, narrow canary | [Verified Outcome Routing and Signed Canary Authority](verified-outcome-routing.md) |
 | Inspect the independent candidate evidence contract | [Independent Candidate Attestation Predicate v1](spec/independent-candidate-attestation/v1/README.md) |
 | Check readiness or troubleshoot model startup | [Installation: Doctor](installation.md#doctor) and [Agent Runtime: Local Model Requirement](agent-runtime.md#local-model-requirement) |

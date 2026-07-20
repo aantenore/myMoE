@@ -134,13 +134,15 @@ when enabling this boundary.
 10. Planning, audit, and run-log telemetry contain hashes, counts, status codes,
     and timings only. Successful execution returns the final answer separately
     in `result.content`; it is never written to those metadata stores.
-11. Read-only work gets a read-only sandbox. Only an exact confirmation bound to
+11. Read-only work requests a named Codex permission profile limited to the minimal
+    runtime and a read-only workspace root. Only an exact confirmation bound to
     the inspected receipt, command plan, external evidence, diff/capsule options,
-    and initial command semantics can grant `write_local`; external, destructive, and
-    privileged effects are not supported by this bridge.
+    and initial command semantics can select the write-workspace profile for
+    `write_local`; external, destructive, and privileged effects are not supported.
 12. Local Codex runs with isolated state, ignored user configuration/rules, a
-    temporary home, a sanitized environment, no native web tool, and agent-tool
-    network disabled.
+    temporary home, a sanitized environment, disabled native web search, and
+    shell network disabled. Native cached web search is a separate channel and
+    is materialized only for an authorized web-capable route.
 13. An enabled signed canary runs only after these guards, may only reduce
     premium use for an exact qualified cell, and samples at most 500 of 10,000
     secret-keyed assignment buckets. The threshold is not a request-volume
@@ -165,6 +167,67 @@ The first slice is a CLI launcher because it can enforce that boundary before a
 premium session exists. An MCP adapter is a later integration surface; it should
 use an established SDK and expose the same contracts rather than inventing a
 private wire protocol.
+
+## Local Provider Compatibility Probe
+
+Provider capabilities in configuration are policy declarations, not empirical
+proof that a particular model and Codex CLI build interoperate. Before adding
+`filesystem`, `shell`, `code`, or `tests` to a local provider, run the bounded
+probe:
+
+```bash
+uv sync --locked --extra assistant-bridge
+.venv/bin/mymoe assistant-probe \
+  --bridge-config configs/assistant-bridge.json \
+  --timeout-seconds 45 \
+  --out work/runtime/local-provider-probe.json \
+  --json
+```
+
+The command creates a random marker inside a disposable read-only workspace and
+asks the configured local Codex provider to recover it with the shell tool. The
+marker, prompt, response, and stderr body are never included in the report. A
+pass observes only `codex_tool_protocol` and `filesystem_read`; it does not prove
+coding quality, test correctness, safe writes, or general task reliability.
+
+The normal provider declaration is not widened. The probe constructs an
+ephemeral `ProviderSpec` that grants only the `filesystem` capability and
+`shell` tool at `read_only` risk, sandbox, and workspace access. Direct command
+planning rejects any capability, tool, risk, network, or workspace request
+outside that exact declaration. Codex CLI may still expose built-in tools to a
+model internally; the provider allowlist governs which authority myMoE may
+request. The generated Codex profile permits reads only from Codex's minimal
+runtime and the disposable workspace root, denies workspace writes, and
+disables both shell network and native web search. Codex performs this
+enforcement; myMoE does not independently attest the effective profile after
+managed requirements are applied, so the report records
+`permission_profile_effective_attested=false` and managed policy remains in the
+trusted computing base.
+
+Every report declares `diagnostic_only=true` and `authorizes_routing=false`.
+It never contacts the premium provider and cannot feed the paired promotion or
+signed-canary path. Re-run it after changing the model, local runtime, Codex
+version, launcher, or Bridge configuration. The report contains both a stable
+digest of the declared config bytes and the host-effective config digest, plus
+the public Codex command/runtime identity. For Ollama, the bounded loopback tags
+query records the full model digest only when it is stable before and after the
+probe; otherwise the report says `mutable_reference_unverified` explicitly.
+
+The current `qwen3:4b`/Ollama check on the documented M5 Pro host timed out after
+30 seconds. Its status is `indeterminate`, not `incompatible`; the content-
+addressed model identity stayed stable during the run. The evidence snapshot is
+[`outputs/local-provider-compatibility-2026-07-20.json`](../outputs/local-provider-compatibility-2026-07-20.json).
+Accordingly, the shipped local Bridge provider advertises read-only `analysis`
+and no tools, with read-only sandbox and workspace ceilings. This is a
+conservative product default based on missing positive evidence, not a claim
+that the model cannot answer ordinary prompts. Operators should add stronger
+capabilities only after separate representative evaluation.
+
+Exit codes are stable for automation: `0` means compatible, `1` means the model
+completed but did not recover the marker, `2` means invalid configuration or
+contract, and `3` means the run was operationally indeterminate (including
+timeouts, launcher failures, runtime attestation failures, and persistence
+errors).
 
 ## CLI usage
 
@@ -462,12 +525,23 @@ response contract; they do not prove that every factual statement is true.
 ## Isolation boundary
 
 `offline` is an enforceable bridge policy, not a claim that an arbitrary binary
-is trustworthy. The configured local executable and the installed Codex sandbox
-remain part of the trusted computing base. The bridge removes proxy variables
-and secret-bearing environment state, uses an empty temporary `CODEX_HOME`,
-ignores ambient config/rules, omits `--search`, and requests network-disabled
-tool sandboxing. Host firewall or container isolation is still appropriate when
-the launcher itself is outside your trust boundary.
+is trustworthy. The configured local executable and the installed Codex
+permission runtime remain part of the trusted computing base. Bridge execution
+requires Codex CLI 0.138 or newer, passes `--strict-config`, and has no myMoE
+fallback to the legacy `--sandbox` mode: unknown profile fields fail before
+provider execution. Named profiles are still a beta Codex interface. System or
+cloud managed requirements may select a compatible profile instead of the CLI
+override; myMoE cannot currently attest that effective selection, exposes this
+as `permission_profile_effective_attested=false`, and treats both managed policy
+and the Codex permission runtime as part of the trusted computing base. The
+bridge removes proxy variables and secret-bearing
+environment state, uses an empty temporary `CODEX_HOME`, ignores ambient
+config/rules, selects a named profile whose filesystem is `:minimal` plus the
+workspace root, disables shell network, and explicitly disables native web for
+local work. An authorized web-capable remote task receives cached native search
+without granting network to spawned commands. Host firewall or container
+isolation is still appropriate when the launcher itself is outside your trust
+boundary.
 
 Verifier containment protects the host from the verifier process; it is not a
 multi-tenant boundary against a concurrent actor with the same host account.

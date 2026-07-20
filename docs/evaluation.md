@@ -77,6 +77,15 @@ unseen set before making a fresh generalization claim.
 - The release quality gate now passes with `release_ready = true`. The previous
   72-record evidence remains preserved as
   `outputs/quality-benchmark-2026-07-10.json` for historical comparison.
+- The Assistant Bridge local-provider compatibility probe is a separate
+  diagnostic. On 2026-07-20, `qwen3:4b` through Ollama did not complete within
+  the 30-second bound, so the result is indeterminate rather than incompatible.
+  The metadata-only report is
+  [`local-provider-compatibility-2026-07-20.json`](../outputs/local-provider-compatibility-2026-07-20.json).
+  It binds the public Codex command/runtime identity, stable declared-config
+  bytes, effective host configuration, and Ollama model digest. The absence of
+  positive evidence justifies a conservative no-tools default; it neither
+  measures answer quality nor qualifies a local-versus-premium route.
 
 Interpretation: the harness works, the current router clears the committed
 multilingual routing gate, and routed top-1 demonstrates benchmark-bounded

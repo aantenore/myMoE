@@ -29,6 +29,7 @@ escalate only under explicit policy.**
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
 | Model lifecycle, diagnostics, and guarded fallbacks | Operators can see what is ready and recover from an unavailable expert through an explicit policy. |
 | Optional Hybrid Assistant Bridge | Local execution and mechanical checks can stop a task early; a premium assistant is considered only when capability, privacy, evidence, and budget rules allow it. |
+| Local Provider Compatibility Probe | A disposable read-only check attempts one exact Codex tool task before operators advertise filesystem or test capabilities; timeout and launcher failures remain explicitly indeterminate. |
 | Verified Hybrid Execution | Runs baseline and less-premium candidate routes in both orders on one frozen snapshot, persists resumable claims, and verifies independently signed pass/fail evidence before admitting a bounded canary. |
 | Signed Route Canary Authority | After enough real paired tests pass and an operator signs a short trial, myMoE can try a less-premium route for a repeatable sample of matching requests and retain the current route on any authority or evidence failure. |
 
@@ -46,7 +47,12 @@ escalate only under explicit policy.**
 > **Evidence boundary:** no real paired evidence has yet established lower
 > cost, lower latency, or equivalent quality. Signed evidence proves the
 > integrity and provenance of the recorded evaluation result, not the truth or
-> representativeness of its benchmark inputs.
+> representativeness of its benchmark inputs. The shipped `qwen3:4b` Assistant
+> Bridge provider did not complete the bounded Codex workspace-tool probe on
+> the documented machine. The result is operationally indeterminate, not a
+> negative compatibility judgment, so its default declaration and technical
+> ceilings remain conservatively limited to read-only analysis. The diagnostic
+> grants no routing authority.
 
 ## Technical overview
 
@@ -190,6 +196,7 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
 | Run a bounded tool task | `.venv/bin/mymoe --agent-prompt "..." --agent-tool memory.search` | Separate CLI-only agent loop; only explicitly selected strict-schema tools are visible. |
 | Preflight local versus premium Codex | `.venv/bin/mymoe --assistant-task "..." --assistant-capability code` | Dry-run by default; plans local execution, verification, bounded escalation, or a policy block without exposing task text in the receipt. |
+| Check local Codex compatibility | `.venv/bin/mymoe assistant-probe --json` | Uses a random marker in a disposable read-only workspace; emits public command/runtime/model identity, never authorizes routing, and never invokes the premium provider. |
 | Inspect or collect one frozen paired case | `.venv/bin/mymoe-paired --help` | Status is provider-free. Execution composes a public-trust workflow and private directory sidecar; without both it fails closed instead of manufacturing evidence. |
 | Inspect readiness | `.venv/bin/mymoe --doctor` | Read-only setup, health, hardware, storage, process, extension, and cron checks. |
 
@@ -240,7 +247,7 @@ response or tool metadata cannot create a new executable implementation.
 - The portable local-data backup contains private chats and memory and requires confirmation. The support bundle is a different, metadata-focused diagnostic artifact, but it still includes configured Git/model URLs and must be reviewed before sharing; credentials should never be embedded in URLs.
 - Model process commands come from the active profile. The web process stops only model processes that it started itself.
 - Assistant Bridge planning is read-only. Execution requires the exact confirmation hash from the inspected task/config/runtime/workspace, command, evidence, and capsule-options receipt; a boolean confirmation is insufficient. It passes task data over stdin, uses argv without a shell, stores metadata-only audit/run events, and returns the answer separately to the user.
-- Local Bridge runs use an isolated Codex home, ignore ambient Codex configuration and rules, sanitize the environment, omit web search, and request network-disabled tool sandboxing. Remote workspace access is separate from remote-model consent and must be opted into explicitly for write tasks.
+- Bridge runs require Codex CLI 0.138 or newer and request a strict named permission profile: Codex's minimal runtime plus the selected workspace, explicit `write_local` authority for workspace writes, and no shell network. The profile API is beta and myMoE cannot attest the effective profile selected after device or cloud managed requirements are applied, so receipts record that limitation and managed policy remains part of the trusted computing base. Unsupported profile configuration fails closed. Local runs also isolate Codex state, ignore ambient configuration and rules, sanitize the environment, and disable native web search; an authorized remote web route receives cached native search without shell network.
 
 See [Agent Runtime](docs/agent-runtime.md) for the exact permission model and [Context and Memory](docs/context-architecture.md) for storage details.
 

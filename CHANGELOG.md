@@ -4,10 +4,17 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
-## [0.4.0-alpha.1] - 2026-07-19
+## [0.4.0-alpha.1] - 2026-07-20
 
 ### Added
 
+- `mymoe assistant-probe`, a bounded diagnostic that checks whether the
+  configured local model can recover a random marker through the Codex
+  workspace tool protocol without retaining prompt, response, or marker content
+  in its metadata report.
+- A metadata-only real-host compatibility snapshot for the shipped
+  `qwen3:4b`/Ollama provider, including public command/runtime identity, a
+  stable declared-config digest, and the content-addressed Ollama model digest.
 - An installable `mymoe-paired` CLI for provider-free journal status and
   fail-closed execution of exact frozen cases, plus a private directory
   exchange for a separately operated signed independent verifier. Execution
@@ -47,6 +54,23 @@ All notable changes to myMoE are documented in this file.
 
 ### Changed
 
+- The shipped local Assistant Bridge provider now advertises read-only
+  `analysis` and no tools because filesystem/tool compatibility was not
+  demonstrated by the bounded live probe. Its sandbox and workspace ceilings
+  are also read-only. Operators can opt into broader capabilities only after
+  evaluating their exact model/runtime combination.
+- Direct Codex command-plan construction now rejects capability, tool, risk,
+  network, and workspace requests outside the provider declaration. Probe
+  reports reuse the hardened no-link atomic writer and distinguish incompatible
+  responses from operationally indeterminate runs.
+- Codex execution now requires version 0.138 or newer and requests strict named
+  permission profiles instead of the legacy sandbox flag. The requested
+  profiles expose only the minimal runtime plus the selected workspace, keep
+  shell network disabled, and bind native cached-web authority separately into
+  receipts and command digests. Receipts explicitly mark the effective profile
+  as unattested because managed requirements and the beta Codex permission
+  runtime remain part of the trusted computing base; unknown configuration
+  fails closed without a myMoE legacy fallback.
 - Refreshed the live 72-execution Qwen3 quality artifact. Routed top-1 retained
   full task success and deterministic quality while the release quality gate
   became ready.
