@@ -864,10 +864,16 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                 _write_response(exchange, request, (envelope,))
 
             real_read = directory_adapter._read_secure_file
+            real_monotonic = time.monotonic
+            monotonic_offset = 0.0
+
+            def controlled_monotonic() -> float:
+                return real_monotonic() + monotonic_offset
 
             def delayed_read(path: Path, *, maximum_bytes: int, label: str) -> bytes:
+                nonlocal monotonic_offset
                 if label == "attestation response":
-                    time.sleep(0.15)
+                    monotonic_offset = 2.0
                 return real_read(
                     path,
                     maximum_bytes=maximum_bytes,
@@ -881,12 +887,17 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     "_read_secure_file",
                     side_effect=delayed_read,
                 ),
+                patch.object(
+                    directory_adapter.time,
+                    "monotonic",
+                    side_effect=controlled_monotonic,
+                ),
                 self.assertRaisesRegex(
                     DirectoryPairedAttestationTimeout,
                     "after its deadline",
                 ),
             ):
-                producer.attest(binding, workspace, time.time() + 0.1)
+                producer.attest(binding, workspace, time.time() + 0.5)
             _finish_watcher(watcher, errors)
 
     def test_response_byte_and_envelope_bounds_are_enforced(self) -> None:
