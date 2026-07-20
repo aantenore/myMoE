@@ -6,7 +6,7 @@ from importlib import metadata
 import platform
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from .app_config import app_config_payload
@@ -55,11 +55,11 @@ def build_environment_report(
         },
         "app": app_payload,
         "paths": {
-            "working_directory": str(Path.cwd()),
-            "app_config": app_config_path,
-            "moe_config": config_path,
-            "work_dir": str(app_config.runtime.work_dir),
-            "model_cache_dir": str(app_config.runtime.model_cache_dir),
+            "working_directory": Path.cwd().as_posix(),
+            "app_config": _portable_path(app_config_path),
+            "moe_config": _portable_path(config_path),
+            "work_dir": _portable_path(app_config.runtime.work_dir),
+            "model_cache_dir": _portable_path(app_config.runtime.model_cache_dir),
         },
         "system": {
             "system": platform.system(),
@@ -122,6 +122,14 @@ def build_environment_report(
         },
         "recommendations": _recommendations(),
     }
+
+
+def _portable_path(value: str | Path) -> str:
+    """Serialize diagnostic paths consistently across supported platforms."""
+    raw = str(value)
+    if "\\" in raw:
+        return PureWindowsPath(raw).as_posix()
+    return Path(raw).as_posix()
 
 
 def environment_report_filename() -> str:

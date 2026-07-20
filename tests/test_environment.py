@@ -20,7 +20,10 @@ class EnvironmentReportTests(unittest.TestCase):
 
         self.assertEqual(report["schema_version"], "1.0")
         self.assertEqual(report["app"]["mode"], "local_model_required")
-        self.assertEqual(report["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
+        self.assertEqual(
+            report["paths"]["moe_config"],
+            "tests/fixtures/moe.synthetic.json",
+        )
         self.assertIn("python", report)
         self.assertIn("packages", report)
         self.assertIn("git", report)
@@ -38,6 +41,18 @@ class EnvironmentReportTests(unittest.TestCase):
         serialized = str(report).lower()
         self.assertNotIn("api_key", serialized)
         self.assertNotIn("content_excerpt", serialized)
+
+    def test_serializes_report_paths_portably(self) -> None:
+        app_config = load_app_config("configs/app.json")
+        config = load_config("tests/fixtures/moe.synthetic.json")
+
+        report = build_environment_report(
+            config_path="tests\\fixtures\\moe.synthetic.json",
+            config=config,
+            app_config=app_config,
+        )
+
+        self.assertEqual(report["paths"]["moe_config"], "tests/fixtures/moe.synthetic.json")
 
     def test_redacts_secret_like_nested_params(self) -> None:
         app_config = load_app_config("configs/app.json")
