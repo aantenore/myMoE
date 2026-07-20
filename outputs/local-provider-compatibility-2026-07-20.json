@@ -7,12 +7,12 @@
     "probe_contract": "codex-disposable-workspace-read/v1",
     "probe_contract_sha256": "064bf6b6f30c5b76f66489ea14645b2ebf65598f37aa75958256aee2294e10ad"
   },
-  "checked_at": "2026-07-20T05:15:09.754937+00:00",
+  "checked_at": "2026-07-20T05:40:49.901225+00:00",
   "diagnostic_only": true,
   "execution_identity": {
     "command_plan": {
       "adapter_id": "codex_cli",
-      "argv_sha256": "f723f1756f5f204e3596e0a370952679a3ee03b0939de4e5a8f5bc9786ca870b",
+      "argv_sha256": "015d7e82b76c1ad476c57b93095d091395f26efb5054a4f88367ab84112aa93f",
       "argv_shape": [
         "<executable>",
         "--strict-config",
@@ -81,7 +81,7 @@
           "sha256": "391bd3b2fe860610a2ed61941f3e631bfab7c036b4847452ffdef9837fb3e0f5",
           "variable_count": 6
         },
-        "fingerprint": "d8c723c8c4710ed219bcc36aa7368e82df06517bd6c9ed30a15acf65200f1158",
+        "fingerprint": "7866b0d8cdbefc18d53a7ac04865c7cbf58934e08b5668efb3f58166f756ebc7",
         "interpreter": null,
         "schema_version": "assistant-bridge-launcher-chain/v1",
         "strict": true
@@ -90,7 +90,7 @@
       "mode": "local",
       "model": "qwen3:4b",
       "network_access": false,
-      "output_path_sha256": "272377d037f65902d312b40f6723b1dd0cd45337b686b890a3fa8d2d24ea946c",
+      "output_path_sha256": "7b4cb088a4dafb922b00a54d2b15f2401184122bc687b3183577bbc9565bbf7c",
       "permission_profile": "mymoe_workspace_read",
       "permission_profile_effective_attested": false,
       "permission_workspace_rule": "read",
@@ -127,7 +127,7 @@
       },
       "web_search_mode": "disabled",
       "workspace_access": "read_only",
-      "workspace_sha256": "52bc1aed5ee79c624c93fe4cae48fa786fba153157b4d27eb661ec5afd1a8814"
+      "workspace_sha256": "3861dd3c2817363ea37c320b1063e53006fd8e487a8561f75bf462d0a9fa5d6f"
     },
     "model": {
       "digest": "sha256:359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
@@ -151,7 +151,7 @@
     ],
     "workspace_access": "read_only"
   },
-  "probe_id": "f719e35c796a148899165b851a3d88d402db439f2cb500e9fccf45caec8bfd28",
+  "probe_id": "78eb5ce073bd3fba256a6c60fc9c4aacd87f2c6a33be4e0f02277b55abf5c414",
   "provider": {
     "adapter": "codex_cli",
     "declared_capabilities": [
@@ -173,7 +173,7 @@
   "result": {
     "code": "launcher_timed_out",
     "command_sha256": "f703c730a513fc74b0d8b7b791a9837bff3c2ff4eda5c18337bb517851bfc188",
-    "duration_ms": 30329,
+    "duration_ms": 30340,
     "output_chars": 0,
     "output_sha256": null,
     "provider_id": "codex-oss-local",
@@ -181,8 +181,8 @@
     "status": "failed",
     "stderr_bytes": 0,
     "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "stdout_bytes": 9957,
-    "stdout_sha256": "fe2f1d51817f4aab269743f5c987e9e73fdfe98cb9ea1195a41abd2c08106249",
+    "stdout_bytes": 298,
+    "stdout_sha256": "3413f7ffa842b1a3fee6494debfc2f66f9d32105e875272011fec9784cab6f67",
     "usage": {
       "completion_tokens": null,
       "cost": null,
