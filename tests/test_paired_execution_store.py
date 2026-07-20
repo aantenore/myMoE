@@ -133,6 +133,39 @@ class PairedExecutionStoreTests(unittest.TestCase):
                         0o600,
                     )
 
+    def test_run_directory_is_parent_durable_before_journal_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            observed: list[Path] = []
+
+            def assert_created_before_sync(parent: Path) -> None:
+                self.assertEqual(parent, run_dir.parent)
+                self.assertTrue(run_dir.is_dir())
+                if os.name != "nt":
+                    self.assertEqual(run_dir.stat().st_mode & 0o777, 0o700)
+                observed.append(parent)
+
+            with mock.patch.object(
+                store_module,
+                "_fsync_directory",
+                side_effect=assert_created_before_sync,
+            ):
+                store_module._ensure_run_directory(run_dir)
+
+            self.assertEqual(observed, [run_dir.parent])
+
+    def test_existing_run_directory_resyncs_its_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            run_dir.mkdir(mode=0o700)
+            if os.name != "nt":
+                run_dir.chmod(0o700)
+
+            with mock.patch.object(store_module, "_fsync_directory") as sync:
+                store_module._ensure_run_directory(run_dir)
+
+            sync.assert_called_once_with(run_dir.parent)
+
     def test_out_of_order_claim_is_rejected_without_writing_an_event(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = PairedExecutionStore(Path(temporary) / "run")

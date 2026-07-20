@@ -27,7 +27,10 @@ from local_moe.assistant_bridge_integrity import (
     canonical_json_bytes,
     sha256_bytes,
 )
-from local_moe.assistant_bridge_two_phase_contracts import AttestationCheck
+from local_moe.assistant_bridge_two_phase_contracts import (
+    ArtifactDescriptor,
+    AttestationCheck,
+)
 from local_moe.paired_execution_bridge import AssistantBridgePairedArmExecutor
 from local_moe.paired_evidence import PairedAttestationVerifier
 from local_moe.paired_execution import (
@@ -548,6 +551,118 @@ class PairedExecutionTests(unittest.TestCase):
             self.assertEqual(resumed.state, "complete")
             self.assertEqual(resumed.root.run_instance_nonce, run_instance_nonce)
             self.assertEqual(len(outcomes.list_records()), 2)
+
+    def test_partial_resume_requires_prior_checkpoint_evidence(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(
+            fixture,
+            local_output="VERIFIED resumable",
+        ), tempfile.TemporaryDirectory() as temporary:
+            task = _balanced_task()
+            delegate, plan, case, pricing = _planned_case(
+                fixture,
+                task,
+                order="BA",
+                baseline_route="local_then_verify",
+                candidate_route="local",
+            )
+            executor = _RecordingExecutor(delegate)
+            run_dir = Path(temporary) / "run"
+            outcomes = OutcomeStore(Path(temporary) / "outcomes.jsonl")
+
+            with self.assertRaises(_StopAfterFirstCheckpoint):
+                run_paired_case(
+                    task=task,
+                    plan=plan,
+                    case=case,
+                    source_workspace=fixture.root,
+                    pricing=pricing,
+                    run_store=_StopAfterFirstStore(run_dir),
+                    outcome_store=outcomes,
+                    executor=executor,
+                    created_at=CREATED_AT,
+                )
+            record = outcomes.list_records()[0]
+            descriptor = record.paired_evidence
+            assert descriptor is not None
+            digest = ArtifactDescriptor.from_payload(descriptor).sha256
+            receipt = (
+                fixture.planned_signed_executor.evidence_store.root
+                / "objects"
+                / "sha256"
+                / digest[:2]
+                / digest[2:]
+            )
+            receipt.unlink()
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "unavailable"):
+                run_paired_case(
+                    task=task,
+                    plan=plan,
+                    case=case,
+                    source_workspace=fixture.root,
+                    pricing=pricing,
+                    run_store=PairedExecutionStore(run_dir),
+                    outcome_store=outcomes,
+                    executor=executor,
+                    created_at=CREATED_AT,
+                )
+
+            self.assertEqual(executor.run_routes, ["local"])
+            self.assertEqual(PairedExecutionStore(run_dir).status().state, "partial")
+
+    def test_complete_replay_reverifies_checkpoint_evidence(self) -> None:
+        with _fake_bridge() as fixture, _fake_environment(
+            fixture,
+            local_output="VERIFIED replay",
+        ), tempfile.TemporaryDirectory() as temporary:
+            task = _balanced_task()
+            delegate, plan, case, pricing = _planned_case(
+                fixture,
+                task,
+                order="AB",
+                baseline_route="local_then_verify",
+                candidate_route="local",
+            )
+            executor = _RecordingExecutor(delegate)
+            run_dir = Path(temporary) / "run"
+            outcomes = OutcomeStore(Path(temporary) / "outcomes.jsonl")
+            result = run_paired_case(
+                task=task,
+                plan=plan,
+                case=case,
+                source_workspace=fixture.root,
+                pricing=pricing,
+                run_store=run_dir,
+                outcome_store=outcomes,
+                executor=executor,
+                created_at=CREATED_AT,
+            )
+            descriptor = result.records[0].paired_evidence
+            assert descriptor is not None
+            digest = ArtifactDescriptor.from_payload(descriptor).sha256
+            receipt = (
+                fixture.planned_signed_executor.evidence_store.root
+                / "objects"
+                / "sha256"
+                / digest[:2]
+                / digest[2:]
+            )
+            receipt.unlink()
+
+            with self.assertRaisesRegex(VerifiedRoutingError, "unavailable"):
+                run_paired_case(
+                    task=task,
+                    plan=plan,
+                    case=case,
+                    source_workspace=fixture.root,
+                    pricing=pricing,
+                    run_store=run_dir,
+                    outcome_store=outcomes,
+                    executor=executor,
+                    created_at=CREATED_AT,
+                )
+
+            self.assertEqual(executor.run_routes, ["local_then_verify", "local"])
 
     def test_fresh_run_directories_receive_distinct_instance_nonces(self) -> None:
         with _fake_bridge() as fixture, _fake_environment(

@@ -728,6 +728,10 @@ def _ensure_run_directory(path: Path) -> None:
                 "Paired run directory cannot be created securely."
             ) from exc
     _validate_run_directory(path)
+    # A durable root/event file is insufficient if the run-directory entry
+    # itself can disappear after a system crash.  Sync on every prepare so a
+    # retry also repairs a prior interrupted or failed parent-directory sync.
+    _fsync_directory(path.parent)
 
 
 def _validate_run_directory(

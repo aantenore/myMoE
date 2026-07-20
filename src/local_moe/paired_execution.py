@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .assistant_bridge import AssistantTaskEnvelope, BridgeRunResult
 from .paired_execution_bridge import (
@@ -442,14 +442,20 @@ def run_paired_case(
     status = store.status()
     _validate_resumable_status(status, root)
     if status.state == "complete":
-        records = _load_checkpointed_records(status, outcomes, case, pricing)
-        executor.assert_source_unchanged(source_snapshot)
         _require_runner_configuration(
             runner_sha256,
             executor_config_sha256=executor_config_sha256,
             lifecycle_config_sha256=lifecycle_config_sha256,
             signal_provider_config_sha256=signals.provider_config_sha256,
         )
+        records = _load_checkpointed_records(
+            status,
+            outcomes,
+            case,
+            pricing,
+            verify_outcome=verify_outcome,
+        )
+        executor.assert_source_unchanged(source_snapshot)
         return _result(root, records)
 
     while status.state in {"ready", "partial"}:
@@ -460,6 +466,17 @@ def run_paired_case(
             lifecycle_config_sha256=lifecycle_config_sha256,
             signal_provider_config_sha256=signals.provider_config_sha256,
         )
+        if status.checkpoints:
+            # A resumed arm must not run unless every earlier checkpoint still
+            # has its durable signed evidence.  This also rechecks the first
+            # arm immediately before claiming the second arm in one process.
+            _load_checkpointed_records(
+                status,
+                outcomes,
+                case,
+                pricing,
+                verify_outcome=verify_outcome,
+            )
         slot = status.next_slot
         if slot is None:
             raise VerifiedRoutingError("Paired run has no next execution slot.")
@@ -566,14 +583,20 @@ def run_paired_case(
 
     if status.state != "complete":
         raise VerifiedRoutingError("Paired execution did not reach completion.")
-    records = _load_checkpointed_records(status, outcomes, case, pricing)
-    executor.assert_source_unchanged(source_snapshot)
     _require_runner_configuration(
         runner_sha256,
         executor_config_sha256=executor_config_sha256,
         lifecycle_config_sha256=lifecycle_config_sha256,
         signal_provider_config_sha256=signals.provider_config_sha256,
     )
+    records = _load_checkpointed_records(
+        status,
+        outcomes,
+        case,
+        pricing,
+        verify_outcome=verify_outcome,
+    )
+    executor.assert_source_unchanged(source_snapshot)
     return _result(root, records)
 
 
@@ -1071,6 +1094,10 @@ def _load_checkpointed_records(
     outcomes: OutcomeStore,
     case: PromotionCase,
     pricing: PricingContract,
+    *,
+    verify_outcome: Callable[
+        [VerifiedOutcomeRecord, PricingContract], VerifiedPairedEvidence
+    ],
 ) -> tuple[VerifiedOutcomeRecord, ...]:
     by_id = {record.record_id: record for record in outcomes.list_records()}
     records: list[VerifiedOutcomeRecord] = []
@@ -1099,6 +1126,14 @@ def _load_checkpointed_records(
             )
         )
         _validate_record(record, checkpoint.binding, case, cost, pricing)
+        reconstructed = verify_outcome(record, pricing)
+        if (
+            not isinstance(reconstructed, VerifiedPairedEvidence)
+            or reconstructed.record != record
+        ):
+            raise VerifiedRoutingError(
+                "Checkpointed outcome failed signed-evidence reconstruction."
+            )
         records.append(record)
     return tuple(records)
 
