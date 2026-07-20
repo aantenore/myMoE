@@ -856,32 +856,47 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             producer = DirectoryPairedAttestationProducer(
                 exchange,
                 poll_interval_seconds=0.002,
-                maximum_wait_seconds=1.0,
+                maximum_wait_seconds=5.0,
             )
+            envelope = _envelope(binding, requirement, private_key)
 
-            def respond(request: dict[str, object]) -> None:
-                envelope = _envelope(binding, requirement, private_key)
-                _write_response(exchange, request, (envelope,))
-
+            real_publish = directory_adapter._atomic_no_clobber
             real_read = directory_adapter._read_secure_file
-            real_monotonic = time.monotonic
-            monotonic_offset = 0.0
+            monotonic_value = 100.0
 
             def controlled_monotonic() -> float:
-                return real_monotonic() + monotonic_offset
+                return monotonic_value
+
+            def publish_request_and_response(path: Path, value: bytes) -> None:
+                real_publish(path, value)
+                if path.parent == exchange / "requests":
+                    request = json.loads(value)
+                    response_path = (
+                        exchange
+                        / "responses"
+                        / f"response-{request['requestId']}.json"
+                    )
+                    real_publish(
+                        response_path,
+                        _response(request, (envelope,)),
+                    )
 
             def delayed_read(path: Path, *, maximum_bytes: int, label: str) -> bytes:
-                nonlocal monotonic_offset
+                nonlocal monotonic_value
                 if label == "attestation response":
-                    monotonic_offset = 2.0
+                    monotonic_value = 110.0
                 return real_read(
                     path,
                     maximum_bytes=maximum_bytes,
                     label=label,
                 )
 
-            watcher, errors = _watch_once(exchange, respond)
             with (
+                patch.object(
+                    directory_adapter,
+                    "_atomic_no_clobber",
+                    side_effect=publish_request_and_response,
+                ),
                 patch.object(
                     directory_adapter,
                     "_read_secure_file",
@@ -892,13 +907,17 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     "monotonic",
                     side_effect=controlled_monotonic,
                 ),
+                patch.object(
+                    directory_adapter.time,
+                    "time",
+                    return_value=1_000.0,
+                ),
                 self.assertRaisesRegex(
                     DirectoryPairedAttestationTimeout,
                     "after its deadline",
                 ),
             ):
-                producer.attest(binding, workspace, time.time() + 0.5)
-            _finish_watcher(watcher, errors)
+                producer.attest(binding, workspace, 1_004.0)
 
     def test_response_byte_and_envelope_bounds_are_enforced(self) -> None:
         for mode in ("bytes", "envelopes"):
