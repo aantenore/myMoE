@@ -66,14 +66,14 @@ unseen set before making a fresh generalization claim.
 - Current live answer-quality benchmark: 72 completed executions with zero
   response failures or truncation. Single-general and routed top-1 both
   achieved `1.0` task success, `1.0` quality pass rate, and `0.975` quality
-  score. Mean latency was `3.1942 s` vs `3.0137 s`; the six fast-routed pairs
-  achieved median latency ratio `0.4354` while routing 25% of cases away from
+  score. Mean latency was `3.5696 s` vs `3.4932 s`; the six fast-routed pairs
+  achieved median latency ratio `0.4376` while routing 25% of cases away from
   the general model.
 - Top-2 remains diagnostic: it reported complete comparisons and disagreement,
-  but achieved `0.75` task success, `0.9188` quality score, and `3.6044 s` mean
+  but achieved `0.75` task success, `0.9188` quality score, and `4.2590 s` mean
   latency. It is not the value route and its result is not masked by top-1.
-- Current host evidence passed with `100%` sample coverage, `86.2605%` peak RAM
-  use, and `753,076,798` bytes swap growth.
+- Current host evidence passed with `100%` sample coverage, `86.5649%` peak RAM
+  use, and `1,035,269,571` bytes swap growth.
 - The release quality gate now passes with `release_ready = true`. The previous
   72-record evidence remains preserved as
   `outputs/quality-benchmark-2026-07-10.json` for historical comparison.
