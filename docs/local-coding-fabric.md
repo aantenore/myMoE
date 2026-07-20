@@ -18,9 +18,10 @@ bill:
 This split is intentional. myMoE is the configurable inference control plane;
 Cline is the mature coding harness. It avoids duplicating file editors,
 terminal sessions, browser automation, approval UX, and the MCP ecosystem. In
-this alpha, the OpenAI-compatible protocol and a real local model tool loop are
-validated; a representative task driven through the Cline UI is still a
-release canary, so the whole Cline integration remains experimental.
+this alpha, the OpenAI-compatible protocol, a real local model tool loop, and
+an isolated read-only task through the Cline extension are validated. A
+representative write, terminal, browser, or MCP task driven through the Cline
+UI is still a release canary, so the whole integration remains experimental.
 
 ## What is implemented now
 
@@ -30,7 +31,7 @@ release canary, so the whole Cline integration remains experimental.
 | `POST /v1/chat/completions` | myMoE | Implemented for regular and streaming OpenAI-compatible requests, including tool definitions and tool-call payloads supported by the selected model endpoint. |
 | Routed model alias `mymoe` | myMoE | Implemented. The configured router chooses one eligible expert from the request text. |
 | Pinned aliases such as `mymoe/coder` | myMoE | Implemented when that expert ID exists in the active profile. Unknown aliases fail explicitly. |
-| File search, reads, patches, and edits | Cline | Provided by Cline; end-to-end validation through this myMoE integration is pending. |
+| File search, reads, patches, and edits | Cline | Isolated file reads passed end to end through myMoE; search, patches, and edits remain pending. |
 | Terminal, tests, and Git | Cline | Provided by Cline; keep approvals enabled during the integration canary. |
 | Browser actions | Cline | Provided by Cline. Network access is a separate policy boundary described below, and the integration canary is pending. |
 | MCP tools | Cline or the separate myMoE CLI agent | Available, but the two registries are independent. Installing or enabling an MCP server grants executable capability and requires review. |
@@ -43,6 +44,29 @@ and administrative `/api/*` routes, so it refuses every non-loopback bind even
 if a future gateway policy permits remote clients. Remote inference requires a
 separate, gateway-only authenticated listener; that listener is not implemented
 in this alpha.
+
+## Validated Cline canary
+
+On 2026-07-20, an isolated Cline 4.0.10 extension instance completed a bounded
+read-only task through myMoE `0.5.0a1` and the local MLX Qwen3-4B model:
+
+- Cline read only `README.md` and `pyproject.toml`, then reported the project
+  purpose and version `0.5.0a1` correctly.
+- The Cline task recorded three file-read events. It invoked no write,
+  terminal, browser, Git, MCP, or subagent tool.
+- The myMoE gateway audit recorded four successful streamed requests with
+  `requested_model=mymoe/general` and `route_selected=[general]`; the local
+  model server returned HTTP 200 for all four.
+- The two-file workspace remained byte-identical after the task.
+- Cline emitted its XML-style file-tool protocol even with native tool calls
+  enabled. The gateway's OpenAI `tool_calls` fidelity is covered separately by
+  HTTP integration tests, not by this specific Cline canary.
+
+The canary used temporary home, Cline data, extension, VS Code user-data, and
+workspace directories. VS Code sync, telemetry, and updates were disabled, as
+were Cline browser, MCP, hooks, checkpoints, and subagents. It proves this exact
+read-only combination, not general write safety or reliable browser/desktop
+autonomy.
 
 ## Five-minute Cline setup
 

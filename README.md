@@ -37,10 +37,11 @@ limitations.
 > electricity, or model-license obligations. myMoE provides local inference;
 > Cline is the external agent harness. Browser or networked MCP actions are not
 > air-gapped, and reliable tool use still depends on the selected local model.
-> This alpha validates the gateway and a real local-model tool loop; the
-> representative task driven through Cline itself is still pending. Run the
-> documented read-only canary before allowing writes or terminal commands for
-> a new model/runtime combination.
+> This alpha validates the gateway, a real local-model tool loop, and an
+> isolated read-only Cline 4.0.10 canary through myMoE and Qwen3-4B. A
+> UI-driven write, terminal, browser, or MCP workflow is still pending. Run the
+> documented read-only canary before allowing those capabilities for a new
+> model/runtime combination.
 
 ## In plain English
 

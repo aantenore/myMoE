@@ -16,6 +16,9 @@ All notable changes to myMoE are documented in this file.
   compatibility canary, 24 GiB model guidance, explicit air-gapped versus
   browser-connected semantics, MCP trust boundaries, and an
   accessibility-first desktop sidecar roadmap.
+- A successful isolated Cline 4.0.10 read-only canary through myMoE and local
+  Qwen3-4B, with correct file-derived output, metadata-only gateway evidence,
+  and a byte-identical workspace after execution.
 - A compact Local Coding Fabric setup link in the existing web UI welcome view.
 - Managed model servers now start with Hugging Face and Transformers offline
   mode enforced, so model downloads remain an explicit bootstrap step rather
