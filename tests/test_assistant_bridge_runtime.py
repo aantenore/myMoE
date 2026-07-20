@@ -552,6 +552,44 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                         strict=True,
                     )
 
+    def test_strict_chain_treats_nonpath_config_values_as_data(self) -> None:
+        identity = resolve_executable(sys.executable)
+        config_value = (
+            'permissions.mymoe_workspace_read.filesystem={":minimal"="read",'
+            '":workspace_roots"={"."="read"}}'
+        )
+
+        chain = resolve_launcher_chain(
+            identity,
+            ("--config", config_value, "--config", 'web_search="disabled"'),
+            cwd=Path.cwd(),
+            strict=True,
+        )
+
+        self.assertEqual(chain.argv[1], config_value)
+
+    def test_unusable_nonpath_value_does_not_hide_executable_shaped_args(self) -> None:
+        with patch.object(
+            bridge_runtime.os.path,
+            "abspath",
+            side_effect=OSError("platform rejected path syntax"),
+        ):
+            self.assertIsNone(
+                bridge_runtime._undeclared_executable_argument(
+                    ('web_search="disabled"',),
+                    cwd=Path.cwd(),
+                    declared=(),
+                )
+            )
+            self.assertEqual(
+                bridge_runtime._undeclared_executable_argument(
+                    ("undeclared-helper.py",),
+                    cwd=Path.cwd(),
+                    declared=(),
+                ),
+                "undeclared-helper.py",
+            )
+
     def test_declared_helper_drift_fails_before_reservation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

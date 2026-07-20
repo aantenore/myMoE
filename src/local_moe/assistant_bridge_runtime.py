@@ -2026,10 +2026,15 @@ def _normalized_declared_path(
     raw = os.fspath(value)
     if not raw or "\x00" in raw:
         raise LauncherChainError("Launcher artifact path is empty or malformed")
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        candidate = cwd / candidate
-    return Path(os.path.abspath(os.fspath(candidate)))
+    try:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        return Path(os.path.abspath(os.fspath(candidate)))
+    except (OSError, ValueError) as exc:
+        raise LauncherChainError(
+            "Launcher artifact path cannot be normalized"
+        ) from exc
 
 
 def _attest_launcher_artifact(
