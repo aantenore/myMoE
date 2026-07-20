@@ -214,6 +214,24 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(any("gemma-4-e4b-it-4bit" in command for command in flattened))
         self.assertTrue(any(".[mlx]" in command for command in (" ".join(item) for item in plan.install_commands)))
 
+    def test_coding_profile_caps_mlx_server_concurrency_and_prompt_cache(self) -> None:
+        moe_config = load_config("configs/moe.live.qwen3-coder-mlx.example.json")
+        plan = build_runtime_plan(
+            moe_config,
+            {"darwin_arm64": "mlx_lm", "fallback": "mlx_lm"},
+        )
+        command = plan.model_commands[0]
+
+        self.assertIn("mlx_lm.server", command)
+        self.assertEqual(command[command.index("--decode-concurrency") + 1], "1")
+        self.assertEqual(command[command.index("--prompt-concurrency") + 1], "1")
+        self.assertEqual(command[command.index("--prompt-cache-size") + 1], "1")
+        self.assertEqual(
+            command[command.index("--prompt-cache-bytes") + 1],
+            "1073741824",
+        )
+        self.assertEqual(command[command.index("--max-tokens") + 1], "2048")
+
     def test_builds_runtime_plan_for_huggingface_gguf_config(self) -> None:
         moe_config = load_config("configs/moe.live.gemma-12b-coder-gguf.example.json")
         plan = build_runtime_plan(moe_config, {"darwin_arm64": "mlx_lm", "fallback": "mlx_lm"})

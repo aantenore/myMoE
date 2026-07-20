@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -556,8 +557,23 @@ def _value_after(command: tuple[str, ...], flag: str) -> str:
 def _start_process(command: tuple[str, ...], log_path: Path) -> subprocess.Popen[bytes]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = log_path.open("ab")
+    process_environment = os.environ.copy()
+    process_environment.update(
+        {
+            "HF_HUB_OFFLINE": "1",
+            "HF_DATASETS_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "DO_NOT_TRACK": "1",
+        }
+    )
     try:
-        return subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT)
+        return subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=process_environment,
+        )
     finally:
         log_file.close()
 

@@ -25,6 +25,12 @@ def build_environment_report(
     app_config_path: str = "configs/app.json",
 ) -> dict[str, Any]:
     hardware = detect_hardware()
+    app_payload = app_config_payload(app_config)
+    gateway_payload = app_payload.get("gateway")
+    if isinstance(gateway_payload, dict):
+        # Even the name of a secret-bearing environment variable is excluded
+        # from portable diagnostics. The live config remains unchanged.
+        gateway_payload.pop("api_key_env", None)
     return {
         "schema_version": "1.0",
         "generated_at": _now_iso(),
@@ -47,7 +53,7 @@ def build_environment_report(
                 "benchmark prompt response excerpts",
             ],
         },
-        "app": app_config_payload(app_config),
+        "app": app_payload,
         "paths": {
             "working_directory": str(Path.cwd()),
             "app_config": app_config_path,

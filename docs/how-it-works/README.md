@@ -11,6 +11,7 @@ flowchart TB
         ChatCLI["Persistent or interactive CLI chat"]
         DirectCLI["Stateless CLI prompt"]
         AgentCLI["CLI-only agent task"]
+        Editor["Cline or OpenAI-compatible client"]
     end
 
     subgraph Generation["Normal generation path"]
@@ -38,6 +39,12 @@ flowchart TB
         Tools["Allowlisted local tools and MCP"]
     end
 
+    subgraph EditorPath["Separate editor-agent inference path"]
+        Gateway["Loopback /v1 gateway"]
+        GatewayRoute["Configured router decision"]
+        GatewayScope["Alias selection and fresh scope check"]
+    end
+
     Web --> Chat
     ChatCLI --> Chat
     Chat --> Context
@@ -57,6 +64,13 @@ flowchart TB
     DirectCLI --> Router
     DirectCLI --> MoE
 
+    Editor --> Gateway
+    Gateway -->|"mymoe routed alias"| GatewayRoute
+    GatewayRoute --> GatewayScope
+    Gateway -->|"pinned alias"| GatewayScope
+    GatewayScope --> Models
+    Gateway -. "OpenAI-compatible response" .-> Editor
+
     AgentCLI --> AgentScope
     AgentScope --> AgentModel
     AgentModel --> Guard
@@ -67,6 +81,13 @@ flowchart TB
 ```
 
 myMoE is a **system-level MoE**: the experts are separate model processes selected by an application router. It is not a sparse transformer whose expert layers are trained inside one neural network.
+
+The editor-agent path supplies inference only. It does not enter the persistent
+chat/context path or the normal orchestrator fallback/aggregation lifecycle.
+Cline owns its file, terminal, browser, MCP, approvals, and task history. The
+gateway chooses one eligible local expert through `mymoe`, or pins one through
+`mymoe/<expert-id>`, then forwards the regular or streaming request. See
+[Local Coding Fabric](../local-coding-fabric.md).
 
 ## 2. Configuration Composition
 
@@ -93,7 +114,7 @@ flowchart LR
 
 | File or directory | What it controls |
 | --- | --- |
-| [`configs/app.json`](../../configs/app.json) | Product mode, default MoE profile, language hints, runtime paths, backend preferences, extension paths, scheduler policy, and permissions. |
+| [`configs/app.json`](../../configs/app.json) | Product mode, default MoE profile, language hints, runtime paths, backend preferences, extension paths, scheduler policy, permissions, and loopback gateway policy. |
 | [`configs/moe.*.json`](../../configs/) | Execution policy plus expert IDs, declared transport/scope, provider, endpoint, model, role, weight, timeout, generation parameters, routing signals, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](../../configs/context-policy.json) | Input/output budgets, compaction threshold, recent-turn cap, and memory-item cap. |
 | [`configs/tools.json`](../../configs/tools.json) | Tool metadata, enabled state, risk class, and declared side effects. |
@@ -108,6 +129,8 @@ flowchart LR
   value, or aggregation mode can be changed in a profile. Non-local
   declarations still require a compatible external attestor.
 - Context budgets and registry file locations can be changed independently.
+- The gateway alias, request/response bounds, loopback exposure policy, and
+  optional API-key environment variable are app configuration.
 - MCP server definitions and cron schedules can be added through guarded configuration paths. An MCP definition is trusted configuration and can name an executable command; process policy and per-call confirmation guard whether it is launched.
 
 ### What still requires code?
@@ -325,6 +348,19 @@ If streaming fails before any visible content starts, the browser retries the re
 
 Implementation: [`providers.py`](../../src/local_moe/providers.py), [`orchestrator.py`](../../src/local_moe/orchestrator.py), and [`web.py`](../../src/local_moe/web.py).
 
+### Editor-agent gateway streaming
+
+`POST /v1/chat/completions` preserves the client's `stream` choice and proxies
+the selected local expert's OpenAI-compatible response. `GET /v1/models`
+returns the routed alias plus pinned aliases for configured OpenAI-compatible
+experts. Gateway requests have independent size limits and metadata-only audit
+events; they do not create chat sessions, memory records, or generation run-log
+content. Client disconnects, provider failures, unknown aliases, and response
+overflow remain explicit failures rather than cloud fallbacks.
+
+Implementation: [`openai_gateway.py`](../../src/local_moe/openai_gateway.py)
+and [`web.py`](../../src/local_moe/web.py).
+
 ## 7. The Separate Agent Tool Loop
 
 Normal chat does not expose tools to the model. The agent loop is a separate CLI-only path selected with `--agent-prompt`, and the caller must explicitly select at least one visible tool with `--agent-tool`.
@@ -492,6 +528,7 @@ See [Evaluation](../evaluation.md), [Tested Performance](../tested-performance.m
 | Concern | Primary implementation |
 | --- | --- |
 | App and MoE configuration | [`app_config.py`](../../src/local_moe/app_config.py), [`config.py`](../../src/local_moe/config.py) |
+| OpenAI-compatible editor gateway | [`openai_gateway.py`](../../src/local_moe/openai_gateway.py), [`web.py`](../../src/local_moe/web.py) |
 | Routing and distilled classifier | [`router.py`](../../src/local_moe/router.py), [`distilled_router.py`](../../src/local_moe/distilled_router.py), [`text_features.py`](../../src/local_moe/text_features.py) |
 | Expert execution and aggregation | [`orchestrator.py`](../../src/local_moe/orchestrator.py), [`providers.py`](../../src/local_moe/providers.py) |
 | Persistent chat and context | [`chat_runtime.py`](../../src/local_moe/chat_runtime.py), [`chat_store.py`](../../src/local_moe/chat_store.py), [`context.py`](../../src/local_moe/context.py) |
@@ -506,6 +543,7 @@ See [Evaluation](../evaluation.md), [Tested Performance](../tested-performance.m
 ## Next Reading
 
 - [Architecture](../architecture.md)
+- [Local Coding Fabric](../local-coding-fabric.md)
 - [Routing](../router.md)
 - [Context and Memory Architecture](../context-architecture.md)
 - [Agent Runtime](../agent-runtime.md)

@@ -1870,10 +1870,14 @@ class AssistantBridgeWorkspaceTests(unittest.TestCase):
             fake_git = Path(tmp) / "bounded-git"
             fake_git.write_text(
                 (
-                    f"#!{sys.executable}\n"
-                    "import os, time\n"
-                    f"os.write(1, b'x' * ({workspace_module._GIT_STDOUT_LIMIT_BYTES} + 1))\n"
-                    "time.sleep(5)\n"
+                    "#!/bin/sh\n"
+                    # Use only shell builtins so the output-bound assertion is
+                    # independent of PATH and of spaces in ``sys.executable``.
+                    # The runtime must terminate this unbounded producer once
+                    # the fixed Git stdout ceiling is crossed.
+                    "while :; do\n"
+                    "  printf '%8192s' ''\n"
+                    "done\n"
                 ),
                 encoding="utf-8",
             )

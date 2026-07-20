@@ -8,7 +8,9 @@ Use a system-level MoE first, not a trained monolithic sparse transformer.
 
 Reason: local hardware can run quantized local experts, but training or fine-tuning a true sparse MoE is much more expensive than routing among already-good local experts. This design keeps the runtime local by default, makes any broader execution boundary explicit, and leaves room for later distillation.
 
-The target product is general-purpose. Coding is only one route, not the default identity of the app.
+The control plane remains general-purpose. Coding is now a supported product
+entry point through the OpenAI-compatible gateway, while the editor agent
+harness remains replaceable rather than being hard-coded into model routing.
 
 ## Components
 
@@ -41,6 +43,27 @@ The quality gate is deliberately outside the online request path. `LocalMoE`
 returns the configured aggregation result directly; tests, routing holdouts,
 and answer-quality benchmarks make offline CI or release decisions.
 
+The Cline path is intentionally separate from persistent myMoE chat:
+
+```mermaid
+flowchart LR
+  C["Cline or compatible client"] -->|"localhost /v1"| G["OpenAI-compatible gateway"]
+  G --> A{"Requested alias"}
+  A -->|"mymoe"| R["Configured router"]
+  A -->|"mymoe/expert-id"| P["Pinned expert"]
+  R --> S["Execution Scope Guard"]
+  P --> S
+  S --> M["Selected local model endpoint"]
+  M -->|"text or tool call"| C
+  C --> T["Cline-owned files, terminal, browser, and MCP"]
+```
+
+The gateway selects one expert and forwards one OpenAI-compatible request. It
+does not use the normal chat store or the orchestrator's multi-answer
+aggregation/fallback lifecycle. Cline owns the coding-agent loop and tools.
+See [Local Coding Fabric](local-coding-fabric.md) for the end-user setup and
+trust boundaries.
+
 ## Core Contracts
 
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
@@ -54,6 +77,13 @@ and answer-quality benchmarks make offline CI or release decisions.
 - `Router`: deterministic scorer over guard-eligible experts, using rules and
   optional local semantic examples with no provider names in code.
 - `Provider`: local inference boundary. Normal use is OpenAI-compatible HTTP against local model servers; synthetic providers are confined to deterministic test fixtures. Providers can expose streaming generation while preserving the same final result contract.
+- `OpenAI-compatible Gateway`: loopback editor-agent inference boundary. It
+  exposes `/v1/models` and `/v1/chat/completions`, accepts routed or pinned
+  aliases, rechecks execution scope, forwards bounded regular or streaming
+  requests, and records operational audit metadata rather than task bodies. The
+  shared UI/control-plane process rejects every non-loopback bind; remote API
+  access requires a future, isolated `/v1`-only listener rather than exposing
+  the control plane.
 - `Orchestrator`: applies route, fallback, timeout, correlation id propagation, and optional progressive generation events.
 - `Evaluator`: deterministic routing and behavior checks.
 - `System Doctor`: read-only control-plane aggregator for setup readiness, endpoint health, active-profile hardware fit, storage capacity, model process reachability, extension audit, and cron state.
@@ -124,6 +154,14 @@ experts remain local.
 ### Mode 5: Distilled Student
 
 If system-level MoE is too slow, distill common expert behavior into one smaller local model.
+
+### Editor-Agent Gateway
+
+Run myMoE behind Cline or another OpenAI-compatible client. `mymoe` invokes the
+configured router; `mymoe/<expert-id>` pins one expert. This is an entry-point
+mode rather than another model topology. The external client owns tool
+execution, so its permissions, browser sessions, and MCP processes are separate
+from myMoE's built-in CLI agent policy.
 
 ## Optional Signed Route Canary
 
@@ -231,6 +269,11 @@ The practical policy is:
 - Local chronology detects rollback on one durable state path but does not
   provide external time or cross-host consensus. Operators must not describe it
   as third-party timestamp attestation.
+- An OpenAI-compatible response shape does not prove coding-agent quality. A
+  local model can still emit malformed tool calls, loop after observations, or
+  fail long repository tasks; validate the exact client/model/runtime tuple.
+- Local inference does not make Cline browser or MCP traffic offline. A true
+  air-gapped claim requires an independently enforced host egress boundary.
 
 ## Validation Gates
 
@@ -261,3 +304,10 @@ The practical policy is:
     enabled cell, and deterministic assignment below a configured threshold of
     at most 500 of 10,000 hash buckets. This is not an observed-traffic quota.
     It may only reduce premium use; every rejection preserves the baseline.
+13. The editor-agent gateway must remain loopback-only by default, reject
+    unknown aliases, preserve streaming and tool payloads, enforce request and
+    response bounds, and avoid writing request or response bodies to its audit
+    trail. The shared listener is loopback-only even if a future-facing gateway
+    policy mentions non-loopback access. Provider-dereferenced media inputs are
+    limited to inline `data:` URLs, streaming reads use bounded chunks, and each
+    opened provider request must end with a terminal audit status.

@@ -10,6 +10,11 @@ from .config import ExpertConfig
 from .http_boundary import open_model_endpoint
 
 LOCAL_PROVIDER_PARAMS = {
+    "decode_concurrency",
+    "prefill_step_size",
+    "prompt_cache_bytes",
+    "prompt_cache_size",
+    "prompt_concurrency",
     "runtime_backend",
     "supports_thinking",
     "thinking_policy",
@@ -219,7 +224,7 @@ def _chat_request(
             {"role": "user", "content": req.prompt},
         ],
     }
-    payload.update(_remote_params(expert, req.prompt))
+    payload.update(provider_request_params(expert, req.prompt))
     if stream:
         payload["stream"] = True
 
@@ -314,7 +319,9 @@ def _maybe_float(raw: object, key: str) -> float | None:
         return None
 
 
-def _remote_params(expert: ExpertConfig, prompt: str) -> dict[str, object]:
+def provider_request_params(expert: ExpertConfig, prompt: str) -> dict[str, object]:
+    """Return provider-facing generation defaults without local runtime metadata."""
+
     params = {
         key: value
         for key, value in expert.params.items()

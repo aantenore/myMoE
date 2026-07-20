@@ -3342,14 +3342,16 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
                 encoding="utf-8",
             )
             proxy.chmod(0o700)
-            if os.name == "nt":
-                proxy_launcher_args = [str(proxy), str(launcher)]
-                proxy_launcher_entrypoint = str(proxy)
-                proxy_launcher_companions = [str(launcher)]
-            else:
-                process_executable = str(proxy)
-                proxy_launcher_args = [str(launcher)]
-                proxy_launcher_companions = [str(launcher)]
+            # Invoke the probe through the already attested Python runtime on
+            # every platform.  Executing the fixture directly would make its
+            # shebang depend on ``sys.executable`` containing no spaces, which
+            # is not a valid POSIX assumption for checkout paths containing
+            # spaces.  The proxy and delegated launcher remain explicit,
+            # attested artifacts in the launcher chain.  This preserves the
+            # fail-closed contract and keeps the test checkout-path agnostic.
+            proxy_launcher_args = [str(proxy), str(launcher)]
+            proxy_launcher_entrypoint = str(proxy)
+            proxy_launcher_companions = [str(launcher)]
         raw = json.loads(
             (ROOT / "configs" / "assistant-bridge.json").read_text(encoding="utf-8")
         )

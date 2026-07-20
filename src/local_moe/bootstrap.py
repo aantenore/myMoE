@@ -149,7 +149,8 @@ def _venv_python(platform_key: str) -> str:
 
 
 def _mlx_server_command(venv_python: str, expert: object, port: int) -> tuple[str, ...]:
-    runtime_backend = str(getattr(expert, "params", {}).get("runtime_backend", "mlx_lm"))
+    params = getattr(expert, "params", {})
+    runtime_backend = str(params.get("runtime_backend", "mlx_lm"))
     module = "mlx_vlm.server" if runtime_backend == "mlx_vlm" else "mlx_lm.server"
     command = [
         venv_python,
@@ -162,10 +163,31 @@ def _mlx_server_command(venv_python: str, expert: object, port: int) -> tuple[st
         "--port",
         str(port),
     ]
-    max_kv_size = getattr(expert, "params", {}).get("max_kv_size")
+    max_tokens = params.get("max_tokens")
+    if max_tokens is not None:
+        command.extend(["--max-tokens", str(_positive_runtime_int(max_tokens, "max_tokens"))])
+    for key, flag in (
+        ("decode_concurrency", "--decode-concurrency"),
+        ("prompt_concurrency", "--prompt-concurrency"),
+        ("prefill_step_size", "--prefill-step-size"),
+        ("prompt_cache_size", "--prompt-cache-size"),
+        ("prompt_cache_bytes", "--prompt-cache-bytes"),
+    ):
+        value = params.get(key)
+        if value is not None and runtime_backend == "mlx_lm":
+            command.extend([flag, str(_positive_runtime_int(value, key))])
+    max_kv_size = params.get("max_kv_size")
     if max_kv_size is not None and runtime_backend == "mlx_vlm":
-        command.extend(["--max-kv-size", str(max_kv_size)])
+        command.extend(
+            ["--max-kv-size", str(_positive_runtime_int(max_kv_size, "max_kv_size"))]
+        )
     return tuple(command)
+
+
+def _positive_runtime_int(value: object, label: str) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"Expert runtime parameter {label} must be a positive integer.")
+    return value
 
 
 def _expert_server_command(

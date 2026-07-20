@@ -47,6 +47,16 @@ class PermissionPolicy:
 
 
 @dataclass(frozen=True)
+class GatewayPolicy:
+    enabled: bool
+    model_alias: str
+    max_request_bytes: int
+    max_response_bytes: int
+    allow_non_loopback: bool
+    api_key_env: str
+
+
+@dataclass(frozen=True)
 class AppConfig:
     name: str
     mode: str
@@ -55,6 +65,7 @@ class AppConfig:
     runtime: RuntimePolicy
     extensions: ExtensionPaths
     permissions: PermissionPolicy
+    gateway: GatewayPolicy
 
 
 def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
@@ -70,6 +81,7 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             "runtime",
             "extensions",
             "permissions",
+            "gateway",
         },
     )
     language_raw = raw.get("language", {})
@@ -114,6 +126,19 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
             "external_communication_policy",
         },
     )
+    gateway_raw = raw.get("gateway", {})
+    _reject_unknown_keys(
+        "gateway",
+        gateway_raw,
+        {
+            "enabled",
+            "model_alias",
+            "max_request_bytes",
+            "max_response_bytes",
+            "allow_non_loopback",
+            "api_key_env",
+        },
+    )
     assistant_bridge_execution_policy = str(
         permissions_raw.get(
             "assistant_bridge_execution_policy",
@@ -127,6 +152,34 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
     }:
         raise ValueError(
             "permissions.assistant_bridge_execution_policy must be disabled, local_only, or hybrid_receipt_confirmation."
+        )
+    gateway_enabled = _strict_bool(
+        gateway_raw.get("enabled", True),
+        "gateway.enabled",
+    )
+    gateway_model_alias = str(gateway_raw.get("model_alias", "mymoe")).strip()
+    if not gateway_model_alias or len(gateway_model_alias) > 80:
+        raise ValueError("gateway.model_alias must contain between 1 and 80 characters.")
+    if any(character.isspace() for character in gateway_model_alias):
+        raise ValueError("gateway.model_alias cannot contain whitespace.")
+    gateway_max_request_bytes = _bounded_positive_int(
+        gateway_raw.get("max_request_bytes", 8 * 1024 * 1024),
+        "gateway.max_request_bytes",
+        maximum=64 * 1024 * 1024,
+    )
+    gateway_max_response_bytes = _bounded_positive_int(
+        gateway_raw.get("max_response_bytes", 32 * 1024 * 1024),
+        "gateway.max_response_bytes",
+        maximum=256 * 1024 * 1024,
+    )
+    gateway_allow_non_loopback = _strict_bool(
+        gateway_raw.get("allow_non_loopback", False),
+        "gateway.allow_non_loopback",
+    )
+    gateway_api_key_env = str(gateway_raw.get("api_key_env", "")).strip()
+    if gateway_allow_non_loopback and not gateway_api_key_env:
+        raise ValueError(
+            "gateway.api_key_env is required when gateway.allow_non_loopback=true."
         )
     return AppConfig(
         name=str(raw.get("name", "myMoE")),
@@ -197,6 +250,14 @@ def load_app_config(path: str | Path = "configs/app.json") -> AppConfig:
                 permissions_raw.get("external_communication_policy", "draft_only")
             ),
         ),
+        gateway=GatewayPolicy(
+            enabled=gateway_enabled,
+            model_alias=gateway_model_alias,
+            max_request_bytes=gateway_max_request_bytes,
+            max_response_bytes=gateway_max_response_bytes,
+            allow_non_loopback=gateway_allow_non_loopback,
+            api_key_env=gateway_api_key_env,
+        ),
     )
 
 
@@ -225,6 +286,7 @@ def app_config_payload(config: AppConfig) -> dict[str, Any]:
         },
         "extensions": config.extensions.__dict__,
         "permissions": config.permissions.__dict__,
+        "gateway": config.gateway.__dict__,
     }
 
 
@@ -244,4 +306,10 @@ def _reject_unknown_keys(
 def _strict_bool(value: object, label: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{label} must be boolean.")
+    return value
+
+
+def _bounded_positive_int(value: object, label: str, *, maximum: int) -> int:
+    if type(value) is not int or value < 1 or value > maximum:
+        raise ValueError(f"{label} must be an integer between 1 and {maximum}.")
     return value

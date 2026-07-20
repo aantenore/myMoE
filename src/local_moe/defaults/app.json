@@ -1,0 +1,33 @@
+{
+  "name": "myMoE",
+  "mode": "local_model_required",
+  "default_moe_config": "moe.json",
+  "runtime": {
+    "auto_configure": false,
+    "preferred_backends": {},
+    "model_cache_dir": "~/.cache/huggingface",
+    "work_dir": "work/runtime",
+    "context_policy_config": "context-policy.json",
+    "context_policy_profile": "default",
+    "profile_dir": ".",
+    "evaluation_dir": "experiments",
+    "cron_auto_run": false,
+    "cron_poll_seconds": 300,
+    "cron_confirm_writes": false
+  },
+  "permissions": {
+    "default_write_policy": "approval_required",
+    "allow_process_execution": false,
+    "assistant_bridge_execution_policy": "disabled",
+    "connector_install_policy": "approval_required",
+    "external_communication_policy": "draft_only"
+  },
+  "gateway": {
+    "enabled": true,
+    "model_alias": "mymoe",
+    "max_request_bytes": 8388608,
+    "max_response_bytes": 33554432,
+    "allow_non_loopback": false,
+    "api_key_env": ""
+  }
+}

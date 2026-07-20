@@ -6,6 +6,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 | If you want to... | Read... |
 | --- | --- |
+| Use Cline as a private local coding agent | [Local Coding Fabric](local-coding-fabric.md) |
 | Understand the complete system | [How myMoE works](how-it-works/README.md) |
 | Install and start local models | [Installation](installation.md) |
 | Use the web app, CLI, or HTTP API | [UI and CLI](ui.md) |
@@ -23,6 +24,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 ## System Design
 
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
+- [Local Coding Fabric](local-coding-fabric.md) — exact Cline connection, gateway contract, 24 GiB resource modes, network boundaries, and desktop sidecar roadmap.
 - [Architecture](architecture.md) — system-level MoE decision, runtime modes, contracts, limitations, and release gates.
 - [Routing](router.md) — exact score composition, semantic examples, distilled artifact, top-k, aggregation, and fallbacks.
 - [Execution Scope Guard](execution-scopes.md) — scope/transport policy, fail-closed eligibility, fallback widening, and Mesh trust assumptions.
@@ -35,6 +37,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 ## Run and Operate
 
 - [Installation](installation.md) — Apple Silicon MLX, Windows/Linux Ollama, llama.cpp, model profiles, startup, and Doctor.
+- [Local Coding Fabric](local-coding-fabric.md#five-minute-cline-setup) — connect Cline to the running local gateway.
 - [UI and CLI](ui.md) — chat behavior, streaming, session management, memory, local data, Advanced panels, API examples, and screenshots.
 - [Gemma 4 E4B Runtime](gemma-e4b-runtime.md) — pinned dependency compatibility and measured result for that optional profile.
 - [CI](ci.md) — local and GitHub Actions verification.
@@ -64,6 +67,7 @@ None of these lists is a universal language-quality guarantee. Answer quality st
 - Runtime diagrams describe implemented behavior, not planned behavior.
 - The online generation path ends when a response is returned and persisted; release quality gates run offline.
 - Normal generation retrieves memory but does not create durable memory records automatically.
+- Cline owns its file, terminal, browser, MCP, approval, and conversation state; the myMoE gateway supplies inference and records operational metadata only.
 - A chat exchange is persisted only after a successful final response.
 - `compaction_needed` is an advisory signal; durable model-generated compaction is an explicit action.
 - Examples use the locked Python 3.12 environment because the project requires Python 3.10 or newer.

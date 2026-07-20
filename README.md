@@ -1,7 +1,46 @@
 # myMoE
 
-**Use the smallest suitable local AI expert, keep a stronger one available, and
-escalate only under explicit policy.**
+**Use local AI to chat or code, choose the smallest suitable expert, and keep
+every wider execution boundary explicit.**
+
+## A private coding agent without per-token fees
+
+myMoE can power [Cline](https://github.com/cline/cline) from models running on
+your own computer. Cline stays in VS Code and provides the coding-agent
+experience; myMoE gives it one OpenAI-compatible local endpoint, chooses or
+pins a configured model, and prevents an implicit cloud fallback.
+
+In practical terms, you can ask the agent to understand a repository, edit
+files, run terminal and Git commands, inspect a local web app in a browser, and
+use configured MCP tools. The model inference remains on your machine; the
+file, terminal, browser, and MCP actions are performed by Cline under its own
+tool and approval settings.
+
+```text
+Cline in VS Code -> http://127.0.0.1:8089/v1 -> myMoE -> local model(s)
+      |                                                   no API bill
+      +-> files / terminal / Git / browser / MCP
+```
+
+Start myMoE, select **OpenAI Compatible** in Cline, and use:
+
+- Base URL: `http://127.0.0.1:8089/v1`
+- API key: `local` if the Cline form requires a value
+- Model: `mymoe` for configured routing, or `mymoe/coder` when the active
+  profile contains the `coder` expert
+
+See the [Local Coding Fabric guide](docs/local-coding-fabric.md) for the exact
+setup, 24 GiB model advice, offline modes, security boundary, and current
+limitations.
+
+> **Honest boundary:** this removes per-token cloud charges, not hardware,
+> electricity, or model-license obligations. myMoE provides local inference;
+> Cline is the external agent harness. Browser or networked MCP actions are not
+> air-gapped, and reliable tool use still depends on the selected local model.
+> This alpha validates the gateway and a real local-model tool loop; the
+> representative task driven through Cline itself is still pending. Run the
+> documented read-only canary before allowing writes or terminal commands for
+> a new model/runtime combination.
 
 ## In plain English
 
@@ -24,6 +63,7 @@ escalate only under explicit policy.**
 
 | Feature | Real-world benefit |
 | --- | --- |
+| Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Configuration-driven routing across independent models | Teams can change experts, weights, endpoints, budgets, and fallbacks without retraining one giant model. |
 | Execution Scope Guard before every model call | A local-only request fails closed instead of silently moving to a wider mesh or remote route. |
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
@@ -185,12 +225,16 @@ Open `http://127.0.0.1:8089`.
 
 Starting only the first model keeps memory use low. If a request is routed to the offline fast expert, the default bidirectional fallback order retries the resident general expert.
 
+To use the same runtime from Cline, follow the
+[five-minute local coding setup](docs/local-coding-fabric.md#five-minute-cline-setup).
+
 For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startup runbook, use the [installation guide](docs/installation.md).
 
 ## Choose the Right Entry Point
 
 | Goal | Entry point | Persistence and tools |
 | --- | --- | --- |
+| Code from VS Code with a local model | Cline with Base URL `http://127.0.0.1:8089/v1` and model `mymoe` | Cline owns workspace, terminal, browser, and MCP tools; myMoE supplies local inference and model selection. |
 | Use the chat application | `.venv/bin/mymoe-web --port 8089` | Persistent chats, memory retrieval, streaming, and metadata-only run logging. |
 | Use persistent terminal chat | `.venv/bin/mymoe --interactive` | Uses the same chat, memory, context, and run-log stores as the web app. |
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
@@ -215,7 +259,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 
 | Configuration | Responsibility |
 | --- | --- |
-| [`configs/app.json`](configs/app.json) | Active profile, allowed profile/evaluation directories, local work directory, backend preferences, language policy, extension paths, and permissions. |
+| [`configs/app.json`](configs/app.json) | Active profile, allowed profile/evaluation directories, local work directory, backend preferences, language policy, extension paths, permissions, and the loopback gateway policy. |
 | [`configs/moe.*.json`](configs/) | Execution-scope policy plus experts, declared transports, endpoints, models, generation parameters, routing strategy, top-k, aggregation, and fallbacks. |
 | [`configs/context-policy.json`](configs/context-policy.json) | Context limit, reserved output, compaction threshold, recent-turn limit, and memory limit. |
 | [`configs/assistant-bridge.json`](configs/assistant-bridge.json) | Replaceable Codex launch adapters and explicit models, capability inventories, local-first profiles, durable premium budgets, bound verifiers, and capsule limits. |
@@ -240,6 +284,7 @@ response or tool metadata cannot create a new executable implementation.
 ## Safety and Local Data
 
 - Normal chat never runs tools automatically. Tool-calling is a separate CLI path with an explicit tool selection.
+- The Cline gateway is a separate path: myMoE forwards OpenAI-compatible model requests, while Cline owns file, terminal, browser, and MCP execution. Cline permissions and third-party MCP servers remain separate trust boundaries.
 - The Execution Scope Guard applies to every local-orchestration generation entry point. The default is `device_only`, fallback scope widening is disabled, and missing or contradictory evidence fails with `scope_blocked` before an ineligible provider call.
 - A loopback URL proves only the first network hop. Mesh and gateway transports require an external attestor even when they listen on `127.0.0.1`; the current Mesh adapter is disabled and fail-closed.
 - Read-only and compute-only agent tools may run automatically; risky calls pause and require an approval bound to the canonical tool name and exact argument SHA-256.
@@ -256,6 +301,7 @@ See [Agent Runtime](docs/agent-runtime.md) for the exact permission model and [C
 Start with the [documentation hub](docs/README.md).
 
 - [How myMoE works](docs/how-it-works/README.md) — end-to-end diagrams and code-level contracts.
+- [Local Coding Fabric](docs/local-coding-fabric.md) — exact Cline setup, local gateway contract, resource profiles, offline semantics, and roadmap.
 - [Installation](docs/installation.md) — platforms, runtimes, models, and startup.
 - [Architecture](docs/architecture.md) — design decisions, components, modes, and validation gates.
 - [Execution Scope Guard](docs/execution-scopes.md) — scope/transport policy, fail-closed behavior, and Mesh trust boundary.
@@ -272,7 +318,7 @@ Start with the [documentation hub](docs/README.md).
 Run the complete cross-platform check with the locked Python 3.12 environment:
 
 ```bash
-uv run --locked --python 3.12 python scripts/run_ci_checks.py
+uv run --locked --extra assistant-bridge --python 3.12 python scripts/run_ci_checks.py
 ```
 
 It compiles the project, runs the unit and contract tests, regenerates deterministic routing evaluations, validates holdout provenance, evaluates the offline quality gate, produces a hardware report, and verifies installed console entry points.
@@ -281,7 +327,9 @@ Current measured results and their limits are documented in [Tested Performance]
 
 ## Product Boundary
 
-myMoE is primarily a local workstation orchestration runtime and evaluation harness. The
+myMoE is primarily a local workstation orchestration runtime and evaluation harness. Its
+OpenAI-compatible gateway can supply local inference to an external coding
+harness such as Cline, but Cline owns its workspace tools and permissions. The
 Hybrid Assistant Bridge may start a separately configured premium Codex process
 only when its profile, explicit privacy choice, capability evidence, and budget
 allow it. myMoE is not a trained sparse transformer, a hosted multi-tenant

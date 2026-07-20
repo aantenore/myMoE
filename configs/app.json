@@ -38,5 +38,13 @@
     "assistant_bridge_execution_policy": "hybrid_receipt_confirmation",
     "connector_install_policy": "approval_required",
     "external_communication_policy": "draft_only"
+  },
+  "gateway": {
+    "enabled": true,
+    "model_alias": "mymoe",
+    "max_request_bytes": 8388608,
+    "max_response_bytes": 33554432,
+    "allow_non_loopback": false,
+    "api_key_env": ""
   }
 }

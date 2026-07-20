@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
+import local_moe.model_servers as model_servers_module
 from local_moe.model_servers import (
     ModelServerManager,
     ModelServerSpec,
@@ -22,6 +24,19 @@ from local_moe.execution_scope import (
 
 
 class ModelServerManagerTests(unittest.TestCase):
+    def test_default_process_starts_with_offline_model_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "model.log"
+            with mock.patch.object(model_servers_module.subprocess, "Popen") as popen:
+                model_servers_module._start_process(("python", "-m", "model_server"), log_path)
+
+        environment = popen.call_args.kwargs["env"]
+        self.assertEqual(environment["HF_HUB_OFFLINE"], "1")
+        self.assertEqual(environment["HF_DATASETS_OFFLINE"], "1")
+        self.assertEqual(environment["TRANSFORMERS_OFFLINE"], "1")
+        self.assertEqual(environment["HF_HUB_DISABLE_TELEMETRY"], "1")
+        self.assertEqual(environment["DO_NOT_TRACK"], "1")
+
     def test_start_requires_confirmation(self) -> None:
         manager = ModelServerManager((_spec(),), reachability_checker=lambda _url: False)
 

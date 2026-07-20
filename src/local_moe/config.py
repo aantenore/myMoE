@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .execution_scope import (
@@ -19,6 +20,9 @@ from .path_security import read_text_file
 
 class ConfigError(ValueError):
     """Raised when MoE configuration is invalid."""
+
+
+_EXPERT_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
 
 @dataclass(frozen=True)
@@ -206,8 +210,15 @@ def _parse_expert(raw: dict[str, Any]) -> ExpertConfig:
         endpoint=endpoint,
     )
 
+    expert_id = str(raw["id"])
+    if _EXPERT_ID_PATTERN.fullmatch(expert_id) is None:
+        raise ConfigError(
+            "Expert id must be 1-80 ASCII letters, digits, dots, underscores, "
+            "or hyphens, and must start with a letter or digit."
+        )
+
     return ExpertConfig(
-        id=str(raw["id"]),
+        id=expert_id,
         provider=str(raw["provider"]),
         model=str(raw["model"]),
         role=str(raw["role"]),

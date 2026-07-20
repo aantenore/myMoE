@@ -22,6 +22,33 @@ PYTHONPATH=src .venv/bin/python scripts/start_local_models.py --only-first
 PYTHONPATH=src .venv/bin/python -m local_moe.web --port 8089
 ```
 
+### OpenAI-compatible local gateway
+
+The web process also exposes an inference endpoint for editor agents and other
+OpenAI-compatible clients:
+
+```bash
+curl http://127.0.0.1:8089/v1/models
+
+curl -N -X POST http://127.0.0.1:8089/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"mymoe","messages":[{"role":"user","content":"Explain this project in one sentence."}],"stream":true}'
+```
+
+The `mymoe` alias uses configured routing. An alias in the form
+`mymoe/<expert-id>` pins that configured OpenAI-compatible expert; for example,
+`mymoe/coder` is present only with a profile containing the `coder` ID. The
+gateway accepts regular and streaming chat completions, rechecks execution
+scope, and records metadata-only audit events. It does not create a myMoE chat
+session or memory record for the client conversation.
+
+For Cline, use Base URL `http://127.0.0.1:8089/v1`, API key `local` when its UI
+requires a value, and model `mymoe` or an available pinned alias. The default
+gateway is loopback-only and does not validate the placeholder key. If
+`gateway.api_key_env` is configured, the client must send that real value.
+See [Local Coding Fabric](local-coding-fabric.md) for setup and security
+boundaries.
+
 List saved chat sessions:
 
 ```bash

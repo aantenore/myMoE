@@ -283,7 +283,45 @@ After installation:
 mymoe-web --port 8089
 ```
 
+The wheel includes a minimal loopback configuration, so this command also
+starts from an empty working directory. That fallback exposes `mymoe` and
+`mymoe/local` and expects an OpenAI-compatible local model endpoint at
+`127.0.0.1:8101`; it does not download or start a model implicitly. Pass
+`--app-config` and `--config` to use a custom profile or the richer source
+checkout examples.
+
 Open `http://127.0.0.1:8089`.
+
+## Connect Cline
+
+The same web process exposes the local OpenAI-compatible gateway. In Cline,
+select `OpenAI Compatible` and set:
+
+```text
+Base URL: http://127.0.0.1:8089/v1
+API key:  local
+Model:    mymoe
+```
+
+`local` is only a placeholder when the default `gateway.api_key_env` is empty.
+Use `mymoe/coder` only when the active profile contains the `coder` expert, such
+as `configs/moe.live.qwen3-coder-mlx.example.json`. The model process and web
+server must use the same profile.
+
+Confirm the exposed aliases before opening a coding task:
+
+```bash
+curl http://127.0.0.1:8089/v1/models
+```
+
+Managed model processes run with Hugging Face and Transformers offline mode
+enforced. Download or update model assets explicitly with
+`scripts/bootstrap_runtime.py --download-models`; runtime startup will not
+silently fetch a missing model.
+
+The full [Local Coding Fabric guide](local-coding-fabric.md) includes the exact
+Cline steps, read-only canary, 24 GiB resource advice, and the distinction
+between air-gapped and browser-connected operation.
 
 ## Cross-Platform Ollama Config
 

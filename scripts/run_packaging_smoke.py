@@ -3,11 +3,20 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
+import time
+from urllib import error as urlerror
+from urllib import request
 
 MIN_PYTHON = (3, 10)
+BUILD_REQUIREMENTS = (
+    "pip==25.2",
+    "setuptools==80.9.0",
+    "wheel==0.45.1",
+)
 
 
 def main() -> None:
@@ -17,7 +26,9 @@ def main() -> None:
         temporary = Path(tmp)
         venv_dir = temporary / "venv"
         dist_dir = temporary / "dist"
+        runtime_dir = temporary / "runtime"
         dist_dir.mkdir()
+        runtime_dir.mkdir()
         subprocess.run([str(packaging_python), "-m", "venv", str(venv_dir)], check=True)
         python = _venv_python(venv_dir)
         scripts_dir = _venv_scripts_dir(venv_dir)
@@ -28,12 +39,9 @@ def main() -> None:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
-                "--upgrade",
-                "pip",
-                "setuptools",
-                "wheel",
+                *BUILD_REQUIREMENTS,
             ],
-            cwd=root,
+            cwd=runtime_dir,
             check=True,
         )
         subprocess.run(
@@ -49,7 +57,7 @@ def main() -> None:
                 str(dist_dir),
                 str(root),
             ],
-            cwd=temporary,
+            cwd=runtime_dir,
             check=True,
         )
         wheels = sorted(dist_dir.glob("local_moe_orchestrator-*.whl"))
@@ -66,9 +74,11 @@ def main() -> None:
                 "--no-deps",
                 str(wheel),
             ],
-            cwd=temporary,
+            cwd=runtime_dir,
             check=True,
         )
+        runtime_environment = dict(os.environ)
+        runtime_environment.pop("PYTHONPATH", None)
         location_result = subprocess.run(
             [
                 str(python),
@@ -78,7 +88,8 @@ def main() -> None:
                 "print(Path(local_moe.__file__).resolve()); "
                 "print(Path(_win32_fs.__file__).resolve())",
             ],
-            cwd=temporary,
+            cwd=runtime_dir,
+            env=runtime_environment,
             check=True,
             text=True,
             capture_output=True,
@@ -97,38 +108,21 @@ def main() -> None:
         mymoe = _console_script(scripts_dir, "mymoe")
         mymoe_paired = _console_script(scripts_dir, "mymoe-paired")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
-        prompt = "Packaging smoke: summarize local MoE in one sentence."
-        completed = subprocess.run(
-            [
-                str(mymoe),
-                "--config",
-                str(root / "tests" / "fixtures" / "moe.synthetic.json"),
-                "--prompt",
-                prompt,
-                "--json",
-            ],
-            cwd=root,
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-        payload = json.loads(completed.stdout)
-        if "content" not in payload or "synthetic-" not in str(payload["content"]):
-            raise SystemExit("mymoe console script did not return the expected synthetic payload.")
-
         help_result = subprocess.run(
-            [str(mymoe_web), "--help"],
-            cwd=temporary,
+            [str(mymoe), "--help"],
+            cwd=runtime_dir,
+            env=runtime_environment,
             check=True,
             text=True,
             capture_output=True,
         )
-        if "myMoE local web UI" not in help_result.stdout:
-            raise SystemExit("mymoe-web console script did not expose the expected help output.")
+        if "Local MoE orchestrator" not in help_result.stdout:
+            raise SystemExit("mymoe console script did not expose the expected help output.")
 
         paired_help_result = subprocess.run(
             [str(mymoe_paired), "--help"],
-            cwd=temporary,
+            cwd=runtime_dir,
+            env=runtime_environment,
             check=True,
             text=True,
             capture_output=True,
@@ -138,26 +132,21 @@ def main() -> None:
                 "mymoe-paired console script did not expose the expected help output."
             )
 
-        web_result = subprocess.run(
-            [
-                str(python),
-                "-c",
-                _WEB_ROOT_SMOKE,
-                str(root / "tests" / "fixtures" / "moe.synthetic.json"),
-                str(root / "configs" / "app.json"),
-            ],
-            cwd=root,
-            check=True,
-            text=True,
-            capture_output=True,
+        _run_installed_web_smoke(
+            mymoe_web,
+            runtime_dir,
+            environment=runtime_environment,
         )
-        if web_result.stdout.strip() != "web-root-ok":
-            raise SystemExit("Installed mymoe-web did not serve its packaged UI asset.")
+        if any(runtime_dir.iterdir()):
+            raise SystemExit(
+                "Installed console scripts unexpectedly wrote into the empty runtime directory."
+            )
 
         print(
             json.dumps(
                 {
                     "status": "passed",
+                    "build_requirements": list(BUILD_REQUIREMENTS),
                     "packaging_python": str(packaging_python),
                     "python": str(python),
                     "wheel": wheel.name,
@@ -168,27 +157,82 @@ def main() -> None:
         )
 
 
-_WEB_ROOT_SMOKE = """
-import sys
-from threading import Thread
-from urllib.request import urlopen
+def _run_installed_web_smoke(
+    executable: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    if any(runtime_dir.iterdir()):
+        raise SystemExit("Packaging smoke runtime directory must start empty.")
+    port = _available_loopback_port()
+    process = subprocess.Popen(
+        [
+            str(executable),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=runtime_dir,
+        env={**environment, "PYTHONUNBUFFERED": "1"},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        _wait_for_web_ready(process, port)
+        with request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
+            body = response.read().decode("utf-8")
+            if response.status != 200 or "<title>myMoE</title>" not in body:
+                raise SystemExit("installed web root returned an unexpected response")
+        with request.urlopen(
+            f"http://127.0.0.1:{port}/v1/models",
+            timeout=5,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            model_ids = {item.get("id") for item in payload.get("data", [])}
+            if (
+                response.status != 200
+                or payload.get("object") != "list"
+                or "mymoe" not in model_ids
+                or "mymoe/local" not in model_ids
+            ):
+                raise SystemExit(
+                    "installed gateway returned an unexpected model catalog"
+                )
+    finally:
+        process.terminate()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=5)
 
-from local_moe.web import build_server
 
-server = build_server(sys.argv[1], "127.0.0.1", 0, app_config_path=sys.argv[2])
-thread = Thread(target=server.serve_forever, daemon=True)
-thread.start()
-try:
-    with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5) as response:
-        body = response.read().decode("utf-8")
-        if response.status != 200 or "<title>myMoE</title>" not in body:
-            raise SystemExit("installed web root returned an unexpected response")
-finally:
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=5)
-print("web-root-ok")
-"""
+def _wait_for_web_ready(process: subprocess.Popen[str], port: int) -> None:
+    deadline = time.monotonic() + 15
+    last_error = "server did not become ready"
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise SystemExit(
+                "Installed mymoe-web exited before startup.\n"
+                f"stdout:\n{stdout}\nstderr:\n{stderr}"
+            )
+        try:
+            with request.urlopen(f"http://127.0.0.1:{port}/", timeout=1):
+                return
+        except (OSError, urlerror.URLError) as exc:
+            last_error = str(exc)
+            time.sleep(0.1)
+    raise SystemExit(f"Installed mymoe-web did not become ready: {last_error}")
+
+
+def _available_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _select_packaging_python(root: Path) -> Path:

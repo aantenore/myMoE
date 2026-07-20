@@ -4,9 +4,11 @@ import argparse
 import time
 import json
 from http import HTTPStatus
+from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib import error as urlerror
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .app_config import AppConfig, app_config_payload, load_app_config
@@ -55,6 +57,15 @@ from .memory import (
 from .model_inventory import build_model_asset_inventory
 from .model_servers import ModelServerManager, model_server_action_payload
 from .orchestrator import LocalMoE
+from .openai_gateway import (
+    GatewayRequestError,
+    OpenAIGatewayService,
+    PreparedChatCompletion,
+    is_loopback_host,
+    openai_error_payload,
+    validate_json_depth,
+)
+from .package_defaults import resolve_app_config_path, resolve_app_config_reference
 from .path_security import PathBoundaryError, resolve_existing_file
 from .performance_report import (
     build_performance_report,
@@ -90,13 +101,17 @@ from .tool_runner import LocalToolRunner, ToolExecutionError, tool_result_payloa
 def main() -> None:
     parser = argparse.ArgumentParser(description="myMoE local web UI")
     parser.add_argument("--config")
-    parser.add_argument("--app-config", default="configs/app.json")
+    parser.add_argument("--app-config")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8089)
     args = parser.parse_args()
 
-    app_config = load_app_config(args.app_config)
-    server = build_server(args.config or app_config.default_moe_config, args.host, args.port, app_config_path=args.app_config)
+    server = build_server(
+        args.config,
+        args.host,
+        args.port,
+        app_config_path=args.app_config,
+    )
     url = f"http://{args.host}:{server.server_address[1]}"
     print(f"myMoE UI listening on {url}")
     cron_runner = getattr(server, "background_cron_runner", None)
@@ -116,19 +131,39 @@ def main() -> None:
 
 
 def build_server(
-    config_path: str,
+    config_path: str | Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8089,
     *,
-    app_config_path: str = "configs/app.json",
+    app_config_path: str | Path | None = None,
 ) -> ThreadingHTTPServer:
-    app_config = load_app_config(app_config_path)
-    config = load_config(config_path)
+    if not is_loopback_host(host):
+        raise ValueError(
+            "The shared myMoE control-plane server must bind to a loopback host. "
+            "A future isolated /v1 listener is required for remote gateway access."
+        )
+    resolved_app_config_path = resolve_app_config_path(app_config_path)
+    app_config = load_app_config(resolved_app_config_path)
+    resolved_config_path = (
+        Path(config_path).expanduser()
+        if config_path is not None
+        else resolve_app_config_reference(
+            app_config.default_moe_config,
+            resolved_app_config_path,
+        )
+    )
+    config_path = str(resolved_config_path)
+    app_config_path = str(resolved_app_config_path)
+    config = load_config(resolved_config_path)
     context_policy = load_context_policy(
-        app_config.runtime.context_policy_config,
+        resolve_app_config_reference(
+            app_config.runtime.context_policy_config,
+            resolved_app_config_path,
+        ),
         app_config.runtime.context_policy_profile,
     )
     moe = LocalMoE(config)
+    gateway = OpenAIGatewayService(config, app_config.gateway)
     registry = _load_registry(app_config)
     audit_store = AuditLogStore(_audit_log_path(app_config))
     run_log_store = RunLogStore(_run_log_path(app_config))
@@ -154,6 +189,7 @@ def build_server(
         config=config,
         context_policy=context_policy,
         moe=moe,
+        gateway=gateway,
         registry=registry,
         audit_store=audit_store,
         run_log_store=run_log_store,
@@ -175,6 +211,7 @@ def _make_handler(
     config: object,
     context_policy: object,
     moe: LocalMoE,
+    gateway: OpenAIGatewayService,
     registry: object,
     audit_store: AuditLogStore,
     run_log_store: RunLogStore,
@@ -187,6 +224,12 @@ def _make_handler(
         def do_GET(self) -> None:
             parsed_url = urlparse(self.path)
             path = parsed_url.path
+            if path == "/v1/models":
+                if not _authorize_gateway(self, gateway):
+                    return
+                _send_json(self, gateway.models_payload())
+                return
+
             if path in {"/", "/index.html"}:
                 _send(
                     self,
@@ -597,6 +640,222 @@ def _make_handler(
         def do_POST(self) -> None:
             nonlocal registry
             path = urlparse(self.path).path
+            if path == "/v1/chat/completions":
+                if not _authorize_gateway(self, gateway):
+                    return
+                try:
+                    payload = _read_gateway_json(self, gateway.policy.max_request_bytes)
+                    prepared = gateway.prepare_chat_completion(
+                        payload,
+                        correlation_id=_optional_str(
+                            self.headers.get("X-MyMoE-Correlation-ID")
+                        ),
+                    )
+                except GatewayRequestError as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        exc.code,
+                        risk_class="compute_only",
+                    )
+                    _send_gateway_error(self, gateway, exc)
+                    return
+                except ScopePolicyError as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        exc.reason_code,
+                        risk_class="compute_only",
+                    )
+                    _send_json(
+                        self,
+                        openai_error_payload(
+                            str(exc),
+                            code=exc.reason_code,
+                            error_type="permission_error",
+                        ),
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
+
+                _audit(
+                    audit_store,
+                    "gateway.chat_completion",
+                    "started",
+                    risk_class="compute_only",
+                    subject=prepared.expert.id,
+                    metadata={
+                        "requested_model": prepared.requested_model,
+                        "stream": prepared.stream,
+                        "request_sha256": prepared.request_sha256,
+                        "routing_sha256": prepared.routing_sha256,
+                        "correlation_id": prepared.correlation_id,
+                        "route_selected": prepared.route_selected,
+                    },
+                )
+                try:
+                    upstream = gateway.open_chat_completion(prepared)
+                except GatewayRequestError as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        exc.code,
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                    )
+                    _send_gateway_error(self, gateway, exc)
+                    return
+                except ScopePolicyError as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        exc.reason_code,
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                    )
+                    _send_json(
+                        self,
+                        openai_error_payload(
+                            str(exc),
+                            code=exc.reason_code,
+                            error_type="permission_error",
+                        ),
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
+                except urlerror.HTTPError as exc:
+                    try:
+                        _send_upstream_http_error(
+                            self,
+                            exc,
+                            max_bytes=gateway.policy.max_response_bytes,
+                        )
+                    except (BrokenPipeError, ConnectionResetError):
+                        _audit(
+                            audit_store,
+                            "gateway.chat_completion",
+                            "client_disconnected",
+                            risk_class="compute_only",
+                            subject=prepared.expert.id,
+                            metadata={"correlation_id": prepared.correlation_id},
+                        )
+                    except GatewayRequestError as response_exc:
+                        _audit(
+                            audit_store,
+                            "gateway.chat_completion",
+                            response_exc.code,
+                            risk_class="compute_only",
+                            subject=prepared.expert.id,
+                            metadata={"correlation_id": prepared.correlation_id},
+                        )
+                        _send_gateway_error(self, gateway, response_exc)
+                    except (IncompleteRead, TimeoutError, OSError, urlerror.URLError) as response_exc:
+                        _audit(
+                            audit_store,
+                            "gateway.chat_completion",
+                            "provider_response_error",
+                            risk_class="compute_only",
+                            subject=prepared.expert.id,
+                            metadata={
+                                "correlation_id": prepared.correlation_id,
+                                "error_type": type(response_exc).__name__,
+                            },
+                        )
+                        _send_provider_response_error(self)
+                    else:
+                        _audit(
+                            audit_store,
+                            "gateway.chat_completion",
+                            "upstream_http_error",
+                            risk_class="compute_only",
+                            subject=prepared.expert.id,
+                            metadata={"status": int(exc.code)},
+                        )
+                    return
+                except (OSError, urlerror.URLError) as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        "provider_error",
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                        metadata={"error_type": type(exc).__name__},
+                    )
+                    _send_json(
+                        self,
+                        openai_error_payload(
+                            "The selected local model endpoint is unavailable.",
+                            code="provider_unavailable",
+                            error_type="server_error",
+                        ),
+                        status=HTTPStatus.BAD_GATEWAY,
+                    )
+                    return
+
+                try:
+                    with upstream:
+                        bytes_forwarded = _proxy_gateway_response(
+                            self,
+                            upstream,
+                            prepared=prepared,
+                            max_bytes=gateway.policy.max_response_bytes,
+                        )
+                except (BrokenPipeError, ConnectionResetError):
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        "client_disconnected",
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                        metadata={"correlation_id": prepared.correlation_id},
+                    )
+                    return
+                except GatewayRequestError as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        exc.code,
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                        metadata={"correlation_id": prepared.correlation_id},
+                    )
+                    if not exc.response_started:
+                        _send_gateway_error(self, gateway, exc)
+                    else:
+                        self.close_connection = True
+                    return
+                except (IncompleteRead, TimeoutError, OSError, urlerror.URLError) as exc:
+                    _audit(
+                        audit_store,
+                        "gateway.chat_completion",
+                        "provider_response_error",
+                        risk_class="compute_only",
+                        subject=prepared.expert.id,
+                        metadata={
+                            "correlation_id": prepared.correlation_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+                    if prepared.stream:
+                        self.close_connection = True
+                    else:
+                        _send_provider_response_error(self)
+                    return
+
+                _audit(
+                    audit_store,
+                    "gateway.chat_completion",
+                    "ok",
+                    risk_class="compute_only",
+                    subject=prepared.expert.id,
+                    metadata={
+                        "stream": prepared.stream,
+                        "bytes_forwarded": bytes_forwarded,
+                        "correlation_id": prepared.correlation_id,
+                    },
+                )
+                return
+
             if path == "/api/generate/stream":
                 payload = _read_json(self)
                 prompt = str(payload.get("prompt", "")).strip()
@@ -1787,6 +2046,317 @@ def _load_registry(app_config: object) -> object:
         mcp_config=app_config.extensions.mcp_config,
         cron_config=app_config.extensions.cron_config,
     )
+
+
+def _authorize_gateway(
+    handler: BaseHTTPRequestHandler,
+    gateway: OpenAIGatewayService,
+) -> bool:
+    client_host = str(handler.client_address[0]) if handler.client_address else ""
+    decision = gateway.authorize(
+        client_host,
+        handler.headers.get("Authorization"),
+        host_header=handler.headers.get("Host"),
+        origin_header=handler.headers.get("Origin"),
+    )
+    if decision.allowed:
+        return True
+    status = (
+        HTTPStatus.NOT_FOUND
+        if decision.code == "gateway_disabled"
+        else HTTPStatus.UNAUTHORIZED
+        if decision.code in {"invalid_api_key", "gateway_key_unavailable"}
+        else HTTPStatus.FORBIDDEN
+    )
+    _send_json(
+        handler,
+        openai_error_payload(
+            decision.message,
+            code=decision.code,
+            error_type="authentication_error"
+            if status == HTTPStatus.UNAUTHORIZED
+            else "permission_error",
+        ),
+        status=status,
+    )
+    return False
+
+
+def _read_gateway_json(
+    handler: BaseHTTPRequestHandler,
+    max_bytes: int,
+) -> dict[str, Any]:
+    content_type = str(handler.headers.get("Content-Type", "")).split(";", 1)[0]
+    if content_type.strip().lower() != "application/json":
+        raise GatewayRequestError(
+            "Content-Type must be application/json.",
+            code="unsupported_media_type",
+            status=415,
+        )
+    if handler.headers.get("Transfer-Encoding"):
+        raise GatewayRequestError(
+            "Chunked request bodies are not supported.",
+            code="unsupported_transfer_encoding",
+            status=400,
+        )
+    raw_length = handler.headers.get("Content-Length")
+    try:
+        length = int(str(raw_length))
+    except (TypeError, ValueError) as exc:
+        raise GatewayRequestError(
+            "A valid Content-Length header is required.",
+            code="invalid_content_length",
+            status=411,
+        ) from exc
+    if length < 1:
+        raise GatewayRequestError(
+            "The request body is required.",
+            code="invalid_request",
+        )
+    if length > max_bytes:
+        raise GatewayRequestError(
+            "The request body exceeds the configured gateway limit.",
+            code="request_too_large",
+            status=413,
+        )
+    raw = handler.rfile.read(length)
+    if len(raw) != length:
+        raise GatewayRequestError(
+            "The request body ended before Content-Length bytes were received.",
+            code="incomplete_request",
+        )
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise GatewayRequestError(
+            "The request body is not valid UTF-8 JSON.",
+            code="invalid_json",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise GatewayRequestError(
+            "The request body must be a JSON object.",
+            code="invalid_json",
+        )
+    validate_json_depth(parsed)
+    return parsed
+
+
+def _send_gateway_error(
+    handler: BaseHTTPRequestHandler,
+    gateway: OpenAIGatewayService,
+    exc: GatewayRequestError,
+) -> None:
+    try:
+        status = HTTPStatus(exc.status)
+    except ValueError:
+        status = HTTPStatus.BAD_REQUEST
+    _send_json(handler, gateway.error_payload(exc), status=status)
+
+
+def _send_upstream_http_error(
+    handler: BaseHTTPRequestHandler,
+    exc: urlerror.HTTPError,
+    *,
+    max_bytes: int,
+) -> None:
+    declared_length = _upstream_content_length(exc.headers)
+    if declared_length is not None and declared_length > max_bytes:
+        raise GatewayRequestError(
+            "The local model returned an oversized error response.",
+            code="upstream_response_too_large",
+            status=502,
+        )
+    body = exc.read(max_bytes + 1)
+    status_code = int(exc.code)
+    if len(body) > max_bytes:
+        raise GatewayRequestError(
+            "The local model returned an oversized error response.",
+            code="upstream_response_too_large",
+            status=502,
+        )
+    if declared_length is not None and len(body) != declared_length:
+        raise GatewayRequestError(
+            "The local model returned an incomplete error response.",
+            code="upstream_response_incomplete",
+            status=502,
+        )
+    if not body:
+        body = json.dumps(
+            openai_error_payload(
+                "The local model rejected the request.",
+                code="upstream_http_error",
+                error_type="server_error",
+            )
+        ).encode("utf-8")
+    _send_gateway_body(
+        handler,
+        status_code,
+        body,
+        content_type="application/json; charset=utf-8",
+    )
+
+
+def _proxy_gateway_response(
+    handler: BaseHTTPRequestHandler,
+    upstream: Any,
+    *,
+    prepared: PreparedChatCompletion,
+    max_bytes: int,
+) -> int:
+    status_code = int(getattr(upstream, "status", 200))
+    headers = getattr(upstream, "headers", {})
+    raw_content_type = str(
+        headers.get("Content-Type", "") if hasattr(headers, "get") else ""
+    )
+    default_content_type = (
+        "text/event-stream; charset=utf-8"
+        if prepared.stream
+        else "application/json; charset=utf-8"
+    )
+    content_type = _safe_gateway_content_type(raw_content_type, default_content_type)
+    declared_length = _upstream_content_length(headers)
+    if declared_length is not None and declared_length > max_bytes:
+        raise GatewayRequestError(
+            "The local model response exceeded the configured gateway limit.",
+            code="upstream_response_too_large",
+            status=502,
+        )
+    extra_headers = {
+        "X-MyMoE-Expert": prepared.expert.id,
+        "X-MyMoE-Correlation-ID": prepared.correlation_id,
+    }
+    if prepared.stream:
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Cache-Control", "no-cache")
+        handler.send_header("X-Accel-Buffering", "no")
+        handler.send_header("Connection", "close")
+        for name, value in extra_headers.items():
+            handler.send_header(name, value)
+        handler.end_headers()
+        handler.close_connection = True
+        total = 0
+        bounded_reader = getattr(upstream, "readline", None)
+        if not callable(bounded_reader):
+            bounded_reader = upstream.read
+        while True:
+            remaining = max_bytes - total
+            chunk = bounded_reader(min(64 * 1024, remaining + 1))
+            if not chunk:
+                break
+            raw_chunk = bytes(chunk)
+            if len(raw_chunk) > remaining:
+                raise GatewayRequestError(
+                    "The streamed local model response exceeded the configured limit.",
+                    code="upstream_response_too_large",
+                    status=502,
+                    response_started=True,
+                )
+            total += len(raw_chunk)
+            handler.wfile.write(raw_chunk)
+            handler.wfile.flush()
+        if declared_length is not None and total != declared_length:
+            raise GatewayRequestError(
+                "The local model returned an incomplete streamed response.",
+                code="upstream_response_incomplete",
+                status=502,
+                response_started=True,
+            )
+        return total
+
+    body = upstream.read(max_bytes + 1)
+    if len(body) > max_bytes:
+        raise GatewayRequestError(
+            "The local model response exceeded the configured gateway limit.",
+            code="upstream_response_too_large",
+            status=502,
+        )
+    if declared_length is not None and len(body) != declared_length:
+        raise GatewayRequestError(
+            "The local model returned an incomplete response.",
+            code="upstream_response_incomplete",
+            status=502,
+        )
+    _send_gateway_body(
+        handler,
+        status_code,
+        body,
+        content_type=content_type,
+        extra_headers=extra_headers,
+    )
+    return len(body)
+
+
+def _upstream_content_length(headers: object) -> int | None:
+    if not hasattr(headers, "get"):
+        return None
+    transfer_encoding = str(headers.get("Transfer-Encoding", "")).strip()
+    raw_length = headers.get("Content-Length")
+    if raw_length is None or not str(raw_length).strip():
+        return None
+    if transfer_encoding:
+        raise GatewayRequestError(
+            "The local model returned conflicting response framing.",
+            code="invalid_upstream_response",
+            status=502,
+        )
+    try:
+        length = int(str(raw_length).strip())
+    except ValueError as exc:
+        raise GatewayRequestError(
+            "The local model returned an invalid Content-Length header.",
+            code="invalid_upstream_response",
+            status=502,
+        ) from exc
+    if length < 0:
+        raise GatewayRequestError(
+            "The local model returned an invalid Content-Length header.",
+            code="invalid_upstream_response",
+            status=502,
+        )
+    return length
+
+
+def _safe_gateway_content_type(raw: str, default: str) -> str:
+    candidate = str(raw).strip()
+    media_type = candidate.split(";", 1)[0]
+    if (
+        not candidate
+        or len(candidate) > 200
+        or "/" not in media_type
+        or any(ord(character) < 32 or ord(character) > 126 for character in candidate)
+    ):
+        return default
+    return candidate
+
+
+def _send_provider_response_error(handler: BaseHTTPRequestHandler) -> None:
+    _send_json(
+        handler,
+        openai_error_payload(
+            "The selected local model response could not be read completely.",
+            code="provider_response_error",
+            error_type="server_error",
+        ),
+        status=HTTPStatus.BAD_GATEWAY,
+    )
+
+
+def _send_gateway_body(
+    handler: BaseHTTPRequestHandler,
+    status_code: int,
+    body: bytes,
+    *,
+    content_type: str,
+    extra_headers: dict[str, str] | None = None,
+) -> None:
+    handler.send_response(status_code)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(body)))
+    for name, value in (extra_headers or {}).items():
+        handler.send_header(name, value)
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:

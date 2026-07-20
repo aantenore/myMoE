@@ -4,6 +4,17 @@ myMoE is structured as a local model control plane plus a system-level MoE harne
 
 For the end-to-end distinction between normal chat and agent mode, see [How myMoE works](how-it-works/README.md#7-the-separate-agent-tool-loop).
 
+There are two deliberately separate ways to use tools:
+
+| Path | Inference | Tool owner |
+| --- | --- | --- |
+| Cline through the local `/v1` gateway | myMoE routes or pins a local expert | Cline owns workspace files, terminal, Git, browser, MCP, approvals, and task history. |
+| Built-in `mymoe --agent-prompt` | One explicitly selected local expert | myMoE exposes a narrow set of strict-schema tools from its own registry. |
+
+Connecting Cline does not grant Cline access to the built-in tool registry, and
+it does not make Cline's tools subject to the built-in CLI approval tokens. The
+Cline path is documented in [Local Coding Fabric](local-coding-fabric.md).
+
 ## Components
 
 ```mermaid
@@ -36,7 +47,7 @@ flowchart TB
 
 ## Agent Tool Loop
 
-The agent loop is intentionally a narrow local harness, not a broad autonomous
+The built-in agent loop is intentionally a narrow local harness, not a broad autonomous
 runtime. `src/local_moe/agent_loop.py` asks one configured OpenAI-compatible
 expert for tool calls, executes only visible allowlisted local tools through
 strict JSON schemas, returns bounded observations, and then lets the model

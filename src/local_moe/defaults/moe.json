@@ -11,27 +11,20 @@
   },
   "experts": [
     {
-      "id": "coder",
+      "id": "local",
       "provider": "openai_compatible",
       "base_url": "http://127.0.0.1:8101/v1",
       "execution": {
         "scope": "device_only",
         "transport": "direct_local"
       },
-      "model": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
-      "role": "coding",
+      "model": "local-coder",
+      "role": "local-coding-model",
       "weight": 1.0,
       "timeout_seconds": 120,
       "params": {
-        "runtime_backend": "mlx_lm",
         "temperature": 0.15,
-        "top_p": 0.95,
-        "max_tokens": 2048,
-        "decode_concurrency": 1,
-        "prompt_concurrency": 1,
-        "prefill_step_size": 1024,
-        "prompt_cache_size": 1,
-        "prompt_cache_bytes": 1073741824
+        "max_tokens": 2048
       }
     }
   ],

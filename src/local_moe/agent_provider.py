@@ -15,7 +15,7 @@ from .agent_types import (
 from .config import ExpertConfig, MoEConfig
 from .execution_scope import ExecutionScopeGuard, ScopePolicyError
 from .http_boundary import is_loopback_http_url, open_model_endpoint
-from .providers import ProviderError, _remote_params, strip_reasoning_content
+from .providers import ProviderError, provider_request_params, strip_reasoning_content
 
 
 MappingPayload = dict[str, Any]
@@ -110,7 +110,7 @@ class OpenAICompatibleAgentAdapter:
             ),
             "",
         )
-        remote_params = _remote_params(self._expert, last_user_prompt)
+        remote_params = provider_request_params(self._expert, last_user_prompt)
         for reserved in (
             "model",
             "messages",

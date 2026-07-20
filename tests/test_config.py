@@ -64,6 +64,20 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unique"):
             parse_config(raw)
 
+    def test_rejects_expert_ids_that_are_not_safe_header_tokens(self) -> None:
+        for expert_id in (
+            "coder\r\nX-Injected: true",
+            "coder/other",
+            " coder",
+            "éxpert",
+            "x" * 81,
+        ):
+            with self.subTest(expert_id=expert_id):
+                raw = _base_config()
+                raw["experts"][0]["id"] = expert_id  # type: ignore[index]
+                with self.assertRaisesRegex(ConfigError, "Expert id must"):
+                    parse_config(raw)
+
     def test_rejects_unknown_rule_expert(self) -> None:
         raw = _base_config()
         raw["rules"] = [{"expert_id": "missing", "keywords": ["x"]}]

@@ -4,6 +4,32 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] - 2026-07-20
+
+### Added
+
+- A loopback OpenAI-compatible gateway for editor-agent harnesses, exposing
+  `/v1/models` and regular or streaming `/v1/chat/completions` with routed
+  `mymoe` and pinned `mymoe/<expert-id>` aliases, fresh execution-scope checks,
+  bounded proxying, and metadata-only audit events.
+- A Cline Local Coding Fabric guide with exact VS Code setup, a read-only
+  compatibility canary, 24 GiB model guidance, explicit air-gapped versus
+  browser-connected semantics, MCP trust boundaries, and an
+  accessibility-first desktop sidecar roadmap.
+- A compact Local Coding Fabric setup link in the existing web UI welcome view.
+- Managed model servers now start with Hugging Face and Transformers offline
+  mode enforced, so model downloads remain an explicit bootstrap step rather
+  than an implicit runtime network action.
+- Packaged fallback configuration and context policy assets, allowing the
+  installed `mymoe-web` console script to start from an empty directory without
+  depending on a source checkout.
+
+### Security
+
+- The shared UI/control-plane listener is loopback-only, gateway streams and
+  JSON structure are bounded, diagnostic reports omit secret-environment names,
+  and managed model processes disable implicit model-network access.
+
 ## [0.4.0-alpha.1] - 2026-07-20
 
 ### Added

@@ -1,0 +1,9 @@
+{
+  "default": {
+    "context_limit_tokens": 16384,
+    "reserved_output_tokens": 2048,
+    "compaction_trigger_ratio": 0.75,
+    "max_recent_turns": 16,
+    "max_memory_items": 8
+  }
+}

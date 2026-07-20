@@ -21,6 +21,26 @@ def _load_runner():
     return module
 
 
+def _mock_clean_runtime_dependency(runner):
+    """Keep Git provenance fixtures hermetic while preserving production checks."""
+
+    original_returncode = runner._git_returncode
+
+    def returncode(root, *args):
+        if args == (
+            "diff",
+            "--quiet",
+            "--no-ext-diff",
+            "HEAD",
+            "--",
+            "src/local_moe/config.py",
+        ):
+            return 0
+        return original_returncode(root, *args)
+
+    return mock.patch.object(runner, "_git_returncode", side_effect=returncode)
+
+
 def _write_routing_eval_fixture(tmp_path: Path, runner):
     config_path = ROOT / "tests" / "fixtures" / "moe.synthetic.json"
     eval_path = ROOT / "experiments" / "eval_set_extended.jsonl"
@@ -379,7 +399,8 @@ class QualityGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config, _, _ = _write_quality_benchmark_fixture(Path(tmp), runner)
 
-            check = runner._check_quality_benchmark(config)
+            with _mock_clean_runtime_dependency(runner):
+                check = runner._check_quality_benchmark(config)
 
         self.assertTrue(check["passed"])
         self.assertTrue(check["release_eligible"])
@@ -554,17 +575,26 @@ class QualityGateTests(unittest.TestCase):
                     return original_git_blob(root, commit, relative_path)
                 return b"stale"
 
-            with mock.patch.object(
-                runner,
-                "_git_blob",
-                side_effect=stale_benchmark_blob,
+            with (
+                _mock_clean_runtime_dependency(runner),
+                mock.patch.object(
+                    runner,
+                    "_git_blob",
+                    side_effect=stale_benchmark_blob,
+                ),
             ):
                 check = runner._check_quality_benchmark(config)
 
         self.assertFalse(check["passed"])
         self.assertFalse(check["provenance_matches"]["git_evidence"])
         dependencies = check["git_evidence"]["runtime_dependencies"]
-        self.assertFalse(dependencies["src/local_moe/config.py"]["matches"])
+        dependency = dependencies["src/local_moe/config.py"]
+        self.assertTrue(dependency["working_tree_clean"])
+        self.assertFalse(dependency["matches"])
+        self.assertNotEqual(
+            dependency["current_head_sha256"],
+            dependency["benchmark_commit_sha256"],
+        )
 
     def test_release_runtime_provenance_is_verified_and_rejects_package_drift(
         self,
@@ -591,13 +621,14 @@ class QualityGateTests(unittest.TestCase):
                 "verify_current_environment_in_release": True,
             }
             result_path.write_text(json.dumps(result), encoding="utf-8")
-            coherent = runner._check_quality_benchmark(config)
+            with _mock_clean_runtime_dependency(runner):
+                coherent = runner._check_quality_benchmark(config)
 
-            result["provenance"]["runtime_environment"]["packages"][
-                "local-moe-orchestrator"
-            ]["version"] = "forged"
-            result_path.write_text(json.dumps(result), encoding="utf-8")
-            drifted = runner._check_quality_benchmark(config)
+                result["provenance"]["runtime_environment"]["packages"][
+                    "local-moe-orchestrator"
+                ]["version"] = "forged"
+                result_path.write_text(json.dumps(result), encoding="utf-8")
+                drifted = runner._check_quality_benchmark(config)
 
         self.assertTrue(coherent["passed"])
         self.assertTrue(coherent["runtime_provenance"]["current_runtime_matches"])

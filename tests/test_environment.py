@@ -34,6 +34,7 @@ class EnvironmentReportTests(unittest.TestCase):
             "direct_local",
         )
         self.assertIn("chat transcripts", report["privacy"]["excludes"])
+        self.assertNotIn("api_key_env", report["app"]["gateway"])
         serialized = str(report).lower()
         self.assertNotIn("api_key", serialized)
         self.assertNotIn("content_excerpt", serialized)

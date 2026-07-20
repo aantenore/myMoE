@@ -358,6 +358,50 @@
         gap: 0.75rem;
       }
 
+      .coding-fabric-link {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.8rem 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        text-decoration: none;
+      }
+
+      .coding-fabric-link:hover {
+        border-color: var(--border-strong);
+        background: var(--surface-strong);
+      }
+
+      .coding-fabric-link strong,
+      .coding-fabric-link span {
+        display: block;
+      }
+
+      .coding-fabric-link span {
+        margin-top: 0.2rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .coding-fabric-link code {
+        color: var(--text);
+        overflow-wrap: anywhere;
+      }
+
+      .coding-fabric-link > span:first-child {
+        min-width: 0;
+      }
+
+      .coding-fabric-action {
+        flex: 0 0 auto;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
       .suggestion {
         min-height: 5.5rem;
         padding: 1rem;
@@ -970,6 +1014,19 @@
                   model and keeps routing details tucked away until you open Advanced.
                 </p>
               </div>
+              <a
+                class="coding-fabric-link"
+                href="/v1/models"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span>
+                  <strong>Code locally from VS Code</strong>
+                  <span>Connect Cline to <code id="coding-fabric-endpoint">this server</code></span>
+                  <span>OpenAI Compatible · model <code>mymoe</code></span>
+                </span>
+                <span class="coding-fabric-action">Check local models &#8599;</span>
+              </a>
               <div class="suggestions" id="suggestions"></div>
             </section>
             <div id="messages"></div>
@@ -1501,6 +1558,7 @@
       }
 
       function init() {
+        el("coding-fabric-endpoint").textContent = `${window.location.origin}/v1`;
         renderStarters();
         bindEvents();
         loadMeta();
