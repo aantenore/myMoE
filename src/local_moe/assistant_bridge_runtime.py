@@ -1602,10 +1602,15 @@ def _cleanup_process_tree(
     pipe_alive = any(worker.is_alive() for worker in workers)
     attempted = root_alive or group_alive or bool(tracked_alive) or pipe_alive
 
+    group_signaled = False
     if os.name == "posix" and group_alive:
-        _signal_process_group(process.pid, signal.SIGTERM)
-        methods.append("posix-process-group-term")
-    elif root_alive:
+        group_signaled = _attempt_process_group_signal(
+            process.pid,
+            signal.SIGTERM,
+        )
+        if group_signaled:
+            methods.append("posix-process-group-term")
+    if root_alive and not group_signaled:
         try:
             process.terminate()
             methods.append("root-terminate")
@@ -1631,10 +1636,15 @@ def _cleanup_process_tree(
     group_alive = _process_group_alive(process.pid) if os.name == "posix" else False
     tracked_alive = tracker.live()
     root_alive = process.poll() is None
+    group_signaled = False
     if os.name == "posix" and group_alive:
-        _signal_process_group(process.pid, signal.SIGKILL)
-        methods.append("posix-process-group-kill")
-    elif root_alive:
+        group_signaled = _attempt_process_group_signal(
+            process.pid,
+            signal.SIGKILL,
+        )
+        if group_signaled:
+            methods.append("posix-process-group-kill")
+    if root_alive and not group_signaled:
         try:
             process.kill()
             methods.append("root-kill")
@@ -2343,6 +2353,24 @@ def _signal_process_group(process_group: int, requested_signal: int) -> None:
     except OSError as exc:
         if exc.errno != errno.ESRCH:
             raise
+
+
+def _attempt_process_group_signal(
+    process_group: int,
+    requested_signal: int,
+) -> bool:
+    """Attempt a group signal while deferring transient Darwin permission races.
+
+    Darwin can report ``EPERM`` while an exited process group contains only
+    zombies that are waiting to be reaped.  The normal cleanup waits and final
+    liveness probe remain authoritative: a persistent group still fails closed.
+    """
+
+    try:
+        _signal_process_group(process_group, requested_signal)
+    except PermissionError:
+        return False
+    return True
 
 
 def _close_pipe(stream: Any) -> None:

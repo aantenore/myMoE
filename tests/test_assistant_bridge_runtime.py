@@ -1482,10 +1482,50 @@ class AssistantBridgeRuntimeProcessTests(unittest.TestCase):
         self.assertFalse(result.ok)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group failure injection")
+    def test_transient_process_group_permission_error_is_reverified(self) -> None:
+        liveness_checks = 0
+
+        def transient_group_state(process_group: int) -> bool:
+            nonlocal liveness_checks
+            self.assertGreater(process_group, 0)
+            liveness_checks += 1
+            return liveness_checks == 1
+
+        with (
+            patch.object(
+                bridge_runtime,
+                "_process_group_alive",
+                side_effect=transient_group_state,
+            ),
+            patch.object(
+                bridge_runtime,
+                "_signal_process_group",
+                side_effect=PermissionError(errno.EPERM, "operation not permitted"),
+            ),
+        ):
+            result = execute_process(
+                self.python,
+                ("-c", "pass"),
+                timeout_seconds=1.0,
+                policy=ProcessExecutionPolicy(
+                    cleanup_grace_seconds=0.0,
+                    cleanup_kill_seconds=0.05,
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertTrue(result.cleanup.verified)
+        self.assertTrue(result.cleanup.process_group_verified)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group failure injection")
     def test_unverified_cleanup_fails_closed(self) -> None:
         with (
             patch.object(bridge_runtime, "_process_group_alive", return_value=True),
-            patch.object(bridge_runtime, "_signal_process_group"),
+            patch.object(
+                bridge_runtime,
+                "_signal_process_group",
+                side_effect=PermissionError(errno.EPERM, "operation not permitted"),
+            ),
         ):
             with self.assertRaises(ProcessCleanupError) as failure:
                 execute_process(
