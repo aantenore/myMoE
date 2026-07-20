@@ -12,6 +12,7 @@ from urllib import error as urlerror
 from urllib import request
 
 MIN_PYTHON = (3, 10)
+WEB_STARTUP_TIMEOUT_SECONDS = 45
 BUILD_REQUIREMENTS = (
     "pip==25.2",
     "setuptools==80.9.0",
@@ -211,7 +212,10 @@ def _run_installed_web_smoke(
 
 
 def _wait_for_web_ready(process: subprocess.Popen[str], port: int) -> None:
-    deadline = time.monotonic() + 15
+    # Hosted macOS runners can remain CPU-constrained after the full test suite.
+    # Keep the product request timeout strict, but give the isolated interpreter
+    # enough time to import the installed wheel before declaring startup broken.
+    deadline = time.monotonic() + WEB_STARTUP_TIMEOUT_SECONDS
     last_error = "server did not become ready"
     while time.monotonic() < deadline:
         if process.poll() is not None:
