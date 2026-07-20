@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, request
 
-from local_moe.app_config import GatewayPolicy
+from local_moe.app_config import GatewayPolicy, load_app_config
 from local_moe.config import MoEConfig, parse_config
 from local_moe.execution_scope import ScopePolicyError
 from local_moe.openai_gateway import GatewayRequestError, OpenAIGatewayService
@@ -526,7 +527,7 @@ class OpenAIGatewayHTTPTests(unittest.TestCase):
                 with _running_gateway(
                     root,
                     upstream.base_url,
-                    api_key_env="MYMOE_TEST_GATEWAY_KEY",
+                    key_environment_name="MYMOE_TEST_GATEWAY_KEY",
                 ) as gateway_url:
                     with self.assertRaises(error.HTTPError) as missing_key:
                         _get_raw(gateway_url + "/v1/models")
@@ -741,7 +742,7 @@ def _running_gateway(
     *,
     max_request_bytes: int = 8 * 1024 * 1024,
     max_response_bytes: int = 32 * 1024 * 1024,
-    api_key_env: str = "",
+    key_environment_name: str = "",
     timeout_seconds: float = 60.0,
 ) -> Iterator[str]:
     moe_path = root / "moe.gateway.json"
@@ -776,11 +777,20 @@ def _running_gateway(
         "max_request_bytes": max_request_bytes,
         "max_response_bytes": max_response_bytes,
         "allow_non_loopback": False,
-        "api_key_env": api_key_env,
+        "api_key_env": "",
     }
     app_path.write_text(json.dumps(app), encoding="utf-8")
 
-    server = build_server(str(moe_path), port=0, app_config_path=str(app_path))
+    configured_app = load_app_config(app_path)
+    configured_app = replace(
+        configured_app,
+        gateway=replace(
+            configured_app.gateway,
+            api_key_env=key_environment_name,
+        ),
+    )
+    with mock.patch("local_moe.web.load_app_config", return_value=configured_app):
+        server = build_server(str(moe_path), port=0, app_config_path=str(app_path))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
