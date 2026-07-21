@@ -7,9 +7,12 @@ import hashlib
 import http.client
 import json
 from pathlib import Path
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -23,8 +26,10 @@ from local_moe.browser_capability import (
     _CanaryServer,
     _ExactOriginProxy,
     _browser_process_environment,
+    _filtered_response_headers,
     _parse_local_origin,
     _resolve_node_cli_launcher,
+    _validated_response_status,
     _verify_browser_runtime,
     browser_tool_specs,
     run_browser_capability_canary,
@@ -565,6 +570,175 @@ class BrowserCapabilityTests(unittest.TestCase):
 
             self.assertGreaterEqual(allowed.hits, 1)
             self.assertEqual(forbidden.hits, 0)
+
+    def test_response_headers_reject_splitting_controls_before_relay(self) -> None:
+        unsafe_headers = (
+            (("X-Test\r\nInjected", "value"),),
+            (("X-Test\rInjected", "value"),),
+            (("X-Test\nInjected", "value"),),
+            (("X-Test:Injected", "value"),),
+            (("X-Test", "value\r\nInjected: true"),),
+            (("X-Test", "value\rInjected: true"),),
+            (("X-Test", "value\nInjected: true"),),
+            (("X-Test", "value\x00"),),
+            (("X-Test", "value\x7f"),),
+            (("X-Test", "value\u0100"),),
+            ((object(), "value"),),
+            (("X-Test", object()),),
+        )
+        for headers in unsafe_headers:
+            with self.subTest(headers=headers), self.assertRaisesRegex(
+                ToolExecutionError,
+                "response header",
+            ):
+                _filtered_response_headers(headers)
+
+        self.assertEqual(
+            _filtered_response_headers(
+                (
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Connection", "X-Hop"),
+                    ("X-Hop", "discarded"),
+                    ("X-Safe", "visible\tvalue"),
+                )
+            ),
+            (
+                ("Content-Type", "text/plain; charset=utf-8"),
+                ("X-Safe", "visible\tvalue"),
+            ),
+        )
+
+    def test_proxy_rejects_malicious_upstream_headers_before_response_start(self) -> None:
+        payload = (
+            b"HTTP/1.1 200 UPSTREAM-SENTINEL\r\n"
+            b"X-Test: safe\r\n"
+            b" Injected: true\r\n"
+            b"Content-Length: 2\r\n"
+            b"Connection: close\r\n\r\n"
+            b"ok"
+        )
+
+        class RawHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.recv(65_536)
+                self.request.sendall(payload)
+
+        class RawServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+            daemon_threads = True
+
+        with RawServer(("127.0.0.1", 0), RawHandler) as upstream:
+            upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+            upstream_thread.start()
+            upstream_url = f"http://127.0.0.1:{upstream.server_address[1]}/"
+            origin = _parse_local_origin(upstream_url, ("127.0.0.1",))
+            proxy = _ExactOriginProxy(origin)
+            proxy.start()
+            try:
+                proxy_url = urlsplit(proxy.url)
+                with socket.create_connection(
+                    (str(proxy_url.hostname), int(proxy_url.port or 0)),
+                    timeout=3,
+                ) as client:
+                    client.sendall(
+                        (
+                            f"GET {upstream_url} HTTP/1.1\r\n"
+                            f"Host: {origin.authority}\r\n"
+                            "Connection: close\r\n\r\n"
+                        ).encode("ascii")
+                    )
+                    chunks: list[bytes] = []
+                    while True:
+                        chunk = client.recv(65_536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                received = b"".join(chunks)
+            finally:
+                proxy.close()
+                upstream.shutdown()
+                upstream_thread.join(timeout=2)
+
+        self.assertTrue(received.startswith(b"HTTP/1.1 403 "), received)
+        self.assertEqual(received.count(b"HTTP/1.1 "), 1)
+        self.assertNotIn(b"UPSTREAM-SENTINEL", received)
+        self.assertNotIn(b"Injected", received)
+        self.assertTrue(received.endswith(b"origin blocked\n"), received)
+
+    def test_proxy_rejects_invalid_upstream_statuses(self) -> None:
+        for status in (199, 600, True, "200", None):
+            with self.subTest(status=status), self.assertRaisesRegex(
+                ToolExecutionError,
+                "response status",
+            ):
+                _validated_response_status(status)
+        self.assertEqual(_validated_response_status(200), 200)
+        self.assertEqual(_validated_response_status(599), 599)
+
+    def test_proxy_never_relays_bodies_for_bodyless_statuses(self) -> None:
+        for status in (204, 205, 304):
+            with self.subTest(status=status):
+                payload = (
+                    f"HTTP/1.1 {status} UPSTREAM-SENTINEL\r\n"
+                    "Content-Length: 13\r\n"
+                    "Connection: close\r\n\r\n"
+                    "body-sentinel"
+                ).encode("ascii")
+
+                class RawHandler(socketserver.BaseRequestHandler):
+                    def handle(self) -> None:
+                        self.request.recv(65_536)
+                        self.request.sendall(payload)
+
+                class RawServer(socketserver.ThreadingTCPServer):
+                    allow_reuse_address = True
+                    daemon_threads = True
+
+                with RawServer(("127.0.0.1", 0), RawHandler) as upstream:
+                    upstream_thread = threading.Thread(
+                        target=upstream.serve_forever,
+                        daemon=True,
+                    )
+                    upstream_thread.start()
+                    upstream_url = f"http://127.0.0.1:{upstream.server_address[1]}/"
+                    origin = _parse_local_origin(upstream_url, ("127.0.0.1",))
+                    proxy = _ExactOriginProxy(origin)
+                    proxy.start()
+                    try:
+                        proxy_url = urlsplit(proxy.url)
+                        with socket.create_connection(
+                            (str(proxy_url.hostname), int(proxy_url.port or 0)),
+                            timeout=3,
+                        ) as client:
+                            client.sendall(
+                                (
+                                    f"GET {upstream_url} HTTP/1.1\r\n"
+                                    f"Host: {origin.authority}\r\n"
+                                    "Connection: close\r\n\r\n"
+                                ).encode("ascii")
+                            )
+                            chunks: list[bytes] = []
+                            while True:
+                                chunk = client.recv(65_536)
+                                if not chunk:
+                                    break
+                                chunks.append(chunk)
+                        received = b"".join(chunks)
+                    finally:
+                        proxy.close()
+                        upstream.shutdown()
+                        upstream_thread.join(timeout=2)
+
+                response_headers, separator, response_body = received.partition(
+                    b"\r\n\r\n"
+                )
+                self.assertEqual(separator, b"\r\n\r\n")
+                self.assertTrue(
+                    response_headers.startswith(f"HTTP/1.1 {status} ".encode("ascii")),
+                    received,
+                )
+                self.assertNotIn(b"Content-Length:", response_headers)
+                self.assertEqual(response_body, b"")
 
     def test_state_binding_tampering_invalidates_the_entire_session(self) -> None:
         mutations = {

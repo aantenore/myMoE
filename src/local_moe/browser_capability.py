@@ -930,6 +930,7 @@ class _ExactOriginProxyHandler(BaseHTTPRequestHandler):
         if not isinstance(server, _ExactOriginHttpServer):
             self._deny()
             return
+        response_started = False
         try:
             parsed = urlsplit(self.path)
             requested_origin = _parse_local_origin(
@@ -958,11 +959,39 @@ class _ExactOriginProxyHandler(BaseHTTPRequestHandler):
             try:
                 connection.request(self.command, path, body=body, headers=headers)
                 response = connection.getresponse()
-                response_length = response.getheader("Content-Length")
-                if response_length is not None and int(response_length) > _MAX_PROXY_RESPONSE_BYTES:
-                    raise ToolExecutionError("Proxy response exceeds the bounded body size.")
+                response_status = _validated_response_status(response.status)
+                raw_response_headers = tuple(response.getheaders())
+                validated_response_headers = tuple(
+                    _validated_response_header(key, value)
+                    for key, value in raw_response_headers
+                )
+                response_headers = _filtered_response_headers(validated_response_headers)
+                response_lengths = tuple(
+                    value
+                    for key, value in validated_response_headers
+                    if key.lower() == "content-length"
+                )
+                if len(response_lengths) > 1:
+                    raise ToolExecutionError(
+                        "Proxy response has multiple Content-Length headers."
+                    )
+                response_length = response_lengths[0] if response_lengths else None
+                if response_length is not None:
+                    if re.fullmatch(r"[0-9]+", response_length) is None:
+                        raise ToolExecutionError(
+                            "Proxy response Content-Length is invalid."
+                        )
+                    if int(response_length) > _MAX_PROXY_RESPONSE_BYTES:
+                        raise ToolExecutionError(
+                            "Proxy response exceeds the bounded body size."
+                        )
                 response_body = b""
-                if self.command != "HEAD":
+                response_has_body = self.command != "HEAD" and response_status not in {
+                    204,
+                    205,
+                    304,
+                }
+                if response_has_body:
                     chunks: list[bytes] = []
                     relayed = 0
                     while True:
@@ -978,20 +1007,21 @@ class _ExactOriginProxyHandler(BaseHTTPRequestHandler):
                             )
                         chunks.append(chunk)
                     response_body = b"".join(chunks)
-                self.send_response(response.status, response.reason)
-                for key, value in _filtered_response_headers(response.getheaders()):
+                response_started = True
+                self.send_response(response_status)
+                for key, value in response_headers:
                     self.send_header(key, value)
-                if self.command != "HEAD":
+                if response_has_body:
                     self.send_header("Content-Length", str(len(response_body)))
                 self.send_header("Connection", "close")
                 self.end_headers()
-                if self.command != "HEAD":
+                if response_has_body:
                     self.wfile.write(response_body)
                 server.record_allowed()
             finally:
                 connection.close()
         except (OSError, http.client.HTTPException, ToolExecutionError, ValueError):
-            if not self.wfile.closed:
+            if not response_started and not self.wfile.closed:
                 try:
                     self._deny()
                 except OSError:
@@ -1365,6 +1395,7 @@ _HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+_HTTP_HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
 
 def _forward_headers(headers: Mapping[str, str], *, host: str) -> dict[str, str]:
@@ -1385,16 +1416,43 @@ def _forward_headers(headers: Mapping[str, str], *, host: str) -> dict[str, str]
 
 
 def _filtered_response_headers(
-    headers: Sequence[tuple[str, str]],
+    headers: Sequence[tuple[object, object]],
 ) -> tuple[tuple[str, str], ...]:
+    validated = tuple(_validated_response_header(key, value) for key, value in headers)
     connection_tokens: set[str] = set()
-    for key, value in headers:
+    for key, value in validated:
         if key.lower() == "connection":
             connection_tokens.update(
                 item.strip().lower() for item in value.split(",") if item.strip()
             )
     denied = _HOP_BY_HOP_HEADERS | connection_tokens | {"content-length"}
-    return tuple((key, value) for key, value in headers if key.lower() not in denied)
+    return tuple((key, value) for key, value in validated if key.lower() not in denied)
+
+
+def _validated_response_status(status: object) -> int:
+    if type(status) is not int or not 200 <= status <= 599:
+        raise ToolExecutionError("Proxy response status is invalid.")
+    return status
+
+
+def _validated_response_header(key: object, value: object) -> tuple[str, str]:
+    if not isinstance(key, str):
+        raise ToolExecutionError("Proxy response header name is invalid.")
+    if not isinstance(value, str):
+        raise ToolExecutionError("Proxy response header value is invalid.")
+    if _HTTP_HEADER_NAME_PATTERN.fullmatch(key) is None:
+        raise ToolExecutionError("Proxy response header name is invalid.")
+    if any(
+        character != "\t"
+        and (ord(character) < 0x20 or ord(character) == 0x7F or ord(character) > 0xFF)
+        for character in value
+    ):
+        raise ToolExecutionError("Proxy response header value is invalid.")
+    # The validation above is fail-closed. These no-op removals also keep the
+    # data-flow boundary explicit for static analyzers at BaseHTTPRequestHandler.
+    safe_key = key.replace("\r", "").replace("\n", "").replace(":", "")
+    safe_value = value.replace("\r", "").replace("\n", "")
+    return safe_key, safe_value
 
 
 def _loopback_addresses(origin: _BrowserOrigin) -> tuple[tuple[Any, ...], ...]:
