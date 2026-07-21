@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Mapping, TypeVar
 
@@ -53,16 +54,28 @@ def build_cell_passport(
     )
 
 
-def load_cell_catalog(path: str | Path) -> AdaptiveCellCatalog:
+def load_cell_catalog(
+    path: str | Path,
+    *,
+    confinement_root: str | Path | None = None,
+) -> AdaptiveCellCatalog:
     try:
         source = Path(path)
-        root = source.parent.resolve(strict=True)
+        if confinement_root is None:
+            root = source.parent.resolve(strict=True)
+            source_path = root / source.name
+            catalog_root = root
+        else:
+            root = Path(os.path.abspath(os.fspath(confinement_root)))
+            source_path = Path(os.path.abspath(os.fspath(source)))
+            source_path.relative_to(root)
+            catalog_root = source_path.parent
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         raise CellContractError(
-            "Catalog parent directory does not exist or is inaccessible."
+            "Catalog path is invalid or leaves its confinement root."
         ) from exc
     content = read_bounded_regular_file(
-        root / source.name,
+        source_path,
         root=root,
         maximum_bytes=MAX_CATALOG_BYTES,
         label="catalog",
@@ -88,7 +101,11 @@ def load_cell_catalog(path: str | Path) -> AdaptiveCellCatalog:
     if not isinstance(raw, dict):
         raise CellContractError("Adaptive cell catalog must be a JSON object.")
     catalog = _trusted_cell_catalog_from_payload(raw)
-    _verify_catalog_sources(catalog, root)
+    _verify_catalog_sources(
+        catalog,
+        catalog_root,
+        confinement_root=root,
+    )
     return catalog
 
 
@@ -146,7 +163,12 @@ def _construct(cls: type[T], raw: object, label: str) -> T:
         raise CellContractError(f"Invalid {label}: {exc}") from exc
 
 
-def _verify_catalog_sources(catalog: AdaptiveCellCatalog, root: Path) -> None:
+def _verify_catalog_sources(
+    catalog: AdaptiveCellCatalog,
+    root: Path,
+    *,
+    confinement_root: Path,
+) -> None:
     cache: dict[str, tuple[str, int]] = {}
     total_evidence_bytes = 0
     for cell in catalog.cells:
@@ -167,7 +189,7 @@ def _verify_catalog_sources(catalog: AdaptiveCellCatalog, root: Path) -> None:
             if cached is None:
                 content = read_bounded_regular_file(
                     root / source_path,
-                    root=root,
+                    root=confinement_root,
                     maximum_bytes=MAX_EVIDENCE_BYTES,
                     label=f"{label} evidence",
                 )
@@ -213,9 +235,7 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     payload: dict[str, object] = {}
     for key, value in pairs:
         if key in payload:
-            raise CellContractError(
-                f"Duplicate JSON object key is not allowed: {key}."
-            )
+            raise CellContractError(f"Duplicate JSON object key is not allowed: {key}.")
         payload[key] = value
     return payload
 

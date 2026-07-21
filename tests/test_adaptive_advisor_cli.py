@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from local_moe import adaptive_advisor_cli
 from local_moe.adaptive_advisor_cli import (
     AdvisorCliError,
     MAX_EVALUATION_CONTRACT_BYTES,
@@ -191,7 +192,9 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
         _validate_windows_output_name("advisor-receipt.json")
 
     @unittest.skipIf(os.name == "nt", "portable mocked Win32 race fixture")
-    def test_windows_publish_rejects_same_bytes_from_a_replacement_identity(self) -> None:
+    def test_windows_publish_rejects_same_bytes_from_a_replacement_identity(
+        self,
+    ) -> None:
         class FakeIdentity:
             def __init__(self, value: str) -> None:
                 self.value = value
@@ -209,7 +212,9 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
             def open_nofollow(path, *, directory, writable, share_delete):
                 del writable, share_delete
                 descriptor = os.open(path, os.O_RDONLY)
-                identity = FakeIdentity(f"directory:{path}") if directory else replacement
+                identity = (
+                    FakeIdentity(f"directory:{path}") if directory else replacement
+                )
                 return descriptor, identity
 
             def replace_before_move(source, destination):
@@ -273,12 +278,101 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
                 "do-not-touch",
             )
             self.assertEqual(
-                (moved_original / "receipt.json").read_bytes(),
-                b"safe receipt\n",
+                list(moved_original.iterdir()),
+                [],
             )
             self.assertFalse(
                 any(path.name.endswith(".tmp") for path in moved_original.iterdir())
             )
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory-fd publication only")
+    def test_parent_moved_below_protected_root_after_link_is_cleaned_up(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output_parent = root / "output"
+            protected_root = root / "protected"
+            moved_output = protected_root / "captured-output"
+            output_parent.mkdir()
+            protected_root.mkdir()
+            real_link = os.link
+
+            def link_then_move_parent(*args, **kwargs):
+                result = real_link(*args, **kwargs)
+                output_parent.rename(moved_output)
+                return result
+
+            with (
+                patch(
+                    "local_moe.adaptive_advisor_cli.os.link",
+                    side_effect=link_then_move_parent,
+                ),
+                self.assertRaises(AdvisorCliError) as raised,
+            ):
+                _write_output(
+                    output_parent / "receipt.json",
+                    b"safe receipt\n",
+                    protected_inputs=(),
+                    protected_roots=(protected_root,),
+                )
+
+            self.assertEqual(raised.exception.code, "output_parent_changed")
+            self.assertEqual(list(moved_output.iterdir()), [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory-fd publication only")
+    def test_protected_root_alias_is_rejected_after_output_parent_is_pinned(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output_parent = root / "output"
+            protected_root = root / "protected"
+            moved_output = root / "moved-output"
+            output_parent.mkdir()
+            protected_root.mkdir()
+
+            real_open_chain = adaptive_advisor_cli._open_posix_directory_chain
+
+            def swap_before_output_pin(path: Path):
+                if Path(path).name == output_parent.name:
+                    output_parent.rename(moved_output)
+                    protected_root.rename(output_parent)
+                return real_open_chain(path)
+
+            with (
+                patch(
+                    "local_moe.adaptive_advisor_cli._open_posix_directory_chain",
+                    side_effect=swap_before_output_pin,
+                ),
+                self.assertRaises(AdvisorCliError) as raised,
+            ):
+                _write_output(
+                    output_parent / "receipt.json",
+                    b"safe receipt\n",
+                    protected_inputs=(),
+                    protected_roots=(protected_root,),
+                )
+
+            self.assertEqual(raised.exception.code, "output_path_conflict")
+            self.assertFalse((output_parent / "receipt.json").exists())
+            self.assertFalse((moved_output / "receipt.json").exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory-fd publication only")
+    def test_direct_output_below_protected_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            protected_root = Path(temporary) / "protected"
+            protected_root.mkdir()
+            target = protected_root / "receipt.json"
+
+            with self.assertRaises(AdvisorCliError) as raised:
+                _write_output(
+                    target,
+                    b"safe receipt\n",
+                    protected_inputs=(),
+                    protected_roots=(protected_root,),
+                )
+
+            self.assertEqual(raised.exception.code, "output_path_conflict")
+            self.assertFalse(target.exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX long-name fixture only")
     def test_long_target_name_does_not_expand_the_staging_name(self) -> None:
@@ -296,8 +390,9 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
         self.assertIn("advisor", root_stdout.getvalue())
 
         advisor_stdout = StringIO()
-        with patch("sys.argv", ["mymoe", "advisor", "--help"]), redirect_stdout(
-            advisor_stdout
+        with (
+            patch("sys.argv", ["mymoe", "advisor", "--help"]),
+            redirect_stdout(advisor_stdout),
         ):
             with self.assertRaises(SystemExit) as advisor_exit:
                 mymoe_main()
@@ -406,7 +501,9 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
                     )
                 )
             self.assertEqual(duplicate_status, 2)
-            self.assertEqual(json.loads(stderr.getvalue())["code"], "invocation_invalid")
+            self.assertEqual(
+                json.loads(stderr.getvalue())["code"], "invocation_invalid"
+            )
             self.assertNotIn("hidden", stderr.getvalue())
 
     def test_oversize_task_file_and_stdin_fail_before_evaluation(self) -> None:
@@ -526,7 +623,8 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
                 patch(
                     "local_moe.adaptive_advisor_cli.evaluate_advisor",
                     side_effect=AdvisorServiceError(
-                        "catalog_invalid", "Adaptive cell catalog could not be verified."
+                        "catalog_invalid",
+                        "Adaptive cell catalog could not be verified.",
                     ),
                 ),
                 redirect_stdout(StringIO()),
@@ -568,7 +666,9 @@ class AdaptiveAdvisorCliTests(unittest.TestCase):
             )
         )
         self.assertIn("Boundary: this receipt is read-only advice", stdout.getvalue())
-        self.assertIn("No model invocation, network access, download", stdout.getvalue())
+        self.assertIn(
+            "No model invocation, network access, download", stdout.getvalue()
+        )
 
 
 if __name__ == "__main__":

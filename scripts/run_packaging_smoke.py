@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from urllib import error as urlerror
@@ -17,6 +18,12 @@ BUILD_REQUIREMENTS = (
     "pip==25.2",
     "setuptools==80.9.0",
     "wheel==0.45.1",
+)
+REQUIRED_SDIST_ARTIFACTS = (
+    "configs/cell-binding-request.example.json",
+    "docs/cell-runtime-binding.md",
+    "experiments/benchmark_runtime_binding.py",
+    "outputs/runtime-binding-contract.json",
 )
 
 
@@ -45,6 +52,11 @@ def main() -> None:
             cwd=runtime_dir,
             check=True,
         )
+        sdist = _build_and_verify_sdist(
+            python,
+            root=root,
+            dist_dir=dist_dir,
+        )
         subprocess.run(
             [
                 str(python),
@@ -56,7 +68,7 @@ def main() -> None:
                 "--no-deps",
                 "--wheel-dir",
                 str(dist_dir),
-                str(root),
+                str(sdist),
             ],
             cwd=runtime_dir,
             check=True,
@@ -85,9 +97,15 @@ def main() -> None:
                 str(python),
                 "-c",
                 "from pathlib import Path; import local_moe; "
-                "from local_moe import _win32_fs; "
+                "from local_moe import ("
+                "_win32_fs, artifact_tree, runtime_binding_cli, "
+                "runtime_binding_contracts, runtime_binding_inspector); "
                 "print(Path(local_moe.__file__).resolve()); "
-                "print(Path(_win32_fs.__file__).resolve())",
+                "print(Path(_win32_fs.__file__).resolve()); "
+                "print(Path(artifact_tree.__file__).resolve()); "
+                "print(Path(runtime_binding_cli.__file__).resolve()); "
+                "print(Path(runtime_binding_contracts.__file__).resolve()); "
+                "print(Path(runtime_binding_inspector.__file__).resolve())",
             ],
             cwd=runtime_dir,
             env=runtime_environment,
@@ -98,7 +116,7 @@ def main() -> None:
         package_locations = tuple(
             Path(line) for line in location_result.stdout.splitlines() if line
         )
-        if len(package_locations) != 2 or any(
+        if len(package_locations) != 6 or any(
             not location.is_relative_to(venv_dir.resolve())
             for location in package_locations
         ):
@@ -125,6 +143,13 @@ def main() -> None:
             raise SystemExit("mymoe console script did not expose advisor-init.")
         if "cell-exec" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose cell-exec.")
+        if "cell-bind" not in help_result.stdout:
+            raise SystemExit("mymoe console script did not expose cell-bind.")
+        _run_installed_cell_binding_help_smoke(
+            mymoe,
+            runtime_dir,
+            environment=runtime_environment,
+        )
         version_result = subprocess.run(
             [str(mymoe), "--version"],
             cwd=runtime_dir,
@@ -239,11 +264,125 @@ def main() -> None:
                     "build_requirements": list(BUILD_REQUIREMENTS),
                     "packaging_python": str(packaging_python),
                     "python": str(python),
+                    "sdist": sdist.name,
                     "wheel": wheel.name,
                     "scripts": [str(mymoe), str(mymoe_paired), str(mymoe_web)],
                 },
                 indent=2,
             )
+        )
+
+
+def _build_and_verify_sdist(
+    python: Path,
+    *,
+    root: Path,
+    dist_dir: Path,
+) -> Path:
+    build_environment = dict(os.environ)
+    build_environment.pop("PYTHONPATH", None)
+    subprocess.run(
+        [
+            str(python),
+            "-c",
+            "from setuptools.build_meta import build_sdist; "
+            "import sys; build_sdist(sys.argv[1])",
+            str(dist_dir),
+        ],
+        cwd=root,
+        env=build_environment,
+        check=True,
+    )
+    sdists = sorted(dist_dir.glob("local_moe_orchestrator-*.tar.gz"))
+    if len(sdists) != 1:
+        raise SystemExit("Packaging smoke did not produce exactly one myMoE sdist.")
+    sdist = sdists[0]
+    _verify_sdist(sdist, root=root)
+    return sdist
+
+
+def _verify_sdist(sdist: Path, *, root: Path) -> None:
+    suffix = ".tar.gz"
+    if not sdist.name.endswith(suffix):
+        raise SystemExit("Packaging smoke produced an unexpected sdist format.")
+    archive_root = sdist.name[: -len(suffix)]
+    with tarfile.open(sdist, mode="r:gz") as archive:
+        members = archive.getmembers()
+        if not members:
+            raise SystemExit("Packaging smoke produced an empty sdist.")
+
+        by_name: dict[str, tarfile.TarInfo] = {}
+        casefolded_names: set[str] = set()
+        for member in members:
+            name = member.name
+            path = PurePosixPath(name)
+            if (
+                not name
+                or "\\" in name
+                or path.is_absolute()
+                or any(part in {"", ".", ".."} for part in path.parts)
+                or path.as_posix() != name
+                or not path.parts
+                or path.parts[0] != archive_root
+            ):
+                raise SystemExit(
+                    f"Packaging smoke rejected unsafe sdist member: {name!r}."
+                )
+            folded_name = name.casefold()
+            if name in by_name or folded_name in casefolded_names:
+                raise SystemExit(
+                    f"Packaging smoke rejected duplicate sdist member: {name!r}."
+                )
+            if not (member.isfile() or member.isdir()):
+                raise SystemExit(
+                    f"Packaging smoke rejected non-regular sdist member: {name!r}."
+                )
+            by_name[name] = member
+            casefolded_names.add(folded_name)
+
+        for relative_name in REQUIRED_SDIST_ARTIFACTS:
+            source = root / relative_name
+            expected_name = f"{archive_root}/{relative_name}"
+            member = by_name.get(expected_name)
+            if not source.is_file() or member is None or not member.isfile():
+                raise SystemExit(
+                    f"Packaging smoke sdist omitted required artifact: {relative_name}."
+                )
+            archived = archive.extractfile(member)
+            if archived is None or archived.read() != source.read_bytes():
+                raise SystemExit(
+                    "Packaging smoke sdist changed required artifact bytes: "
+                    f"{relative_name}."
+                )
+
+
+def _run_installed_cell_binding_help_smoke(
+    mymoe: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    completed = subprocess.run(
+        [str(mymoe), "cell-bind", "inspect", "--help"],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    normalized = " ".join(completed.stdout.split())
+    expected = (
+        "--request PATH",
+        "--json",
+        "--out PATH",
+        "does not start or download models",
+        "access the network",
+        "grant authorization",
+    )
+    if any(marker not in normalized for marker in expected):
+        raise SystemExit(
+            "Installed mymoe console script omitted the read-only cell-bind "
+            "inspection contract."
         )
 
 

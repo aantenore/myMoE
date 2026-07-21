@@ -4,6 +4,58 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0-alpha.1] - 2026-07-22
+
+### Added
+
+- The Bound Cell Attestor, exposed as `mymoe cell-bind inspect`, which observes
+  one explicitly declared set of local model/runtime/driver/harness bindings
+  and emits a content-addressed manifest plus a short-lived `verified` or
+  `abstained` inspection receipt without starting the cell.
+- A strict `CellBindingInspectRequest` and `BoundCellInspector` bundle contract
+  that fingerprints the declared selected cell and expert, local-only adapter,
+  runtime launch plan, endpoint authority, validated configuration, platform,
+  selected producer modules, runtime components, and bounded model artifact
+  tree. It does not discover every file a future process will load.
+- Human-readable and stable JSON output with exit codes `0` for verified, `1`
+  for a valid abstention, and `2` for invalid or operational failure. Optional
+  `--out` publication writes the complete manifest-and-receipt bundle as one
+  atomic no-clobber owner-only file on POSIX, only outside the request,
+  catalog, configuration, runtime, and model-artifact roots.
+- Installed-wheel smoke coverage that imports the artifact-tree and runtime
+  binding modules from the isolated wheel environment and exercises
+  `mymoe cell-bind inspect --help` from an unrelated empty directory.
+- A deterministic Bound Cell Attestor contract benchmark and checked-in
+  `outputs/runtime-binding-contract.json` artifact covering first-use
+  abstention, separately anchored identity matching, drift, reorder stability,
+  fresh receipts, bounded streaming reads, and the non-authorizing boundary.
+
+### Security
+
+- Request, catalog, runtime configuration, runtime components, and model
+  artifacts are constrained to explicit roots and byte/entry/depth limits.
+  Inspection rejects links, special files, path escape, ambiguous or changing
+  trees, duplicate JSON keys or non-finite values, unsupported runtime plans,
+  non-local transports, tool authority, and commands that could fetch artifacts.
+- Artifact roots are real directories whose private physical identities survive
+  through publication checks; request/output paths are resolved once, and a
+  failed post-link parent check removes only the staged output inode. Public
+  model evidence uses hashed relative-path identities, so filenames are absent
+  in plaintext while renames still change the recomputable model manifest
+  digest; the deterministic hashes are explicitly documented as guessable.
+- Every receipt records zero model invocations, network use, process mutation,
+  and execution authority. Error JSON does not echo request content, supplied
+  paths, secrets, or underlying exceptions.
+
+### Known limitations
+
+- Self-digests provide canonical internal-consistency checks, not a signature,
+  authenticated provenance, or a trusted-producer guarantee. Detecting later
+  drift or deliberate rewriting requires a separately trusted anchor. The
+  short-lived snapshot can age immediately, does not reserve resources or prove
+  process residency, and does not cover undeclared dynamic dependencies. A
+  verified receipt never authorizes launch or execution.
+
 ## [0.10.0-alpha.1] - 2026-07-21
 
 ### Added

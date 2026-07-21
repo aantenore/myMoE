@@ -293,6 +293,21 @@ class CellPassportTests(unittest.TestCase):
             with self.assertRaisesRegex(CellContractError, "securely|symlink"):
                 load_cell_catalog(config_link)
 
+            real_catalog_dir = root / "real-catalog"
+            real_catalog_dir.mkdir()
+            nested_catalog = real_catalog_dir / "catalog.json"
+            nested_catalog.write_text(
+                json.dumps(catalog(passport()).payload()),
+                encoding="utf-8",
+            )
+            linked_catalog_dir = root / "linked-catalog"
+            linked_catalog_dir.symlink_to(real_catalog_dir, target_is_directory=True)
+            with self.assertRaisesRegex(CellContractError, "securely|symlink"):
+                load_cell_catalog(
+                    linked_catalog_dir / "catalog.json",
+                    confinement_root=root,
+                )
+
     def test_loader_is_bounded_and_relative_paths_cannot_escape(self) -> None:
         with self.assertRaises(CellContractError):
             passport("../outside.json", SHA_A)

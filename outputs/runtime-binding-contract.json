@@ -1,0 +1,234 @@
+{
+  "benchmark": "bound_cell_attestor_contract",
+  "contract_checks_passed": true,
+  "criteria": {
+    "artifact_hashing_uses_bounded_streaming_reads": true,
+    "every_inspection_is_static_and_non_authorizing": true,
+    "every_receipt_reports_zero_network_process_and_model_use": true,
+    "expert_reorder_preserves_selected_binding": true,
+    "first_run_abstains_with_observed_identities": true,
+    "manifest_is_clock_stable_and_receipt_is_fresh": true,
+    "model_content_drift_abstains": true,
+    "pinned_expected_identities_verify": true,
+    "runtime_content_drift_abstains": true
+  },
+  "fixture": {
+    "backend": "llama_cpp",
+    "guarded_side_effect_surfaces": [
+      "model_server_start",
+      "network_socket",
+      "process_spawn",
+      "url_fetch"
+    ],
+    "kind": "deterministic_synthetic_contract_fixture",
+    "model_artifact_bytes": 151556,
+    "observed_max_read_request_bytes": 65536,
+    "observed_model_max_read_request_bytes": 65536,
+    "observed_model_read_request_count": 28,
+    "platform_key": "linux",
+    "stream_read_bound_bytes": 65536,
+    "whole_file_path_reads_blocked": true
+  },
+  "limits": [
+    "synthetic_contract_fixture_only",
+    "does_not_measure_model_quality",
+    "does_not_measure_latency_throughput_or_memory",
+    "does_not_benchmark_hash_performance",
+    "does_not_start_stop_or_call_a_model",
+    "does_not_open_network_connections",
+    "does_not_run_tools",
+    "does_not_authorize_or_apply_execution",
+    "does_not_perform_operator_review_or_trust_decisions",
+    "identity_digests_are_not_signatures_or_authenticated_provenance"
+  ],
+  "scenarios": {
+    "expert_reorder": {
+      "after": {
+        "adapter_id": "managed_direct_local_openai_v1",
+        "applied": false,
+        "authorizes_execution": false,
+        "captured_at": "2026-07-21T12:00:00+00:00",
+        "cell_id": "coder-local",
+        "component_count": 4,
+        "execution_scope": "device_only",
+        "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+        "expert_id": "coder",
+        "expires_at": "2026-07-21T12:01:00+00:00",
+        "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+        "model_invocations": 0,
+        "network_used": false,
+        "observed_component_count": 4,
+        "observed_identities": {
+          "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+          "model_sha256": "8c7f94e3cfdbff8ad45cc8c7e4e79965427d30d1b15c0b59c853194863f9af51",
+          "runtime_sha256": "21aad82125830a299c8b7cd4340f2dae19ff06ab3e45c480500c6c09f7c6caa6",
+          "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+        },
+        "process_mutations": false,
+        "processes_started": 0,
+        "reason_codes": [],
+        "residency_status": "unknown",
+        "status": "verified",
+        "transport": "direct_local"
+      },
+      "before": {
+        "adapter_id": "managed_direct_local_openai_v1",
+        "applied": false,
+        "authorizes_execution": false,
+        "captured_at": "2026-07-21T12:00:00+00:00",
+        "cell_id": "coder-local",
+        "component_count": 4,
+        "execution_scope": "device_only",
+        "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+        "expert_id": "coder",
+        "expires_at": "2026-07-21T12:01:00+00:00",
+        "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+        "model_invocations": 0,
+        "network_used": false,
+        "observed_component_count": 4,
+        "observed_identities": {
+          "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+          "model_sha256": "8c7f94e3cfdbff8ad45cc8c7e4e79965427d30d1b15c0b59c853194863f9af51",
+          "runtime_sha256": "21aad82125830a299c8b7cd4340f2dae19ff06ab3e45c480500c6c09f7c6caa6",
+          "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+        },
+        "process_mutations": false,
+        "processes_started": 0,
+        "reason_codes": [],
+        "residency_status": "unknown",
+        "status": "verified",
+        "transport": "direct_local"
+      },
+      "selected_binding_preserved": true
+    },
+    "first_run_unpinned": {
+      "adapter_id": "managed_direct_local_openai_v1",
+      "applied": false,
+      "authorizes_execution": false,
+      "captured_at": "2026-07-21T12:00:00+00:00",
+      "cell_id": "coder-local",
+      "component_count": 4,
+      "execution_scope": "device_only",
+      "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+      "expert_id": "coder",
+      "expires_at": "2026-07-21T12:01:00+00:00",
+      "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+      "model_invocations": 0,
+      "network_used": false,
+      "observed_component_count": 4,
+      "observed_identities": {
+        "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+        "model_sha256": "8c7f94e3cfdbff8ad45cc8c7e4e79965427d30d1b15c0b59c853194863f9af51",
+        "runtime_sha256": "21aad82125830a299c8b7cd4340f2dae19ff06ab3e45c480500c6c09f7c6caa6",
+        "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+      },
+      "process_mutations": false,
+      "processes_started": 0,
+      "reason_codes": [
+        "harness_identity_unknown",
+        "model_identity_unknown",
+        "runtime_identity_unknown",
+        "tool_contract_identity_unknown"
+      ],
+      "residency_status": "unknown",
+      "status": "abstained",
+      "transport": "direct_local"
+    },
+    "fresh_receipt": {
+      "first_captured_at": "2026-07-21T12:00:00+00:00",
+      "manifest_clock_stable": true,
+      "receipt_changed": true,
+      "second_captured_at": "2026-07-21T12:00:05+00:00",
+      "second_expires_at": "2026-07-21T12:01:05+00:00"
+    },
+    "model_content_drift": {
+      "adapter_id": "managed_direct_local_openai_v1",
+      "applied": false,
+      "authorizes_execution": false,
+      "captured_at": "2026-07-21T12:00:00+00:00",
+      "cell_id": "coder-local",
+      "component_count": 4,
+      "execution_scope": "device_only",
+      "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+      "expert_id": "coder",
+      "expires_at": "2026-07-21T12:01:00+00:00",
+      "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+      "model_invocations": 0,
+      "network_used": false,
+      "observed_component_count": 4,
+      "observed_identities": {
+        "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+        "model_sha256": "7c8966b3d92d6d6cf6898de19e1e5181e88c8bcd3c833d8f1e935b363e4d90f0",
+        "runtime_sha256": "21aad82125830a299c8b7cd4340f2dae19ff06ab3e45c480500c6c09f7c6caa6",
+        "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+      },
+      "process_mutations": false,
+      "processes_started": 0,
+      "reason_codes": [
+        "model_identity_mismatch"
+      ],
+      "residency_status": "unknown",
+      "status": "abstained",
+      "transport": "direct_local"
+    },
+    "runtime_content_drift": {
+      "adapter_id": "managed_direct_local_openai_v1",
+      "applied": false,
+      "authorizes_execution": false,
+      "captured_at": "2026-07-21T12:00:00+00:00",
+      "cell_id": "coder-local",
+      "component_count": 4,
+      "execution_scope": "device_only",
+      "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+      "expert_id": "coder",
+      "expires_at": "2026-07-21T12:01:00+00:00",
+      "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+      "model_invocations": 0,
+      "network_used": false,
+      "observed_component_count": 4,
+      "observed_identities": {
+        "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+        "model_sha256": "8c7f94e3cfdbff8ad45cc8c7e4e79965427d30d1b15c0b59c853194863f9af51",
+        "runtime_sha256": "54d296aaa1e9960aff61d4c3e08bdd577318df80b2715459e1626bddec1611c2",
+        "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+      },
+      "process_mutations": false,
+      "processes_started": 0,
+      "reason_codes": [
+        "runtime_identity_mismatch"
+      ],
+      "residency_status": "unknown",
+      "status": "abstained",
+      "transport": "direct_local"
+    },
+    "verified_after_expected_pinning": {
+      "adapter_id": "managed_direct_local_openai_v1",
+      "applied": false,
+      "authorizes_execution": false,
+      "captured_at": "2026-07-21T12:00:00+00:00",
+      "cell_id": "coder-local",
+      "component_count": 4,
+      "execution_scope": "device_only",
+      "expert_config_sha256": "498e1427893654cd72b6e2927a8ef379c0b2f2fa6320d1254599c396305ac392",
+      "expert_id": "coder",
+      "expires_at": "2026-07-21T12:01:00+00:00",
+      "launch_plan_sha256": "dde2155bf7c3ccd95c8f57d40aa713c5aa0944567e65852885cf85f66ac1729b",
+      "model_invocations": 0,
+      "network_used": false,
+      "observed_component_count": 4,
+      "observed_identities": {
+        "harness_sha256": "f860a5413419f4de80059d0b14ae588b08339f6ff3b10d164617e0ad69b3cf66",
+        "model_sha256": "8c7f94e3cfdbff8ad45cc8c7e4e79965427d30d1b15c0b59c853194863f9af51",
+        "runtime_sha256": "21aad82125830a299c8b7cd4340f2dae19ff06ab3e45c480500c6c09f7c6caa6",
+        "tool_contract_sha256": "b1806444c8eb718ec3e1552dbb85a0c6af689457ddfca7980524b5f84d0ff3f2"
+      },
+      "process_mutations": false,
+      "processes_started": 0,
+      "reason_codes": [],
+      "residency_status": "unknown",
+      "status": "verified",
+      "transport": "direct_local"
+    }
+  },
+  "schema_version": "1.0"
+}

@@ -47,21 +47,59 @@ The gate currently performs these steps:
    write `outputs/cell-execution-gate-contract.json`. Its synthetic fixture
    checks unchanged admission, exact task and catalog drift, receipt expiry,
    and current resource pressure. It never runs a model or authorizes execution.
-11. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+11. Run the deterministic Bound Cell Attestor contract benchmark and write
+   `outputs/runtime-binding-contract.json`. Its synthetic fixture checks
+   first-use abstention, separately anchored identity matching, model and
+   runtime drift, selected-expert reorder stability, fresh receipts, bounded
+   streaming reads, and the zero-network/zero-process/non-authorizing boundary.
+   It does not measure model quality, runtime performance, or producer trust.
+12. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-12. Refresh the hardware profile artifact.
-13. Run the packaging smoke test, which installs the project in a temporary
+13. Refresh the hardware profile artifact.
+14. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe`, `mymoe-paired`, and
    `mymoe-web` console scripts, packaged browser, desktop, and Advisor templates,
-   and the installed workspace initializers. The Advisor smoke runs from an
-   unrelated working directory and verifies its zero-claim abstention path.
+   and the installed workspace initializers. It also imports `artifact_tree`
+   and every `runtime_binding*` module from the isolated wheel and invokes
+   `mymoe cell-bind inspect --help` from an unrelated empty directory. The
+   Advisor smoke runs from an unrelated working directory and verifies its
+   zero-claim abstention path.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
+
+## Bound Cell Attestor verification
+
+The full unit suite separates three deterministic boundaries:
+
+1. Artifact-tree tests cover canonical ordering and digests, explicit
+   entry/byte/depth ceilings, root confinement, regular-file-only traversal,
+   link and special-file rejection, and mutation detection.
+2. Inspector tests cover strict request/config/catalog parsing, exact selected
+   expert and runtime-executable binding, local model and loopback endpoint
+   constraints, launch-plan derivation, identity match/unknown/mismatch states,
+   receipt lifetime, and the zero-network/zero-process/non-authorizing
+   invariants.
+3. CLI tests cover human and JSON rendering, `0`/`1`/`2` exit semantics,
+   request-safe error JSON, root help discovery, observed-component wording,
+   absence of apply/start/execute verbs, rejection of output inside every input
+   or observed artifact root (including rename races against captured physical
+   identities), cleanup after failed post-link parent validation, and atomic
+   no-clobber `0600` output on POSIX.
+
+The packaging smoke is deliberately narrower than the source-level inspection
+tests: it builds and byte-verifies the required source-distribution artifacts,
+builds the wheel from that verified sdist rather than from the worktree, then
+proves that a clean install can import the modules and expose the read-only
+console surface. It does not
+claim that arbitrary machine-specific model artifacts exist in CI, start a
+runtime, or turn the self-digested receipt into authenticated provenance. A
+live cell inspection remains dependent on explicit local files and catalog
+identities supplied by the operator.
 
 ## GitHub Actions
 

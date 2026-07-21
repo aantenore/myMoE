@@ -10,9 +10,20 @@ from typing import Any
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the myMoE cross-platform quality gate.")
-    parser.add_argument("--dry-run", action="store_true", help="Print the planned command list without running it.")
-    parser.add_argument("--json", action="store_true", dest="json_output", help="Print the dry-run plan as JSON.")
+    parser = argparse.ArgumentParser(
+        description="Run the myMoE cross-platform quality gate."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the planned command list without running it.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Print the dry-run plan as JSON.",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -41,12 +52,17 @@ class CheckStep:
 
 def build_check_plan(python: str) -> list[CheckStep]:
     return [
-        CheckStep("compile", [python, "-m", "compileall", "src", "tests", "experiments", "scripts"]),
+        CheckStep(
+            "compile",
+            [python, "-m", "compileall", "src", "tests", "experiments", "scripts"],
+        ),
         CheckStep(
             "assistant bridge dependency contract",
             [python, "scripts/check_assistant_bridge_dependencies.py"],
         ),
-        CheckStep("unit tests", [python, "-m", "unittest", "discover", "-s", "tests", "-v"]),
+        CheckStep(
+            "unit tests", [python, "-m", "unittest", "discover", "-s", "tests", "-v"]
+        ),
         CheckStep(
             "smoke eval",
             [
@@ -127,6 +143,15 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "bound cell attestor contract benchmark",
+            [
+                python,
+                "experiments/benchmark_runtime_binding.py",
+                "--out",
+                "outputs/runtime-binding-contract.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,
@@ -154,9 +179,7 @@ def require_supported_python(version_info: Any) -> None:
 
 def build_env(_root: Path) -> dict[str, str]:
     return {
-        key: value
-        for key, value in os.environ.items()
-        if key.upper() != "PYTHONPATH"
+        key: value for key, value in os.environ.items() if key.upper() != "PYTHONPATH"
     }
 
 

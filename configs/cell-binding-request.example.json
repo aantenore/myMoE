@@ -1,0 +1,32 @@
+{
+  "adapter_id": "managed_direct_local_openai_v1",
+  "catalog_path": "adaptive-cells.bound.local.json",
+  "cell_id": "coder-local",
+  "contract": "CellBindingInspectRequest",
+  "expert_id": "coder",
+  "hash_limits": {
+    "max_depth": 32,
+    "max_file_bytes": 68719476736,
+    "max_files": 20000,
+    "max_total_bytes": 549755813888
+  },
+  "model_artifact_root": "models",
+  "observation_ttl_seconds": 60,
+  "runtime_components": [
+    {
+      "path": "bin/runtime",
+      "role": "runtime_executable"
+    },
+    {
+      "path": "lib/driver.py",
+      "role": "driver"
+    },
+    {
+      "path": "lib/harness.py",
+      "role": "harness"
+    }
+  ],
+  "runtime_config_path": "moe.bound.local.json",
+  "runtime_root": "runtime",
+  "schema_version": "1.0"
+}

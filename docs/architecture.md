@@ -106,8 +106,51 @@ abstention. This reduces stale-decision risk but does not reserve resources or
 close the time-of-check/time-of-use gap. See
 [Adaptive Cell Execution Gate](cell-execution-gate.md).
 
+The Bound Cell Attestor is another separate boundary. Its inspection is
+read-only and answers a narrower question before any launcher is involved: what
+fingerprints describe the local files and configuration bindings explicitly
+declared for this cell on this machine?
+
+```mermaid
+flowchart LR
+  Q["Strict CellBindingInspectRequest"] --> I["Bound Cell Attestor"]
+  C["Catalog + runtime configuration"] --> I
+  F["Declared runtime, driver, harness + model files"] --> I
+  I --> M["Content-addressed binding manifest"]
+  I --> R["Short-lived verified or abstained receipt"]
+  M --> N["No launch authority"]
+  R --> N
+```
+
+The v1 `managed_direct_local_openai_v1` adapter accepts only an offline-capable,
+`compute_only`, zero-tool cell under a non-widening `device_only` policy. It
+binds one selected expert to an exact local model reference, runtime executable,
+generated launch argv, and uncredentialed loopback endpoint, and separately
+fingerprints the driver and harness paths declared in the request. It does not
+prove that a future process will load those declared driver or harness files.
+Traversal and hashing stay below request-relative roots and explicit
+entry/byte/depth limits. No model is downloaded, started, contacted, or made
+resident; no network, process mutation, resource reservation, or tool authority
+is used.
+
+Manifest and receipt self-digests provide canonical internal-consistency
+checks, not producer authentication, signed provenance, or protection against
+an adversary who rewrites the content and recomputes them. Detecting later
+drift or deliberate rewriting requires a separately trusted anchor. The
+observation can become stale after capture, does not prove that the declared
+driver or harness is what a future process will load, does not cover undeclared
+dynamic dependencies, and does not close the time-of-check/time-of-use gap.
+Optional receipt publication must remain outside every inspected input and
+artifact root. A future authenticated producer could wrap this contract, but
+the receipt itself must never become execution authority. See the
+[Bound Cell Attestor guide](cell-runtime-binding.md).
+
 ## Core Contracts
 
+- `Bound Cell Attestor`: bounded offline inspection of one explicitly selected
+  local cell. It fingerprints the declared runtime/model/harness bindings and
+  emits a short-lived non-authorizing receipt, or abstains when separately
+  anchored component identities are missing or differ.
 - `Adaptive Cell Advisor`: offline whole-cell admission and Pareto selection
   over exact model/runtime/harness/tool passports, current resources, and
   applicable evaluation evidence. Its receipt is advisory only.

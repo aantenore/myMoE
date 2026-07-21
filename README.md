@@ -15,6 +15,49 @@ coding agent. Its current runtime is implemented on POSIX and has been
 live-qualified on macOS; Windows currently receives provider-contract checks
 only and the desktop runtime fails closed there.
 
+## Did the declared local cell change?
+
+In plain terms, the **Bound Cell Attestor** fingerprints the runtime, driver,
+harness, model artifacts, and configuration bindings you explicitly declare,
+without starting the cell. `mymoe cell-bind inspect` compares the observed
+model, runtime, harness, and tool-contract identities with separately reviewed
+catalog anchors, then emits one manifest plus a short-lived `verified` or
+`abstained` receipt. It does not discover or prove every file that a future
+process will load.
+
+From a fresh clone, run the self-contained contract benchmark first; it creates
+temporary sample artifacts, exercises verified, abstained, and drift cases, and
+prints a machine-readable report without needing a model download:
+
+```bash
+uv run python experiments/benchmark_runtime_binding.py
+```
+
+To inspect a real local cell, copy the linked request template, replace every
+placeholder with paths and identities from files you already have, then run:
+
+```bash
+mymoe cell-bind inspect \
+  --request ./cell-binding-request.json \
+  --json \
+  --out ./cell-binding-inspection.json
+```
+
+The inspection is offline and read-only. Optional `--out` publication is the
+only write and is allowed only outside the request, catalog, configuration,
+runtime, and model-artifact roots. The command does not start or download a
+model, use the network, reserve resources, or authorize execution. Embedded
+self-digests check internal consistency; detecting later drift or deliberate
+rewriting requires comparison with a separately trusted anchor. They are not
+signatures or authenticated provenance. The snapshot can age, and it does not
+prove dynamic dependencies or process residency. See the
+[Bound Cell Attestor guide](docs/cell-runtime-binding.md) for the request,
+output, threat, and comparison contracts.
+Start from the
+[`cell-binding-request.example.json`](configs/cell-binding-request.example.json)
+template; it is intentionally not executable until its local paths and catalog
+identities are replaced with files you already have.
+
 ## Which local setup should handle this task?
 
 The **Adaptive Cell Advisor** answers that question before a model is run. A
@@ -290,7 +333,9 @@ cannot perform other coding tasks.
 
 | Feature | Real-world benefit |
 | --- | --- |
+| Bound Cell Attestor | Fingerprint the local model, runtime, driver, harness, and configuration bindings you declared, then detect drift against separately reviewed catalog anchors without starting the cell. |
 | Adaptive Cell Advisor | See the best eligible configured cell with current verified evidence—or a precise abstention—before spending time or memory loading a model. The v1 command is offline, read-only, and non-authorizing. |
+| Adaptive Cell Execution Gate | Recheck the exact advised cell, receipt freshness, catalog identity, task binding, and current resource pressure immediately before a later launcher makes its own execution decision. |
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
 | Local Browser Capability Cell | Let a local model inspect and exercise a local web app through four approval-gated tools, while normal external browser HTTP(S) traffic and raw MCP authority stay blocked. |

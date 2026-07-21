@@ -6,13 +6,13 @@ import unittest
 from unittest import mock
 
 import local_moe.model_servers as model_servers_module
+from local_moe.bootstrap import ExpertRuntimeCommand, build_runtime_plan
 from local_moe.model_servers import (
     ModelServerManager,
     ModelServerSpec,
     build_model_server_specs,
     model_server_action_payload,
 )
-from local_moe.bootstrap import build_runtime_plan
 from local_moe.config import parse_config
 from local_moe.execution_scope import (
     ExecutionAttestation,
@@ -107,6 +107,76 @@ class ModelServerManagerTests(unittest.TestCase):
         self.assertEqual(specs[0].base_url, "http://127.0.0.1:8199/v1")
         self.assertEqual(specs[0].log_path.endswith("model-1.log"), True)
         self.assertIn("llama-server", specs[0].command[0])
+
+    def test_builds_specs_by_expert_id_when_runtime_commands_are_reordered(self) -> None:
+        config = _two_expert_runtime_config()
+        plan = build_runtime_plan(config, {"fallback": "llama_cpp"})
+        reordered = plan.with_expert_commands(
+            tuple(reversed(plan.expert_commands)),
+        )
+
+        specs = build_model_server_specs(
+            config,
+            reordered,
+            work_dir="work/runtime",
+        )
+        commands = {spec.expert_id: spec.command for spec in specs}
+
+        self.assertIn("owner/alpha-model", commands["alpha"])
+        self.assertNotIn("owner/beta-model", commands["alpha"])
+        self.assertIn("owner/beta-model", commands["beta"])
+        self.assertNotIn("owner/alpha-model", commands["beta"])
+
+    def test_rejects_missing_runtime_command(self) -> None:
+        config = _two_expert_runtime_config()
+        plan = build_runtime_plan(config, {"fallback": "llama_cpp"})
+        incomplete = plan.with_expert_commands(plan.expert_commands[:1])
+
+        with self.assertRaisesRegex(ValueError, "missing.*beta"):
+            build_model_server_specs(
+                config,
+                incomplete,
+                work_dir="work/runtime",
+            )
+
+    def test_rejects_duplicate_runtime_command(self) -> None:
+        config = _two_expert_runtime_config()
+        plan = build_runtime_plan(config, {"fallback": "llama_cpp"})
+        duplicated = plan.with_expert_commands(
+            (
+                plan.expert_commands[0],
+                plan.expert_commands[0],
+                plan.expert_commands[1],
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Duplicate.*alpha"):
+            build_model_server_specs(
+                config,
+                duplicated,
+                work_dir="work/runtime",
+            )
+
+    def test_rejects_runtime_command_for_unknown_expert(self) -> None:
+        config = _two_expert_runtime_config()
+        plan = build_runtime_plan(config, {"fallback": "llama_cpp"})
+        unknown = plan.with_expert_commands(
+            plan.expert_commands
+            + (
+                ExpertRuntimeCommand(
+                    expert_id="unknown",
+                    backend="llama_cpp",
+                    argv=("llama-server", "-hf", "owner/unknown-model"),
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "unknown expert 'unknown'"):
+            build_model_server_specs(
+                config,
+                unknown,
+                work_dir="work/runtime",
+            )
 
     def test_scope_blocked_server_is_not_probed_or_started(self) -> None:
         config = parse_config(
@@ -478,6 +548,37 @@ def _spec() -> ModelServerSpec:
         base_url="http://127.0.0.1:9999/v1",
         command=("python", "-m", "model_server"),
         log_path="work/runtime/model-1.log",
+    )
+
+
+def _two_expert_runtime_config():
+    return parse_config(
+        {
+            "routing": {
+                "top_k": 1,
+                "fallback_order": ["alpha", "beta"],
+                "aggregation": "best",
+            },
+            "experts": [
+                {
+                    "id": "alpha",
+                    "provider": "openai_compatible",
+                    "model": "owner/alpha-model",
+                    "role": "general",
+                    "base_url": "http://127.0.0.1:8201/v1",
+                    "params": {"runtime_backend": "llama_cpp"},
+                },
+                {
+                    "id": "beta",
+                    "provider": "openai_compatible",
+                    "model": "owner/beta-model",
+                    "role": "code",
+                    "base_url": "http://127.0.0.1:8202/v1",
+                    "params": {"runtime_backend": "llama_cpp"},
+                },
+            ],
+            "rules": [],
+        }
     )
 
 

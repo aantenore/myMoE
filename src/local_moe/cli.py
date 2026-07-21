@@ -197,6 +197,11 @@ def main() -> None:
 
         raise SystemExit(run_cell_execution(sys.argv[2:]))
 
+    if sys.argv[1:2] == ["cell-bind"]:
+        from .runtime_binding_cli import main as run_runtime_binding
+
+        raise SystemExit(run_runtime_binding(sys.argv[2:]))
+
     if sys.argv[1:2] == ["desktop-init"]:
         desktop_parser = argparse.ArgumentParser(
             prog="mymoe desktop-init",
@@ -311,6 +316,7 @@ def main() -> None:
             "  assistant-probe  Check local Codex tool compatibility in a disposable workspace.\n"
             "  browser-init     Create packaged config files for the local browser cell.\n"
             "  browser-prefetch Cache a pinned browser provider without executing its package.\n"
+            "  cell-bind        Inspect exact local-cell files without starting a model.\n"
             "  cell-exec        Preview exact local-cell admission without executing it.\n"
             "  desktop-init     Bind packaged desktop-cell config to one app window.\n"
             "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."

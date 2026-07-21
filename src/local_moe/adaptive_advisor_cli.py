@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -87,6 +88,34 @@ class AdvisorCliError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class ProtectedRootIdentity:
+    """Private physical identity for one inspected artifact directory."""
+
+    path: Path
+    platform: str
+    key: tuple[int, int | bytes]
+
+    def __post_init__(self) -> None:
+        path = Path(self.path)
+        if not path.is_absolute() or self.platform not in {"posix", "windows"}:
+            raise ValueError("Protected root identity is invalid.")
+        if (
+            not isinstance(self.key, tuple)
+            or len(self.key) != 2
+            or isinstance(self.key[0], bool)
+            or not isinstance(self.key[0], int)
+            or isinstance(self.key[1], bool)
+            or not isinstance(self.key[1], (bytes, int))
+        ):
+            raise ValueError("Protected root identity is invalid.")
+        object.__setattr__(self, "path", path)
+
+
+class ProtectedRootIdentityError(ValueError):
+    """Raised when a protected artifact directory cannot be identified safely."""
 
 
 class _AdvisorArgumentParser(argparse.ArgumentParser):
@@ -215,7 +244,9 @@ def render_human(receipt: AdaptiveAdvisorReceipt) -> str:
     if advice.status == "recommended":
         heading = f"Recommended now: {advice.selected_cell_id}"
         selected = next(
-            item for item in advice.candidates if item.cell_id == advice.selected_cell_id
+            item
+            for item in advice.candidates
+            if item.cell_id == advice.selected_cell_id
         )
         tradeoff = (
             f"Trade-off: profile '{advice.profile}' selected verified evidence with "
@@ -233,8 +264,7 @@ def render_human(receipt: AdaptiveAdvisorReceipt) -> str:
             "was not filled in."
         )
         evidence_lines = [
-            f"  - {candidate.cell_id}: "
-            f"{_render_reasons(candidate.rejection_codes)}"
+            f"  - {candidate.cell_id}: {_render_reasons(candidate.rejection_codes)}"
             for candidate in advice.candidates
         ]
 
@@ -344,7 +374,12 @@ def _decode_task(value: bytes) -> str:
 
 
 def _write_output(
-    path: Path, value: bytes, *, protected_inputs: Sequence[Path]
+    path: Path,
+    value: bytes,
+    *,
+    protected_inputs: Sequence[Path],
+    protected_roots: Sequence[Path] = (),
+    protected_root_identities: Sequence[ProtectedRootIdentity] = (),
 ) -> None:
     if any(_same_location(path, protected) for protected in protected_inputs):
         raise AdvisorCliError(
@@ -358,11 +393,24 @@ def _write_output(
         raise AdvisorCliError(
             "output_invalid", "Advisor output must name one new file."
         )
+    identities = _prepare_protected_root_identities(
+        protected_roots,
+        protected_root_identities,
+    )
     if os.name == "nt":
         _validate_windows_output_name(path.name)
-        _write_output_windows(path, value)
+        _write_output_windows(
+            path,
+            value,
+            protected_root_identities=identities,
+        )
         return
-    _write_output_posix(path, value, protected_inputs=protected_inputs)
+    _write_output_posix(
+        path,
+        value,
+        protected_inputs=protected_inputs,
+        protected_root_identities=identities,
+    )
 
 
 def _write_output_posix(
@@ -370,6 +418,7 @@ def _write_output_posix(
     value: bytes,
     *,
     protected_inputs: Sequence[Path],
+    protected_root_identities: Sequence[ProtectedRootIdentity],
 ) -> None:
     parent = path.parent
     try:
@@ -402,11 +451,7 @@ def _write_output_posix(
     try:
         parent_identity = os.fstat(parent_descriptor)
     except OSError as exc:
-        for item in reversed(descriptors):
-            try:
-                os.close(item)
-            except OSError:
-                pass
+        _close_descriptors(descriptors)
         raise AdvisorCliError(
             "output_parent_invalid", "Advisor output parent could not be pinned."
         ) from exc
@@ -415,22 +460,33 @@ def _write_output_posix(
     except FileNotFoundError:
         pass
     except OSError as exc:
-        for item in reversed(descriptors):
-            try:
-                os.close(item)
-            except OSError:
-                pass
+        _close_descriptors(descriptors)
         raise AdvisorCliError(
             "output_invalid", "Advisor output could not be inspected safely."
         ) from exc
     else:
-        for item in reversed(descriptors):
-            try:
-                os.close(item)
-            except OSError:
-                pass
+        _close_descriptors(descriptors)
         raise AdvisorCliError(
             "output_exists", "Advisor output already exists; overwrite is forbidden."
+        )
+    try:
+        output_ancestor_identities = {
+            (metadata.st_dev, metadata.st_ino)
+            for metadata in (os.fstat(item) for item in descriptors)
+        }
+    except OSError as exc:
+        _close_descriptors(descriptors)
+        raise AdvisorCliError(
+            "output_parent_invalid", "Advisor output parent could not be pinned."
+        ) from exc
+    expected_identities = {
+        _posix_identity_key(identity) for identity in protected_root_identities
+    }
+    if output_ancestor_identities.intersection(expected_identities):
+        _close_descriptors(descriptors)
+        raise AdvisorCliError(
+            "output_path_conflict",
+            "Advisor output must stay outside protected artifact roots.",
         )
 
     temporary_name = f".mymoe-advisor-{secrets.token_hex(16)}.tmp"
@@ -472,7 +528,8 @@ def _write_output_posix(
             published = True
         except FileExistsError as exc:
             raise AdvisorCliError(
-                "output_exists", "Advisor output already exists; overwrite is forbidden."
+                "output_exists",
+                "Advisor output already exists; overwrite is forbidden.",
             ) from exc
         published_stat = os.stat(
             path.name,
@@ -499,8 +556,22 @@ def _write_output_posix(
             )
         _require_directory_identity(canonical_parent, parent_identity)
     except AdvisorCliError:
+        if published:
+            _cleanup_published_at(
+                parent_descriptor,
+                path.name,
+                expected=staged_identity,
+            )
+            published = False
         raise
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        if published:
+            _cleanup_published_at(
+                parent_descriptor,
+                path.name,
+                expected=staged_identity,
+            )
+            published = False
         raise AdvisorCliError(
             "output_publish_failed", "Advisor output could not be published safely."
         ) from exc
@@ -513,19 +584,19 @@ def _write_output_posix(
                 temporary_name,
                 expected=staged_identity,
             )
-        for item in reversed(descriptors):
-            try:
-                os.close(item)
-            except OSError:
-                pass
+        _close_descriptors(descriptors)
         if published:
-            # A published receipt is never removed after an uncertain error.
-            # The directory-relative identity checks ensure cleanup cannot
-            # follow a replacement pathname.
+            # Success is reached only after content, permissions, and the
+            # canonical parent identity have all been revalidated.
             pass
 
 
-def _write_output_windows(path: Path, value: bytes) -> None:
+def _write_output_windows(
+    path: Path,
+    value: bytes,
+    *,
+    protected_root_identities: Sequence[ProtectedRootIdentity] = (),
+) -> None:
     from . import _win32_fs
 
     parent = path.parent.absolute()
@@ -560,9 +631,20 @@ def _write_output_windows(path: Path, value: bytes) -> None:
                 share_delete=False,
             )
             pinned.append((descriptor, identity))
+        if any(
+            _windows_identity_key(output_identity)
+            == _windows_protected_identity_key(protected_identity)
+            for _, output_identity in pinned
+            for protected_identity in protected_root_identities
+        ):
+            raise AdvisorCliError(
+                "output_path_conflict",
+                "Advisor output must stay outside protected artifact roots.",
+            )
         if os.path.lexists(path):
             raise AdvisorCliError(
-                "output_exists", "Advisor output already exists; overwrite is forbidden."
+                "output_exists",
+                "Advisor output already exists; overwrite is forbidden.",
             )
         temporary = parent / f".mymoe-advisor-{secrets.token_hex(16)}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
@@ -586,7 +668,8 @@ def _write_output_windows(path: Path, value: bytes) -> None:
             _win32_fs.move_no_replace(temporary, path)
         except FileExistsError as exc:
             raise AdvisorCliError(
-                "output_exists", "Advisor output already exists; overwrite is forbidden."
+                "output_exists",
+                "Advisor output already exists; overwrite is forbidden.",
             ) from exc
         target_descriptor, target_identity = _win32_fs.open_nofollow_fd(
             path,
@@ -635,6 +718,142 @@ def _write_output_windows(path: Path, value: bytes) -> None:
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def capture_protected_root_identity(path: str | Path) -> ProtectedRootIdentity:
+    """Capture one existing real directory without retaining its descriptor."""
+
+    try:
+        supplied = Path(os.path.abspath(os.fspath(path)))
+        supplied_metadata = supplied.lstat()
+        if stat.S_ISLNK(supplied_metadata.st_mode) or not stat.S_ISDIR(
+            supplied_metadata.st_mode
+        ):
+            raise ProtectedRootIdentityError(
+                "Protected artifact root must be a real directory."
+            )
+        canonical = supplied.resolve(strict=True)
+    except ProtectedRootIdentityError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ProtectedRootIdentityError(
+            "Protected artifact root could not be resolved."
+        ) from exc
+    if os.name == "nt":
+        from . import _win32_fs
+
+        descriptor = -1
+        try:
+            descriptor, identity = _win32_fs.open_nofollow_fd(
+                supplied,
+                directory=True,
+                writable=False,
+                share_delete=False,
+            )
+            metadata = os.fstat(descriptor)
+            if identity.is_reparse_point or not stat.S_ISDIR(metadata.st_mode):
+                raise ProtectedRootIdentityError(
+                    "Protected artifact root must be a real directory."
+                )
+            key: tuple[int, int | bytes] = (
+                int(identity.volume_serial),
+                bytes(identity.file_id),
+            )
+        except ProtectedRootIdentityError:
+            raise
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise ProtectedRootIdentityError(
+                "Protected artifact root could not be pinned."
+            ) from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        return ProtectedRootIdentity(path=supplied, platform="windows", key=key)
+
+    descriptors: list[int] = []
+    try:
+        descriptors = _open_posix_directory_chain(canonical)
+        metadata = os.fstat(descriptors[-1])
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ProtectedRootIdentityError(
+                "Protected artifact root must be a real directory."
+            )
+        key = (int(metadata.st_dev), int(metadata.st_ino))
+    except ProtectedRootIdentityError:
+        raise
+    except (AdvisorCliError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ProtectedRootIdentityError(
+            "Protected artifact root could not be pinned."
+        ) from exc
+    finally:
+        _close_descriptors(descriptors)
+    return ProtectedRootIdentity(path=supplied, platform="posix", key=key)
+
+
+def protected_root_identity_is_current(identity: ProtectedRootIdentity) -> bool:
+    try:
+        current = capture_protected_root_identity(identity.path)
+    except ProtectedRootIdentityError:
+        return False
+    return current.platform == identity.platform and current.key == identity.key
+
+
+def _prepare_protected_root_identities(
+    protected_roots: Sequence[Path],
+    protected_root_identities: Sequence[ProtectedRootIdentity],
+) -> tuple[ProtectedRootIdentity, ...]:
+    try:
+        supplied = tuple(protected_root_identities)
+        if any(not isinstance(item, ProtectedRootIdentity) for item in supplied):
+            raise ProtectedRootIdentityError("Protected root identity is invalid.")
+        captured = tuple(
+            capture_protected_root_identity(path) for path in protected_roots
+        )
+    except ProtectedRootIdentityError as exc:
+        raise AdvisorCliError(
+            "output_path_conflict",
+            "Advisor output protected roots could not be pinned.",
+        ) from exc
+    expected_platform = "windows" if os.name == "nt" else "posix"
+    result = (*supplied, *captured)
+    if any(item.platform != expected_platform for item in result):
+        raise AdvisorCliError(
+            "output_path_conflict",
+            "Advisor output protected roots use an incompatible identity.",
+        )
+    return result
+
+
+def _posix_identity_key(identity: ProtectedRootIdentity) -> tuple[int, int]:
+    first, second = identity.key
+    if identity.platform != "posix" or not isinstance(second, int):
+        raise AdvisorCliError(
+            "output_path_conflict", "Advisor output protected identity is invalid."
+        )
+    return first, second
+
+
+def _windows_identity_key(identity: object) -> tuple[int, bytes]:
+    return int(getattr(identity, "volume_serial")), bytes(getattr(identity, "file_id"))
+
+
+def _windows_protected_identity_key(
+    identity: ProtectedRootIdentity,
+) -> tuple[int, bytes]:
+    first, second = identity.key
+    if identity.platform != "windows" or not isinstance(second, bytes):
+        raise AdvisorCliError(
+            "output_path_conflict", "Advisor output protected identity is invalid."
+        )
+    return first, second
+
+
+def _close_descriptors(descriptors: Sequence[int]) -> None:
+    for descriptor in reversed(descriptors):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def _validate_windows_output_name(name: str) -> None:
@@ -734,6 +953,19 @@ def _unlink_matching_at(
             os.unlink(name, dir_fd=parent_descriptor)
     except (FileNotFoundError, OSError):
         return
+
+
+def _cleanup_published_at(
+    parent_descriptor: int,
+    name: str,
+    *,
+    expected: tuple[int, int] | None,
+) -> None:
+    _unlink_matching_at(parent_descriptor, name, expected=expected)
+    try:
+        os.fsync(parent_descriptor)
+    except OSError:
+        pass
 
 
 def _write_all(descriptor: int, value: bytes) -> None:

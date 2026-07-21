@@ -349,9 +349,41 @@ def build_model_server_specs(
 ) -> tuple[ModelServerSpec, ...]:
     work = Path(work_dir)
     experts = tuple(expert for expert in config.experts if expert.provider == "openai_compatible")
+    expert_ids = tuple(expert.id for expert in experts)
+    expected_ids = set(expert_ids)
+    if len(expected_ids) != len(expert_ids):
+        raise ValueError("OpenAI-compatible expert ids must be unique.")
+
+    commands_by_expert: dict[str, tuple[str, ...]] | None = None
+    if plan.expert_commands:
+        commands_by_expert = {}
+        for runtime_command in plan.expert_commands:
+            expert_id = runtime_command.expert_id
+            if expert_id in commands_by_expert:
+                raise ValueError(f"Duplicate runtime command for expert {expert_id!r}.")
+            if expert_id not in expected_ids:
+                raise ValueError(
+                    f"Runtime command references unknown expert {expert_id!r}."
+                )
+            if not runtime_command.argv:
+                raise ValueError(f"Runtime command for expert {expert_id!r} is empty.")
+            commands_by_expert[expert_id] = runtime_command.argv
+
+        missing_ids = expected_ids - commands_by_expert.keys()
+        if missing_ids:
+            missing = ", ".join(sorted(missing_ids))
+            raise ValueError(f"Runtime commands are missing for experts: {missing}.")
+
     specs: list[ModelServerSpec] = []
     for index, expert in enumerate(experts):
-        command = plan.model_commands[index] if index < len(plan.model_commands) else ()
+        if commands_by_expert is None:
+            command = (
+                plan.model_commands[index]
+                if index < len(plan.model_commands)
+                else ()
+            )
+        else:
+            command = commands_by_expert[expert.id]
         specs.append(
             ModelServerSpec(
                 expert_id=expert.id,

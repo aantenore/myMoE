@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_runner():
-    spec = importlib.util.spec_from_file_location("run_ci_checks", ROOT / "scripts" / "run_ci_checks.py")
+    spec = importlib.util.spec_from_file_location(
+        "run_ci_checks", ROOT / "scripts" / "run_ci_checks.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("Unable to load scripts/run_ci_checks.py")
     module = importlib.util.module_from_spec(spec)
@@ -41,6 +43,7 @@ class CiRunnerTests(unittest.TestCase):
                 "desktop semantic benchmark",
                 "adaptive cell advisor contract benchmark",
                 "adaptive cell execution gate contract benchmark",
+                "bound cell attestor contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -119,6 +122,20 @@ class CiRunnerTests(unittest.TestCase):
                 "outputs/cell-execution-gate-contract.json",
             ],
         )
+        runtime_binding_benchmark = next(
+            step
+            for step in steps
+            if step.name == "bound cell attestor contract benchmark"
+        )
+        self.assertEqual(
+            runtime_binding_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_runtime_binding.py",
+                "--out",
+                "outputs/runtime-binding-contract.json",
+            ],
+        )
 
     def test_make_eval_holdout_uses_current_unseen_dataset(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -128,12 +145,8 @@ class CiRunnerTests(unittest.TestCase):
         self.assertNotIn("eval_set_live_general_holdout_v2.jsonl", target)
 
     def test_active_github_workflow_matches_documented_template(self) -> None:
-        active = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-        template = (ROOT / "docs" / "github-actions-ci.yml").read_text(
-            encoding="utf-8"
-        )
+        active = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        template = (ROOT / "docs" / "github-actions-ci.yml").read_text(encoding="utf-8")
 
         self.assertEqual(active, template)
         self.assertIn(
@@ -147,9 +160,7 @@ class CiRunnerTests(unittest.TestCase):
         )[0]
         self.assertNotIn("runner.temp", browser_job_header)
         self.assertEqual(
-            active.count(
-                "NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache"
-            ),
+            active.count("NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache"),
             2,
         )
         self.assertIn("  desktop-provider-contract:\n", active)
@@ -198,7 +209,9 @@ class CiRunnerTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["root"], str(ROOT))
         self.assertEqual(payload["steps"][0]["name"], "compile")
-        self.assertEqual(payload["steps"][-1]["command"][1], "scripts/run_packaging_smoke.py")
+        self.assertEqual(
+            payload["steps"][-1]["command"][1], "scripts/run_packaging_smoke.py"
+        )
 
     def test_rejects_unsupported_python_with_actionable_message(self) -> None:
         runner = _load_runner()
