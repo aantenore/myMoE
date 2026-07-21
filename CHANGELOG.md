@@ -4,6 +4,8 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0-alpha.1] - 2026-07-21
+
 ### Added
 
 - `mymoe advisor`, an offline, read-only Adaptive Cell Advisor that evaluates a
