@@ -15,6 +15,53 @@ Then open:
 http://127.0.0.1:8089
 ```
 
+### Adaptive Cell Advisor mini-app
+
+An installed wheel can materialize an opt-in, self-contained Advisor starter
+and launch it through the same bundled web app:
+
+```bash
+mymoe advisor-init --out ./.mymoe-advisor
+mymoe-web --app-config ./.mymoe-advisor/app.json
+```
+
+The generated workspace contains `app.json`, `adaptive-cells.json`,
+`adaptive-evaluation-contract.json`, `moe.json`, and `context-policy.json`.
+Initialization is no-clobber. It uses a `0700` directory and `0600` files on
+POSIX; Windows inherits the destination directory ACL and does not claim an
+owner-only DACL. The catalog and evaluation contract deliberately contain no
+qualified measurements, so the starter cannot recommend a cell until a trusted
+local producer supplies applicable evidence. When the live resource gates pass,
+this is reported as `Not enough evidence`; current resource pressure can instead
+produce the earlier `Not available now` state.
+
+The **Find the right local setup** card accepts task text, an allowlisted goal,
+and a context ceiling. Workload, capabilities, tool surfaces, and
+`compute_only` risk are supplied by local policy—not inferred from the task and
+not controlled by the browser. It renders exactly three states: `Recommended
+now`, `Not available now`, and `Not enough evidence`. The browser can
+download the complete technical receipt with a client-side `Blob`; the server
+does not persist the task or receipt, add it to chat history, invoke a model,
+or apply the result.
+
+The local HTTP contract is:
+
+```bash
+curl http://127.0.0.1:8089/api/advisor/config
+
+curl -X POST http://127.0.0.1:8089/api/advisor \
+  -H 'Content-Type: application/json' \
+  --data '{"task":"Summarize this local design note.","profile":"balanced","context_tokens":4096}'
+```
+
+`POST /api/advisor` accepts only `task`, optional allowlisted `profile`, and
+optional bounded `context_tokens`. It requires strict fixed-length UTF-8 JSON;
+unknown or duplicate keys are rejected. Both Advisor endpoints set
+`Cache-Control: no-store`. The response contains short presentation fields and
+the full content-addressed receipt; it never contains raw task text. See the
+[Adaptive Cell Advisor guide](adaptive-cell-advisor.md) for the exact evidence,
+privacy, and non-authority boundaries.
+
 Start the configured local model server first:
 
 ```bash

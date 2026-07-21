@@ -5,10 +5,34 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from local_moe.app_config import app_config_payload, load_app_config
+from local_moe.app_config import (
+    MAX_APP_CONFIG_BYTES,
+    app_config_payload,
+    load_app_config,
+)
 
 
 class AppConfigTests(unittest.TestCase):
+    def test_rejects_duplicate_keys_and_oversized_config_before_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            duplicate_root = root / "duplicate-root.json"
+            duplicate_root.write_text(
+                '{"name":"decoy","name":"myMoE"}', encoding="utf-8"
+            )
+            duplicate_nested = root / "duplicate-nested.json"
+            duplicate_nested.write_text(
+                '{"advisor":{"enabled":false,"enabled":true}}',
+                encoding="utf-8",
+            )
+            oversized = root / "oversized.json"
+            with oversized.open("wb") as handle:
+                handle.truncate(MAX_APP_CONFIG_BYTES + 1)
+
+            for path in (duplicate_root, duplicate_nested, oversized):
+                with self.subTest(path=path.name), self.assertRaises(ValueError):
+                    load_app_config(path)
+
     def test_loads_response_language_policy_and_serializes_same_contract(self) -> None:
         config = load_app_config("configs/app.json")
 
@@ -43,6 +67,120 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(gateway.max_response_bytes, 32 * 1024 * 1024)
         self.assertFalse(gateway.allow_non_loopback)
         self.assertEqual(gateway.api_key_env, "")
+
+    def test_advisor_defaults_to_disabled_for_older_app_configs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app.json"
+            path.write_text("{}", encoding="utf-8")
+
+            config = load_app_config(path)
+
+        self.assertFalse(config.advisor.enabled)
+        self.assertEqual(config.advisor.catalog_path, "")
+        self.assertEqual(config.advisor.evaluation_contract_path, "")
+        self.assertEqual(config.advisor.allowed_profiles, ("balanced",))
+        public = app_config_payload(config)["advisor"]
+        self.assertNotIn("catalog_path", public)
+        self.assertNotIn("evaluation_contract_path", public)
+
+    def test_loads_enabled_advisor_policy_without_exposing_source_paths(self) -> None:
+        config = load_app_config("configs/app.json")
+
+        self.assertTrue(config.advisor.enabled)
+        self.assertEqual(config.advisor.workload_id, "local-summary")
+        self.assertEqual(config.advisor.capabilities, ("summarization",))
+        self.assertEqual(config.advisor.tool_surfaces, ())
+        self.assertEqual(config.advisor.risk_class, "compute_only")
+        self.assertEqual(config.advisor.context_tokens, 4096)
+        public = app_config_payload(config)["advisor"]
+        self.assertEqual(public["default_profile"], "balanced")
+        self.assertEqual(public["workload"]["id"], "local-summary")
+        self.assertNotIn("catalog_path", public)
+        self.assertNotIn("evaluation_contract_path", public)
+
+    def test_enabled_advisor_requires_both_source_paths(self) -> None:
+        for missing in ("catalog_path", "evaluation_contract_path"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as tmp:
+                advisor = {
+                    "enabled": True,
+                    "catalog_path": "catalog.json",
+                    "evaluation_contract_path": "evaluation.json",
+                }
+                del advisor[missing]
+                path = Path(tmp) / "app.json"
+                path.write_text(json.dumps({"advisor": advisor}), encoding="utf-8")
+
+                with self.assertRaisesRegex(ValueError, f"advisor.{missing}"):
+                    load_app_config(path)
+
+    def test_advisor_rejects_invalid_profile_and_workload_shapes(self) -> None:
+        valid = {
+            "enabled": True,
+            "catalog_path": "catalog.json",
+            "evaluation_contract_path": "evaluation.json",
+            "allowed_profiles": ["balanced"],
+            "default_profile": "balanced",
+            "workload_id": "local-summary",
+            "capabilities": ["summarization"],
+            "tool_surfaces": [],
+            "risk_class": "compute_only",
+            "context_tokens": 4096,
+            "max_request_bytes": 65536,
+            "max_task_chars": 16384,
+        }
+        cases = (
+            ("allowed_profiles", [], "allowed_profiles"),
+            ("allowed_profiles", ["balanced", "balanced"], "allowed_profiles"),
+            ("allowed_profiles", "balanced", "allowed_profiles"),
+            ("default_profile", "quality", "default_profile"),
+            ("workload_id", 7, "workload_id"),
+            ("capabilities", [], "capabilities"),
+            ("capabilities", ["summarization", 7], "capabilities"),
+            ("tool_surfaces", "none", "tool_surfaces"),
+            ("risk_class", "", "risk_class"),
+        )
+        for field, value, message in cases:
+            with (
+                self.subTest(field=field, value=value),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                advisor = dict(valid)
+                advisor[field] = value
+                path = Path(tmp) / "app.json"
+                path.write_text(json.dumps({"advisor": advisor}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    load_app_config(path)
+
+    def test_advisor_rejects_coerced_booleans_and_out_of_range_limits(self) -> None:
+        valid = {
+            "enabled": True,
+            "catalog_path": "catalog.json",
+            "evaluation_contract_path": "evaluation.json",
+        }
+        cases = (
+            ("enabled", "true"),
+            ("catalog_path", 7),
+            ("catalog_path", " catalog.json"),
+            ("evaluation_contract_path", "evaluation.json\n"),
+            ("context_tokens", True),
+            ("context_tokens", 0),
+            ("context_tokens", 1_048_577),
+            ("max_request_bytes", 0),
+            ("max_request_bytes", 262_145),
+            ("max_task_chars", 0),
+            ("max_task_chars", 131_073),
+        )
+        for field, value in cases:
+            with (
+                self.subTest(field=field, value=value),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                advisor = dict(valid)
+                advisor[field] = value
+                path = Path(tmp) / "app.json"
+                path.write_text(json.dumps({"advisor": advisor}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, f"advisor.{field}"):
+                    load_app_config(path)
 
     def test_gateway_accepts_explicit_loopback_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +274,10 @@ class AppConfigTests(unittest.TestCase):
             (
                 base | {"gateway": {**base["gateway"], "unexpected": True}},
                 "gateway",
+            ),
+            (
+                base | {"advisor": {**base["advisor"], "unexpected": True}},
+                "advisor",
             ),
         )
         for raw, section in cases:

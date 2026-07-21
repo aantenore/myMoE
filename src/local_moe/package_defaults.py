@@ -4,7 +4,15 @@ from importlib import resources
 from pathlib import Path
 
 
-_DEFAULTS = frozenset({"app.json", "context-policy.json", "moe.json"})
+_DEFAULTS = frozenset(
+    {
+        "adaptive-cells.json",
+        "adaptive-evaluation-contract.json",
+        "app.json",
+        "context-policy.json",
+        "moe.json",
+    }
+)
 _SOURCE_APP_CONFIG = Path("configs/app.json")
 
 
@@ -51,17 +59,41 @@ def resolve_app_config_path(
 def resolve_app_config_reference(value: str | Path, app_config_path: str | Path) -> Path:
     """Resolve package-relative references without changing normal CWD semantics."""
 
+    raw_value = str(value)
     candidate = Path(value).expanduser()
     if candidate.is_absolute():
         return candidate
     app_path = Path(app_config_path).expanduser()
+    if raw_value.startswith("./") or raw_value.startswith(".\\"):
+        return _resolve_confined_reference(candidate, app_path)
     if _is_packaged_default(app_path):
-        defaults_dir = app_path.parent.resolve()
-        packaged_candidate = (defaults_dir / candidate).resolve()
-        if not packaged_candidate.is_relative_to(defaults_dir):
-            raise ValueError("Packaged config references must stay inside defaults.")
-        return packaged_candidate
+        try:
+            return _resolve_confined_reference(candidate, app_path)
+        except ValueError as exc:
+            raise ValueError(
+                "Packaged config references must stay inside defaults."
+            ) from exc
     return candidate
+
+
+def resolve_advisor_config_reference(
+    value: str | Path,
+    app_config_path: str | Path,
+) -> Path:
+    """Resolve one Advisor asset relative to its owning app configuration."""
+
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    return _resolve_confined_reference(candidate, Path(app_config_path).expanduser())
+
+
+def _resolve_confined_reference(candidate: Path, app_path: Path) -> Path:
+    config_root = app_path.parent.resolve()
+    resolved = (config_root / candidate).resolve()
+    if not resolved.is_relative_to(config_root):
+        raise ValueError("Local config references must stay beside the app config.")
+    return resolved
 
 
 def _is_packaged_default(path: Path) -> bool:

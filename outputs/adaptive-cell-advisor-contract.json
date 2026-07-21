@@ -1,0 +1,125 @@
+{
+  "benchmark": "adaptive_cell_advisor_contract",
+  "contract_checks_passed": true,
+  "criteria": {
+    "caller_intent_family_is_preserved": true,
+    "declared_demand_is_identical": true,
+    "efficiency_profile_selects_fast_small_cell": true,
+    "every_result_is_non_authorizing_and_model_free": true,
+    "paraphrase_advice_records_remain_distinct": true,
+    "paraphrase_exact_fingerprints_differ": true,
+    "quality_profile_selects_high_quality_cell": true,
+    "resource_pressure_abstains": true,
+    "stale_snapshot_abstains": true
+  },
+  "fixture": {
+    "cell_count": 2,
+    "declared_capabilities": [
+      "summarization"
+    ],
+    "declared_risk_class": "compute_only",
+    "declared_workload_id": "local-summary",
+    "kind": "deterministic_synthetic_contract_fixture",
+    "profile_count": 2,
+    "task_text_interpreted": false
+  },
+  "limits": [
+    "synthetic_contract_fixture_only",
+    "does_not_measure_model_quality",
+    "does_not_measure_real_latency_or_memory",
+    "does_not_compare_models_or_runtimes",
+    "does_not_interpret_task_wording",
+    "does_not_validate_semantic_intent_families",
+    "does_not_cache_or_reuse_model_responses",
+    "does_not_authorize_execution"
+  ],
+  "scenarios": {
+    "efficiency_profile": {
+      "advice_sha256": "5e78c2432e13442d55b919b8bed2b105c58e4f29adf4a8e95a71f488fbb46486",
+      "applied": false,
+      "authorizes_execution": false,
+      "candidate_rejections": {
+        "fast-small-cell": [],
+        "high-quality-cell": []
+      },
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "advisory_only",
+        "pareto_frontier_selected"
+      ],
+      "selected_cell_id": "fast-small-cell",
+      "status": "recommended"
+    },
+    "paraphrase_lineage": {
+      "first_advice_sha256": "5a245ba48ed6c7c752292273bb99b448f01a0d755d1d05908d45db5cabd6697b",
+      "first_exact_request_fingerprint": "f7f146e3e54d11296e09e94f5b3c4547a7a9d5611c8fe13930aef3e0e63305d0",
+      "response_cache_lookup_performed": false,
+      "response_reuse_authorized": false,
+      "second_advice_sha256": "5241e7cec20a011cefc77909b6ab66dbe6867743c87a69b5469736b5dbfa6f55",
+      "second_exact_request_fingerprint": "6a5853dce0bbccc21c22b5356d14026900c70e3882bd1f92e5945a4ef5c1a0bb",
+      "shared_caller_intent_family_sha256": "2df7cde29cefc0359144e0c1ad7ddd9f269190e0a53cb49246471d7a5e18ccec",
+      "shared_declared_demand_sha256": "62ba7e71f4385af5010e71eaef975bcd763da49423dc5c933d555945ffc17052"
+    },
+    "quality_profile": {
+      "advice_sha256": "0a68dbb54b2593a9d3cb8fb4baa306a73a6b35fa557efcf24371381ddfb6f552",
+      "applied": false,
+      "authorizes_execution": false,
+      "candidate_rejections": {
+        "fast-small-cell": [],
+        "high-quality-cell": []
+      },
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "advisory_only",
+        "pareto_frontier_selected"
+      ],
+      "selected_cell_id": "high-quality-cell",
+      "status": "recommended"
+    },
+    "resource_pressure": {
+      "advice_sha256": "a224c66e4515580e42c5f1b0d731f739996a97f50e576e2c7d5bf9c86830cf77",
+      "applied": false,
+      "authorizes_execution": false,
+      "candidate_rejections": {
+        "fast-small-cell": [
+          "host_memory_headroom_insufficient"
+        ],
+        "high-quality-cell": [
+          "host_memory_headroom_insufficient"
+        ]
+      },
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "advisory_only",
+        "no_eligible_cell"
+      ],
+      "selected_cell_id": null,
+      "status": "abstained"
+    },
+    "stale_snapshot": {
+      "advice_sha256": "903ac5005e5373b53c5b34c9168f7c00bd69c1b162562a6ab1abea8ae3b081b2",
+      "applied": false,
+      "authorizes_execution": false,
+      "candidate_rejections": {
+        "fast-small-cell": [
+          "snapshot_stale"
+        ],
+        "high-quality-cell": [
+          "snapshot_stale"
+        ]
+      },
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "advisory_only",
+        "snapshot_stale"
+      ],
+      "selected_cell_id": null,
+      "status": "abstained"
+    }
+  },
+  "schema_version": "1.0"
+}

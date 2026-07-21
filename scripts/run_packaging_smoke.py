@@ -119,6 +119,44 @@ def main() -> None:
         )
         if "Local MoE orchestrator" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose the expected help output.")
+        if "advisor-init" not in help_result.stdout:
+            raise SystemExit("mymoe console script did not expose advisor-init.")
+        version_result = subprocess.run(
+            [str(mymoe), "--version"],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        metadata_version = subprocess.run(
+            [
+                str(python),
+                "-c",
+                "from importlib.metadata import version; "
+                "print(version('local-moe-orchestrator'))",
+            ],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        if version_result.stdout.strip() != f"mymoe {metadata_version}":
+            raise SystemExit("Installed mymoe version does not match wheel metadata.")
+
+        default_probe_before = _installed_default_probe(
+            python,
+            runtime_dir,
+            environment=runtime_environment,
+        )
+
+        _run_installed_advisor_smoke(
+            mymoe,
+            mymoe_web,
+            temporary / "Advisor & Workspace",
+            environment=runtime_environment,
+        )
 
         browser_workspace = temporary / "Browser & Workspace"
         browser_init_result = subprocess.run(
@@ -178,6 +216,13 @@ def main() -> None:
             runtime_dir,
             environment=runtime_environment,
         )
+        default_probe_after = _installed_default_probe(
+            python,
+            runtime_dir,
+            environment=runtime_environment,
+        )
+        if default_probe_after != default_probe_before:
+            raise SystemExit("Installed packaged defaults changed during smoke tests.")
         if any(runtime_dir.iterdir()):
             raise SystemExit(
                 "Installed console scripts unexpectedly wrote into the empty runtime directory."
@@ -196,6 +241,42 @@ def main() -> None:
                 indent=2,
             )
         )
+
+
+def _installed_default_probe(
+    python: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> dict[str, object]:
+    probe = "; ".join(
+        (
+            "import hashlib,json",
+            "from pathlib import Path",
+            "from local_moe.app_config import load_app_config",
+            "from local_moe.package_defaults import packaged_default_path",
+            "names=('app.json','adaptive-cells.json','adaptive-evaluation-contract.json','moe.json','context-policy.json')",
+            "paths={name:packaged_default_path(name) for name in names}",
+            "app=load_app_config(paths['app.json'])",
+            "root=paths['app.json'].parent.resolve()",
+            "owned=(app.default_moe_config,app.runtime.context_policy_config,app.runtime.profile_dir,app.runtime.evaluation_dir,app.extensions.plugins_dir,app.extensions.skills_dir,app.extensions.tools_config,app.extensions.mcp_config,app.extensions.cron_config,app.advisor.catalog_path,app.advisor.evaluation_contract_path)",
+            "print(json.dumps({'work_dir':app.runtime.work_dir,'owned':all(Path(value).is_relative_to(root) for value in owned),'hashes':{name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in paths.items()}}))",
+        )
+    )
+    completed = subprocess.run(
+        [str(python), "-c", probe],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    payload = json.loads(completed.stdout)
+    if payload.get("work_dir") != "work/runtime" or payload.get("owned") is not True:
+        raise SystemExit(
+            "Installed packaged app did not keep writable state outside its defaults."
+        )
+    return payload
 
 
 def _run_installed_desktop_smoke(
@@ -292,6 +373,248 @@ def _run_installed_desktop_smoke(
         raise SystemExit(
             "Installed wheel did not materialize the packaged desktop workspace."
         )
+
+
+def _run_installed_advisor_smoke(
+    mymoe: Path,
+    mymoe_web: Path,
+    advisor_workspace: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    hostile_runtime = advisor_workspace.parent / "Hostile Advisor Runtime"
+    ambient_skill = hostile_runtime / "skills" / "ambient-secret"
+    ambient_skill.mkdir(parents=True)
+    (ambient_skill / "SKILL.md").write_text(
+        "---\nname: ambient-secret\ndescription: must not load\n---\n",
+        encoding="utf-8",
+    )
+    hostile_configs = hostile_runtime / "configs"
+    hostile_configs.mkdir()
+    (hostile_configs / "tools.json").write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "name": "ambient-tool",
+                        "description": "must not load",
+                        "risk_class": "compute_only",
+                        "side_effects": "none",
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    initialized = subprocess.run(
+        [str(mymoe), "advisor-init", "--out", str(advisor_workspace)],
+        cwd=hostile_runtime,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    if initialized.returncode != 0:
+        raise SystemExit(
+            "Installed advisor-init failed.\n"
+            f"stdout:\n{initialized.stdout}\nstderr:\n{initialized.stderr}"
+        )
+    payload = json.loads(initialized.stdout)
+    expected_files = {
+        "adaptive-cells.json",
+        "adaptive-evaluation-contract.json",
+        "app.json",
+        "context-policy.json",
+        "moe.json",
+    }
+    actual_files = {
+        path.name for path in advisor_workspace.iterdir() if path.is_file()
+    }
+    app = json.loads((advisor_workspace / "app.json").read_text(encoding="utf-8"))
+    next_commands = payload.get("next")
+    if not isinstance(next_commands, dict):
+        raise SystemExit("Installed advisor-init omitted its next-command contract.")
+    advisor_argv = next_commands.get("advisor_argv")
+    web_argv = next_commands.get("web_argv")
+    if (
+        payload.get("status") != "created"
+        or set(payload.get("files", [])) != expected_files
+        or actual_files != expected_files
+        or str(advisor_workspace) in initialized.stdout
+        or app.get("default_moe_config") != "./moe.json"
+        or app.get("advisor", {}).get("catalog_path") != "./adaptive-cells.json"
+        or app.get("advisor", {}).get("evaluation_contract_path")
+        != "./adaptive-evaluation-contract.json"
+        or app.get("runtime", {}).get("work_dir") != "./work/runtime"
+        or app.get("runtime", {}).get("profile_dir") != "./profiles"
+        or app.get("runtime", {}).get("evaluation_dir") != "./experiments"
+        or app.get("extensions", {}).get("skills_dir") != "./skills"
+        or app.get("extensions", {}).get("tools_config") != "./tools.json"
+        or next_commands.get("run_from") != "workspace"
+        or not isinstance(advisor_argv, list)
+        or advisor_argv[:2] != ["mymoe", "advisor"]
+        or not isinstance(web_argv, list)
+        or web_argv != ["mymoe-web", "--app-config", "./app.json"]
+    ):
+        raise SystemExit(
+            "Installed wheel did not materialize a self-contained Advisor workspace."
+        )
+
+    repeated = subprocess.run(
+        [str(mymoe), "advisor-init", "--out", str(advisor_workspace)],
+        cwd=hostile_runtime,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    if (
+        repeated.returncode != 2
+        or json.loads(repeated.stderr).get("error") != "advisor_init_failed"
+        or str(advisor_workspace) in repeated.stderr
+    ):
+        raise SystemExit("Installed advisor-init did not fail closed on repeat.")
+
+    exact_advisor_argv = [str(mymoe), *advisor_argv[1:]]
+    stdin_task = "private installed-wheel stdin task"
+    stdin_result = subprocess.run(
+        exact_advisor_argv,
+        cwd=advisor_workspace,
+        env=environment,
+        input=stdin_task,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    _assert_advisor_abstention(stdin_result.stdout, stdin_task)
+    _assert_task_not_persisted(advisor_workspace, stdin_task)
+
+    task_file = advisor_workspace / "task.txt"
+    task_text = "private installed-wheel file task"
+    task_file.write_text(task_text, encoding="utf-8")
+    file_argv = list(exact_advisor_argv)
+    try:
+        task_stdin_index = file_argv.index("--task-stdin")
+    except ValueError as exc:
+        raise SystemExit("Installed advisor command omitted --task-stdin.") from exc
+    file_argv[task_stdin_index : task_stdin_index + 1] = [
+        "--task-file",
+        str(task_file),
+    ]
+    try:
+        file_result = subprocess.run(
+            file_argv,
+            cwd=advisor_workspace,
+            env=environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        task_file.unlink()
+    _assert_advisor_abstention(file_result.stdout, task_text)
+    _assert_task_not_persisted(advisor_workspace, task_text)
+
+    _run_installed_advisor_web_smoke(
+        mymoe_web,
+        advisor_workspace,
+        web_argv,
+        environment=environment,
+    )
+    if (hostile_runtime / "work").exists():
+        raise SystemExit("Installed Advisor wrote runtime state into its hostile CWD.")
+
+
+def _assert_advisor_abstention(rendered: str, task_text: str) -> None:
+    payload = json.loads(rendered)
+    if (
+        payload.get("advice", {}).get("status") != "abstained"
+        or payload.get("display_state") == "recommended_now"
+        or payload.get("advice", {}).get("selected_cell_id") is not None
+        or task_text in rendered
+    ):
+        raise SystemExit("Installed zero-claim Advisor did not abstain safely.")
+
+
+def _assert_task_not_persisted(workspace: Path, task_text: str) -> None:
+    needle = task_text.encode("utf-8")
+    for path in workspace.rglob("*"):
+        if path.is_file() and needle in path.read_bytes():
+            raise SystemExit(
+                f"Installed Advisor persisted raw task text in {path.relative_to(workspace)}."
+            )
+
+
+def _run_installed_advisor_web_smoke(
+    executable: Path,
+    advisor_workspace: Path,
+    web_argv: list[str],
+    *,
+    environment: dict[str, str],
+) -> None:
+    port = _available_loopback_port()
+    process = subprocess.Popen(
+        [
+            str(executable),
+            *web_argv[1:],
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=advisor_workspace,
+        env={**environment, "PYTHONUNBUFFERED": "1"},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        _wait_for_web_ready(process, port)
+        with request.urlopen(
+            f"http://127.0.0.1:{port}/api/advisor/config",
+            timeout=5,
+        ) as response:
+            public = json.loads(response.read().decode("utf-8"))
+        with request.urlopen(
+            f"http://127.0.0.1:{port}/api/extensions",
+            timeout=5,
+        ) as response:
+            extensions = response.read().decode("utf-8")
+        task_text = "private installed-wheel browser task"
+        advisor_request = request.Request(
+            f"http://127.0.0.1:{port}/api/advisor",
+            data=json.dumps(
+                {
+                    "task": task_text,
+                    "profile": "balanced",
+                    "context_tokens": 4096,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(advisor_request, timeout=5) as response:
+            rendered = response.read().decode("utf-8")
+            presentation = json.loads(rendered)
+        if (
+            public.get("enabled") is not True
+            or "ambient-secret" in extensions
+            or "ambient-tool" in extensions
+            or "catalog_path" in json.dumps(public)
+            or "evaluation_contract_path" in json.dumps(public)
+            or presentation.get("display_state") == "recommended_now"
+            or presentation.get("receipt", {}).get("advice", {}).get("status")
+            != "abstained"
+            or task_text in rendered
+        ):
+            raise SystemExit("Installed Advisor web endpoint failed its safe smoke.")
+        _assert_task_not_persisted(advisor_workspace, task_text)
+    finally:
+        process.terminate()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=5)
 
 
 def _run_installed_web_smoke(

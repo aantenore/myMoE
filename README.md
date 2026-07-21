@@ -5,13 +5,81 @@ the built-in agent inspect one selected desktop window without screenshots.**
 
 In plain terms: myMoE helps you do AI-assisted coding on your own computer
 without paying for every request. Today it connects local models to a coding
-agent, tests whether one exact setup can complete a controlled coding task,
-lets its built-in agent exercise simple local web apps, and can read the
-semantic controls in one operator-selected desktop window. The desktop cell is
-read-only: it does not click, type, capture screenshots, or replace a complete
-frontier coding agent. Its current runtime is implemented on POSIX and has been
+agent, explains which fully evidenced local setup is eligible for a task,
+tests whether one exact setup can complete a controlled coding task, lets its
+built-in agent exercise simple local web apps, and can read the semantic
+controls in one operator-selected desktop window. The desktop cell is read-only:
+it does not click, type, capture screenshots, or replace a complete frontier
+coding agent. Its current runtime is implemented on POSIX and has been
 live-qualified on macOS; Windows currently receives provider-contract checks
 only and the desktop runtime fails closed there.
+
+## Which local setup should handle this task?
+
+The **Adaptive Cell Advisor** answers that question before a model is run. A
+cell is one exact model + quantization + runtime + harness + tool surface +
+hardware placement. The advisor compares only cells configured in a local
+catalog, rejects any cell whose identity, capabilities, measurement, or current
+memory headroom is missing or incompatible, and explains why. It makes no
+universal ranking claim; it reports the **best eligible configured cell with
+current verified evidence**, or abstains.
+
+For example, imagine that a laptop has a small fast cell and a larger general
+cell configured. For a short local summary, the advisor can prefer the smaller
+cell only if a trusted local producer has proved that the exact model, runtime,
+harness, evaluation contract, workload, and current machine all match. If that
+proof is missing after the live resource gates pass, the honest result is `Not
+enough verified evidence`. If the machine is already outside a declared
+resource boundary, the advisor stops earlier with `Not available now`. The
+deliberately unqualified checked-in example therefore abstains instead of
+inventing a recommendation:
+
+```bash
+uv run mymoe advisor \
+  --catalog configs/adaptive-cells.example.json \
+  --task "Summarize this local design note." \
+  --workload local-summary \
+  --capability summarization \
+  --risk-class compute_only \
+  --context-tokens 4096 \
+  --evaluation-contract configs/adaptive-evaluation-contract.example.json \
+  --goal balanced
+```
+
+This command is offline and advisory-only. It does not download, start, call,
+or stop a model; modify runtime configuration; or authorize execution. The
+task wording is fingerprinted, not interpreted: workload, capabilities, tool
+surfaces, risk class, context ceiling, and goal are explicit caller or policy
+declarations.
+
+Installed from a wheel? Materialize the complete zero-claim starter and launch
+the included mini-app:
+
+```bash
+mymoe advisor-init --out ./.mymoe-advisor
+mymoe-web --app-config ./.mymoe-advisor/app.json
+```
+
+Open `http://127.0.0.1:8089`, enter a task, and the **Find the right local
+setup** card shows one of three honest states: `Recommended now`, `Not available
+now`, or `Not enough evidence`. The starter cannot recommend a cell until a
+trusted local producer supplies applicable evidence; current resource pressure
+can make it report `Not available now` before that evidence check. The UI can
+download the complete metadata receipt in the browser; it does not persist the
+task on the server or turn the receipt into execution authority.
+
+Run the synthetic contract benchmark to see deterministic profile selection,
+stale/resource-pressure abstention, and distinct paraphrase lineage without a
+model call:
+
+```bash
+uv run python experiments/benchmark_adaptive_cell_advisor.py
+```
+
+See the
+[Adaptive Cell Advisor guide](docs/adaptive-cell-advisor.md) for passports,
+evidence, profiles, reason codes, platform limits, the mini-app/API contract,
+market positioning, and full JSON receipts.
 
 ## Local coding without per-token model fees
 
@@ -196,6 +264,7 @@ cannot perform other coding tasks.
 
 | Feature | Real-world benefit |
 | --- | --- |
+| Adaptive Cell Advisor | See the best eligible configured cell with current verified evidence—or a precise abstention—before spending time or memory loading a model. The v1 command is offline, read-only, and non-authorizing. |
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
 | Local Browser Capability Cell | Let a local model inspect and exercise a local web app through four approval-gated tools, while normal external browser HTTP(S) traffic and raw MCP authority stay blocked. |

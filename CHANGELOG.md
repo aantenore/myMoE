@@ -4,6 +4,92 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `mymoe advisor`, an offline, read-only Adaptive Cell Advisor that evaluates a
+  task demand against live local resources and exact configured cell passports,
+  then recommends the best eligible configured cell with current verified
+  evidence or abstains with machine-readable reason codes.
+- Versioned catalog and passport contracts that keep cell declarations,
+  observed component identities, resource estimates, and workload-specific
+  measurements separate and content-addressed.
+- Deterministic hard eligibility filters followed by a profile-weighted Pareto
+  selection across verified quality, p95 latency, and peak memory evidence.
+- Metadata-only human and JSON receipts binding the exact task fingerprint,
+  optional caller-supplied intent family, workload demand, evaluation contract,
+  catalog, live resource snapshot, candidate assessments, and final advice.
+- `--task-file` and `--task-stdin` alternatives to command-line task text, plus
+  a full content-addressed receipt envelope and atomic no-clobber `--out`
+  publication.
+- A vendor-neutral, deliberately unqualified example catalog that demonstrates
+  safe abstention instead of presenting invented model or benchmark evidence.
+- `mymoe advisor-init`, which materializes a self-contained zero-claim starter
+  without overwriting existing paths, and an installed **Find the right local
+  setup** mini-app launched with `mymoe-web --app-config <dir>/app.json`.
+- A strict, bounded, no-store `GET /api/advisor/config` and `POST /api/advisor`
+  boundary that keeps workload, capabilities, tool surfaces, and risk under
+  local policy while returning three non-technical states plus the complete
+  technical receipt.
+- A deterministic synthetic contract benchmark, integrated into the canonical
+  CI plan, covering profile-dependent valid selection, stale/resource-pressure
+  abstention, and separate exact lineage for paraphrases with a shared
+  caller-declared intent family. It makes no empirical model-quality,
+  performance, or semantic-normalization claim.
+
+### Security
+
+- The advisor makes zero model calls, uses no network, and does not download,
+  start, stop, or reconfigure a model. Every v1 receipt is non-applying and
+  non-authorizing.
+- Catalog, evaluation-contract, and referenced evidence inputs are size-bounded;
+  referenced evidence must be a regular non-symlink file below the catalog root
+  and must match its declared SHA-256 digest.
+- Catalog and app configuration JSON reject duplicate keys at every depth; app
+  configuration reads are bounded and use the same no-follow regular-file
+  boundary.
+- The loopback control plane rejects non-loopback clients, malformed or
+  wrong-port Host headers, and browser origins that do not exactly match the
+  request authority on every supported HTTP method, preventing DNS-rebinding
+  and cross-port local-origin access to Advisor, chat, memory, and operational
+  endpoints. The separately authenticated `/v1/*` model gateway preserves its
+  documented loopback-origin policy for local editor and web clients. Generic
+  control-plane JSON is now bounded, depth-limited, and duplicate-key safe as
+  well.
+- Receipt publication pins its destination directory, uses directory-relative
+  no-replace operations on POSIX, and cannot redirect cleanup through a swapped
+  parent path. Read-only host probes discard output from failed processes.
+- The macOS coding canary now selects its read-denial probe from any explicit
+  sandbox-denied root, so a checkout outside the user's home remains
+  qualifiable without weakening the host-file boundary.
+- Advisor task files use the same bounded non-link loader. Receipt publication
+  requires an existing real parent, rejects input aliases and existing targets,
+  and forces mode `0600` on POSIX. Windows inherits the destination directory
+  ACL; no owner-only DACL is claimed.
+- The mini-app accepts only strict fixed-length UTF-8 JSON with allowlisted
+  fields, returns `Cache-Control: no-store`, does not persist task or receipt,
+  and cannot widen the locally configured workload or risk policy.
+- Unknown, stale, future-dated, mismatched, insufficient, or inapplicable
+  identity, evaluation, platform, and resource evidence fails closed before
+  ranking.
+
+### Known limitations
+
+- Windows swap use is deliberately unknown and therefore causes abstention.
+  Linux and Windows GPU identity and accelerator-memory discovery are not
+  implemented, so accelerator cells abstain there when that evidence is needed.
+- Source path, byte, and digest verification does not authenticate who produced
+  the evidence or prove that its claims are true; operators must trust the local
+  evidence producer.
+- A live resource snapshot can become stale immediately after collection. The
+  advice does not reserve memory and cannot authorize a later execution.
+- v1 does not implement ACP delivery, desktop or browser actions, model
+  concurrency or lifecycle changes, response caching, or an LLM-based semantic
+  intent normalizer.
+- Task wording is fingerprinted but not interpreted. Workload, capabilities,
+  tool surfaces, risk class, and goal are explicit caller or local-policy
+  declarations; a matching intent-family digest never authorizes response
+  reuse.
+
 ## [0.8.0-alpha.1] - 2026-07-21
 
 ### Added

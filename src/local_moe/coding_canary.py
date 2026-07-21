@@ -2105,35 +2105,62 @@ def _select_forbidden_probe_file(
     home: Path,
     config_path: str | Path,
     cline_root: Path,
+    canary_root: Path,
 ) -> Path:
     candidates = (
         Path(config_path).expanduser(),
         Path(__file__),
         Path.cwd() / "README.md",
+        home / ".zshrc",
+        home / ".profile",
+        home / ".bash_profile",
+        home / ".gitconfig",
+        home / "Library" / "Preferences" / ".GlobalPreferences.plist",
+    )
+    denied_roots = tuple(
+        root.resolve(strict=True)
+        for root in (
+            home,
+            Path("/Volumes"),
+            Path("/Network"),
+            Path("/private/tmp"),
+            Path("/private/var/folders"),
+        )
+        if root.exists()
+    )
+    allowed_roots = (
+        cline_root.resolve(strict=True),
+        canary_root.resolve(strict=True),
     )
     for candidate in candidates:
         try:
+            before = candidate.lstat()
+            if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+                continue
             resolved = candidate.resolve(strict=True)
-            resolved.relative_to(home)
-            resolved.relative_to(cline_root)
-        except ValueError:
-            try:
-                resolved.relative_to(home)
-            except (OSError, ValueError):
+            after = resolved.lstat()
+            if (
+                stat.S_ISLNK(after.st_mode)
+                or not stat.S_ISREG(after.st_mode)
+                or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                or any(_path_is_within(resolved, root) for root in allowed_roots)
+                or not any(_path_is_within(resolved, root) for root in denied_roots)
+            ):
                 continue
         except OSError:
             continue
-        try:
-            metadata = resolved.lstat()
-            resolved.relative_to(cline_root)
-        except ValueError:
-            if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
-                return resolved
-        except OSError:
-            continue
+        return resolved
     raise CodingCanaryOperationalError(
         "No safe host file was available to exercise the sandbox deny rule."
     )
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _same_executable(left: ExecutableIdentity, right: ExecutableIdentity) -> bool:
@@ -2471,6 +2498,7 @@ def run_coding_canary(
             home=host_home,
             config_path=gateway_config,
             cline_root=cline_root,
+            canary_root=root,
         )
         token = secrets.token_urlsafe(32)
         gateway_before = _capture_gateway_models(

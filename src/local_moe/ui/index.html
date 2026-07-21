@@ -358,6 +358,152 @@
         gap: 0.75rem;
       }
 
+      .advisor-card {
+        display: grid;
+        gap: 1rem;
+        padding: 1rem;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+
+      .advisor-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .advisor-head h2,
+      .advisor-result h3 {
+        margin: 0;
+        line-height: 1.25;
+      }
+
+      .advisor-head h2 {
+        font-size: 1.05rem;
+      }
+
+      .advisor-head p,
+      .advisor-result p {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.5;
+      }
+
+      .advisor-read-only {
+        flex: 0 0 auto;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .advisor-form {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .advisor-field {
+        display: grid;
+        gap: 0.35rem;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .advisor-task,
+      .advisor-select,
+      .advisor-number {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        color: var(--text);
+        outline: none;
+      }
+
+      .advisor-task {
+        min-height: 5rem;
+        padding: 0.7rem;
+        resize: vertical;
+        line-height: 1.45;
+      }
+
+      .advisor-select,
+      .advisor-number {
+        min-height: 2.4rem;
+        padding: 0 0.7rem;
+      }
+
+      .advisor-task:focus,
+      .advisor-select:focus,
+      .advisor-number:focus {
+        border-color: var(--border-strong);
+      }
+
+      .advisor-controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(8rem, 0.7fr) auto;
+        gap: 0.65rem;
+        align-items: end;
+      }
+
+      .advisor-submit {
+        min-height: 2.4rem;
+        padding: 0 1rem;
+        background: var(--accent);
+        color: var(--accent-text);
+        border-color: transparent;
+        font-weight: 700;
+      }
+
+      .advisor-privacy {
+        margin: 0;
+        color: var(--subtle);
+        font-size: 0.76rem;
+        line-height: 1.45;
+      }
+
+      .advisor-result {
+        display: grid;
+        gap: 0.65rem;
+        padding-top: 0.9rem;
+        border-top: 1px solid var(--border);
+      }
+
+      .advisor-state {
+        width: fit-content;
+        color: var(--muted);
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+
+      .advisor-state.recommended {
+        color: var(--success);
+      }
+
+      .advisor-state.unavailable {
+        color: var(--warning);
+      }
+
+      .advisor-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .advisor-badge {
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--muted);
+        background: var(--surface-strong);
+        font-size: 0.72rem;
+      }
+
+      .advisor-download {
+        width: fit-content;
+      }
+
       .coding-fabric-link {
         display: flex;
         align-items: center;
@@ -945,6 +1091,18 @@
           grid-template-columns: 1fr;
         }
 
+        .advisor-head {
+          display: grid;
+        }
+
+        .advisor-controls {
+          grid-template-columns: 1fr;
+        }
+
+        .advisor-submit {
+          width: 100%;
+        }
+
         .kv-row {
           grid-template-columns: 1fr;
           gap: 0.15rem;
@@ -1027,6 +1185,76 @@
                 </span>
                 <span class="coding-fabric-action">Check local models &#8599;</span>
               </a>
+              <section
+                class="advisor-card"
+                id="advisor-card"
+                aria-labelledby="advisor-title"
+                hidden
+              >
+                <div class="advisor-head">
+                  <div>
+                    <h2 id="advisor-title">Find the right local setup</h2>
+                    <p>
+                      Check whether a verified local cell fits this task and the
+                      resources available right now.
+                    </p>
+                  </div>
+                  <span class="advisor-read-only">Read-only advice</span>
+                </div>
+                <form class="advisor-form" id="advisor-form">
+                  <label class="advisor-field" for="advisor-task">
+                    <span>Task</span>
+                    <textarea
+                      class="advisor-task"
+                      id="advisor-task"
+                      rows="3"
+                      placeholder="Describe what you need to do locally..."
+                      autocomplete="off"
+                      spellcheck="true"
+                      required
+                    ></textarea>
+                  </label>
+                  <div class="advisor-controls">
+                    <label class="advisor-field" for="advisor-profile">
+                      <span>Efficiency profile</span>
+                      <select class="advisor-select" id="advisor-profile"></select>
+                    </label>
+                    <label class="advisor-field" for="advisor-context">
+                      <span>Context tokens</span>
+                      <input
+                        class="advisor-number"
+                        id="advisor-context"
+                        type="number"
+                        min="1"
+                        step="1"
+                      />
+                    </label>
+                    <button class="advisor-submit" id="advisor-submit" type="submit">
+                      Find setup
+                    </button>
+                  </div>
+                  <p class="advisor-privacy">
+                    Your task is fingerprinted only and is not stored. The workload is
+                    configured by policy, not inferred from your wording.
+                    <span id="advisor-workload"></span>
+                  </p>
+                </form>
+                <div class="advisor-result" id="advisor-result" aria-live="polite" hidden>
+                  <span class="advisor-state" id="advisor-state"></span>
+                  <div>
+                    <h3 id="advisor-result-title"></h3>
+                    <p id="advisor-result-summary"></p>
+                  </div>
+                  <div class="advisor-badges" id="advisor-badges"></div>
+                  <button
+                    class="ghost-button advisor-download"
+                    id="advisor-download"
+                    type="button"
+                  >
+                    Download technical receipt
+                  </button>
+                </div>
+              </section>
               <div class="suggestions" id="suggestions"></div>
             </section>
             <div id="messages"></div>
@@ -1513,6 +1741,9 @@
         sessions: [],
         activeSessionId: null,
         chatSearchTimer: null,
+        advisorConfig: null,
+        advisorReceipt: null,
+        advisorBusy: false,
       };
 
       const starters = [
@@ -1542,6 +1773,12 @@
         },
       ];
 
+      const advisorStateLabels = {
+        recommended_now: "Recommended now",
+        not_available_now: "Not available now",
+        not_enough_evidence: "Not enough evidence",
+      };
+
       const el = (id) => document.getElementById(id);
 
       async function api(path, options = {}) {
@@ -1562,6 +1799,7 @@
         renderStarters();
         bindEvents();
         loadMeta();
+        loadAdvisorConfig();
         loadChats(!new URLSearchParams(window.location.search).has("new_chat"));
       }
 
@@ -1638,6 +1876,8 @@
         el("remove-extension-entry").addEventListener("click", () => configureExtensionEntry("remove"));
         el("create-plugin").addEventListener("click", createPlugin);
         el("tool-select").addEventListener("change", setDefaultToolInput);
+        el("advisor-form").addEventListener("submit", runAdaptiveAdvisor);
+        el("advisor-download").addEventListener("click", downloadAdvisorReceipt);
         el("chat-search").addEventListener("input", () => {
           window.clearTimeout(state.chatSearchTimer);
           state.chatSearchTimer = window.setTimeout(() => loadChats(false), 160);
@@ -1714,6 +1954,152 @@
             error: true,
           });
         }
+      }
+
+      async function loadAdvisorConfig() {
+        try {
+          const response = await fetch("/api/advisor/config", {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+          if (response.status === 404) return;
+          const config = await response.json();
+          if (!response.ok || !config.enabled) return;
+          if (
+            !Array.isArray(config.allowed_profiles) ||
+            !config.allowed_profiles.length ||
+            !config.workload ||
+            !config.limits
+          ) {
+            return;
+          }
+          state.advisorConfig = config;
+          const profile = el("advisor-profile");
+          profile.replaceChildren();
+          config.allowed_profiles.forEach((profileId) => {
+            const option = document.createElement("option");
+            option.value = String(profileId);
+            option.textContent = String(profileId);
+            option.selected = profileId === config.default_profile;
+            profile.appendChild(option);
+          });
+          const context = el("advisor-context");
+          context.max = String(config.workload.context_tokens);
+          context.value = String(config.workload.context_tokens);
+          el("advisor-task").maxLength = Number(config.limits.max_task_chars);
+          const capabilities = (config.workload.capabilities || []).join(", ");
+          const toolSurfaces = (config.workload.tool_surfaces || []).join(", ") || "no tools";
+          el("advisor-workload").textContent = ` Configured: ${config.workload.id} · ${capabilities} · ${toolSurfaces}.`;
+          el("advisor-card").hidden = false;
+        } catch (_error) {
+          el("advisor-card").hidden = true;
+        }
+      }
+
+      async function runAdaptiveAdvisor(event) {
+        event.preventDefault();
+        if (!state.advisorConfig || state.advisorBusy) return;
+        const taskInput = el("advisor-task");
+        let task = taskInput.value;
+        if (!task.trim()) {
+          taskInput.focus();
+          return;
+        }
+
+        taskInput.value = "";
+        state.advisorBusy = true;
+        state.advisorReceipt = null;
+        el("advisor-submit").disabled = true;
+        el("advisor-download").hidden = true;
+        el("advisor-result").hidden = true;
+        const requestPayload = {
+          task,
+          profile: el("advisor-profile").value,
+          context_tokens: Number(el("advisor-context").value),
+        };
+        let requestBody = JSON.stringify(requestPayload);
+        requestPayload.task = "";
+        task = "";
+        try {
+          const response = await fetch("/api/advisor", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json; charset=utf-8",
+            },
+            body: requestBody,
+            cache: "no-store",
+          });
+          requestBody = "";
+          const presentation = await response.json();
+          if (!response.ok) {
+            throw new Error(presentation.message || "Adaptive Advisor is unavailable.");
+          }
+          renderAdvisorPresentation(presentation);
+        } catch (error) {
+          requestBody = "";
+          renderAdvisorError(error.message || "Adaptive Advisor is unavailable.");
+        } finally {
+          state.advisorBusy = false;
+          el("advisor-submit").disabled = false;
+        }
+      }
+
+      function renderAdvisorPresentation(presentation) {
+        const label = advisorStateLabels[presentation.display_state];
+        if (!label) {
+          renderAdvisorError("Adaptive Advisor returned an unsupported state.");
+          return;
+        }
+        const stateLabel = el("advisor-state");
+        stateLabel.textContent = label;
+        stateLabel.className = `advisor-state ${
+          presentation.display_state === "recommended_now"
+            ? "recommended"
+            : presentation.display_state === "not_available_now"
+              ? "unavailable"
+              : "evidence"
+        }`;
+        el("advisor-result-title").textContent = presentation.title;
+        el("advisor-result-summary").textContent = presentation.summary;
+        const badges = el("advisor-badges");
+        badges.replaceChildren();
+        (presentation.badges || []).slice(0, 3).forEach((value) => {
+          const badge = document.createElement("span");
+          badge.className = "advisor-badge";
+          badge.textContent = String(value);
+          badges.appendChild(badge);
+        });
+        state.advisorReceipt = presentation.receipt || null;
+        el("advisor-download").hidden = !state.advisorReceipt;
+        el("advisor-result").hidden = false;
+      }
+
+      function renderAdvisorError(message) {
+        state.advisorReceipt = null;
+        const stateLabel = el("advisor-state");
+        stateLabel.textContent = "Advisor unavailable";
+        stateLabel.className = "advisor-state unavailable";
+        el("advisor-result-title").textContent = "No receipt created";
+        el("advisor-result-summary").textContent = message;
+        el("advisor-badges").replaceChildren();
+        el("advisor-download").hidden = true;
+        el("advisor-result").hidden = false;
+      }
+
+      function downloadAdvisorReceipt() {
+        if (!state.advisorReceipt) return;
+        const serialized = JSON.stringify(state.advisorReceipt, null, 2);
+        const blob = new Blob([serialized], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const digest = String(state.advisorReceipt.digest || "receipt").slice(0, 12);
+        link.href = url;
+        link.download = `mymoe-advisor-${digest}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
       }
 
       async function loadChats(autoSelect = false) {

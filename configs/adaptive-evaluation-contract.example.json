@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "local-summary-zero-claim",
+  "workload": {
+    "id": "local-summary",
+    "capabilities": ["summarization"],
+    "tool_surfaces": [],
+    "risk_class": "compute_only",
+    "context_tokens": 4096
+  },
+  "qualification": {
+    "status": "not_qualified",
+    "claims": [],
+    "minimum_samples": 5
+  }
+}

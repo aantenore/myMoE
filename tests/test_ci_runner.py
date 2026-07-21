@@ -39,6 +39,7 @@ class CiRunnerTests(unittest.TestCase):
                 "live routing holdout",
                 "verified routing shadow eval",
                 "desktop semantic benchmark",
+                "adaptive cell advisor contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -87,6 +88,20 @@ class CiRunnerTests(unittest.TestCase):
                 "experiments/benchmark_desktop_semantic.py",
                 "--out",
                 "outputs/desktop-semantic-benchmark.json",
+            ],
+        )
+        adaptive_benchmark = next(
+            step
+            for step in steps
+            if step.name == "adaptive cell advisor contract benchmark"
+        )
+        self.assertEqual(
+            adaptive_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_adaptive_cell_advisor.py",
+                "--out",
+                "outputs/adaptive-cell-advisor-contract.json",
             ],
         )
 

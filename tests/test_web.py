@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http.client import HTTPConnection
 from http import HTTPStatus
 from pathlib import Path
 import tempfile
@@ -8,6 +9,7 @@ import threading
 from urllib.error import HTTPError
 from urllib import request
 import unittest
+from unittest import mock
 
 from local_moe.config import load_config, runtime_config_sha256
 from local_moe.web import _download_disposition, build_server
@@ -17,6 +19,439 @@ HTTP_TEST_TIMEOUT_SECONDS = 15
 
 
 class WebTests(unittest.TestCase):
+    def test_advisor_api_is_sanitized_bounded_and_metadata_only(self) -> None:
+        secret_task = "SENTINEL raw user task that must never be returned or stored"
+        presentation = {
+            "display_state": "not_enough_evidence",
+            "title": "Not enough evidence",
+            "summary": "Missing evidence prevents a safe recommendation.",
+            "badges": ["balanced", "2 cells checked", "read-only"],
+            "receipt": {
+                "digest": "a" * 64,
+                "request": {"exact_request_fingerprint": "b" * 64},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            raw_config = json.loads(app_config.read_text(encoding="utf-8"))
+            raw_config["advisor"]["catalog_path"] = str(root / "catalog.json")
+            raw_config["advisor"]["evaluation_contract_path"] = str(
+                root / "evaluation.json"
+            )
+            raw_config["advisor"]["max_request_bytes"] = 512
+            raw_config["advisor"]["max_task_chars"] = 64
+            app_config.write_text(json.dumps(raw_config), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with request.urlopen(
+                    base_url + "/api/advisor/config",
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                ) as response:
+                    public_config = json.loads(response.read().decode("utf-8"))
+                    config_cache_control = response.headers.get("Cache-Control")
+
+                with (
+                    mock.patch(
+                        "local_moe.adaptive_advisor_service.evaluate_advisor",
+                        return_value=object(),
+                    ) as evaluate,
+                    mock.patch(
+                        "local_moe.adaptive_advisor_service.advisor_presentation_payload",
+                        return_value=presentation,
+                    ),
+                ):
+                    advisor_request = request.Request(
+                        base_url + "/api/advisor",
+                        data=json.dumps(
+                            {
+                                "task": secret_task,
+                                "profile": "balanced",
+                                "context_tokens": 2048,
+                            }
+                        ).encode("utf-8"),
+                        headers={"Content-Type": "application/json; charset=utf-8"},
+                        method="POST",
+                    )
+                    with request.urlopen(
+                        advisor_request,
+                        timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                    ) as response:
+                        response_text = response.read().decode("utf-8")
+                        response_payload = json.loads(response_text)
+                        advisor_cache_control = response.headers.get("Cache-Control")
+
+                    audit = _get_json(base_url + "/api/audit")
+                    runs = _get_json(base_url + "/api/runs")
+                    chats = _get_json(base_url + "/api/chats")
+                    memory = _get_json(base_url + "/api/memory")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertTrue(public_config["enabled"])
+        self.assertEqual(public_config["workload"]["id"], "local-summary")
+        self.assertEqual(public_config["workload"]["capabilities"], ["summarization"])
+        self.assertEqual(public_config["workload"]["tool_surfaces"], [])
+        self.assertNotIn("catalog_path", json.dumps(public_config))
+        self.assertNotIn("evaluation_contract_path", json.dumps(public_config))
+        self.assertEqual(config_cache_control, "no-store")
+        self.assertEqual(advisor_cache_control, "no-store")
+        self.assertEqual(response_payload["display_state"], "not_enough_evidence")
+        self.assertNotIn(secret_task, response_text)
+        self.assertEqual(evaluate.call_count, 1)
+        called = evaluate.call_args.kwargs
+        self.assertEqual(called["task_text"], secret_task)
+        self.assertEqual(called["workload_id"], "local-summary")
+        self.assertEqual(called["required_capabilities"], ("summarization",))
+        self.assertEqual(called["required_tool_surfaces"], ())
+        self.assertEqual(called["risk_class"], "compute_only")
+        self.assertEqual(called["context_tokens"], 2048)
+        self.assertEqual(audit["count"], 0)
+        self.assertEqual(runs["count"], 0)
+        self.assertEqual(chats["count"], 0)
+        self.assertEqual(memory["count"], 0)
+
+    def test_advisor_api_rejects_ambiguous_or_oversize_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            raw_config = json.loads(app_config.read_text(encoding="utf-8"))
+            raw_config["advisor"]["max_request_bytes"] = 256
+            raw_config["advisor"]["max_task_chars"] = 20
+            app_config.write_text(json.dumps(raw_config), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                bad_requests = (
+                    ({"task": "ok", "workload_id": "body-controlled"}, 400),
+                    ({"task": "ok", "profile": "unknown"}, 400),
+                    ({"task": "ok", "context_tokens": True}, 400),
+                    ({"task": "ok", "context_tokens": 4097}, 400),
+                    ({"task": " "}, 400),
+                    ({"task": "x" * 21}, 413),
+                    ({"task": "x", "padding": "y" * 300}, 413),
+                )
+                statuses = []
+                for payload, expected in bad_requests:
+                    with self.subTest(payload=payload):
+                        with self.assertRaises(HTTPError) as raised:
+                            _post_json(base_url + "/api/advisor", payload)
+                        statuses.append((raised.exception.code, expected))
+
+                invalid_media = request.Request(
+                    base_url + "/api/advisor",
+                    data=b'{"task":"ok"}',
+                    headers={"Content-Type": "text/plain"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as media_raised:
+                    request.urlopen(invalid_media, timeout=HTTP_TEST_TIMEOUT_SECONDS)
+
+                connection = HTTPConnection(
+                    "127.0.0.1",
+                    server.server_address[1],
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                )
+                connection.putrequest("POST", "/api/advisor")
+                connection.putheader("Content-Type", "application/json")
+                connection.endheaders()
+                missing_length = connection.getresponse()
+                missing_length_status = missing_length.status
+                missing_length.read()
+                connection.close()
+
+                connection = HTTPConnection(
+                    "127.0.0.1",
+                    server.server_address[1],
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                )
+                connection.putrequest("POST", "/api/advisor")
+                connection.putheader("Content-Type", "application/json")
+                connection.putheader("Content-Length", "9" * 100)
+                connection.endheaders()
+                oversized_length = connection.getresponse()
+                oversized_length_status = oversized_length.status
+                oversized_length.read()
+                connection.close()
+
+                connection = HTTPConnection(
+                    "127.0.0.1",
+                    server.server_address[1],
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                )
+                connection.putrequest("POST", "/api/advisor")
+                connection.putheader("Content-Type", "application/json")
+                connection.putheader("Content-Length", "13")
+                connection.putheader("Transfer-Encoding", "chunked")
+                connection.endheaders(b'{"task":"ok"}')
+                transfer_encoded = connection.getresponse()
+                transfer_encoded_status = transfer_encoded.status
+                transfer_encoded.read()
+                connection.close()
+
+                duplicate_body = b'{"task":"first","task":"second"}'
+                duplicate_request = request.Request(
+                    base_url + "/api/advisor",
+                    data=duplicate_body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as duplicate_raised:
+                    request.urlopen(
+                        duplicate_request,
+                        timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                    )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertTrue(all(actual == expected for actual, expected in statuses))
+        self.assertEqual(media_raised.exception.code, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        self.assertEqual(missing_length_status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(oversized_length_status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(transfer_encoded_status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(duplicate_raised.exception.code, HTTPStatus.BAD_REQUEST)
+
+    def test_advisor_rejects_deep_json_and_non_loopback_host_or_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_config = _write_temp_app_config(Path(tmp))
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = server.server_address[1]
+                base_url = f"http://127.0.0.1:{port}"
+                deep_payload = (
+                    b'{"task":"ok","padding":'
+                    + b"[" * 128
+                    + b"0"
+                    + b"]" * 128
+                    + b"}"
+                )
+                deep_request = request.Request(
+                    base_url + "/api/advisor",
+                    data=deep_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as deep_raised:
+                    request.urlopen(deep_request, timeout=HTTP_TEST_TIMEOUT_SECONDS)
+
+                statuses = []
+                for method, path, host, origin in (
+                    ("GET", "/api/advisor/config", "attacker.example", None),
+                    ("GET", "/api/advisor/config", "127.0.0.1/path", None),
+                    ("GET", "/api/chats", "attacker.example", None),
+                    (
+                        "GET",
+                        "/api/advisor/config",
+                        f"127.0.0.1:{port}",
+                        "http://attacker.example",
+                    ),
+                    (
+                        "POST",
+                        "/api/advisor",
+                        f"127.0.0.1:{port}",
+                        "http://attacker.example",
+                    ),
+                    (
+                        "GET",
+                        "/api/advisor/config",
+                        f"127.0.0.1:{port}",
+                        f"http://127.0.0.1:{port + 1}",
+                    ),
+                    (
+                        "GET",
+                        "/api/advisor/config",
+                        f"127.0.0.1:{port}",
+                        f"http://127.0.0.1:{port}/unexpected-path",
+                    ),
+                ):
+                    connection = HTTPConnection(
+                        "127.0.0.1",
+                        port,
+                        timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                    )
+                    connection.putrequest(method, path, skip_host=True)
+                    connection.putheader("Host", host)
+                    if origin is not None:
+                        connection.putheader("Origin", origin)
+                    if method == "POST":
+                        body = b'{"task":"ok"}'
+                        connection.putheader("Content-Type", "application/json")
+                        connection.putheader("Content-Length", str(len(body)))
+                        connection.endheaders(body)
+                    else:
+                        connection.endheaders()
+                    response = connection.getresponse()
+                    statuses.append(response.status)
+                    response.read()
+                    connection.close()
+
+                same_origin = HTTPConnection(
+                    "127.0.0.1",
+                    port,
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                )
+                same_origin.putrequest(
+                    "GET",
+                    "/api/advisor/config",
+                    skip_host=True,
+                )
+                same_origin.putheader("Host", f"127.0.0.1:{port}")
+                same_origin.putheader("Origin", f"http://127.0.0.1:{port}")
+                same_origin.endheaders()
+                same_origin_response = same_origin.getresponse()
+                same_origin_status = same_origin_response.status
+                same_origin_response.read()
+                same_origin.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(deep_raised.exception.code, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(statuses, [HTTPStatus.FORBIDDEN] * 7)
+        self.assertEqual(same_origin_status, HTTPStatus.OK)
+
+    def test_generic_control_plane_json_is_bounded_strict_and_shallow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_config = _write_temp_app_config(Path(tmp))
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = server.server_address[1]
+                base_url = f"http://127.0.0.1:{port}"
+                invalid_bodies = (
+                    b'{"title":"first","title":"second"}',
+                    b'{"title":"safe","padding":'
+                    + b"[" * 64
+                    + b"0"
+                    + b"]" * 64
+                    + b"}",
+                )
+                invalid_statuses = []
+                for body in invalid_bodies:
+                    invalid = request.Request(
+                        base_url + "/api/chats",
+                        data=body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with self.assertRaises(HTTPError) as raised:
+                        request.urlopen(invalid, timeout=HTTP_TEST_TIMEOUT_SECONDS)
+                    invalid_statuses.append(raised.exception.code)
+
+                oversized = HTTPConnection(
+                    "127.0.0.1",
+                    port,
+                    timeout=HTTP_TEST_TIMEOUT_SECONDS,
+                )
+                oversized.putrequest("POST", "/api/chats")
+                oversized.putheader("Content-Type", "application/json")
+                oversized.putheader("Content-Length", str(33 * 1024 * 1024))
+                oversized.endheaders()
+                oversized_response = oversized.getresponse()
+                oversized_status = oversized_response.status
+                oversized_response.read()
+                oversized.close()
+
+                valid = _post_json(base_url + "/api/chats", {"title": "safe"})
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(invalid_statuses, [HTTPStatus.BAD_REQUEST] * 2)
+        self.assertEqual(oversized_status, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(valid["title"], "safe")
+
+    def test_disabled_or_failing_advisor_is_fail_closed_without_details(self) -> None:
+        secret_task = "DO-NOT-ECHO-FAILURE-TASK"
+        secret_path = "/private/sensitive/catalog.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_config = _write_temp_app_config(root)
+            raw_config = json.loads(app_config.read_text(encoding="utf-8"))
+            raw_config["advisor"]["enabled"] = False
+            app_config.write_text(json.dumps(raw_config), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(HTTPError) as get_raised:
+                    _get_json(base_url + "/api/advisor/config")
+                with self.assertRaises(HTTPError) as post_raised:
+                    _post_json(base_url + "/api/advisor", {"task": secret_task})
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+            raw_config["advisor"]["enabled"] = True
+            raw_config["advisor"]["catalog_path"] = secret_path
+            app_config.write_text(json.dumps(raw_config), encoding="utf-8")
+            server = build_server(
+                "tests/fixtures/moe.synthetic.json",
+                port=0,
+                app_config_path=str(app_config),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                with mock.patch(
+                    "local_moe.adaptive_advisor_service.evaluate_advisor",
+                    side_effect=RuntimeError(f"failure at {secret_path}: {secret_task}"),
+                ):
+                    with self.assertRaises(HTTPError) as service_raised:
+                        _post_json(base_url + "/api/advisor", {"task": secret_task})
+                    service_body = service_raised.exception.read().decode("utf-8")
+                    service_cache_control = service_raised.exception.headers.get(
+                        "Cache-Control"
+                    )
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        self.assertEqual(get_raised.exception.code, HTTPStatus.NOT_FOUND)
+        self.assertEqual(post_raised.exception.code, HTTPStatus.NOT_FOUND)
+        self.assertEqual(service_raised.exception.code, HTTPStatus.SERVICE_UNAVAILABLE)
+        self.assertEqual(service_cache_control, "no-store")
+        self.assertNotIn(secret_task, service_body)
+        self.assertNotIn(secret_path, service_body)
+
     def test_serves_config_and_generates_with_synthetic_provider(self) -> None:
         config_path = "tests/fixtures/moe.synthetic.json"
         expected_runtime_digest = runtime_config_sha256(load_config(config_path))
@@ -1290,6 +1725,20 @@ class WebTests(unittest.TestCase):
         self.assertIn("generateStream", html)
         self.assertIn("consumeSseEvents", html)
         self.assertIn("What should we work on?", html)
+        self.assertIn("Find the right local setup", html)
+        self.assertIn("/api/advisor/config", html)
+        self.assertIn("/api/advisor", html)
+        self.assertIn("fingerprinted only", html)
+        self.assertIn("configured by policy, not inferred", html)
+        self.assertIn("Recommended now", html)
+        self.assertIn("Not available now", html)
+        self.assertIn("Not enough evidence", html)
+        self.assertIn("Download technical receipt", html)
+        self.assertIn("new Blob", html)
+        self.assertIn("state.advisorReceipt", html)
+        self.assertNotIn("localStorage", html)
+        self.assertNotIn("sessionStorage", html)
+        self.assertNotIn("indexedDB", html)
         self.assertIn("advanced-panel", html)
         self.assertIn("runtime.model_commands || runtime.commands", html)
         self.assertIn("/api/models/processes", html)

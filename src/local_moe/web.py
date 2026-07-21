@@ -11,7 +11,13 @@ from typing import Any
 from urllib import error as urlerror
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .app_config import AppConfig, app_config_payload, load_app_config
+from .app_config import (
+    AdvisorPolicy,
+    AppConfig,
+    advisor_policy_payload,
+    app_config_payload,
+    load_app_config,
+)
 from .audit import AuditLogStore, audit_log_payload, audit_prune_payload
 from .bootstrap import build_runtime_plan, runtime_plan_payload
 from .chat_store import ChatSession, FileChatStore, chat_session_payload, chat_summary_payload
@@ -65,7 +71,11 @@ from .openai_gateway import (
     openai_error_payload,
     validate_json_depth,
 )
-from .package_defaults import resolve_app_config_path, resolve_app_config_reference
+from .package_defaults import (
+    resolve_advisor_config_reference,
+    resolve_app_config_path,
+    resolve_app_config_reference,
+)
 from .path_security import PathBoundaryError, resolve_existing_file
 from .performance_report import (
     build_performance_report,
@@ -222,6 +232,8 @@ def _make_handler(
 ) -> type[BaseHTTPRequestHandler]:
     class MyMoEHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            if not _authorize_control_plane_http(self):
+                return
             parsed_url = urlparse(self.path)
             path = parsed_url.path
             if path == "/v1/models":
@@ -236,6 +248,20 @@ def _make_handler(
                     HTTPStatus.OK,
                     _asset("index.html").encode("utf-8"),
                     content_type="text/html; charset=utf-8",
+                )
+                return
+
+            if path == "/api/advisor/config":
+                if not app_config.advisor.enabled:
+                    _send_advisor_json(
+                        self,
+                        {"error": "not_found"},
+                        status=HTTPStatus.NOT_FOUND,
+                    )
+                    return
+                _send_advisor_json(
+                    self,
+                    advisor_policy_payload(app_config.advisor),
                 )
                 return
 
@@ -638,8 +664,79 @@ def _make_handler(
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
+            if not _authorize_control_plane_http(self):
+                return
+            try:
+                self._do_POST_authorized()
+            except _ControlPlaneRequestError as exc:
+                self.close_connection = True
+                _send_json(
+                    self,
+                    {"error": exc.code, "message": exc.public_message},
+                    status=exc.status,
+                )
+
+        def _do_POST_authorized(self) -> None:
             nonlocal registry
             path = urlparse(self.path).path
+            if path == "/api/advisor":
+                if not app_config.advisor.enabled:
+                    _send_advisor_json(
+                        self,
+                        {"error": "not_found"},
+                        status=HTTPStatus.NOT_FOUND,
+                    )
+                    return
+                try:
+                    advisor_request = _read_advisor_request(
+                        self,
+                        app_config.advisor,
+                    )
+                except _AdvisorRequestError as exc:
+                    _send_advisor_json(
+                        self,
+                        {"error": exc.code, "message": exc.public_message},
+                        status=exc.status,
+                    )
+                    return
+                try:
+                    from .adaptive_advisor_service import (
+                        advisor_presentation_payload,
+                        evaluate_advisor,
+                    )
+
+                    receipt = evaluate_advisor(
+                        catalog_path=resolve_advisor_config_reference(
+                            app_config.advisor.catalog_path,
+                            app_config_path,
+                        ),
+                        evaluation_contract_path=resolve_advisor_config_reference(
+                            app_config.advisor.evaluation_contract_path,
+                            app_config_path,
+                        ),
+                        task_text=advisor_request["task"],
+                        workload_id=app_config.advisor.workload_id,
+                        required_capabilities=app_config.advisor.capabilities,
+                        required_tool_surfaces=app_config.advisor.tool_surfaces,
+                        risk_class=app_config.advisor.risk_class,
+                        context_tokens=advisor_request["context_tokens"],
+                        profile=advisor_request["profile"],
+                    )
+                    presentation = advisor_presentation_payload(receipt)
+                    _validate_advisor_presentation(presentation)
+                except Exception:
+                    _send_advisor_json(
+                        self,
+                        {
+                            "error": "advisor_unavailable",
+                            "message": "Adaptive Advisor is temporarily unavailable.",
+                        },
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                _send_advisor_json(self, presentation)
+                return
+
             if path == "/v1/chat/completions":
                 if not _authorize_gateway(self, gateway):
                     return
@@ -1882,6 +1979,19 @@ def _make_handler(
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_PATCH(self) -> None:
+            if not _authorize_control_plane_http(self):
+                return
+            try:
+                self._do_PATCH_authorized()
+            except _ControlPlaneRequestError as exc:
+                self.close_connection = True
+                _send_json(
+                    self,
+                    {"error": exc.code, "message": exc.public_message},
+                    status=exc.status,
+                )
+
+        def _do_PATCH_authorized(self) -> None:
             path = urlparse(self.path).path
             if path.startswith("/api/chats/"):
                 session_id = _path_tail(path, "/api/chats/")
@@ -1913,6 +2023,8 @@ def _make_handler(
             _send_json(self, {"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_DELETE(self) -> None:
+            if not _authorize_control_plane_http(self):
+                return
             parsed_url = urlparse(self.path)
             path = parsed_url.path
             confirm = parse_qs(parsed_url.query).get("confirm", ["false"])[0] == "true"
@@ -2359,12 +2471,420 @@ def _send_gateway_body(
     handler.wfile.write(body)
 
 
+_MAX_CONTROL_PLANE_JSON_BYTES = 32 * 1024 * 1024
+
+
+class _ControlPlaneRequestError(ValueError):
+    def __init__(
+        self,
+        code: str,
+        public_message: str,
+        status: HTTPStatus,
+    ) -> None:
+        super().__init__(public_message)
+        self.code = code
+        self.public_message = public_message
+        self.status = status
+
+
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
-    length = int(handler.headers.get("Content-Length", "0"))
+    if handler.headers.get("Transfer-Encoding") is not None:
+        raise _ControlPlaneRequestError(
+            "invalid_request",
+            "The local control plane requires a fixed Content-Length.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    content_lengths = handler.headers.get_all("Content-Length") or []
+    if not content_lengths:
+        return {}
+    if len(content_lengths) != 1:
+        raise _ControlPlaneRequestError(
+            "invalid_request",
+            "The local control plane requires one Content-Length header.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    rendered_length = content_lengths[0].strip()
+    if (
+        not rendered_length.isascii()
+        or not rendered_length.isdecimal()
+        or len(rendered_length) > 12
+    ):
+        raise _ControlPlaneRequestError(
+            "invalid_request",
+            "The local control plane received an invalid Content-Length.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    length = int(rendered_length)
+    if length > _MAX_CONTROL_PLANE_JSON_BYTES:
+        raise _ControlPlaneRequestError(
+            "request_too_large",
+            "The local control-plane request is too large.",
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
     if length == 0:
         return {}
-    raw = handler.rfile.read(length).decode("utf-8")
-    return json.loads(raw)
+    raw = handler.rfile.read(length)
+    if len(raw) != length:
+        raise _ControlPlaneRequestError(
+            "invalid_request",
+            "The local control-plane request body is incomplete.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+        validate_json_depth(payload, max_depth=32)
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        GatewayRequestError,
+        RecursionError,
+        ValueError,
+    ) as exc:
+        raise _ControlPlaneRequestError(
+            "invalid_json",
+            "The local control plane requires a bounded JSON object.",
+            HTTPStatus.BAD_REQUEST,
+        ) from exc
+    finally:
+        del raw
+    if not isinstance(payload, dict):
+        raise _ControlPlaneRequestError(
+            "invalid_request",
+            "The local control plane requires a JSON object.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    return payload
+
+
+class _AdvisorRequestError(ValueError):
+    def __init__(
+        self,
+        code: str,
+        public_message: str,
+        status: HTTPStatus,
+    ) -> None:
+        super().__init__(public_message)
+        self.code = code
+        self.public_message = public_message
+        self.status = status
+
+
+def _read_advisor_request(
+    handler: BaseHTTPRequestHandler,
+    policy: AdvisorPolicy,
+) -> dict[str, Any]:
+    if handler.headers.get("Transfer-Encoding") is not None:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor requires a fixed Content-Length.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    content_lengths = handler.headers.get_all("Content-Length") or []
+    if len(content_lengths) != 1:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor requires one Content-Length header.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    rendered_length = content_lengths[0].strip()
+    if (
+        not rendered_length.isascii()
+        or not rendered_length.isdecimal()
+        or len(rendered_length) > 12
+    ):
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor received an invalid Content-Length.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    length = int(rendered_length)
+    if length > policy.max_request_bytes:
+        raise _AdvisorRequestError(
+            "request_too_large",
+            "Adaptive Advisor request is too large.",
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
+
+    content_types = handler.headers.get_all("Content-Type") or []
+    if len(content_types) != 1 or not _is_advisor_json_content_type(content_types[0]):
+        raise _AdvisorRequestError(
+            "unsupported_media_type",
+            "Content-Type must be application/json with optional UTF-8 charset.",
+            HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        )
+
+    raw = handler.rfile.read(length)
+    if len(raw) != length:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor request body is incomplete.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    try:
+        decoded = raw.decode("utf-8")
+        payload = json.loads(
+            decoded,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
+        raise _AdvisorRequestError(
+            "invalid_json",
+            "Adaptive Advisor requires a valid JSON object.",
+            HTTPStatus.BAD_REQUEST,
+        ) from exc
+    finally:
+        del raw
+
+    if not isinstance(payload, dict):
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor requires a JSON object.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    try:
+        validate_json_depth(payload, max_depth=8)
+    except GatewayRequestError as exc:
+        raise _AdvisorRequestError(
+            "invalid_json",
+            "Adaptive Advisor requires shallow JSON primitive fields.",
+            HTTPStatus.BAD_REQUEST,
+        ) from exc
+    allowed = {"task", "profile", "context_tokens"}
+    if set(payload) - allowed or "task" not in payload:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Adaptive Advisor request fields are invalid.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    task = payload["task"]
+    if not isinstance(task, str) or not task.strip():
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Task must be non-empty UTF-8 text.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    if len(task) > policy.max_task_chars:
+        raise _AdvisorRequestError(
+            "request_too_large",
+            "Adaptive Advisor request is too large.",
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
+    try:
+        task.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Task must be non-empty UTF-8 text.",
+            HTTPStatus.BAD_REQUEST,
+        ) from exc
+
+    profile = payload.get("profile", policy.default_profile)
+    if not isinstance(profile, str) or profile not in policy.allowed_profiles:
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Advisor profile is not allowed.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    context_tokens = payload.get("context_tokens", policy.context_tokens)
+    if (
+        type(context_tokens) is not int
+        or context_tokens < 1
+        or context_tokens > policy.context_tokens
+    ):
+        raise _AdvisorRequestError(
+            "invalid_request",
+            "Context tokens exceed the configured Advisor boundary.",
+            HTTPStatus.BAD_REQUEST,
+        )
+    return {
+        "task": task,
+        "profile": profile,
+        "context_tokens": context_tokens,
+    }
+
+
+def _is_advisor_json_content_type(value: str) -> bool:
+    parts = [part.strip().lower() for part in value.split(";")]
+    if not parts or parts[0] != "application/json":
+        return False
+    if len(parts) == 1:
+        return True
+    if len(parts) != 2:
+        return False
+    return parts[1] in {"charset=utf-8", 'charset="utf-8"'}
+
+
+def _authorize_control_plane_http(handler: BaseHTTPRequestHandler) -> bool:
+    client_host = str(handler.client_address[0]) if handler.client_address else ""
+    host_values = handler.headers.get_all("Host") or []
+    origin_values = handler.headers.get_all("Origin") or []
+    try:
+        server_port = int(handler.server.server_address[1])
+    except (AttributeError, IndexError, TypeError, ValueError):
+        server_port = -1
+    host_authority = (
+        _advisor_host_authority(host_values[0], default_port=server_port)
+        if len(host_values) == 1
+        else None
+    )
+    origin_authority = (
+        _advisor_origin_authority(origin_values[0])
+        if len(origin_values) == 1
+        else None
+    )
+    gateway_request = urlparse(handler.path).path.startswith("/v1/")
+    origin_allowed = not origin_values or (
+        origin_authority is not None
+        and (gateway_request or origin_authority == host_authority)
+    )
+    allowed = (
+        is_loopback_host(client_host)
+        and len(host_values) == 1
+        and host_authority is not None
+        and is_loopback_host(host_authority[0])
+        and host_authority[1] == server_port
+        and len(origin_values) <= 1
+        and origin_allowed
+    )
+    if allowed:
+        return True
+    _send_advisor_json(
+        handler,
+        {
+            "error": "control_plane_forbidden",
+            "message": "The local control plane accepts loopback requests only.",
+        },
+        status=HTTPStatus.FORBIDDEN,
+    )
+    return False
+
+
+def _advisor_host_authority(
+    value: str,
+    *,
+    default_port: int,
+) -> tuple[str, int] | None:
+    raw = str(value).strip()
+    if (
+        not raw
+        or any(ord(character) < 32 or ord(character) == 127 for character in raw)
+        or any(character in raw for character in "/?#@")
+    ):
+        return None
+    try:
+        parsed = urlparse(f"//{raw}")
+        port = parsed.port
+    except ValueError:
+        return None
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if not host or parsed.username is not None or parsed.password is not None:
+        return None
+    return host, default_port if port is None else port
+
+
+def _advisor_origin_authority(value: str) -> tuple[str, int] | None:
+    raw = str(value).strip()
+    try:
+        parsed = urlparse(raw)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "http"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if not host or not is_loopback_host(host):
+        return None
+    return host, 80 if port is None else port
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("Duplicate JSON object key.")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
+def _validate_advisor_presentation(payload: object) -> None:
+    if not isinstance(payload, dict) or set(payload) != {
+        "display_state",
+        "title",
+        "summary",
+        "badges",
+        "receipt",
+    }:
+        raise ValueError("Advisor presentation contract is invalid.")
+    if payload["display_state"] not in {
+        "recommended_now",
+        "not_available_now",
+        "not_enough_evidence",
+    }:
+        raise ValueError("Advisor presentation state is invalid.")
+    for key in ("title", "summary"):
+        if not isinstance(payload[key], str) or not payload[key]:
+            raise ValueError("Advisor presentation copy is invalid.")
+    badges = payload["badges"]
+    if (
+        not isinstance(badges, list)
+        or len(badges) > 3
+        or any(not isinstance(item, str) or not item for item in badges)
+    ):
+        raise ValueError("Advisor presentation badges are invalid.")
+    if not isinstance(payload["receipt"], dict):
+        raise ValueError("Advisor presentation receipt is invalid.")
+    if _advisor_payload_has_sensitive_key(payload):
+        raise ValueError("Advisor presentation contains task content.")
+    json.dumps(payload, allow_nan=False)
+
+
+def _advisor_payload_has_sensitive_key(value: object) -> bool:
+    if isinstance(value, dict):
+        forbidden = {"task", "task_text", "raw_task", "prompt", "content"}
+        if any(str(key).lower() in forbidden for key in value):
+            return True
+        return any(_advisor_payload_has_sensitive_key(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_advisor_payload_has_sensitive_key(item) for item in value)
+    return False
+
+
+def _send_advisor_json(
+    handler: BaseHTTPRequestHandler,
+    payload: object,
+    *,
+    status: HTTPStatus = HTTPStatus.OK,
+) -> None:
+    body = json.dumps(payload, indent=2, allow_nan=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 def _send_json(

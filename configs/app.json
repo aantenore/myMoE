@@ -46,5 +46,19 @@
     "max_response_bytes": 33554432,
     "allow_non_loopback": false,
     "api_key_env": ""
+  },
+  "advisor": {
+    "enabled": true,
+    "catalog_path": "./adaptive-cells.example.json",
+    "evaluation_contract_path": "./adaptive-evaluation-contract.example.json",
+    "allowed_profiles": ["balanced", "efficiency", "quality"],
+    "default_profile": "balanced",
+    "workload_id": "local-summary",
+    "capabilities": ["summarization"],
+    "tool_surfaces": [],
+    "risk_class": "compute_only",
+    "context_tokens": 4096,
+    "max_request_bytes": 65536,
+    "max_task_chars": 16384
   }
 }

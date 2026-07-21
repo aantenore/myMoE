@@ -109,6 +109,15 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "adaptive cell advisor contract benchmark",
+            [
+                python,
+                "experiments/benchmark_adaptive_cell_advisor.py",
+                "--out",
+                "outputs/adaptive-cell-advisor-contract.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,

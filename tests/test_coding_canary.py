@@ -65,6 +65,7 @@ from local_moe.coding_canary import (
     _require_direct_macos_native_executable,
     _reattest_cline_executable,
     _run_independent_verifier,
+    _select_forbidden_probe_file,
     _snapshot_fixture,
     _validate_report_metadata,
     _validated_inference_response_status,
@@ -332,6 +333,26 @@ def _ndjson(*records: dict[str, object]) -> bytes:
 
 
 class CodingCanaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "macOS deny-root fixture")
+    def test_forbidden_probe_can_use_a_regular_file_in_an_external_worktree(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as temporary:
+            root = Path(temporary)
+            config = root / "gateway.json"
+            config.write_text("{}\n", encoding="utf-8")
+            cline_root = root / "cline"
+            canary_root = root / "canary"
+            cline_root.mkdir()
+            canary_root.mkdir()
+
+            selected = _select_forbidden_probe_file(
+                home=Path.home().resolve(strict=True),
+                config_path=config,
+                cline_root=cline_root,
+                canary_root=canary_root,
+            )
+
+            self.assertEqual(selected, config.resolve(strict=True))
+
     def test_endpoint_requires_numeric_ipv4_loopback_and_v1(self) -> None:
         endpoint = _parse_loopback_endpoint("http://127.0.0.1:8089/v1")
         self.assertEqual(endpoint.port, 8089)

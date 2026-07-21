@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict
 import hashlib
 from importlib import import_module
+from importlib import metadata as importlib_metadata
 import json
 from pathlib import Path
 import re
@@ -157,6 +158,40 @@ class _MymoeArgumentParser(argparse.ArgumentParser):
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["advisor-init"]:
+        from .advisor_setup import materialize_advisor_workspace
+
+        advisor_init_parser = argparse.ArgumentParser(
+            prog="mymoe advisor-init",
+            description=(
+                "Create a no-clobber, self-contained Adaptive Advisor starter."
+            ),
+            allow_abbrev=False,
+        )
+        advisor_init_parser.add_argument("--out", required=True)
+        advisor_init_args = advisor_init_parser.parse_args(sys.argv[2:])
+        try:
+            result = materialize_advisor_workspace(advisor_init_args.out)
+        except (FileExistsError, OSError, TypeError, ValueError):
+            print(
+                json.dumps(
+                    {
+                        "error": "advisor_init_failed",
+                        "message": "Advisor workspace was not created.",
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from None
+        print(json.dumps(result, indent=2))
+        return
+
+    if sys.argv[1:2] == ["advisor"]:
+        from .adaptive_advisor_cli import main as run_advisor
+
+        raise SystemExit(run_advisor(sys.argv[2:]))
+
     if sys.argv[1:2] == ["desktop-init"]:
         desktop_parser = argparse.ArgumentParser(
             prog="mymoe desktop-init",
@@ -266,12 +301,19 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "commands:\n"
+            "  advisor          Recommend a verified offline cell without changing runtime state.\n"
+            "  advisor-init     Create a no-clobber Adaptive Advisor starter.\n"
             "  assistant-probe  Check local Codex tool compatibility in a disposable workspace.\n"
             "  browser-init     Create packaged config files for the local browser cell.\n"
             "  browser-prefetch Cache a pinned browser provider without executing its package.\n"
             "  desktop-init     Bind packaged desktop-cell config to one app window.\n"
             "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_distribution_version()}",
     )
     parser.add_argument("--config")
     parser.add_argument("--app-config", default="configs/app.json")
@@ -2530,6 +2572,13 @@ def _chat_store(app_config: object) -> FileChatStore:
 
 def _memory_store(app_config: object) -> FileMemoryStore:
     return FileMemoryStore(f"{app_config.runtime.work_dir.rstrip('/')}/memory.jsonl")
+
+
+def _distribution_version() -> str:
+    try:
+        return importlib_metadata.version("local-moe-orchestrator")
+    except importlib_metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _context_policy(app_config: object) -> object:
