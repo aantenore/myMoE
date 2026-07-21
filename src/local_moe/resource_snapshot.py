@@ -429,12 +429,13 @@ def _read_linux_memory() -> dict[str, object]:
 
 
 def _linux_cgroup_memory() -> tuple[int | None, int | None, str]:
+    # Kernel paths keep POSIX semantics when this parser is exercised off-Linux.
     memberships = _read_bounded_text(
-        Path("/proc/self/cgroup"),
+        PurePosixPath("/proc/self/cgroup"),
         maximum_bytes=MAX_CGROUP_TEXT_BYTES,
     )
     mounts = _read_bounded_text(
-        Path("/proc/self/mountinfo"),
+        PurePosixPath("/proc/self/mountinfo"),
         maximum_bytes=MAX_MOUNTINFO_TEXT_BYTES,
     )
     if memberships is None or mounts is None:
@@ -479,12 +480,12 @@ def _linux_cgroup_memory() -> tuple[int | None, int | None, str]:
 def _resolve_cgroup_memory_files(
     cgroup_text: str,
     mountinfo_text: str,
-) -> tuple[str, Path, Path] | None:
+) -> tuple[str, PurePosixPath, PurePosixPath] | None:
     memberships = _parse_cgroup_memberships(cgroup_text)
     mounts = _parse_cgroup_mounts(mountinfo_text)
     if memberships is None or mounts is None:
         return None
-    candidates: list[tuple[str, Path, Path]] = []
+    candidates: list[tuple[str, PurePosixPath, PurePosixPath]] = []
     for mode, membership_path in memberships:
         for mount_mode, mount_root, mount_point in mounts:
             if mount_mode != mode:
@@ -496,16 +497,19 @@ def _resolve_cgroup_memory_files(
             )
             if mapped is None:
                 continue
-            candidates.append((mode, mapped, Path(mount_point.as_posix())))
+            candidates.append((mode, mapped, mount_point))
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _cgroup_levels(leaf: Path, boundary: Path) -> tuple[Path, ...] | None:
+def _cgroup_levels(
+    leaf: PurePosixPath,
+    boundary: PurePosixPath,
+) -> tuple[PurePosixPath, ...] | None:
     try:
         leaf.relative_to(boundary)
     except ValueError:
         return None
-    levels: list[Path] = []
+    levels: list[PurePosixPath] = []
     current = leaf
     while True:
         levels.append(current)
@@ -614,12 +618,12 @@ def _map_cgroup_membership(
     *,
     mount_root: PurePosixPath,
     mount_point: PurePosixPath,
-) -> Path | None:
+) -> PurePosixPath | None:
     try:
         relative = membership.relative_to(mount_root)
     except ValueError:
         return None
-    return Path(mount_point.as_posix()).joinpath(*relative.parts)
+    return mount_point.joinpath(*relative.parts)
 
 
 def _parse_non_negative_decimal(value: str) -> int | None:
@@ -833,7 +837,7 @@ def _terminate_probe(process: subprocess.Popen[bytes]) -> None:
 
 
 def _read_bounded_text(
-    path: Path,
+    path: Path | PurePosixPath,
     *,
     maximum_bytes: int,
     errors: str = "strict",
