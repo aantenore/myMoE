@@ -133,14 +133,14 @@
       },
       "git_evidence": {
         "git_dirty_is_false": true,
-        "git_commit": "d0973af150796d05899410c7d2baf411ab276d30",
+        "git_commit": "3dce844919961a19a6d54a47bcb31b593aef3607",
         "git_commit_format_valid": true,
         "runtime_dependency_paths_valid": true,
         "runtime_dependency_count": 14,
         "passed": true,
         "status": "passed",
-        "repository_root": "/Users/antonioantenore/Documents/my moe",
-        "current_head": "d0973af150796d05899410c7d2baf411ab276d30",
+        "repository_root": "/Users/antonioantenore/Documents/github/myMoE",
+        "current_head": "3dce844919961a19a6d54a47bcb31b593aef3607",
         "repository_shallow": false,
         "commit_available": true,
         "ancestor_of_head": true,
@@ -152,14 +152,14 @@
             "matches": true
           },
           "pyproject.toml": {
-            "current_head_sha256": "be26f980c6cd64a213aa7f05f8c097651b56c760fc30c5f89f9b0ddc6f1f44fc",
-            "benchmark_commit_sha256": "be26f980c6cd64a213aa7f05f8c097651b56c760fc30c5f89f9b0ddc6f1f44fc",
+            "current_head_sha256": "4fce72e3b6cb75569867e404f5d7f57fb8eaeb563ce734cc1b65abdd239f3778",
+            "benchmark_commit_sha256": "4fce72e3b6cb75569867e404f5d7f57fb8eaeb563ce734cc1b65abdd239f3778",
             "working_tree_clean": true,
             "matches": true
           },
           "uv.lock": {
-            "current_head_sha256": "b67ecbdc2895114c13007de17e2316ec7bf9ee00ee8db8ab484324925fd0a2c1",
-            "benchmark_commit_sha256": "b67ecbdc2895114c13007de17e2316ec7bf9ee00ee8db8ab484324925fd0a2c1",
+            "current_head_sha256": "1e0c0634314cc94c8cff43c2093ab4227951e31a65e3dd525070b83cbb4bb352",
+            "benchmark_commit_sha256": "1e0c0634314cc94c8cff43c2093ab4227951e31a65e3dd525070b83cbb4bb352",
             "working_tree_clean": true,
             "matches": true
           },
@@ -170,8 +170,8 @@
             "matches": true
           },
           "src/local_moe/config.py": {
-            "current_head_sha256": "b65110739b3c4d622f1328959d4b1017c7fffa20a234440551c1e8a5d97be5bc",
-            "benchmark_commit_sha256": "b65110739b3c4d622f1328959d4b1017c7fffa20a234440551c1e8a5d97be5bc",
+            "current_head_sha256": "6e1c35a7406ecd0c4fc6728ca8ea60597eff4767bdcebef2369321da639d8a4e",
+            "benchmark_commit_sha256": "6e1c35a7406ecd0c4fc6728ca8ea60597eff4767bdcebef2369321da639d8a4e",
             "working_tree_clean": true,
             "matches": true
           },
