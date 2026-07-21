@@ -99,6 +99,16 @@ class CiRunnerTests(unittest.TestCase):
         )
         self.assertIn('python-version: ["3.10", "3.12"]', active)
         self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", active)
+        browser_job_header = active.split("  browser-canary:\n", 1)[1].split(
+            "    steps:\n", 1
+        )[0]
+        self.assertNotIn("runner.temp", browser_job_header)
+        self.assertEqual(
+            active.count(
+                "NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache"
+            ),
+            2,
+        )
 
     def test_build_env_removes_pythonpath_and_preserves_other_values(self) -> None:
         runner = _load_runner()

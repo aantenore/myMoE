@@ -56,7 +56,6 @@ jobs:
         python-version: ["3.10", "3.12"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -77,12 +76,16 @@ jobs:
           package-manager-cache: false
 
       - name: Prefetch and verify exact browser provider without executing it
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache
         run: >-
           uv run --locked python -m local_moe.cli browser-prefetch
           --mcp-config configs/mcp.playwright-browser.example.json
           --server browser-local
 
       - name: Run exact-origin canary with offline provider resolution
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache
         run: >-
           uv run --locked python -m local_moe.cli
           --app-config configs/app.browser.example.json
