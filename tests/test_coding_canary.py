@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,8 @@ from local_moe.coding_canary import (
     _run_independent_verifier,
     _snapshot_fixture,
     _validate_report_metadata,
+    _validated_inference_response_status,
+    _validated_upstream_content_type,
     CodingCanaryContractError,
     CodingCanaryOperationalError,
     main,
@@ -1375,6 +1378,234 @@ class CodingCanaryTests(unittest.TestCase):
         self.assertEqual(evidence.requests, Counter({"chat_completions": 1}))
         self.assertEqual(evidence.responses, Counter({"status_503": 1}))
         self.assertEqual(evidence.errors, Counter({"upstream_non_success": 1}))
+
+    def test_inference_proxy_rejects_unsafe_upstream_response_metadata(self) -> None:
+        unsafe_content_types = (
+            "application/json\r\nX-Injected: true",
+            "application/json\rX-Injected: true",
+            "application/json\nX-Injected: true",
+            "application/json\x00",
+            "application/json\x7f",
+            "application/json\u0100",
+            "not-a-media-type",
+            "application/json; broken",
+            "application/json; =oops",
+            "application/json; x=",
+            "application/json;",
+            'application/json; x="unterminated',
+            "x" * 1_025,
+            object(),
+        )
+        for value in unsafe_content_types:
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "Content-Type",
+            ):
+                _validated_upstream_content_type(value)
+
+        self.assertEqual(
+            _validated_upstream_content_type(" application/json; charset=utf-8 "),
+            "application/json; charset=utf-8",
+        )
+        self.assertEqual(
+            _validated_upstream_content_type(
+                'application/problem+json; note="quoted; value\\\""'
+            ),
+            'application/problem+json; note="quoted; value\\\""',
+        )
+        self.assertEqual(
+            _validated_upstream_content_type('text/plain; note="caf\xe9"'),
+            'text/plain; note="caf\xe9"',
+        )
+        self.assertEqual(_validated_upstream_content_type(None), "application/json")
+        for status in (199, 600, True, "200", None):
+            with self.subTest(status=status), self.assertRaisesRegex(
+                ValueError,
+                "response status",
+            ):
+                _validated_inference_response_status(status)
+        self.assertEqual(_validated_inference_response_status(200), 200)
+        self.assertEqual(_validated_inference_response_status(599), 599)
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802 - stdlib handler API.
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                payload = b'{"upstream":"sentinel"}\n'
+                self.send_response(200, "UPSTREAM-SENTINEL")
+                self.send_header(
+                    "Content-Type",
+                    "application/json\r\n X-Injected: true",
+                )
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(payload)
+                self.close_connection = True
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        upstream_thread = threading.Thread(
+            target=upstream.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
+        upstream_thread.start()
+        endpoint = _parse_loopback_endpoint(
+            f"http://127.0.0.1:{upstream.server_address[1]}/v1"
+        )
+        body = json.dumps({"model": "mymoe/coder", "messages": []}).encode("utf-8")
+        try:
+            with _InferenceProxy(
+                endpoint,
+                token="canary-secret",
+                expected_model="mymoe/coder",
+                deadline=time.monotonic() + 5.0,
+            ) as proxy:
+                with socket.create_connection(
+                    ("127.0.0.1", proxy.port),
+                    timeout=2.0,
+                ) as client:
+                    client.sendall(
+                        (
+                            "POST /v1/chat/completions HTTP/1.1\r\n"
+                            "Host: 127.0.0.1\r\n"
+                            "Authorization: Bearer canary-secret\r\n"
+                            "Content-Type: application/json\r\n"
+                            f"Content-Length: {len(body)}\r\n"
+                            "Connection: close\r\n\r\n"
+                        ).encode("ascii")
+                        + body
+                    )
+                    chunks: list[bytes] = []
+                    while True:
+                        chunk = client.recv(65_536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                received = b"".join(chunks)
+                evidence = proxy.evidence
+
+                with patch(
+                    "local_moe.coding_canary._InferenceProxyHandler._reject",
+                    side_effect=OSError("synthetic reject transport failure"),
+                ) as reject:
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1",
+                        proxy.port,
+                        timeout=2.0,
+                    )
+                    try:
+                        connection.request(
+                            "POST",
+                            "/v1/chat/completions",
+                            body=body,
+                            headers={
+                                "Authorization": "Bearer canary-secret",
+                                "Content-Type": "application/json",
+                            },
+                        )
+                        connection.getresponse()
+                    except (OSError, http.client.HTTPException):
+                        pass
+                    else:  # pragma: no cover - the synthetic reject must abort.
+                        self.fail("failed reject unexpectedly produced a response")
+                    finally:
+                        connection.close()
+                    self.assertEqual(reject.call_count, 1)
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            upstream_thread.join(timeout=2.0)
+
+        self.assertTrue(received.startswith(b"HTTP/1.1 502 "), received)
+        self.assertEqual(received.count(b"HTTP/1.1 "), 1)
+        self.assertNotIn(b"UPSTREAM-SENTINEL", received)
+        self.assertNotIn(b"X-Injected", received)
+        self.assertNotIn(b'"upstream":"sentinel"', received)
+        self.assertTrue(received.endswith(b"local canary broker\"}\n"), received)
+        self.assertEqual(
+            evidence.errors,
+            Counter({"upstream_response_invalid": 1}),
+        )
+        self.assertEqual(
+            evidence.violations,
+            Counter({"upstream_response_invalid": 1}),
+        )
+
+    def test_inference_proxy_drops_bodyless_payloads_and_rejects_redirects(self) -> None:
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802 - stdlib handler API.
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                payload = b"body-sentinel"
+                self.send_response(self.server.response_status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(payload)
+                self.close_connection = True
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        upstream.response_status = 204
+        upstream_thread = threading.Thread(
+            target=upstream.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
+        upstream_thread.start()
+        endpoint = _parse_loopback_endpoint(
+            f"http://127.0.0.1:{upstream.server_address[1]}/v1"
+        )
+        body = json.dumps({"model": "mymoe/coder", "messages": []}).encode("utf-8")
+        try:
+            with _InferenceProxy(
+                endpoint,
+                token="canary-secret",
+                expected_model="mymoe/coder",
+                deadline=time.monotonic() + 5.0,
+            ) as proxy:
+                for upstream_status, expected_status in ((204, 204), (205, 205), (304, 502)):
+                    with self.subTest(upstream_status=upstream_status):
+                        upstream.response_status = upstream_status
+                        connection = http.client.HTTPConnection(
+                            "127.0.0.1",
+                            proxy.port,
+                            timeout=2.0,
+                        )
+                        connection.request(
+                            "POST",
+                            "/v1/chat/completions",
+                            body=body,
+                            headers={
+                                "Authorization": "Bearer canary-secret",
+                                "Content-Type": "application/json",
+                            },
+                        )
+                        response = connection.getresponse()
+                        response_body = response.read()
+                        self.assertEqual(response.status, expected_status)
+                        self.assertNotIn(b"body-sentinel", response_body)
+                        if upstream_status in {204, 205}:
+                            self.assertIsNone(response.getheader("Content-Length"))
+                            self.assertEqual(response_body, b"")
+                        connection.close()
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            upstream_thread.join(timeout=2.0)
+
+        self.assertFalse(upstream_thread.is_alive())
 
     def test_inference_proxy_waits_for_handlers_and_snapshots_evidence(self) -> None:
         request_started = threading.Event()

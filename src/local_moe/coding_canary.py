@@ -86,6 +86,7 @@ _MAX_CONFIG_BYTES = 2 * 1024 * 1024
 _MAX_APPROVAL_BYTES = 64 * 1024
 _MAX_PROXY_REQUEST_BYTES = 4 * 1024 * 1024
 _MAX_PROXY_RESPONSE_BYTES = 8 * 1024 * 1024
+_MAX_PROXY_CONTENT_TYPE_CHARS = 1_024
 _MAX_NDJSON_BYTES = 8 * 1024 * 1024
 _AI_SDK_WARNING_LINE = (
     b"AI SDK Warning System: To turn off warning logging, set the "
@@ -93,6 +94,16 @@ _AI_SDK_WARNING_LINE = (
 )
 _SAFE_REASON = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
 _CLINE_VERSION = re.compile(r"(?:cline\s+)?(\d+\.\d+\.\d+)", re.IGNORECASE)
+_HTTP_TOKEN = r"[-!#$%&'*+.^_`|~0-9A-Za-z]+"
+_HTTP_QUOTED_STRING = (
+    r'"(?:[\t\x20-\x21\x23-\x5b\x5d-\x7e\x80-\xff]'
+    r'|\\[\t\x20-\x7e\x80-\xff])*"'
+)
+_MEDIA_TYPE_PATTERN = re.compile(
+    rf"{_HTTP_TOKEN}/{_HTTP_TOKEN}"
+    rf"(?:[ \t]*;[ \t]*{_HTTP_TOKEN}="
+    rf"(?:{_HTTP_TOKEN}|{_HTTP_QUOTED_STRING}))*[ \t]*\Z"
+)
 _MACH_O_MAGICS = {
     b"\xca\xfe\xba\xbe",  # Universal binary.
     b"\xca\xfe\xba\xbf",  # Universal binary with 64-bit offsets.
@@ -1388,6 +1399,7 @@ class _InferenceProxyHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def _forward(self, method: str) -> None:
+        response_started = False
         if self.client_address[0] != "127.0.0.1":
             self._reject(HTTPStatus.FORBIDDEN, "non_loopback_client")
             return
@@ -1443,6 +1455,7 @@ class _InferenceProxyHandler(BaseHTTPRequestHandler):
             self.server.endpoint.port,
             timeout=min(remaining, 120.0),
         )
+        response: http.client.HTTPResponse | None = None
         try:
             headers = {
                 "Accept": self.headers.get("Accept", "application/json"),
@@ -1452,31 +1465,89 @@ class _InferenceProxyHandler(BaseHTTPRequestHandler):
             }
             connection.request(method, self.path, body=body, headers=headers)
             response = connection.getresponse()
-            payload = response.read(_MAX_PROXY_RESPONSE_BYTES + 1)
-            if len(payload) > _MAX_PROXY_RESPONSE_BYTES:
-                self.server.record("errors", "response_too_large")
-                self._reject(HTTPStatus.BAD_GATEWAY, "upstream_response_too_large")
+            try:
+                response_status = _validated_inference_response_status(response.status)
+            except ValueError:
+                self.server.record("errors", "upstream_response_invalid")
+                response_started = True
+                self._reject(HTTPStatus.BAD_GATEWAY, "upstream_response_invalid")
                 return
-            if 300 <= response.status < 400:
+            if 300 <= response_status < 400:
                 self.server.record("errors", "upstream_redirect")
+                response_started = True
                 self._reject(HTTPStatus.BAD_GATEWAY, "upstream_redirect_denied")
                 return
-            if not 200 <= response.status < 300:
+            try:
+                content_type = _validated_upstream_content_type(
+                    response.getheader("Content-Type")
+                )
+            except ValueError:
+                self.server.record("errors", "upstream_response_invalid")
+                response_started = True
+                self._reject(HTTPStatus.BAD_GATEWAY, "upstream_response_invalid")
+                return
+            response_has_body = response_status not in {204, 205, 304}
+            payload = (
+                response.read(_MAX_PROXY_RESPONSE_BYTES + 1)
+                if response_has_body
+                else b""
+            )
+            if len(payload) > _MAX_PROXY_RESPONSE_BYTES:
+                self.server.record("errors", "response_too_large")
+                response_started = True
+                self._reject(HTTPStatus.BAD_GATEWAY, "upstream_response_too_large")
+                return
+            if not 200 <= response_status < 300:
                 self.server.record("errors", "upstream_non_success")
-            self.server.record("responses", f"status_{response.status}")
-            self.send_response(response.status)
-            content_type = response.getheader("Content-Type") or "application/json"
+            self.server.record("responses", f"status_{response_status}")
+            response_started = True
+            self.send_response(response_status)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(payload)))
+            if response_has_body:
+                self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(payload)
+            if response_has_body:
+                self.wfile.write(payload)
             self.close_connection = True
         except (OSError, http.client.HTTPException, TimeoutError):
             self.server.record("errors", "upstream_unavailable")
-            self._reject(HTTPStatus.BAD_GATEWAY, "upstream_unavailable")
+            if not response_started:
+                self._reject(HTTPStatus.BAD_GATEWAY, "upstream_unavailable")
+            else:
+                self.close_connection = True
         finally:
-            connection.close()
+            try:
+                if response is not None:
+                    response.close()
+            finally:
+                connection.close()
+
+
+def _validated_inference_response_status(status: object) -> int:
+    if type(status) is not int or not 200 <= status <= 599:
+        raise ValueError("upstream response status is invalid")
+    return status
+
+
+def _validated_upstream_content_type(value: object) -> str:
+    if value is None:
+        return "application/json"
+    if not isinstance(value, str) or len(value) > _MAX_PROXY_CONTENT_TYPE_CHARS:
+        raise ValueError("upstream Content-Type is invalid")
+    line_safe = value.replace("\r", "").replace("\n", "")
+    if line_safe != value:
+        raise ValueError("upstream Content-Type is invalid")
+    if any(
+        character != "\t"
+        and (ord(character) < 0x20 or ord(character) == 0x7F or ord(character) > 0xFF)
+        for character in line_safe
+    ):
+        raise ValueError("upstream Content-Type is invalid")
+    safe_value = line_safe.strip(" \t")
+    if _MEDIA_TYPE_PATTERN.fullmatch(safe_value) is None:
+        raise ValueError("upstream Content-Type is invalid")
+    return safe_value
 
 
 class _InferenceProxy:
