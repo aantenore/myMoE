@@ -133,14 +133,14 @@
       },
       "git_evidence": {
         "git_dirty_is_false": true,
-        "git_commit": "eb435dc3d3bc465c6f79e4730c27c0aed8643b66",
+        "git_commit": "6fff201099a541087b08d0e945cf1b7e006d71e6",
         "git_commit_format_valid": true,
         "runtime_dependency_paths_valid": true,
         "runtime_dependency_count": 14,
         "passed": true,
         "status": "passed",
-        "repository_root": "/private/tmp/mymoe-cell-gate-evidence-r2",
-        "current_head": "eb435dc3d3bc465c6f79e4730c27c0aed8643b66",
+        "repository_root": "/private/tmp/mymoe-bound-cell-attestor",
+        "current_head": "6fff201099a541087b08d0e945cf1b7e006d71e6",
         "repository_shallow": false,
         "commit_available": true,
         "ancestor_of_head": true,
@@ -152,14 +152,14 @@
             "matches": true
           },
           "pyproject.toml": {
-            "current_head_sha256": "a48cb94b6855b0191c5f127d388a0d5eaa7e23c72eca9f0e3c1ed2b140125866",
-            "benchmark_commit_sha256": "a48cb94b6855b0191c5f127d388a0d5eaa7e23c72eca9f0e3c1ed2b140125866",
+            "current_head_sha256": "58f714b90ce8d83089af628c1570a1d8634d42f74ba7e0dfbbb2d8d2f9a165d6",
+            "benchmark_commit_sha256": "58f714b90ce8d83089af628c1570a1d8634d42f74ba7e0dfbbb2d8d2f9a165d6",
             "working_tree_clean": true,
             "matches": true
           },
           "uv.lock": {
-            "current_head_sha256": "32f638d51a57322d0b10eba8f921a6ff743700e8aca8a8f0a119dcdd848ab4d7",
-            "benchmark_commit_sha256": "32f638d51a57322d0b10eba8f921a6ff743700e8aca8a8f0a119dcdd848ab4d7",
+            "current_head_sha256": "03b06437b9883a4f18ac47d2ce8d8126ea2ddba58536ff223924da07824212be",
+            "benchmark_commit_sha256": "03b06437b9883a4f18ac47d2ce8d8126ea2ddba58536ff223924da07824212be",
             "working_tree_clean": true,
             "matches": true
           },
