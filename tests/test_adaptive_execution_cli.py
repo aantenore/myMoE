@@ -104,10 +104,10 @@ class AdaptiveExecutionCliTests(unittest.TestCase):
         preview.assert_not_called()
 
     def test_task_file_preserves_exact_bytes_without_shell_redirection(self) -> None:
-        secret = "exact UTF-8 task: caffè\n"
+        task_text = "exact UTF-8 task: caffè\n"
         with tempfile.TemporaryDirectory() as temporary:
             task_path = Path(temporary) / "task.txt"
-            task_path.write_bytes(secret.encode("utf-8"))
+            task_path.write_bytes(task_text.encode("utf-8"))
             arguments = _arguments()
             stdin_index = arguments.index("--task-stdin")
             arguments[stdin_index : stdin_index + 1] = [
@@ -125,7 +125,7 @@ class AdaptiveExecutionCliTests(unittest.TestCase):
                 status = cell_execution_main(arguments)
 
         self.assertEqual(status, 0)
-        self.assertEqual(preview.call_args.kwargs["task_text"], secret)
+        self.assertEqual(preview.call_args.kwargs["task_text"], task_text)
 
     def test_root_dispatch_and_help_expose_preview_without_apply_surface(self) -> None:
         root_stdout = StringIO()
