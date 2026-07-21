@@ -84,6 +84,9 @@ bootstrap settings again and remains on the isolated offline npm configuration.
 
 Before every new provider lifecycle, myMoE runs `npm pack --offline`, computes
 the cached archive's SHA-512 itself, and compares it with the pinned value. It
+uses a separate bounded archive-verification timeout (configurable from 10 to
+180 seconds; the example uses 60) so slow local disks do not widen MCP action
+timeouts or cause unbounded startup. It
 also hashes the Node executable, resolved launcher, configured arguments,
 effective dynamic arguments, and live MCP tool schemas. On Windows, when `npx`
 resolves to a batch shim, it executes `node.exe` with `npx-cli.js` directly

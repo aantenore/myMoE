@@ -64,7 +64,9 @@ constrains normal browser HTTP(S) requests to that origin through a parent-owned
 proxy, and
 binds approval to the session, origin, snapshot hash, target, and accessible
 label. With Node.js 20+, npm, and Google Chrome installed, a deterministic
-canary verifies the adapter without a model. From a source checkout:
+canary verifies the adapter without a model. Cached archive verification has a
+separate bounded 10-180 second timeout (60 seconds in the example), independent
+from MCP action timeouts. From a source checkout:
 
 ```bash
 uv run mymoe browser-prefetch \

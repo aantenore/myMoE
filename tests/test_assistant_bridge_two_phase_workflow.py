@@ -44,6 +44,8 @@ CONFIG_SHA256 = "b" * 64
 CHECK_SHA256 = "c" * 64
 STAGE_KEY = "stage-workflow-operation-00000001"
 RESUME_KEY = "resume-workflow-operation-0000001"
+THREAD_SYNC_TIMEOUT_SECONDS = 30
+THREAD_RESULT_TIMEOUT_SECONDS = 40
 
 
 class TwoPhaseWorkflowTests(unittest.TestCase):
@@ -111,33 +113,23 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
             alternate_candidate = context.root / "alternate-candidate"
             shutil.copytree(context.candidate, alternate_candidate)
             (alternate_candidate / "app.txt").write_text("alternate\n")
-            barrier = threading.Barrier(2)
-            create_workflow = context.service.store.create_workflow
-
-            def synchronized_create(*args: object, **kwargs: object):
-                barrier.wait(timeout=5)
-                return create_workflow(*args, **kwargs)
-
-            with patch.object(
-                context.service.store,
-                "create_workflow",
-                side_effect=synchronized_create,
-            ):
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    futures = (
-                        executor.submit(
-                            context.stage,
-                            now=1_750_000_000.123_456,
-                            ttl_seconds=80.125,
-                        ),
-                        executor.submit(
-                            context.stage,
-                            now=1_750_000_000.223_456,
-                            ttl_seconds=80.125,
-                            candidate_workspace=alternate_candidate,
-                        ),
-                    )
-                    receipts = tuple(future.result(timeout=10) for future in futures)
+            outcomes = _concurrent_stage_outcomes_after_replay_miss(
+                context,
+                (
+                    {
+                        "now": 1_750_000_000.123_456,
+                        "ttl_seconds": 80.125,
+                    },
+                    {
+                        "now": 1_750_000_000.223_456,
+                        "ttl_seconds": 80.125,
+                        "candidate_workspace": alternate_candidate,
+                    },
+                ),
+            )
+            errors = [value for value in outcomes if isinstance(value, Exception)]
+            self.assertEqual(errors, [])
+            receipts = outcomes
 
             self.assertEqual(receipts[0].binding, receipts[1].binding)
             self.assertEqual(
@@ -170,29 +162,13 @@ class TwoPhaseWorkflowTests(unittest.TestCase):
     def test_concurrent_same_key_stage_conflicts_on_different_ttl(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             context = _context(Path(temporary), changed=True)
-            barrier = threading.Barrier(2)
-            create_workflow = context.service.store.create_workflow
-
-            def synchronized_create(*args: object, **kwargs: object):
-                barrier.wait(timeout=5)
-                return create_workflow(*args, **kwargs)
-
-            with patch.object(
-                context.service.store,
-                "create_workflow",
-                side_effect=synchronized_create,
-            ):
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    futures = (
-                        executor.submit(context.stage, now=100, ttl_seconds=80),
-                        executor.submit(context.stage, now=100.1, ttl_seconds=81),
-                    )
-                    outcomes: list[object] = []
-                    for future in futures:
-                        try:
-                            outcomes.append(future.result(timeout=10))
-                        except TwoPhaseWorkflowError as exc:
-                            outcomes.append(exc)
+            outcomes = _concurrent_stage_outcomes_after_replay_miss(
+                context,
+                (
+                    {"now": 100, "ttl_seconds": 80},
+                    {"now": 100.1, "ttl_seconds": 81},
+                ),
+            )
 
             self.assertEqual(
                 sum(not isinstance(value, Exception) for value in outcomes),
@@ -926,6 +902,46 @@ class _Context:
                 ),
             ),
         )
+
+
+def _concurrent_stage_outcomes_after_replay_miss(
+    context: _Context,
+    calls: tuple[dict[str, object], dict[str, object]],
+) -> tuple[object, object]:
+    """Start two stages only after both observed the same replay miss."""
+
+    start = threading.Barrier(3)
+    replay_miss = threading.Barrier(2)
+    find_stage_replay = context.service.find_stage_replay
+
+    def synchronized_stage(kwargs: dict[str, object]) -> object:
+        start.wait(timeout=THREAD_SYNC_TIMEOUT_SECONDS)
+        return context.stage(**kwargs)
+
+    def synchronized_replay_check(*args: object, **kwargs: object) -> None:
+        if find_stage_replay(*args, **kwargs) is not None:
+            raise AssertionError(
+                "Concurrent stage did not observe the expected replay miss."
+            )
+        replay_miss.wait(timeout=THREAD_SYNC_TIMEOUT_SECONDS)
+
+    with (
+        patch.object(
+            context.service,
+            "find_stage_replay",
+            new=synchronized_replay_check,
+        ),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        futures = tuple(executor.submit(synchronized_stage, call) for call in calls)
+        start.wait(timeout=THREAD_SYNC_TIMEOUT_SECONDS)
+        outcomes: list[object] = []
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=THREAD_RESULT_TIMEOUT_SECONDS))
+            except Exception as exc:
+                outcomes.append(exc)
+    return outcomes[0], outcomes[1]
 
 
 def _context(root: Path, *, changed: bool) -> _Context:

@@ -40,6 +40,7 @@
         "package": "@playwright/mcp",
         "version": "0.0.78",
         "package_integrity": "sha512-XLTUeA6mEN9sQ+hJ4dfG8EIkDbxS0K3Trc2RBkUJuf02TgE2FQRNTMtq/aJfhyRMINsRl/Ybc4sxcWLtFn4/TQ==",
+        "archive_verification_timeout_seconds": 60,
         "allowed_hosts": ["localhost", "127.0.0.1", "::1"],
         "tool_schema_sha256": {
           "browser_type": "ed892740ebc14bb2a49467c08b8bb02717d50f1f3ef8ed06d51abf5ebb3249da",

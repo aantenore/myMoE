@@ -153,6 +153,7 @@ class BrowserCapabilityConfig:
     package_integrity: str
     allowed_hosts: tuple[str, ...]
     tool_schema_sha256: dict[str, str]
+    archive_verification_timeout_seconds: int = 60
     max_result_chars: int = 12_000
 
     @classmethod
@@ -170,6 +171,7 @@ class BrowserCapabilityConfig:
             "package_integrity",
             "allowed_hosts",
             "tool_schema_sha256",
+            "archive_verification_timeout_seconds",
             "max_result_chars",
         }
         unknown = set(raw) - allowed_fields
@@ -210,6 +212,18 @@ class BrowserCapabilityConfig:
         digests = {str(name): str(value).lower() for name, value in digests_raw.items()}
         if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in digests.values()):
             raise ToolExecutionError("Every browser tool schema digest must be lowercase SHA-256.")
+        archive_verification_timeout_seconds = raw.get(
+            "archive_verification_timeout_seconds",
+            60,
+        )
+        if type(archive_verification_timeout_seconds) is not int:
+            raise ToolExecutionError(
+                "Browser archive_verification_timeout_seconds must be an integer."
+            )
+        if not 10 <= archive_verification_timeout_seconds <= 180:
+            raise ToolExecutionError(
+                "Browser archive_verification_timeout_seconds must be between 10 and 180."
+            )
         try:
             max_result_chars = int(raw.get("max_result_chars", 12_000))
         except (TypeError, ValueError) as exc:
@@ -225,6 +239,9 @@ class BrowserCapabilityConfig:
             package_integrity=package_integrity,
             allowed_hosts=hosts,
             tool_schema_sha256=digests,
+            archive_verification_timeout_seconds=(
+                archive_verification_timeout_seconds
+            ),
             max_result_chars=max_result_chars,
         )
         _validate_playwright_launch(server, config)
@@ -240,6 +257,9 @@ class BrowserCapabilityConfig:
                 "package_integrity": self.package_integrity,
                 "allowed_hosts": self.allowed_hosts,
                 "tool_schema_sha256": self.tool_schema_sha256,
+                "archive_verification_timeout_seconds": (
+                    self.archive_verification_timeout_seconds
+                ),
                 "max_result_chars": self.max_result_chars,
             }
         )
@@ -1123,7 +1143,9 @@ def run_browser_capability_canary(
     started = time.monotonic()
     checks: list[dict[str, Any]] = []
     blocked_egress_attempts = 0
+    runtime: dict[str, Any] = {}
     try:
+        runtime = dict(provider.attest())
         with _CanaryServer(b"blocked") as forbidden:
             probe = f'<img alt="" src="{forbidden.url}unapproved-local-service">'.encode()
             page = _CANARY_PAGE.replace(b"</main>", probe + b"</main>")
@@ -1172,7 +1194,7 @@ def run_browser_capability_canary(
                         forbidden.hits == 0 and blocked_egress_attempts > 0,
                     )
                 )
-                runtime = dict(clicked.get("runtime", {}))
+                runtime = dict(clicked.get("runtime", runtime))
     except Exception as exc:
         checks.append(
             {
@@ -1181,10 +1203,6 @@ def run_browser_capability_canary(
                 "error_type": type(exc).__name__,
             }
         )
-        try:
-            runtime = provider.attest()
-        except Exception:
-            runtime = {}
     finally:
         provider.close()
 
@@ -1731,7 +1749,7 @@ def _verify_browser_runtime(
                 text=True,
                 encoding="utf-8",
                 errors="strict",
-                timeout=20,
+                timeout=config.archive_verification_timeout_seconds,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:

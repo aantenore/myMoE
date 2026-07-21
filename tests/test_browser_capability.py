@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import ChainMap
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 import hashlib
 import http.client
@@ -244,6 +246,92 @@ class BrowserCapabilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ToolExecutionError, "harness-owned"):
                 BrowserCapabilityConfig.from_server(injected_environment)
 
+            for timeout in (9, 181):
+                with self.subTest(archive_verification_timeout_seconds=timeout):
+                    server = _fake_server(root)
+                    browser_config = dict(server.browser_capability)
+                    browser_config["archive_verification_timeout_seconds"] = timeout
+                    with self.assertRaisesRegex(
+                        ToolExecutionError,
+                        "archive_verification_timeout_seconds",
+                    ):
+                        BrowserCapabilityConfig.from_server(
+                            replace(server, browser_capability=browser_config)
+                        )
+
+            for timeout in (10.5, "60", True):
+                with self.subTest(archive_verification_timeout_type=type(timeout)):
+                    server = _fake_server(root)
+                    browser_config = dict(server.browser_capability)
+                    browser_config["archive_verification_timeout_seconds"] = timeout
+                    with self.assertRaisesRegex(
+                        ToolExecutionError,
+                        "must be an integer",
+                    ):
+                        BrowserCapabilityConfig.from_server(
+                            replace(server, browser_capability=browser_config)
+                        )
+
+    def test_runtime_archive_verification_uses_configured_bounded_timeout(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "npm-cache"
+            cache.mkdir()
+            server = _fake_server(root)
+            browser_config = dict(server.browser_capability)
+            browser_config["archive_verification_timeout_seconds"] = 73
+            config = BrowserCapabilityConfig.from_server(
+                replace(server, browser_capability=browser_config)
+            )
+            pack_timeouts: list[object] = []
+
+            def fake_run(command, **kwargs):
+                if "process.execPath" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=f"{sys.executable}\n",
+                        stderr="",
+                    )
+                if "--version" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout="v24.0.0\n",
+                        stderr="",
+                    )
+                pack_timeouts.append(kwargs.get("timeout"))
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+            with (
+                patch(
+                    "local_moe.browser_capability.shutil.which",
+                    return_value=sys.executable,
+                ),
+                patch(
+                    "local_moe.browser_capability.subprocess.run",
+                    side_effect=fake_run,
+                ),
+                self.assertRaisesRegex(ToolExecutionError, "offline npm cache"),
+            ):
+                _verify_browser_runtime(
+                    config,
+                    {
+                        "HOME": str(root),
+                        "NPM_CONFIG_CACHE": str(cache),
+                        "PATH": str(root),
+                        "SystemRoot": str(root),
+                    },
+                )
+
+            self.assertEqual(pack_timeouts, [73])
+            self.assertNotEqual(
+                config.digest,
+                replace(config, archive_verification_timeout_seconds=60).digest,
+            )
+
     def test_package_archive_integrity_is_computed_not_trusted_from_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -252,6 +340,13 @@ class BrowserCapabilityTests(unittest.TestCase):
             config = BrowserCapabilityConfig.from_server(_fake_server(root))
 
             def fake_run(command, **_kwargs):
+                if "process.execPath" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=f"{sys.executable}\n",
+                        stderr="",
+                    )
                 if "--version" in command:
                     return subprocess.CompletedProcess(
                         command,
@@ -332,6 +427,31 @@ class BrowserCapabilityTests(unittest.TestCase):
             self.assertEqual(launcher.prefix_args, (str(cli.resolve()),))
             self.assertNotIn(".cmd", " ".join((str(launcher.command), *launcher.prefix_args)))
 
+    def test_windows_environment_keeps_case_insensitive_system_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "npm-cache"
+            cache.mkdir()
+            source = _CaseInsensitiveEnvironment(
+                {
+                    "PATH": str(root),
+                    "SYSTEMROOT": str(root / "Windows"),
+                }
+            )
+            isolated_source = ChainMap(
+                {"NPM_CONFIG_CACHE": str(cache)},
+                source,
+            )
+
+            environment = _browser_process_environment(
+                isolated_source,
+                platform="win32",
+                npm_user_config=(root / "browser.npmrc").resolve(),
+            )
+
+            self.assertEqual(environment["SystemRoot"], source["SYSTEMROOT"])
+            self.assertEqual(environment["NPM_CONFIG_CACHE"], str(cache.resolve()))
+
     def test_runtime_rejects_node_18_for_the_pinned_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -340,6 +460,13 @@ class BrowserCapabilityTests(unittest.TestCase):
             config = BrowserCapabilityConfig.from_server(_fake_server(root))
 
             def fake_run(command, **_kwargs):
+                if "process.execPath" in command:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=f"{sys.executable}\n",
+                        stderr="",
+                    )
                 if "--version" in command:
                     return subprocess.CompletedProcess(
                         command, 0, stdout="v18.20.0\n", stderr=""
@@ -515,6 +642,15 @@ class BrowserCapabilityTests(unittest.TestCase):
         self.assertIn("does_not_qualify_desktop_control", result["limits"])
         self.assertIn("does_not_qualify_host_network_containment", result["limits"])
 
+    def test_canary_does_not_retry_failed_runtime_attestation(self) -> None:
+        provider = _FailingAttestationCanaryProvider()
+
+        result = run_browser_capability_canary(provider)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["checks"][0]["name"], "runtime")
+        self.assertEqual(provider.attestation_attempts, 1)
+
 
 class _SuccessfulRunner:
     def run(
@@ -586,6 +722,16 @@ class _CanaryProvider:
             "blocked_egress_attempts": 1,
             "runtime": self.attest(),
         }
+
+
+class _FailingAttestationCanaryProvider(_CanaryProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attestation_attempts = 0
+
+    def attest(self):
+        self.attestation_attempts += 1
+        raise ToolExecutionError("bounded runtime attestation failure")
 
 
 def _fake_server(
@@ -682,12 +828,25 @@ def _fake_provider(
             "npm_cache_sha256": "c" * 64,
         }
 
+    def fake_process_environment(source, platform, config):
+        cache = config.with_name("npm-cache")
+        cache.mkdir(exist_ok=True)
+        isolated_source = ChainMap(
+            {"NPM_CONFIG_CACHE": str(cache)},
+            source,
+        )
+        return _browser_process_environment(
+            isolated_source,
+            platform=platform,
+            npm_user_config=config,
+        )
+
     return PlaywrightMcpBrowserProvider(
         configured,
         runtime_attestor=runtime_attestor,
         session_factory=session_factory,
         executable_resolver=lambda _command: sys.executable,
-        environment_factory=lambda _source, _platform, _config: {},
+        environment_factory=fake_process_environment,
     )
 
 
@@ -701,6 +860,20 @@ def _binding(payload: dict[str, object]) -> dict[str, object]:
             "snapshot_sha256",
         )
     }
+
+
+class _CaseInsensitiveEnvironment(Mapping[str, str]):
+    def __init__(self, values: Mapping[str, str]) -> None:
+        self._values = {key.upper(): value for key, value in values.items()}
+
+    def __getitem__(self, key: str) -> str:
+        return self._values[key.upper()]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
 
 
 def _target_label(snapshot: object, target: str) -> str:

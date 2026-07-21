@@ -46,6 +46,8 @@ All notable changes to myMoE are documented in this file.
   plus `npx-cli.js` directly instead of crossing a batch-file argument parser.
 - Provider errors, state drift, invalid bindings, oversized MCP responses, and
   dead processes invalidate the entire browser lifecycle and fail closed.
+- Offline archive verification has a separate configurable 10-180 second
+  startup bound, and the canary never retries a failed runtime attestation.
 
 ### Known limitations
 
