@@ -65,8 +65,10 @@ and Windows use their platform-specific capability paths.
 
 A separate Desktop Semantic Cell contract matrix installs the exact `desktop`
 extra on Linux, macOS, and Windows under both Python 3.10 and 3.12. It executes
-no GUI action; it verifies the pinned native provider version, exact 49-tool
-catalog size, and admitted `get_window_state` schema.
+no GUI action; it verifies the pinned native provider version, complete
+platform-specific catalog by both count and sorted-name digest (53 tools on
+Linux, 49 on macOS, and 50 on Windows), and the exact native
+`get_window_state` schema.
 
 The matrix runs once for each pull request and again after changes reach
 `main`. Feature-branch pushes do not start a duplicate matrix alongside the

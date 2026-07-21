@@ -12,6 +12,7 @@ from local_moe.desktop_capability import (
     _desktop_session_policy,
     _desktop_user_policy,
 )
+from local_moe.desktop_provider_contract import admitted_cua_provider_contract
 from local_moe.extensions import McpServerDefinition
 from local_moe.mcp_client import McpTool, McpToolCallResult, McpToolList
 
@@ -61,7 +62,6 @@ def main() -> None:
         json.dumps(result, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps(result, indent=2))
     if not result["release_ready"]:
         raise SystemExit(2)
 
@@ -112,7 +112,8 @@ def run_benchmark(*, iterations: int = 40) -> dict[str, Any]:
         100 * (1 - delivered_bytes / raw_bytes),
         2,
     )
-    raw_tool_count = 49
+    reference_contract = admitted_cua_provider_contract(platform_system="Darwin")
+    raw_tool_count = reference_contract.tool_count
     model_tool_count = 1
     tool_surface_reduction_percent = round(
         100 * (1 - model_tool_count / raw_tool_count),
@@ -146,7 +147,11 @@ def run_benchmark(*, iterations: int = 40) -> dict[str, Any]:
             "raw_payload_bytes": raw_bytes,
             "delivered_payload_bytes": delivered_bytes,
             "payload_reduction_percent": payload_reduction_percent,
+            "raw_provider_platform": reference_contract.platform_system,
             "raw_provider_tool_count": raw_tool_count,
+            "raw_provider_catalog_names_sha256": (
+                reference_contract.catalog_names_sha256
+            ),
             "model_visible_tool_count": model_tool_count,
             "tool_surface_reduction_percent": tool_surface_reduction_percent,
             "delivered_nodes": len(delivered.get("nodes", [])),

@@ -118,9 +118,9 @@ binds approval to target plus configuration, and tears it down after use.
 > **Platform boundary:** the owned-daemon runtime is implemented on POSIX and
 > has been live-qualified on macOS. Linux requires its own bound-window canary
 > because toolkit and compositor behavior varies. Windows CI verifies only the
-> locked provider package/version, 49-tool catalog, and admitted schema, while
-> reporting the observed native executable digest; the runtime deliberately
-> fails closed there.
+> locked provider package/version, its exact 50-tool Windows catalog-name
+> digest, and admitted schema, while reporting the observed native executable digest;
+> the runtime deliberately fails closed there.
 
 ```bash
 uv sync --locked --extra desktop
@@ -141,16 +141,18 @@ operator-only discovery sequence in the
 That temporary discovery daemon is never exposed to the model and is stopped
 before the bound cell starts. `desktop-init` then binds the current process
 instance, pins the installed native provider executable, persistently disables
-its telemetry, erases its telemetry identifier, and returns exact canary and
-agent argv arrays. The checked-in desktop files are schemas and examples; their
-zero digests are intentionally not runnable target bindings.
+its telemetry, erases its telemetry identifier, validates the exact native
+catalog and schema for the current operating system, and returns exact canary
+and agent argv arrays. The checked-in desktop files are schemas and examples;
+their zero executable and target digests are intentionally not runnable
+bindings.
 
 On the shipped deterministic 512-node accessibility fixture, the firewall
 keeps 14 useful nodes within the normal agent-result budget, reduces the
 serialized observation by 98.52%, and reduces the model-visible provider
-surface from 49 tools to 1, with zero secret sentinels or provider-addressing
-keys delivered. This is a payload/safety benchmark, not a desktop task-success
-or accessibility-completeness claim.
+surface from the 49-tool macOS reference catalog to 1, with zero secret
+sentinels or provider-addressing keys delivered. This is a payload/safety
+benchmark, not a desktop task-success or accessibility-completeness claim.
 
 See [Desktop Semantic Cell](docs/desktop-semantic-cell.md) for the simple use
 case, target-binding contract, provider admission, platform limits, threat

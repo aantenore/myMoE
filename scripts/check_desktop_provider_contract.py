@@ -6,8 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 
-
-EXPECTED_PROVIDER_TOOL_COUNT = 49
+from local_moe.desktop_provider_contract import (
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV,
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE,
+    validate_cua_provider_document,
+)
 
 
 def main() -> None:
@@ -26,7 +29,6 @@ def main() -> None:
     )
     capability = config["servers"][0]["desktop_capability"]
     expected_version = capability["version"]
-    expected_schema = capability["tool_schema_sha256"]["get_window_state"]
     binary = Path(get_binary_path()).resolve(strict=True)
     environment = {
         key: value
@@ -47,6 +49,9 @@ def main() -> None:
     }
     environment.update(
         {
+            CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV: (
+                CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE
+            ),
             "CUA_DRIVER_RS_TELEMETRY_ENABLED": "false",
             "CUA_DRIVER_RS_UPDATE_CHECK": "false",
         }
@@ -59,31 +64,17 @@ def main() -> None:
         environment,
     )
     payload = json.loads(docs.stdout)
-    tools = payload.get("tools", [])
-    if not isinstance(tools, list) or len(tools) != EXPECTED_PROVIDER_TOOL_COUNT:
-        raise SystemExit(
-            "Pinned desktop provider tool catalog size did not match the admitted contract."
+    if not isinstance(payload, dict):
+        raise SystemExit("Pinned desktop provider documentation is malformed.")
+    try:
+        contract = validate_cua_provider_document(
+            payload,
+            version=expected_version,
         )
-    tool_names = [
-        item.get("name")
-        for item in tools
-        if isinstance(item, dict) and isinstance(item.get("name"), str)
-    ]
-    if len(tool_names) != len(tools) or len(set(tool_names)) != len(tool_names):
-        raise SystemExit("Pinned desktop provider tool catalog is malformed.")
-    tool = next(
-        (
-            item
-            for item in tools
-            if isinstance(item, dict) and item.get("name") == "get_window_state"
-        ),
-        None,
-    )
-    if tool is None:
-        raise SystemExit("Pinned desktop provider omitted get_window_state.")
-    actual_schema = _sha256_json(tool.get("input_schema"))
-    if actual_schema != expected_schema:
-        raise SystemExit("Pinned desktop provider schema digest did not match.")
+    except ValueError as exc:
+        raise SystemExit(
+            f"Pinned desktop provider platform contract did not match: {exc}"
+        ) from exc
     print(
         json.dumps(
             {
@@ -91,9 +82,11 @@ def main() -> None:
                 "status": "passed",
                 "provider": "cua_driver",
                 "version": expected_version,
+                "platform_system": contract.platform_system,
                 "observed_provider_executable_sha256": _sha256_file(binary),
-                "get_window_state_schema_sha256": actual_schema,
-                "provider_tool_count": EXPECTED_PROVIDER_TOOL_COUNT,
+                "provider_catalog_names_sha256": contract.catalog_names_sha256,
+                "get_window_state_schema_sha256": contract.observe_schema_sha256,
+                "provider_tool_count": contract.tool_count,
                 "model_visible_tool_count": 1,
                 "telemetry_enabled_for_check": False,
                 "update_check_enabled_for_check": False,
@@ -119,16 +112,6 @@ def _run(
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise SystemExit("Desktop provider contract command failed safely.") from exc
-
-
-def _sha256_json(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _sha256_file(path: Path) -> str:

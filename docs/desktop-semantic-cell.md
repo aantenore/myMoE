@@ -32,12 +32,13 @@ boundary: use an egress policy if an independently enforced air gap is required.
 ## Why this is not a new computer-control framework
 
 [Cua Driver](https://github.com/trycua/cua) already implements native desktop
-inspection across operating systems. Its
-[MCP server exposes 49 tools](https://cua.ai/docs/reference/cua-driver/mcp-tools),
-including application discovery, screenshots, coordinate input, process
-control, clipboard access, and other authority that this alpha does not need.
+inspection across operating systems. The pinned `0.10.0` native catalogs expose
+49 tools on macOS, 53 on Linux, and 50 on Windows, including application
+discovery, screenshots, coordinate input, process control, and other authority
+that this alpha does not need. The platform differences are explicit in the
+[pinned upstream source](https://github.com/trycua/cua/tree/cua-driver-rs-v0.10.0/libs/cua-driver/rust/crates).
 Reimplementing those adapters would duplicate useful upstream work; exposing
-the complete catalog to a model would grant far too much authority.
+any complete catalog to a model would grant far too much authority.
 
 myMoE instead contributes a provider-neutral **capability firewall**:
 
@@ -195,11 +196,16 @@ uv run mymoe \
 ```
 
 `desktop-init` inspects the current process start time, name, and executable;
-hashes both target and native provider executable; persistently disables Cua
-telemetry; erases its telemetry installation identifier; and writes files with
-exclusive creation without overwriting an existing workspace. On POSIX, the
-files request mode `0600`; on Windows, they inherit the destination directory's
-ACL and this command does not claim to establish an owner-only DACL. It returns
+hashes both target and native provider executable; validates the exact
+platform-native catalog and `get_window_state` schema; writes the admitted
+schema digest into the binding; persistently disables Cua telemetry; erases its
+telemetry installation identifier; suppresses Linux accessibility advertisement
+during version and contract inspection; and writes files with exclusive
+creation without overwriting an existing workspace. The separately launched
+runtime daemon retains the accessibility behavior required for observation. On
+POSIX, the files request mode
+`0600`; on Windows, they inherit the destination directory's ACL and this
+command does not claim to establish an owner-only DACL. It returns
 the exact canary and agent argv arrays as JSON. Re-run it into a new directory
 after an application or provider update.
 
@@ -215,11 +221,12 @@ actions.
 
 CI separately installs the exact optional provider wheel on Linux, macOS, and
 Windows, executes no GUI action, and verifies the locked provider version,
-49-tool catalog, and canonical `get_window_state` schema digest with telemetry
-and update checks disabled. It reports the observed native executable digest;
-it does not compare that platform-specific digest with a separately admitted
-binary digest. Hosted CI cannot qualify an interactive desktop session; that
-remains the purpose of the local bound-window canary.
+complete platform catalog by count and sorted-name digest (53/49/50), and exact
+platform-native `get_window_state` schema digest with telemetry and update
+checks disabled. It reports the observed native executable digest; it does not
+compare that platform-specific digest with a separately admitted binary digest.
+Hosted CI cannot qualify an interactive desktop session; that remains the
+purpose of the local bound-window canary.
 
 The deterministic payload benchmark uses a 512-node synthetic accessibility
 tree with long text, provider-only tokens, coordinates, password fields, and

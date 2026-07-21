@@ -75,11 +75,14 @@ Optional extras:
 
 - `.[desktop]`: installs the pinned Cua Driver adapter and process-inspection
   dependency required by `mymoe desktop-init` and the Desktop Semantic Cell.
-  The locked provider package/version, catalog, and schema are checked on Linux,
-  macOS, and Windows; CI reports but does not independently admit the observed
-  native executable digest. The owned-daemon runtime is implemented on POSIX and
-  live-qualified on macOS; Linux requires a local bound-window canary. Windows
-  receives provider-contract checks only, and the runtime fails closed there
+  The locked provider package/version, digest of the complete platform-native
+  tool-name set, and admitted schema are checked on Linux, macOS, and Windows;
+  `desktop-init` writes the matching schema into the generated binding. CI
+  reports but does not
+  independently admit the observed native executable digest. The owned-daemon
+  runtime is implemented on POSIX and live-qualified on macOS; Linux requires a
+  local bound-window canary. Windows receives provider-contract checks only,
+  and the runtime fails closed there
   until its named-pipe lifecycle is qualified.
 - `.[coding-canary]`: installs the canonical-JSON dependency required by the
   isolated Cline coding-cell qualification command.

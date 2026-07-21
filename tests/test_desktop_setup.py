@@ -7,19 +7,47 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from local_moe.app_config import load_app_config
 from local_moe.desktop_capability import DesktopCapabilityConfig
+from local_moe.desktop_provider_contract import (
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV,
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE,
+    admitted_cua_provider_contract,
+)
 from local_moe.desktop_setup import materialize_desktop_workspace
 from local_moe.desktop_setup import _read_packaged_json
+from local_moe.desktop_setup import _run_provider
 from local_moe.extensions import load_mcp_servers
 
 
 class DesktopSetupTests(unittest.TestCase):
+    def test_provider_inspection_suppresses_linux_a11y_advertisement(self) -> None:
+        completed = Mock(returncode=0, stdout="", stderr="")
+        with patch(
+            "local_moe.desktop_setup.subprocess.run",
+            return_value=completed,
+        ) as run:
+            self.assertIs(
+                _run_provider(Path("/tmp/cua-driver"), ["dump-docs"]),
+                completed,
+            )
+
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(
+            environment[CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV],
+            CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE,
+        )
+        self.assertEqual(environment["CUA_DRIVER_RS_TELEMETRY_ENABLED"], "false")
+        self.assertEqual(environment["CUA_DRIVER_RS_UPDATE_CHECK"], "false")
+
     def test_materializes_bound_installable_workspace_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            provider_contract = admitted_cua_provider_contract(
+                platform_system="Linux"
+            )
             binary = root / "cua-driver"
             binary.write_bytes(b"pinned-provider")
             binary.chmod(0o700)
@@ -32,6 +60,10 @@ class DesktopSetupTests(unittest.TestCase):
                 patch(
                     "local_moe.desktop_setup._provider_version",
                     return_value="0.10.0",
+                ),
+                patch(
+                    "local_moe.desktop_setup._provider_contract",
+                    return_value=provider_contract,
                 ),
                 patch("local_moe.desktop_setup._disable_provider_telemetry"),
                 patch(
@@ -65,6 +97,19 @@ class DesktopSetupTests(unittest.TestCase):
                 expected_provider_sha256,
             )
             self.assertEqual(config.process_executable_sha256, "b" * 64)
+            self.assertEqual(
+                config.tool_schema_sha256["get_window_state"],
+                provider_contract.observe_schema_sha256,
+            )
+            self.assertEqual(result["provider"]["platform_system"], "Linux")
+            self.assertEqual(
+                result["provider"]["catalog_tool_count"],
+                provider_contract.tool_count,
+            )
+            self.assertEqual(
+                result["provider"]["catalog_names_sha256"],
+                provider_contract.catalog_names_sha256,
+            )
             self.assertTrue(Path(app.default_moe_config).is_absolute())
             self.assertTrue(Path(app.extensions.mcp_config).is_absolute())
             self.assertEqual(
@@ -100,6 +145,10 @@ class DesktopSetupTests(unittest.TestCase):
                 patch(
                     "local_moe.desktop_setup._provider_version",
                     return_value="0.10.0",
+                ),
+                patch(
+                    "local_moe.desktop_setup._provider_contract",
+                    return_value=provider_contract,
                 ),
                 patch(
                     "local_moe.desktop_setup._disable_provider_telemetry"

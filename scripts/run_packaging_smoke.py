@@ -229,8 +229,10 @@ def _run_installed_desktop_smoke(
             "from pathlib import Path",
             "from unittest.mock import patch",
             "from local_moe import cli",
+            "from local_moe.desktop_provider_contract import admitted_cua_provider_contract",
             "workspace = sys.argv[1]",
             "binary = Path(sys.executable).resolve()",
+            "provider_contract = admitted_cua_provider_contract()",
             "identity = {",
             "    'pid': 4242,",
             "    'name': 'Installed Wheel Editor',",
@@ -240,6 +242,7 @@ def _run_installed_desktop_smoke(
             "with ExitStack() as stack:",
             "    stack.enter_context(patch('local_moe.desktop_setup._provider_binary', return_value=binary))",
             "    stack.enter_context(patch('local_moe.desktop_setup._provider_version', return_value='0.10.0'))",
+            "    stack.enter_context(patch('local_moe.desktop_setup._provider_contract', return_value=provider_contract))",
             "    stack.enter_context(patch('local_moe.desktop_setup._disable_provider_telemetry'))",
             "    stack.enter_context(patch('local_moe.desktop_setup._resolve_process_identity', return_value=identity))",
             "    sys.argv = [",
@@ -274,13 +277,16 @@ def _run_installed_desktop_smoke(
         (desktop_workspace / "mcp.cua-desktop.json").read_text(encoding="utf-8")
     )
     server = mcp.get("servers", [{}])[0]
-    target = server.get("desktop_capability", {}).get("target", {})
+    capability = server.get("desktop_capability", {})
+    target = capability.get("target", {})
     if (
         payload.get("status") != "created"
         or actual_files != expected_files
         or server.get("command") != str(python.resolve())
         or target.get("pid") != 4242
         or target.get("window_id") != 17
+        or capability.get("tool_schema_sha256", {}).get("get_window_state")
+        != payload.get("provider", {}).get("observe_schema_sha256")
         or not isinstance(payload.get("next", {}).get("offline_canary_argv"), list)
     ):
         raise SystemExit(

@@ -16,6 +16,13 @@ from .desktop_capability import (
     _resolve_process_identity,
     _sha256_file,
 )
+from .desktop_provider_contract import (
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV,
+    CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE,
+    CUA_DRIVER_OBSERVE_TOOL,
+    CuaProviderContract,
+    validate_cua_provider_document,
+)
 from .extensions import load_mcp_servers
 from .tool_runner import ToolExecutionError
 
@@ -56,6 +63,7 @@ def materialize_desktop_workspace(
         raise ToolExecutionError(
             f"Desktop init requires cua-driver {CUA_DRIVER_VERSION}; found {version}."
         )
+    provider_contract = _provider_contract(binary, version)
     identity = _resolve_process_identity(target_pid)
 
     app = _read_packaged_json("templates/desktop/app.desktop.example.json")
@@ -76,6 +84,12 @@ def materialize_desktop_workspace(
         raise ValueError("Packaged desktop MCP template is missing provider metadata.")
     server["command"] = str(binary)
     capability["provider_executable_sha256"] = _sha256_file(binary)
+    schema_digests = capability.get("tool_schema_sha256")
+    if not isinstance(schema_digests, dict):
+        raise ValueError("Packaged desktop MCP template is missing schema metadata.")
+    schema_digests[CUA_DRIVER_OBSERVE_TOOL] = (
+        provider_contract.observe_schema_sha256
+    )
     capability["target"] = {
         "id": target_id,
         "pid": target_pid,
@@ -183,7 +197,11 @@ def materialize_desktop_workspace(
         "provider": {
             "name": "cua_driver",
             "version": version,
+            "platform_system": provider_contract.platform_system,
             "executable_sha256": _sha256_file(binary),
+            "catalog_tool_count": provider_contract.tool_count,
+            "catalog_names_sha256": provider_contract.catalog_names_sha256,
+            "observe_schema_sha256": provider_contract.observe_schema_sha256,
             "telemetry_enabled": False,
         },
         "next": {
@@ -215,6 +233,24 @@ def _provider_version(binary: Path) -> str:
         "",
     )
     return line[len(prefix) :].strip()
+
+
+def _provider_contract(binary: Path, version: str) -> CuaProviderContract:
+    completed = _run_provider(binary, ["dump-docs", "--type", "mcp"])
+    if completed.returncode != 0:
+        raise ToolExecutionError("Desktop provider contract inspection failed.")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ToolExecutionError("Desktop provider contract is invalid.") from exc
+    if not isinstance(payload, dict):
+        raise ToolExecutionError("Desktop provider contract is invalid.")
+    try:
+        return validate_cua_provider_document(payload, version=version)
+    except ValueError as exc:
+        raise ToolExecutionError(
+            "Desktop provider did not match the admitted platform contract."
+        ) from exc
 
 
 def _disable_provider_telemetry(binary: Path) -> None:
@@ -266,6 +302,9 @@ def _run_provider(
         }
     }
     environment["CUA_DRIVER_RS_UPDATE_CHECK"] = "false"
+    environment[CUA_DRIVER_DISABLE_A11Y_ADVERTISE_ENV] = (
+        CUA_DRIVER_DISABLE_A11Y_ADVERTISE_VALUE
+    )
     if telemetry_override:
         environment["CUA_DRIVER_RS_TELEMETRY_ENABLED"] = "false"
     try:

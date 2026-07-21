@@ -19,10 +19,12 @@ All notable changes to myMoE are documented in this file.
 - Dedicated app and provider configuration examples plus a deterministic
   live canary for the read-only desktop contract.
 - A `desktop-init` binder that hashes the installed native provider and current
-  target process, disables provider telemetry, erases its telemetry identifier,
-  and writes an installable workspace with exclusive creation. Files request
-  mode `0600` on POSIX; Windows retains the destination directory's inherited
-  ACL rather than claiming an owner-only DACL.
+  target process, validates the exact platform-native catalog and observe
+  schema, writes that platform's admitted schema digest, disables provider
+  telemetry, erases its telemetry identifier, and creates an installable
+  workspace exclusively. Files request mode `0600` on POSIX; Windows retains
+  the destination directory's inherited ACL rather than claiming an owner-only
+  DACL.
 - A Desktop Semantic Cell guide covering the plain-language use case,
   originality boundary, provider admission, threat model, platform limits, and
   future resource-aware semantic-versus-vision routing.
@@ -30,8 +32,9 @@ All notable changes to myMoE are documented in this file.
   addressing removal, bounded output, and reductions in model-visible tools and
   serialized observation size.
 - A Linux, macOS, and Windows CI contract job that installs the exact optional
-  provider wheel, checks its locked version, 49-tool catalog, and semantic
-  schema, and reports the observed native executable digest without GUI access,
+  provider wheel, checks its locked version, complete platform catalog (53, 49,
+  and 50 tools respectively), catalog-name digest, and exact semantic schema,
+  and reports the observed native executable digest without GUI access,
   telemetry, or update checks.
 - A repository security policy describing supported alpha versions, private
   vulnerability reporting, and the project's main trust boundaries.

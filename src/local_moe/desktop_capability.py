@@ -19,6 +19,10 @@ from typing import Any, Callable, Mapping, Protocol
 import unicodedata
 
 from .agent_types import AgentToolSpec
+from .desktop_provider_contract import (
+    CUA_DRIVER_CONTRACT_VERSION,
+    CUA_DRIVER_OBSERVE_TOOL,
+)
 from .extensions import ExtensionRegistry, McpServerDefinition
 from .mcp_client import McpClientError, McpToolCallResult, StdioMcpClient, StdioMcpSession
 from .redaction import REDACTED_VALUE
@@ -26,8 +30,7 @@ from .tool_runner import ToolExecutionError, ToolRunResult
 
 
 CUA_DRIVER_PROVIDER = "cua_driver"
-CUA_DRIVER_VERSION = "0.10.0"
-CUA_DRIVER_OBSERVE_TOOL = "get_window_state"
+CUA_DRIVER_VERSION = CUA_DRIVER_CONTRACT_VERSION
 _FALSE_ENVIRONMENT = {
     "CUA_DRIVER_RS_TELEMETRY_ENABLED": "false",
     "CUA_DRIVER_RS_UPDATE_CHECK": "false",
