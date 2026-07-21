@@ -89,6 +89,13 @@ gateway chooses one eligible local expert through `mymoe`, or pins one through
 `mymoe/<expert-id>`, then forwards the regular or streaming request. See
 [Local Coding Fabric](../local-coding-fabric.md).
 
+The built-in CLI agent can independently opt into the
+[Browser Capability Cell](../browser-capability-cell.md). That path keeps one
+stateful local-only browser session behind myMoE-owned tools, schema
+attestation, a parent-owned exact-origin proxy, pre-action snapshot checks, and
+approval bound to session, origin, snapshot hash, target, and label. It does not
+grant those tools to Cline or to normal chat.
+
 ## 2. Configuration Composition
 
 The runtime is assembled from independent configuration files rather than one monolithic settings object.

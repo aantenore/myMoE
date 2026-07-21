@@ -23,6 +23,12 @@ from .assistant_lifecycle_cli import (
     run_lifecycle_cli,
 )
 from .bootstrap import build_runtime_plan, runtime_plan_payload
+from .browser_capability import (
+    BrowserToolRunner,
+    CompositeToolRunner,
+    prefetch_browser_provider,
+)
+from .browser_setup import materialize_browser_workspace
 from .chat_runtime import generate_chat_turn
 from .chat_store import (
     ChatSession,
@@ -42,6 +48,7 @@ from .execution_scope import ScopePolicyError
 from .extensions import (
     create_plugin_scaffold,
     load_extension_registry,
+    load_mcp_servers,
     registry_payload,
 )
 from .memory import FileMemoryStore
@@ -148,6 +155,67 @@ class _MymoeArgumentParser(argparse.ArgumentParser):
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["browser-init"]:
+        browser_parser = argparse.ArgumentParser(
+            prog="mymoe browser-init",
+            description="Create an opt-in, self-contained local browser workspace.",
+            allow_abbrev=False,
+        )
+        browser_parser.add_argument("--out", required=True)
+        browser_args = browser_parser.parse_args(sys.argv[2:])
+        try:
+            result = materialize_browser_workspace(browser_args.out)
+        except (OSError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "error": "browser_init_failed",
+                        "message": str(exc),
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        print(json.dumps(result, indent=2))
+        return
+
+    if sys.argv[1:2] == ["browser-prefetch"]:
+        browser_parser = argparse.ArgumentParser(
+            prog="mymoe browser-prefetch",
+            description=(
+                "Cache one pinned browser provider and its dependencies without "
+                "executing the provider package."
+            ),
+            allow_abbrev=False,
+        )
+        browser_parser.add_argument("--mcp-config", required=True)
+        browser_parser.add_argument("--server", default="browser-local")
+        browser_args = browser_parser.parse_args(sys.argv[2:])
+        try:
+            servers = load_mcp_servers(browser_args.mcp_config)
+            matches = [item for item in servers if item.name == browser_args.server]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Browser MCP config must contain exactly one server named "
+                    f"{browser_args.server}."
+                )
+            result = prefetch_browser_provider(matches[0])
+        except (OSError, ValueError, ToolExecutionError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "error": "browser_prefetch_failed",
+                        "message": str(exc),
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        print(json.dumps(result, indent=2))
+        return
+
     if sys.argv[1:2] == ["coding-canary"]:
         raise SystemExit(_run_coding_canary_command(sys.argv[2:]))
 
@@ -163,6 +231,8 @@ def main() -> None:
         epilog=(
             "commands:\n"
             "  assistant-probe  Check local Codex tool compatibility in a disposable workspace.\n"
+            "  browser-init     Create packaged config files for the local browser cell.\n"
+            "  browser-prefetch Cache a pinned browser provider without executing its package.\n"
             "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
         ),
     )
@@ -257,6 +327,22 @@ def main() -> None:
         metavar="TOOL:ARGUMENTS_SHA256",
         help="Approve only a tool name and exact argument hash returned by a prior run.",
     )
+    parser.add_argument(
+        "--agent-browser-server",
+        help=(
+            "Expose the narrow local-only browser capability from one explicitly "
+            "configured MCP server."
+        ),
+    )
+    parser.add_argument(
+        "--agent-interactive-approvals",
+        action="store_true",
+        default=None,
+        help=(
+            "Keep a stateful agent session open and require the exact displayed "
+            "TOOL:ARGUMENTS_SHA256 token before each protected call."
+        ),
+    )
     parser.add_argument("--agent-correlation-id")
     parser.add_argument("--agent-max-model-turns", type=int)
     parser.add_argument("--agent-max-tool-calls", type=int)
@@ -277,6 +363,16 @@ def main() -> None:
         type=float,
         dest="agent_deprecated_max_wall_time_seconds",
         help="Deprecated alias for --agent-soft-wall-time-seconds.",
+    )
+    parser.add_argument(
+        "--browser-canary",
+        metavar="SERVER",
+        help="Qualify one configured local-only browser provider on a disposable fixture.",
+    )
+    parser.add_argument(
+        "--browser-canary-confirm",
+        action="store_true",
+        help="Confirm the deterministic local browser process and fixture interactions.",
     )
     parser.add_argument("--eval")
     parser.add_argument("--interactive", action="store_true")
@@ -365,6 +461,7 @@ def main() -> None:
     args = parser.parse_args()
     _validate_assistant_bridge_cli_mode(parser, args)
     _validate_agent_cli_mode(parser, args)
+    _validate_browser_canary_cli_mode(parser, args)
 
     lifecycle_cli_mode = assistant_bridge_lifecycle_mode(args)
     if lifecycle_cli_mode is not None:
@@ -372,6 +469,43 @@ def main() -> None:
         return
 
     app_config = load_app_config(args.app_config)
+
+    if args.browser_canary:
+        browser_runner: BrowserToolRunner | None = None
+        try:
+            allow_process_execution = bool(
+                getattr(
+                    getattr(app_config, "permissions", None),
+                    "allow_process_execution",
+                    False,
+                )
+            )
+            if not allow_process_execution:
+                raise ToolExecutionError(
+                    "Browser canary is disabled by the app process-execution policy."
+                )
+            browser_runner = BrowserToolRunner.from_registry(
+                _registry(app_config),
+                args.browser_canary,
+                allow_process_execution=True,
+            )
+            result = browser_runner.canary()
+        except (ToolExecutionError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {"error": "browser_canary_error", "message": str(exc)},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        finally:
+            if browser_runner is not None:
+                browser_runner.close()
+        print(json.dumps(result, indent=2))
+        if result.get("status") != "passed":
+            raise SystemExit(2)
+        return
 
     if args.assistant_task is not None or args.assistant_task_file is not None:
         from .assistant_bridge import (
@@ -467,6 +601,7 @@ def main() -> None:
     config = load_config(config_path)
 
     if args.agent_prompt is not None:
+        browser_runner: BrowserToolRunner | None = None
         try:
             if (
                 str(getattr(app_config, "mode", "")).strip().lower()
@@ -474,26 +609,46 @@ def main() -> None:
             ):
                 validate_local_agent_endpoints(config)
             registry = _registry(app_config)
-            runner = LocalToolRunner(
+            local_runner = LocalToolRunner(
                 registry,
                 app_config=app_config,
                 moe_config=config,
                 app_config_path=args.app_config,
                 active_config_path=config_path,
             )
+            runner: object = local_runner
+            additional_specs = ()
+            if args.agent_browser_server:
+                browser_runner = BrowserToolRunner.from_registry(
+                    registry,
+                    args.agent_browser_server,
+                    allow_process_execution=bool(
+                        getattr(
+                            getattr(app_config, "permissions", None),
+                            "allow_process_execution",
+                            False,
+                        )
+                    ),
+                )
+                runner = CompositeToolRunner(local_runner, browser_runner)
+                additional_specs = browser_runner.specs
             agent = build_local_agent_loop(
                 config,
                 runner,
                 registry,
                 expert_id=args.agent_expert,
-                visible_tools=args.agent_tool,
+                visible_tools=args.agent_tool or (),
+                additional_specs=additional_specs,
                 permission_policy=_agent_permission_policy(app_config),
                 budget=_agent_budget(args),
             )
             result = agent.run(
                 args.agent_prompt,
                 correlation_id=args.agent_correlation_id,
-                approval_handler=_agent_approval_handler(args.agent_approve),
+                approval_handler=_agent_approval_handler(
+                    args.agent_approve,
+                    interactive=args.agent_interactive_approvals,
+                ),
             )
         except ScopePolicyError as exc:
             _exit_scope_blocked(exc)
@@ -506,6 +661,9 @@ def main() -> None:
                 file=sys.stderr,
             )
             raise SystemExit(2) from exc
+        finally:
+            if browser_runner is not None:
+                browser_runner.close()
         _print_agent_result(result, json_output=args.json_output)
         if result.status != "completed":
             raise SystemExit(2)
@@ -1442,13 +1600,15 @@ def _agent_permission_policy(app_config: object) -> AgentPermissionPolicy:
 
 def _agent_approval_handler(
     raw_approvals: list[str] | None,
+    *,
+    interactive: bool = False,
 ):
-    if not raw_approvals:
+    if not raw_approvals and not interactive:
         return None
 
     approved: set[tuple[str, str]] = set()
     pattern = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127}):([0-9a-fA-F]{64})$")
-    for value in raw_approvals:
+    for value in raw_approvals or ():
         match = pattern.fullmatch(value.strip())
         if match is None:
             raise ValueError(
@@ -1461,6 +1621,33 @@ def _agent_approval_handler(
         exact = key in approved
         if exact:
             approved.remove(key)
+        elif interactive:
+            token = f"{request.tool_name}:{request.arguments_sha256.lower()}"
+            print(
+                json.dumps(
+                    {
+                        "approval_required": {
+                            "tool": request.tool_name,
+                            "risk_class": request.risk_class,
+                            "side_effects": request.side_effects,
+                            "summary": _approval_summary(request),
+                            "arguments": request.arguments,
+                            "exact_token": token,
+                        }
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                "Type y or paste the exact token to approve this one bound call; "
+                "press Enter to deny:",
+                file=sys.stderr,
+                flush=True,
+            )
+            response = sys.stdin.readline().strip()
+            exact = response.lower() == "y" or response == token
         return ApprovalDecision(
             approved=exact,
             reason=(
@@ -1471,6 +1658,24 @@ def _agent_approval_handler(
         )
 
     return decide
+
+
+def _approval_summary(request: ApprovalRequest) -> str:
+    arguments = request.arguments
+    if request.tool_name == "browser.navigate":
+        return f"Open local URL {arguments.get('url', '')}"
+    if request.tool_name == "browser.observe":
+        return f"Read accessible state from {arguments.get('origin', '')}"
+    if request.tool_name == "browser.click":
+        return f"Click {arguments.get('target_label', arguments.get('target', ''))}"
+    if request.tool_name == "browser.type":
+        text = str(arguments.get("text", ""))
+        preview = text if len(text) <= 80 else f"{text[:77]}..."
+        return (
+            f"Type {preview!r} into "
+            f"{arguments.get('target_label', arguments.get('target', ''))}"
+        )
+    return f"Run {request.tool_name} with the shown exact arguments"
 
 
 def _run_assistant_lifecycle_mode(
@@ -1795,6 +2000,8 @@ def _validate_agent_cli_mode(
         "agent_expert",
         "agent_tool",
         "agent_approve",
+        "agent_browser_server",
+        "agent_interactive_approvals",
         "agent_correlation_id",
         "agent_max_model_turns",
         "agent_max_tool_calls",
@@ -1811,9 +2018,10 @@ def _validate_agent_cli_mode(
         parser.error("--agent-* options require --agent-prompt")
     if args.agent_prompt is None:
         return
-    if not args.agent_tool:
+    if not args.agent_tool and not args.agent_browser_server:
         parser.error(
-            "--agent-prompt requires at least one explicit --agent-tool; use --prompt for tool-free generation"
+            "--agent-prompt requires at least one explicit --agent-tool or "
+            "--agent-browser-server; use --prompt for tool-free generation"
         )
     if (
         args.agent_soft_wall_time_seconds is not None
@@ -1909,6 +2117,33 @@ def _validate_agent_cli_mode(
     if active_conflicts:
         rendered = ", ".join(f"--{name.replace('_', '-')}" for name in active_conflicts)
         parser.error(f"--agent-prompt cannot be combined with {rendered}")
+
+
+def _validate_browser_canary_cli_mode(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.browser_canary is None:
+        if args.browser_canary_confirm:
+            parser.error("--browser-canary-confirm requires --browser-canary")
+        return
+    if not args.browser_canary_confirm:
+        parser.error("--browser-canary requires --browser-canary-confirm")
+    allowed = {
+        "app_config",
+        "browser_canary",
+        "browser_canary_confirm",
+        "json_output",
+    }
+    explicit = _explicit_argument_destinations(parser)
+    conflicts = sorted(
+        name
+        for name in explicit
+        if name not in allowed
+    )
+    if conflicts:
+        rendered = ", ".join(f"--{name.replace('_', '-')}" for name in conflicts)
+        parser.error(f"--browser-canary cannot be combined with {rendered}")
 
 
 def _response_payload(response: object) -> dict[str, object]:

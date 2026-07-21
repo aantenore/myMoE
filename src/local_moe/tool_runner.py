@@ -623,6 +623,11 @@ class LocalToolRunner:
     def _mcp_server(self, name: str) -> McpServerDefinition:
         for server in self._registry.mcp_servers:
             if server.name == name:
+                if server.browser_capability.get("enabled") is True:
+                    raise ToolExecutionError(
+                        "Browser capability servers are exclusive to the guarded browser runner; "
+                        "raw MCP discovery and calls are disabled."
+                    )
                 return server
         raise ToolExecutionError(f"MCP server is not configured: {name}")
 

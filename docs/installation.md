@@ -332,6 +332,34 @@ The full [Local Coding Fabric guide](local-coding-fabric.md) includes the exact
 Cline steps, read-only canary, 24 GiB resource advice, and the distinction
 between air-gapped and browser-connected operation.
 
+## Add the local Browser Capability Cell
+
+The browser adapter is separate from Cline and opt-in. It requires Node.js 20+
+with npm and a compatible local Google Chrome. From an installed wheel,
+materialize the packaged configuration, prefetch the exact provider without
+executing its package binary or lifecycle scripts, then run the deterministic
+fixture:
+
+```bash
+mymoe browser-init --out ./.mymoe-browser
+mymoe browser-prefetch \
+  --mcp-config .mymoe-browser/mcp.playwright-browser.json \
+  --server browser-local
+mymoe \
+  --app-config .mymoe-browser/app.browser.json \
+  --browser-canary browser-local \
+  --browser-canary-confirm
+```
+
+From a source checkout, use `uv run mymoe browser-prefetch --mcp-config
+configs/mcp.playwright-browser.example.json --server browser-local`, followed by
+the same canary with `configs/app.browser.example.json`. Normal execution uses
+the pinned package with `npx --offline`, recomputes the cached archive integrity,
+and never downloads a dependency implicitly. Follow the
+[Browser Capability Cell](browser-capability-cell.md) runbook for model-driven
+local-app testing, exact-origin confinement, state-bound interactive approvals,
+and the security boundary.
+
 ## Cross-Platform Ollama Config
 
 Use `configs/moe.live.ollama.example.json` when running through Ollama:

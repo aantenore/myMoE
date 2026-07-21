@@ -1,0 +1,54 @@
+{
+  "servers": [
+    {
+      "name": "browser-local",
+      "description": "Pinned Playwright MCP adapter for the exact-origin Browser Capability Cell.",
+      "command": "npx",
+      "args": [
+        "--offline",
+        "-y",
+        "@playwright/mcp@0.0.78",
+        "--browser",
+        "chrome",
+        "--headless",
+        "--isolated",
+        "--block-service-workers",
+        "--image-responses",
+        "omit",
+        "--output-mode",
+        "stdout",
+        "--codegen",
+        "none",
+        "--sandbox"
+      ],
+      "enabled": true,
+      "risk_class": "process_execution",
+      "capabilities": ["browser", "tools"],
+      "transport": "stdio",
+      "cwd": ".",
+      "env": {},
+      "timeout_seconds": 20,
+      "allowed_tools": [
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type"
+      ],
+      "browser_capability": {
+        "enabled": true,
+        "provider": "playwright_mcp",
+        "package": "@playwright/mcp",
+        "version": "0.0.78",
+        "package_integrity": "sha512-XLTUeA6mEN9sQ+hJ4dfG8EIkDbxS0K3Trc2RBkUJuf02TgE2FQRNTMtq/aJfhyRMINsRl/Ybc4sxcWLtFn4/TQ==",
+        "allowed_hosts": ["localhost", "127.0.0.1", "::1"],
+        "tool_schema_sha256": {
+          "browser_type": "ed892740ebc14bb2a49467c08b8bb02717d50f1f3ef8ed06d51abf5ebb3249da",
+          "browser_navigate": "2165538e098634780eec628947d795a2619b4d2e3cef0e36d3084ac46abb94f7",
+          "browser_snapshot": "36ee5bbb5798a52e26015635e1f6015b8f4b62f44119d53ad2516837667fcd61",
+          "browser_click": "7fed82f52ae7018670d967e4429b63501948c80de2df2e9279ce4c103694d0d3"
+        },
+        "max_result_chars": 12000
+      }
+    }
+  ]
+}

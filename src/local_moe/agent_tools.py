@@ -73,6 +73,8 @@ class AgentPermissionPolicy:
             return "deny"
         if spec.risk_class in self.denied_risks:
             return "deny"
+        if spec.approval_required:
+            return "approval_required"
         if spec.name in self.approval_required_tools:
             return "approval_required"
         if spec.risk_class in self.auto_allow_risks:
@@ -147,6 +149,7 @@ class AgentToolRegistry:
         *,
         visible_tools: Sequence[str] | None = None,
         schemas: Mapping[str, Mapping[str, Any]] | None = None,
+        additional_specs: Sequence[AgentToolSpec] = (),
         permission_policy: AgentPermissionPolicy | None = None,
     ) -> AgentToolRegistry:
         schema_map = LOCAL_TOOL_INPUT_SCHEMAS if schemas is None else schemas
@@ -182,6 +185,7 @@ class AgentToolRegistry:
                     side_effects=tool.side_effects,
                 )
             )
+        specs.extend(additional_specs)
         return cls(runner, specs, permission_policy=permission_policy)
 
     @property

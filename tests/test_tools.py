@@ -587,6 +587,63 @@ class ToolRunnerTests(unittest.TestCase):
         self.assertEqual(result.payload["tool_name"], "echo")
         self.assertEqual(result.payload["content"][0]["text"], "echo:hello")
 
+    def test_browser_capability_server_is_inaccessible_through_raw_mcp_tools(self) -> None:
+        registry = ExtensionRegistry(
+            tools=(
+                ToolDefinition(
+                    name="mcp.list_tools",
+                    description="List MCP tools",
+                    risk_class="process_execution",
+                    side_effects="starts_process",
+                    enabled=True,
+                ),
+                ToolDefinition(
+                    name="mcp.call_tool",
+                    description="Call MCP tool",
+                    risk_class="process_execution",
+                    side_effects="starts_process_and_calls_tool",
+                    enabled=True,
+                ),
+            ),
+            skills=(),
+            mcp_servers=(
+                McpServerDefinition(
+                    name="browser-exclusive",
+                    description="Guarded browser provider",
+                    command="must-not-run",
+                    args=(),
+                    enabled=True,
+                    risk_class="process_execution",
+                    capabilities=("browser", "tools"),
+                    allowed_tools=("browser_navigate",),
+                    browser_capability={"enabled": True},
+                ),
+            ),
+            cron_jobs=(),
+            plugins=(),
+        )
+        runner = LocalToolRunner(registry, allow_process_execution=True)
+
+        with self.assertRaisesRegex(ToolExecutionError, "exclusive"):
+            runner.run(
+                "mcp.list_tools",
+                {
+                    "server": "browser-exclusive",
+                    "confirm_process_execution": True,
+                },
+            )
+        with self.assertRaisesRegex(ToolExecutionError, "exclusive"):
+            runner.run(
+                "mcp.call_tool",
+                {
+                    "server": "browser-exclusive",
+                    "tool_name": "browser_navigate",
+                    "arguments": {"url": "data:text/html,blocked"},
+                    "confirm_process_execution": True,
+                    "confirm_tool_call": True,
+                },
+            )
+
 
 def _extension_configure_registry() -> ExtensionRegistry:
     return ExtensionRegistry(

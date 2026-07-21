@@ -10,6 +10,7 @@ There are two deliberately separate ways to use tools:
 | --- | --- | --- |
 | Cline through the local `/v1` gateway | myMoE routes or pins a local expert | Cline owns workspace files, terminal, Git, browser, MCP, approvals, and task history. |
 | Built-in `mymoe --agent-prompt` | One explicitly selected local expert | myMoE exposes a narrow set of strict-schema tools from its own registry. |
+| Built-in agent plus Browser Capability Cell | One explicitly selected local expert | myMoE owns four local-only browser contracts over a pinned persistent Playwright MCP session. |
 
 Connecting Cline does not grant Cline access to the built-in tool registry, and
 it does not make Cline's tools subject to the built-in CLI approval tokens. The
@@ -32,6 +33,8 @@ flowchart TB
   Agent --> Guard["Schema, Permission, and Budget Guard"]
   Registry --> Guard
   Guard --> Tools["Allowlisted Tools"]
+  Guard --> Browser["Local Browser Capability Cell"]
+  Browser --> Proxy["Exact-origin forward proxy"]
   Registry --> Skills["Discovered Skills"]
   Registry --> MCP["Guarded MCP Servers"]
   Registry --> Cron["Allowlisted Cron Jobs"]
@@ -89,8 +92,9 @@ Safety properties:
 `--agent-prompt` is separate from normal `--prompt` generation and cannot be
 combined with another CLI action. It selects one OpenAI-compatible expert from
 the active MoE config, builds the local tool registry from the active app config,
-and runs the same provider-neutral loop described above. It requires a narrow,
-explicit, repeatable `--agent-tool <canonical-name>` selection for each task:
+and runs the same provider-neutral loop described above. It requires either a
+narrow, explicit, repeatable `--agent-tool <canonical-name>` selection, an
+explicit `--agent-browser-server`, or both:
 
 ```bash
 mymoe \
@@ -123,6 +127,17 @@ any different request is denied. The provider call id is not trusted as an
 approval because it may change when the task is replayed. Harness-owned
 confirmation fields are injected only after the exact match.
 
+For stateful browser tasks, `--agent-interactive-approvals` prints the sanitized
+arguments, human-readable action summary, and exact token before every
+protected call. The operator may type `y` for the currently shown bound call or
+paste the token. This keeps one browser session alive while preserving exact
+per-call approval. The model sees only `browser.navigate`, `browser.observe`,
+`browser.type`, and `browser.click`; the raw MCP catalog and metadata are never
+registered, and the generic raw-MCP runner rejects that server. Interaction
+approvals include the browser session, exact origin, snapshot hash, revision,
+reference, and accessible label. See
+[Browser Capability Cell](browser-capability-cell.md).
+
 The default app config additionally denies model-facing process execution and
 external communication. An alternate app config may enable process execution,
 but each process/tool call still needs its own exact approval and remains bound
@@ -151,6 +166,7 @@ support bundle.
 | Surface | Runtime behavior | Safety policy | Entry points |
 | --- | --- | --- | --- |
 | CLI agent task | Runs a bounded model -> tool -> observation loop against one configured OpenAI-compatible local expert. | Strict-schema configured tools only; narrow tool selection is recommended; risky calls require exact tool+argument-hash approval; app permission policy can deny additional risks; trace is metadata-only. | CLI `--agent-prompt`, repeatable `--agent-tool`, optional exact `--agent-approve`, and `--json`. |
+| Browser Capability Cell | Keeps one pinned Playwright MCP stdio session for navigate, observe, type, and click against a local web app. | Opt-in process policy; local hosts only; deny-egress proxy; ephemeral profile and outputs; schema-drift guard; current-revision targets; exact approval for every model call; results stay untrusted. | CLI `--agent-browser-server`, `--agent-interactive-approvals`, and deterministic `--browser-canary`. |
 | `memory.search` | Searches the local memory store. | Read-only, no path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, Advanced Tools panel. |
 | `memory.maintenance` | Reports local memory totals, active temporal records, pending future records, and expired records. | Read-only; no deletion or path override through the web API. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/maintenance`, Advanced Memory panel, cron. |
 | `memory.prune_expired` | Deletes only records whose `valid_until` timestamp is expired. | Requires `confirm=true` from tools/API and `confirm_writes=true` for cron; future `valid_from` records are preserved. | CLI `--run-tool`, web `/api/tools/run`, web `/api/memory/prune-expired`, Advanced Memory panel, optional cron. |

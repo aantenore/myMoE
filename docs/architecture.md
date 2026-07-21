@@ -64,6 +64,11 @@ aggregation/fallback lifecycle. Cline owns the coding-agent loop and tools.
 See [Local Coding Fabric](local-coding-fabric.md) for the end-user setup and
 trust boundaries.
 
+The built-in CLI agent has a separate, opt-in
+[Browser Capability Cell](browser-capability-cell.md). It does not reuse Cline's
+browser authority: myMoE owns four strict local-web contracts over one pinned,
+persistent Playwright MCP process, and keeps raw MCP tools hidden.
+
 ## Core Contracts
 
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
@@ -98,6 +103,10 @@ trust boundaries.
 - `Audit Trail`: local JSONL metadata log for sensitive host-side actions, intentionally excluding chat and memory text.
 - `Generation Run Log`: local JSONL metadata log for successful generations, intentionally excluding prompt and answer text while retaining route, model, latency, token, context, prompt-hash observations, and aggregate health summaries.
 - `Agent Loop`: provider-neutral OpenAI-compatible model/tool/observation loop with strict local tool schemas, approval-gated side effects, bounded redacted observations, and metadata-only traces.
+- `Browser Capability Provider`: replaceable `attest/start/observe/execute/close`
+  boundary. The current Playwright MCP adapter is local-only, schema-bound,
+  cached-archive-verified, exact-origin proxied, ephemeral, pre-action-state
+  checked, and exact-approval gated.
 - `Quality Benchmark`: deterministic answer-quality comparison harness for single-general, routed top-1, and routed top-2 variants, with endpoint/model readiness checks and provenance-rich artifacts.
 - `Hybrid Assistant Bridge`: local-first task planner that preserves capability,
   privacy, budget, verification, workspace, and provider-authority boundaries
@@ -274,6 +283,10 @@ The practical policy is:
   fail long repository tasks; validate the exact client/model/runtime tuple.
 - Local inference does not make Cline browser or MCP traffic offline. A true
   air-gapped claim requires an independently enforced host egress boundary.
+- The built-in Browser Capability Cell forwards normal browser traffic only to
+  one approved loopback scheme + host + port, but its trusted Node provider
+  process is not VM or OS-user containment and does not qualify hostile
+  dependencies or server-side egress by the local app.
 
 ## Validation Gates
 

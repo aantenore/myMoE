@@ -36,9 +36,9 @@ publication, unrestricted terminal use, or general autonomy.
 | File reads, one exact edit, and one exact test command | Cline under the canary gate | Implemented only inside the disposable fixture. The hook gate permits the expected sequence and the targeted sandbox permits only the source-file write. |
 | Independent verification | myMoE | Implemented. A separate isolated verifier receives the candidate source and the pristine embedded test; it has no network access. |
 | Real repository edits, unrestricted terminal, and Git | Cline | Cline can provide these capabilities, but the current canary does not qualify or contain them. |
-| Browser actions | Cline | Not qualified. Browser-connected use is a separate egress and credential boundary. |
+| Browser actions inside Cline | Cline | Not qualified by the coding canary. The separate myMoE [Browser Capability Cell](browser-capability-cell.md) qualifies four local-web-app actions only. |
 | MCP tools | Cline or the separate myMoE CLI agent | Not qualified by this canary. The registries are independent, and every MCP server is executable capability. |
-| General desktop control outside the editor/browser | Future native sidecar | Not implemented. The accessibility-first design is documented in the roadmap below. |
+| General desktop control outside the editor/browser | Future capability adapter | Not implemented. Accessibility-first adapters require separate OS-specific contracts and qualification. |
 
 The gateway does not silently call a paid provider. Its configured experts,
 execution declarations, and scope guard remain authoritative. The default
@@ -394,8 +394,11 @@ The browser and VS Code cover most coding work. General interaction with native
 desktop applications needs a separate, narrow component; it should not be
 implemented as unrestricted screen clicking inside the Python web process.
 
-The planned architecture is a small native sidecar behind the same capability
-broker:
+The canonical plan is a provider-neutral desktop lifecycle behind the same
+capability broker. Cua Drivers is the first adapter candidate to evaluate;
+native accessibility sidecars remain replaceable alternatives or fallbacks.
+The detailed contract and progression live in
+[Browser Capability Cell](browser-capability-cell.md#desktop-control-roadmap):
 
 1. **Semantic observation first.** On macOS, use the Accessibility API
    (`AXUIElement`) to return a bounded element tree, app identity, roles, labels,
@@ -424,7 +427,9 @@ credentials, purchases, messages, or destructive actions.
 
 - **Now:** loopback OpenAI-compatible gateway, routed and pinned aliases,
   streaming proxy, and the macOS-only Cline CLI 3.0.46 qualification for one
-  disposable single-file edit and pristine test.
+  disposable single-file edit and pristine test. A separate exact-origin
+  browser cell now qualifies four accessibility-first operations against one
+  local HTTP(S) application without qualifying the selected model.
 - **Next:** repeat the coding-cell evaluation across selected local
   model/runtime/hardware combinations, publish comparable metadata-only
   evidence, and add explicit resource admission before concurrent local-model
@@ -433,14 +438,15 @@ credentials, purchases, messages, or destructive actions.
   real-repository filesystem, terminal, and Git operations; browser and MCP
   remain distinct capability and egress cells rather than inherited promises.
 - **Later:** guarded specialist cold-loading, session-sticky multi-model
-  scheduling, browser/MCP qualification, and an accessibility-first desktop
-  sidecar with replaceable platform adapters.
+  scheduling, broader MCP cells, and the provider-neutral accessibility-first
+  desktop lifecycle described above.
 
 The release criterion is not "the endpoint answered." This alpha releases the
-gateway and one narrow diagnostic contract, not a claim that the entire Cline
-fabric is production-ready. Browser, desktop, MCP, Git publication, real
-repositories, and general autonomy require their own policies, representative
-tasks, independent verification, resource evidence, and explicit authority.
+gateway plus narrow coding and local-browser diagnostic contracts, not a claim
+that the entire fabric is production-ready. Desktop control, general MCP, Git
+publication, real repositories, and general autonomy require their own policies,
+representative tasks, independent verification, resource evidence, and explicit
+authority.
 
 ## Related documentation
 

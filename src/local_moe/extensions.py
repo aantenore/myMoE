@@ -93,6 +93,7 @@ class McpServerDefinition:
     env: dict[str, str] = field(default_factory=dict)
     timeout_seconds: float = 8.0
     allowed_tools: tuple[str, ...] = ()
+    browser_capability: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -621,6 +622,13 @@ def _parse_mcp_server(item: dict[str, Any]) -> McpServerDefinition:
         env_raw = {}
     if not isinstance(env_raw, dict):
         raise ExtensionError(f"MCP server {item['name']} env must be an object.")
+    browser_capability = item.get("browser_capability", {})
+    if browser_capability is None:
+        browser_capability = {}
+    if not isinstance(browser_capability, dict):
+        raise ExtensionError(
+            f"MCP server {item['name']} browser_capability must be an object."
+        )
     try:
         timeout_seconds = float(item.get("timeout_seconds", 8.0))
     except (TypeError, ValueError) as exc:
@@ -643,6 +651,7 @@ def _parse_mcp_server(item: dict[str, Any]) -> McpServerDefinition:
         env={str(key): str(value) for key, value in env_raw.items()},
         timeout_seconds=timeout_seconds,
         allowed_tools=tuple(str(name) for name in item.get("allowed_tools", [])),
+        browser_capability=dict(browser_capability),
     )
 
 

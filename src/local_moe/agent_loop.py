@@ -21,7 +21,7 @@ from .agent_tools import (
     bound_tool_result,
     redact_agent_text,
 )
-from .agent_types import AgentMessage, AgentModelAdapter, AgentToolCall
+from .agent_types import AgentMessage, AgentModelAdapter, AgentToolCall, AgentToolSpec
 from .config import MoEConfig
 from .execution_scope import ExecutionScopeGuard
 from .extensions import ExtensionRegistry
@@ -579,6 +579,7 @@ def build_local_agent_loop(
     *,
     expert_id: str | None = None,
     visible_tools: Sequence[str] | None = None,
+    additional_specs: Sequence[AgentToolSpec] = (),
     permission_policy: AgentPermissionPolicy | None = None,
     budget: AgentLoopBudget | None = None,
     system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT,
@@ -595,6 +596,7 @@ def build_local_agent_loop(
         runner,
         registry,
         visible_tools=visible_tools,
+        additional_specs=additional_specs,
         permission_policy=permission_policy,
     )
     return AgentLoop(model, tools, budget=budget, system_prompt=system_prompt)

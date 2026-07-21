@@ -606,6 +606,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertIn("requires at least one explicit --agent-tool", completed.stderr)
 
+    def test_agent_prompt_accepts_browser_as_the_only_explicit_tool_surface(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--agent-prompt",
+                "Inspect the local application.",
+                "--agent-browser-server",
+                "filesystem",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("requires at least one explicit --agent-tool", completed.stderr)
+        self.assertIn("Browser MCP server is disabled", completed.stderr)
+
+    def test_browser_canary_requires_explicit_confirmation(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--browser-canary",
+                "browser-local",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--browser-canary requires --browser-canary-confirm", completed.stderr)
+
     def test_agent_approval_token_is_single_use_within_one_run(self) -> None:
         arguments_sha256 = "a" * 64
         handler = _agent_approval_handler(
@@ -623,6 +664,36 @@ class CliTests(unittest.TestCase):
 
         self.assertTrue(handler(request).approved)
         self.assertFalse(handler(request).approved)
+
+    def test_interactive_browser_approval_accepts_human_yes_for_the_bound_call(self) -> None:
+        handler = _agent_approval_handler([], interactive=True)
+        self.assertIsNotNone(handler)
+        request = ApprovalRequest(
+            call_id="browser-call-1",
+            tool_name="browser.click",
+            arguments={
+                "target": "e2",
+                "target_label": 'button "Confirm" [ref=e2]',
+                "browser_session_id": "a" * 32,
+                "origin": "http://127.0.0.1:3000",
+                "revision": 2,
+                "snapshot_sha256": "b" * 64,
+            },
+            arguments_sha256="c" * 64,
+            risk_class="process_execution",
+            side_effects="may_trigger_local_application_side_effects",
+        )
+        stderr = io.StringIO()
+
+        with (
+            patch.object(sys, "stdin", io.StringIO("y\n")),
+            redirect_stderr(stderr),
+        ):
+            decision = handler(request)
+
+        self.assertTrue(decision.approved)
+        self.assertIn("Click button", stderr.getvalue())
+        self.assertIn("Confirm", stderr.getvalue())
 
     def test_prompt_mode_can_persist_to_cli_chat_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

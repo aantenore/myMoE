@@ -4,6 +4,63 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0-alpha.1] - 2026-07-21
+
+### Added
+
+- An opt-in Browser Capability Cell that lets the built-in local-model agent
+  navigate, observe, type, and click inside one explicitly approved local web
+  origin through four myMoE-owned contracts rather than raw Playwright tools.
+- A deterministic five-step browser canary covering navigation, accessibility
+  observation, typing, clicking, and denial of a second unapproved loopback
+  service without requiring a model.
+- `mymoe browser-init`, which materializes a self-contained app, MCP, model, and
+  context-policy workspace at its chosen location from the installed wheel
+  without overwriting existing files.
+- `mymoe browser-prefetch`, which fills a fresh npm cache without executing the
+  provider package or lifecycle scripts, records the resolved dependency-lock
+  digest, and verifies the pinned top-level archive before first execution.
+- A persistent, UTF-8 MCP stdio session with bounded messages, deterministic
+  process-tree teardown, POSIX process groups, and a kill-on-close Windows Job
+  Object launcher.
+- Cross-platform CI jobs that admit the exact browser dependency and run the
+  real canary with offline provider resolution on Linux, macOS, and Windows
+  with Python 3.10 and 3.12.
+
+### Security
+
+- Normal browser HTTP(S) traffic is forced through a parent-owned proxy that
+  forwards only the approved scheme, loopback host, and port. Chromium's implicit
+  loopback bypass is disabled, and redirects are rechecked from every returned
+  observation.
+- Click and type approvals bind browser session, exact origin, full snapshot
+  hash, revision, reference, and accessible label. A fresh pre-action snapshot
+  must match before the action is sent upstream.
+- Browser-capability MCP servers are exclusive to the guarded runner; generic
+  raw-MCP discovery and call paths reject them.
+- The provider launch is an exact offline argument profile with an empty
+  provider environment. myMoE recomputes the cached package archive SHA-512,
+  hashes Node plus the configured and effective launch arguments, and verifies live
+  upstream schema digests before exposing tools. The profile selects Google
+  Chrome explicitly instead of inheriting an upstream default. Windows executes `node.exe`
+  plus `npx-cli.js` directly instead of crossing a batch-file argument parser.
+- Provider errors, state drift, invalid bindings, oversized MCP responses, and
+  dead processes invalidate the entire browser lifecycle and fail closed.
+
+### Known limitations
+
+- This alpha qualifies accessible interactions with one local HTTP(S) origin;
+  it does not qualify the public web, login sessions, downloads, visual layout,
+  WebSocket upgrades, desktop control, or a model's ability to complete a real
+  browser task.
+- The proxy constrains normal browser HTTP(S) traffic, not a compromised Node
+  dependency, non-HTTP browser networking, server-side egress by the local app,
+  or the host network. The Node/npm toolchain and remaining dependency tree are
+  trusted computing-base components rather than OS-sandboxed code.
+- The pre-action accessibility snapshot narrows stale-state risk but cannot make
+  a JavaScript-driven action atomic or prove visual and semantic intent. Use a
+  disposable environment for untrusted applications.
+
 ## [0.6.0-alpha.1] - 2026-07-20
 
 ### Added

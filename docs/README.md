@@ -7,6 +7,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | If you want to... | Read... |
 | --- | --- |
 | Use Cline as a private local coding agent | [Local Coding Fabric](local-coding-fabric.md) |
+| Exercise a local web app with a local model | [Browser Capability Cell](browser-capability-cell.md) |
 | Understand the complete system | [How myMoE works](how-it-works/README.md) |
 | Install and start local models | [Installation](installation.md) |
 | Use the web app, CLI, or HTTP API | [UI and CLI](ui.md) |
@@ -25,6 +26,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
 - [Local Coding Fabric](local-coding-fabric.md) — exact Cline connection, gateway contract, 24 GiB resource modes, network boundaries, and desktop sidecar roadmap.
+- [Browser Capability Cell](browser-capability-cell.md) — persistent local-only browser tools, deterministic canary, exact approvals, schema attestation, and desktop adapter roadmap.
 - [Architecture](architecture.md) — system-level MoE decision, runtime modes, contracts, limitations, and release gates.
 - [Routing](router.md) — exact score composition, semantic examples, distilled artifact, top-k, aggregation, and fallbacks.
 - [Execution Scope Guard](execution-scopes.md) — scope/transport policy, fail-closed eligibility, fallback widening, and Mesh trust assumptions.

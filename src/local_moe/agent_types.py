@@ -51,6 +51,7 @@ class AgentToolSpec:
     risk_class: str
     side_effects: str
     model_name: str = ""
+    approval_required: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip():

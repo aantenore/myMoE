@@ -1,7 +1,13 @@
 # myMoE
 
-**Run coding agents with local models, then test each exact
-Cline/runtime/model/hardware combination before trusting it with code.**
+**Run coding agents with local models, qualify each exact runtime cell, and let
+the built-in agent inspect local web apps through a tightly bounded browser.**
+
+In plain terms: myMoE helps you do AI-assisted coding on your own computer
+without paying for every request. Today it connects local models to a coding
+agent, tests whether one exact setup can complete a controlled coding task, and
+lets its built-in agent exercise simple local web apps. It does not yet control
+the desktop or replace a complete frontier coding agent.
 
 ## Local coding without per-token model fees
 
@@ -49,12 +55,55 @@ See the [Local Coding Fabric guide](docs/local-coding-fabric.md) for the exact
 setup, result meanings, 24 GiB model advice, offline modes, and security
 boundary.
 
-> **Honest boundary:** this removes per-token cloud-model charges, not hardware,
+myMoE now also ships a separate **Browser Capability Cell** for local web-app
+development. A tool-capable local model can navigate, observe, type, and click
+on one explicitly approved local scheme + host + port. It never receives
+Playwright MCP's raw tool catalog. myMoE owns four strict contracts, keeps one
+stateful browser session, rejects schema drift and changed pre-action snapshots,
+constrains normal browser HTTP(S) requests to that origin through a parent-owned
+proxy, and
+binds approval to the session, origin, snapshot hash, target, and accessible
+label. With Node.js 20+, npm, and Google Chrome installed, a deterministic
+canary verifies the adapter without a model. From a source checkout:
+
+```bash
+uv run mymoe browser-prefetch \
+  --mcp-config configs/mcp.playwright-browser.example.json \
+  --server browser-local
+uv run mymoe \
+  --app-config configs/app.browser.example.json \
+  --browser-canary browser-local \
+  --browser-canary-confirm
+```
+
+See [Browser Capability Cell](docs/browser-capability-cell.md) for the one-time
+package admission step, agent command, configuration contract, threat model,
+and the deliberately separate desktop-control roadmap.
+
+Installed from a wheel? Materialize a self-contained opt-in workspace, prefetch
+the resolved dependency tree without executing the provider package, then run the
+offline canary:
+
+```bash
+mymoe browser-init --out ./.mymoe-browser
+mymoe browser-prefetch \
+  --mcp-config .mymoe-browser/mcp.playwright-browser.json \
+  --server browser-local
+mymoe \
+  --app-config .mymoe-browser/app.browser.json \
+  --browser-canary browser-local \
+  --browser-canary-confirm
+```
+
+`browser-init` also returns those two follow-up invocations as JSON argv arrays,
+so paths containing spaces or shell metacharacters remain unambiguous.
+
+> **Coding-canary boundary:** this removes per-token cloud-model charges, not hardware,
 > electricity, or model-license obligations. The current canary is a
 > macOS-only diagnostic for one disposable single-file edit-and-test contract.
 > Its hook gate and targeted `sandbox-exec` policy are not VM containment. It
-> does not qualify real repositories, browser or desktop control, MCP, Git
-> publication, unrestricted terminal use, or general autonomy. Every report,
+> does not qualify real repositories, the separate Browser Capability Cell,
+> desktop control, MCP, Git publication, unrestricted terminal use, or general autonomy. Every report,
 > including a passing one, sets `diagnostic_only=true` and
 > `authorizes_routing=false`.
 
@@ -89,6 +138,7 @@ cannot perform other coding tasks.
 | --- | --- |
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
+| Local Browser Capability Cell | Let a local model inspect and exercise a local web app through four approval-gated tools, while normal external browser HTTP(S) traffic and raw MCP authority stay blocked. |
 | Configuration-driven routing across independent models | Teams can change experts, weights, endpoints, budgets, and fallbacks without retraining one giant model. |
 | Execution Scope Guard before every model call | A local-only request fails closed instead of silently moving to a wider mesh or remote route. |
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
@@ -255,6 +305,9 @@ To qualify one exact local Cline coding cell, follow the
 The same guide also explains how to connect the Cline editor interface after
 qualification.
 
+To qualify the separate browser adapter and exercise a local web app, follow
+the [Browser Capability Cell runbook](docs/browser-capability-cell.md).
+
 For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startup runbook, use the [installation guide](docs/installation.md).
 
 ## Choose the Right Entry Point
@@ -267,6 +320,8 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 | Use persistent terminal chat | `.venv/bin/mymoe --interactive` | Uses the same chat, memory, context, and run-log stores as the web app. |
 | Ask one stateless question | `.venv/bin/mymoe --prompt "..."` | Calls `LocalMoE` directly; it does not load chat context or persist a session. |
 | Run a bounded tool task | `.venv/bin/mymoe --agent-prompt "..." --agent-tool memory.search` | Separate CLI-only agent loop; only explicitly selected strict-schema tools are visible. |
+| Test a local web app with the built-in agent | `.venv/bin/mymoe --app-config configs/app.browser.example.json --agent-prompt "..." --agent-browser-server browser-local --agent-interactive-approvals` | One ephemeral, stateful browser; loopback only, normal browser HTTP(S) egress denied, exact approval per call, raw MCP tools hidden. |
+| Qualify the installed browser adapter | `.venv/bin/mymoe --app-config configs/app.browser.example.json --browser-canary browser-local --browser-canary-confirm` | Deterministic navigate/observe/type/click fixture; qualifies only local web-app interaction. |
 | Preflight local versus premium Codex | `.venv/bin/mymoe --assistant-task "..." --assistant-capability code` | Dry-run by default; plans local execution, verification, bounded escalation, or a policy block without exposing task text in the receipt. |
 | Check local Codex compatibility | `.venv/bin/mymoe assistant-probe --json` | Uses a random marker in a disposable read-only workspace; emits public command/runtime/model identity, never authorizes routing, and never invokes the premium provider. |
 | Inspect or collect one frozen paired case | `.venv/bin/mymoe-paired --help` | Status is provider-free. Execution composes a public-trust workflow and private directory sidecar; without both it fails closed instead of manufacturing evidence. |
@@ -297,6 +352,7 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/verified-routing-runtime.example.json`](configs/verified-routing-runtime.example.json) | Disabled-by-default canary artifact and chronology paths, pinned operator public key, and environment-secret name for deterministic hash-bucket assignment. |
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
+| [`configs/mcp.playwright-browser.example.json`](configs/mcp.playwright-browser.example.json) | Disabled-from-default, pinned local Browser Capability Cell provider, schema digests, loopback hosts, and result budget. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
 
 The design is configurable, but not infinitely dynamic. OpenAI-compatible

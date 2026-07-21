@@ -120,6 +120,38 @@ def main() -> None:
         if "Local MoE orchestrator" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose the expected help output.")
 
+        browser_workspace = temporary / "Browser & Workspace"
+        browser_init_result = subprocess.run(
+            [str(mymoe), "browser-init", "--out", str(browser_workspace)],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        browser_init = json.loads(browser_init_result.stdout)
+        expected_browser_files = {
+            "app.browser.json",
+            "mcp.playwright-browser.json",
+            "moe.json",
+            "context-policy.json",
+            "tools.json",
+            "cron.json",
+        }
+        actual_browser_files = {
+            path.name for path in browser_workspace.iterdir() if path.is_file()
+        }
+        if (
+            browser_init.get("status") != "created"
+            or actual_browser_files != expected_browser_files
+            or not isinstance(
+                browser_init.get("next", {}).get("offline_canary_argv"), list
+            )
+        ):
+            raise SystemExit(
+                "Installed wheel did not materialize the packaged browser workspace."
+            )
+
         paired_help_result = subprocess.run(
             [str(mymoe_paired), "--help"],
             cwd=runtime_dir,
