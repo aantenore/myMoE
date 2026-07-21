@@ -8,6 +8,7 @@ import stat
 from typing import Any, Mapping
 
 from .app_config import AdvisorPolicy, AppConfig, load_app_config
+from .adaptive_execution_gate import load_adaptive_execution_policy
 from .cell_passport import load_cell_catalog
 from .config import load_config
 from .context_policy import load_context_policy
@@ -22,6 +23,7 @@ from .secure_files import read_bounded_regular_file
 _OUTPUT_FILES = (
     "app.json",
     "adaptive-cells.json",
+    "adaptive-execution-policy.json",
     "adaptive-evaluation-contract.json",
     "moe.json",
     "context-policy.json",
@@ -73,6 +75,7 @@ def materialize_advisor_workspace(output_dir: str | Path) -> dict[str, Any]:
         },
         "next": {
             "advisor_argv": _advisor_argv(app.advisor),
+            "cell_execution_preview_argv": _cell_execution_preview_argv(),
             "web_argv": ["mymoe-web", "--app-config", "./app.json"],
             "run_from": "workspace",
         },
@@ -104,9 +107,29 @@ def _advisor_argv(policy: AdvisorPolicy) -> list[str]:
             "--goal",
             policy.default_profile,
             "--json",
+            "--out",
+            "./advisor-receipt.json",
         )
     )
     return command
+
+
+def _cell_execution_preview_argv() -> list[str]:
+    return [
+        "mymoe",
+        "cell-exec",
+        "preview",
+        "--receipt",
+        "./advisor-receipt.json",
+        "--task-stdin",
+        "--catalog",
+        "./adaptive-cells.json",
+        "--evaluation-contract",
+        "./adaptive-evaluation-contract.json",
+        "--policy",
+        "./adaptive-execution-policy.json",
+        "--json",
+    ]
 
 
 def _validated_packaged_payloads() -> tuple[dict[str, bytes], AppConfig]:
@@ -178,7 +201,12 @@ def _decode_json_object(content: bytes, *, label: str) -> dict[str, Any]:
             object_pairs_hook=unique_object,
             parse_constant=reject_constant,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
         raise ValueError(f"{label} must be strict UTF-8 JSON.") from exc
     if not isinstance(decoded, dict):
         raise ValueError(f"{label} must be an object.")
@@ -196,18 +224,14 @@ def _new_workspace_path(output_dir: str | Path) -> Path:
     if requested.name in {"", ".", ".."}:
         raise ValueError("Advisor workspace path is invalid.")
     if os.path.lexists(requested):
-        raise FileExistsError(
-            "Advisor workspace already exists and was not changed."
-        )
+        raise FileExistsError("Advisor workspace already exists and was not changed.")
     parent = requested.parent
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     parent = parent.resolve(strict=True)
     _require_plain_directory(parent, "Advisor workspace parent")
     root = parent / requested.name
     if os.path.lexists(root):
-        raise FileExistsError(
-            "Advisor workspace already exists and was not changed."
-        )
+        raise FileExistsError("Advisor workspace already exists and was not changed.")
     return root
 
 
@@ -216,6 +240,11 @@ def _validate_workspace(root: Path) -> AppConfig:
     app = load_app_config(app_path)
     if not app.advisor.enabled:
         raise ValueError("Packaged Advisor policy must be enabled.")
+    execution_policy = load_adaptive_execution_policy(
+        root / "adaptive-execution-policy.json"
+    )
+    if execution_policy.mode != "dry_run":
+        raise ValueError("Packaged execution policy must remain dry-run only.")
     load_config(resolve_app_config_reference(app.default_moe_config, app_path))
     load_context_policy(
         resolve_app_config_reference(

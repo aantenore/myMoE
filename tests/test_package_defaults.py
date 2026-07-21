@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from local_moe.app_config import load_app_config
+from local_moe.adaptive_execution_gate import load_adaptive_execution_policy
 from local_moe.cell_passport import load_cell_catalog
 from local_moe.chat_store import FileChatStore
 from local_moe.config import load_config
@@ -19,6 +20,9 @@ from local_moe.package_defaults import (
     resolve_app_config_path,
     resolve_app_config_reference,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackageDefaultsTests(unittest.TestCase):
@@ -48,17 +52,29 @@ class PackageDefaultsTests(unittest.TestCase):
             app_path,
         )
         catalog = load_cell_catalog(catalog_path)
+        execution_policy = load_adaptive_execution_policy(
+            packaged_default_path("adaptive-execution-policy.json")
+        )
 
         self.assertEqual(config.experts[0].id, "local")
         self.assertEqual(context.context_limit_tokens, 16384)
         self.assertTrue(app_config.advisor.enabled)
         self.assertTrue(evaluation_path.is_file())
         self.assertTrue(all(cell.measured.sample_count == 0 for cell in catalog.cells))
+        self.assertEqual(execution_policy.mode, "dry_run")
+        self.assertEqual(execution_policy.max_tool_surfaces, 0)
+        self.assertEqual(
+            packaged_default_path("adaptive-execution-policy.json").read_bytes(),
+            (
+                ROOT / "configs" / "adaptive-execution-policy.example.json"
+            ).read_bytes(),
+        )
 
     def test_packaged_app_ignores_ambient_extensions_and_keeps_defaults_read_only(self) -> None:
         packaged_names = (
             "app.json",
             "adaptive-cells.json",
+            "adaptive-execution-policy.json",
             "adaptive-evaluation-contract.json",
             "moe.json",
             "context-policy.json",

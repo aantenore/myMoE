@@ -7,6 +7,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | If you want to... | Read... |
 | --- | --- |
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
+| Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |
 | Use Cline as a private local coding agent | [Local Coding Fabric](local-coding-fabric.md) |
 | Exercise a local web app with a local model | [Browser Capability Cell](browser-capability-cell.md) |
 | Read one selected desktop window with a local model | [Desktop Semantic Cell](desktop-semantic-cell.md) |
@@ -28,6 +29,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
 - [Adaptive Cell Advisor](adaptive-cell-advisor.md) — whole-cell passports, live resource admission, safe abstention, mini-app/API, deterministic contract benchmark, and market boundary.
+- [Adaptive Cell Execution Gate](cell-execution-gate.md) — receipt-bound fresh admission, exact drift checks, strict dry-run policy, and a non-authorizing result.
 - [Local Coding Fabric](local-coding-fabric.md) — exact Cline connection, gateway contract, 24 GiB resource modes, network boundaries, and desktop sidecar roadmap.
 - [Browser Capability Cell](browser-capability-cell.md) — persistent local-only browser tools, deterministic canary, exact approvals, schema attestation, and desktop adapter roadmap.
 - [Desktop Semantic Cell](desktop-semantic-cell.md) — one read-only semantic window tool, exact target binding, bounded redaction, Cua Driver admission, threat model, and platform limits.

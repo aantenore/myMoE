@@ -40,6 +40,7 @@ class CiRunnerTests(unittest.TestCase):
                 "verified routing shadow eval",
                 "desktop semantic benchmark",
                 "adaptive cell advisor contract benchmark",
+                "adaptive cell execution gate contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -102,6 +103,20 @@ class CiRunnerTests(unittest.TestCase):
                 "experiments/benchmark_adaptive_cell_advisor.py",
                 "--out",
                 "outputs/adaptive-cell-advisor-contract.json",
+            ],
+        )
+        execution_gate_benchmark = next(
+            step
+            for step in steps
+            if step.name == "adaptive cell execution gate contract benchmark"
+        )
+        self.assertEqual(
+            execution_gate_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_cell_execution_gate.py",
+                "--out",
+                "outputs/cell-execution-gate-contract.json",
             ],
         )
 

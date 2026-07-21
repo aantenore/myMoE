@@ -5,7 +5,8 @@ the built-in agent inspect one selected desktop window without screenshots.**
 
 In plain terms: myMoE helps you do AI-assisted coding on your own computer
 without paying for every request. Today it connects local models to a coding
-agent, explains which fully evidenced local setup is eligible for a task,
+agent, explains which fully evidenced local setup is eligible for a task, can
+recheck that exact recommendation against current resources before later use,
 tests whether one exact setup can complete a controlled coding task, lets its
 built-in agent exercise simple local web apps, and can read the semantic
 controls in one operator-selected desktop window. The desktop cell is read-only:
@@ -80,6 +81,31 @@ See the
 [Adaptive Cell Advisor guide](docs/adaptive-cell-advisor.md) for passports,
 evidence, profiles, reason codes, platform limits, the mini-app/API contract,
 market positioning, and full JSON receipts.
+
+## Is that recommendation still valid right now?
+
+The **Adaptive Cell Execution Gate** narrows the gap between receiving a
+recommendation and acting on it. It reloads the earlier receipt, repeats the
+Advisor check with current local resources, and verifies that the exact task,
+catalog, evaluation contract, selected cell, and cell passport have not
+changed. If anything drifted, it blocks and explains why.
+
+```bash
+mymoe cell-exec preview \
+  --receipt ./advisor-receipt.json \
+  --task-file ./task.txt \
+  --catalog ./adaptive-cells.json \
+  --evaluation-contract ./adaptive-evaluation-contract.json \
+  --policy ./adaptive-execution-policy.json \
+  --json
+```
+
+This is a dry-run preview, not an executor. A passing result does not reserve
+resources, run a model or tool, modify configuration, or grant execution
+authority. `mymoe advisor-init` includes the strict policy file and the command
+template in its six-file starter. See the
+[Adaptive Cell Execution Gate guide](docs/cell-execution-gate.md) for the
+workflow, policy, reason codes, receipt contract, and deterministic benchmark.
 
 ## Local coding without per-token model fees
 
@@ -526,6 +552,7 @@ Start with the [documentation hub](docs/README.md).
 - [Local Coding Fabric](docs/local-coding-fabric.md) — exact Cline setup, local gateway contract, resource profiles, offline semantics, and roadmap.
 - [Installation](docs/installation.md) — platforms, runtimes, models, and startup.
 - [Architecture](docs/architecture.md) — design decisions, components, modes, and validation gates.
+- [Adaptive Cell Execution Gate](docs/cell-execution-gate.md) — fresh exact-cell admission preview, drift reasons, and non-authorizing receipt.
 - [Execution Scope Guard](docs/execution-scopes.md) — scope/transport policy, fail-closed behavior, and Mesh trust boundary.
 - [Routing](docs/router.md) — scoring, multilingual coverage, distillation, and fallback behavior.
 - [Context and Memory](docs/context-architecture.md) — prompt budgets, persistence, compaction, and observability.

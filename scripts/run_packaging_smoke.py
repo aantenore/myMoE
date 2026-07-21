@@ -118,9 +118,13 @@ def main() -> None:
             capture_output=True,
         )
         if "Local MoE orchestrator" not in help_result.stdout:
-            raise SystemExit("mymoe console script did not expose the expected help output.")
+            raise SystemExit(
+                "mymoe console script did not expose the expected help output."
+            )
         if "advisor-init" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose advisor-init.")
+        if "cell-exec" not in help_result.stdout:
+            raise SystemExit("mymoe console script did not expose cell-exec.")
         version_result = subprocess.run(
             [str(mymoe), "--version"],
             cwd=runtime_dir,
@@ -255,7 +259,7 @@ def _installed_default_probe(
             "from pathlib import Path",
             "from local_moe.app_config import load_app_config",
             "from local_moe.package_defaults import packaged_default_path",
-            "names=('app.json','adaptive-cells.json','adaptive-evaluation-contract.json','moe.json','context-policy.json')",
+            "names=('app.json','adaptive-cells.json','adaptive-execution-policy.json','adaptive-evaluation-contract.json','moe.json','context-policy.json')",
             "paths={name:packaged_default_path(name) for name in names}",
             "app=load_app_config(paths['app.json'])",
             "root=paths['app.json'].parent.resolve()",
@@ -351,9 +355,7 @@ def _run_installed_desktop_smoke(
         "tools.json",
         "cron.json",
     }
-    actual_files = {
-        path.name for path in desktop_workspace.iterdir() if path.is_file()
-    }
+    actual_files = {path.name for path in desktop_workspace.iterdir() if path.is_file()}
     mcp = json.loads(
         (desktop_workspace / "mcp.cua-desktop.json").read_text(encoding="utf-8")
     )
@@ -422,19 +424,19 @@ def _run_installed_advisor_smoke(
     payload = json.loads(initialized.stdout)
     expected_files = {
         "adaptive-cells.json",
+        "adaptive-execution-policy.json",
         "adaptive-evaluation-contract.json",
         "app.json",
         "context-policy.json",
         "moe.json",
     }
-    actual_files = {
-        path.name for path in advisor_workspace.iterdir() if path.is_file()
-    }
+    actual_files = {path.name for path in advisor_workspace.iterdir() if path.is_file()}
     app = json.loads((advisor_workspace / "app.json").read_text(encoding="utf-8"))
     next_commands = payload.get("next")
     if not isinstance(next_commands, dict):
         raise SystemExit("Installed advisor-init omitted its next-command contract.")
     advisor_argv = next_commands.get("advisor_argv")
+    execution_preview_argv = next_commands.get("cell_execution_preview_argv")
     web_argv = next_commands.get("web_argv")
     if (
         payload.get("status") != "created"
@@ -453,6 +455,11 @@ def _run_installed_advisor_smoke(
         or next_commands.get("run_from") != "workspace"
         or not isinstance(advisor_argv, list)
         or advisor_argv[:2] != ["mymoe", "advisor"]
+        or "--out" not in advisor_argv
+        or "./advisor-receipt.json" not in advisor_argv
+        or not isinstance(execution_preview_argv, list)
+        or execution_preview_argv[:3] != ["mymoe", "cell-exec", "preview"]
+        or "./adaptive-execution-policy.json" not in execution_preview_argv
         or not isinstance(web_argv, list)
         or web_argv != ["mymoe-web", "--app-config", "./app.json"]
     ):
@@ -488,6 +495,72 @@ def _run_installed_advisor_smoke(
     _assert_advisor_abstention(stdin_result.stdout, stdin_task)
     _assert_task_not_persisted(advisor_workspace, stdin_task)
 
+    receipt_path = advisor_workspace / "advisor-receipt.json"
+    if (
+        not receipt_path.is_file()
+        or receipt_path.read_text(encoding="utf-8") != stdin_result.stdout
+    ):
+        raise SystemExit(
+            "Installed advisor command did not publish its generated receipt."
+        )
+    exact_execution_preview_argv = [
+        str(mymoe),
+        *execution_preview_argv[1:],
+    ]
+    preview_result = subprocess.run(
+        exact_execution_preview_argv,
+        cwd=advisor_workspace,
+        env=environment,
+        input=stdin_task,
+        text=True,
+        capture_output=True,
+    )
+    preview = json.loads(preview_result.stdout)
+    if (
+        preview_result.returncode != 1
+        or preview.get("status") != "admission_blocked"
+        or "source_receipt_not_recommended" not in preview.get("reason_codes", [])
+        or preview.get("applied") is not False
+        or preview.get("authorizes_execution") is not False
+        or preview.get("network_used") is not False
+        or preview.get("model_invocations") != 0
+    ):
+        raise SystemExit(
+            "Installed cell-exec did not preserve the dry-run blocked contract."
+        )
+    _assert_task_not_persisted(advisor_workspace, stdin_task)
+
+    preview_task_path = advisor_workspace / "preview-task.txt"
+    preview_task_path.write_text(stdin_task, encoding="utf-8")
+    file_preview_argv = list(exact_execution_preview_argv)
+    try:
+        preview_stdin_index = file_preview_argv.index("--task-stdin")
+    except ValueError as exc:
+        raise SystemExit("Installed execution preview omitted --task-stdin.") from exc
+    file_preview_argv[preview_stdin_index : preview_stdin_index + 1] = [
+        "--task-file",
+        str(preview_task_path),
+    ]
+    try:
+        file_preview_result = subprocess.run(
+            file_preview_argv,
+            cwd=advisor_workspace,
+            env=environment,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        preview_task_path.unlink()
+    file_preview = json.loads(file_preview_result.stdout)
+    if (
+        file_preview_result.returncode != 1
+        or file_preview.get("status") != "admission_blocked"
+        or "task_fingerprint_mismatch" in file_preview.get("reason_codes", [])
+    ):
+        raise SystemExit(
+            "Installed cell-exec task-file mode did not preserve exact task bytes."
+        )
+
     task_file = advisor_workspace / "task.txt"
     task_text = "private installed-wheel file task"
     task_file.write_text(task_text, encoding="utf-8")
@@ -500,6 +573,12 @@ def _run_installed_advisor_smoke(
         "--task-file",
         str(task_file),
     ]
+    file_receipt = advisor_workspace / "advisor-receipt-file.json"
+    try:
+        output_index = file_argv.index("--out")
+    except ValueError as exc:
+        raise SystemExit("Installed advisor command omitted --out.") from exc
+    file_argv[output_index + 1] = str(file_receipt)
     try:
         file_result = subprocess.run(
             file_argv,
@@ -511,6 +590,7 @@ def _run_installed_advisor_smoke(
         )
     finally:
         task_file.unlink()
+        file_receipt.unlink(missing_ok=True)
     _assert_advisor_abstention(file_result.stdout, task_text)
     _assert_task_not_persisted(advisor_workspace, task_text)
 
@@ -707,7 +787,9 @@ def _select_packaging_python(root: Path) -> Path:
         candidates.append(root / ".venv" / "Scripts" / "python.exe")
     else:
         candidates.append(root / ".venv" / "bin" / "python")
-        candidates.extend(Path(name) for name in ("python3.12", "python3.11", "python3.10"))
+        candidates.extend(
+            Path(name) for name in ("python3.12", "python3.11", "python3.10")
+        )
     seen: set[str] = set()
     for candidate in candidates:
         key = str(candidate)
@@ -716,7 +798,9 @@ def _select_packaging_python(root: Path) -> Path:
         seen.add(key)
         if _python_is_compatible(candidate):
             return candidate
-    raise SystemExit("Packaging smoke requires Python >= 3.10. Set MYMOE_PACKAGING_PYTHON to a compatible interpreter.")
+    raise SystemExit(
+        "Packaging smoke requires Python >= 3.10. Set MYMOE_PACKAGING_PYTHON to a compatible interpreter."
+    )
 
 
 def _python_is_compatible(python: Path) -> bool:

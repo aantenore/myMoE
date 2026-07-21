@@ -62,9 +62,10 @@ mymoe advisor-init --out ./.mymoe-advisor
 mymoe-web --app-config ./.mymoe-advisor/app.json
 ```
 
-`advisor-init` creates a new `0700` directory and five `0600` files on POSIX:
-`app.json`, `adaptive-cells.json`, `adaptive-evaluation-contract.json`,
-`moe.json`, and `context-policy.json`. It never overwrites an existing path.
+`advisor-init` creates a new `0700` directory and six `0600` files on POSIX:
+`app.json`, `adaptive-cells.json`, `adaptive-execution-policy.json`,
+`adaptive-evaluation-contract.json`, `moe.json`, and `context-policy.json`. It
+never overwrites an existing path.
 On Windows the destination directory's inherited ACL applies; the command does
 not claim to install an owner-only DACL. Its JSON result contains metadata-only
 `status`, `files`, and exact `next` argv arrays. The included catalog and
@@ -448,7 +449,7 @@ evidence and enough current resources before execution. This positioning is an
 architectural boundary, not a claim that myMoE replaces those products or has
 empirically outperformed them.
 
-Two research directions matter next but are not implemented in v1. The
+Two research directions remain outside the current whole-cell preview. The
 [harness-native routing paper](https://arxiv.org/abs/2607.11399) motivates
 making routing aware of the agent harness and individual steps, while
 [TwinRouterBench](https://arxiv.org/abs/2605.18859) highlights the need for
@@ -456,7 +457,9 @@ explicit router evaluation rather than anecdotal model choice. A future myMoE
 executor could re-admit a cell at each step and expose the boundary through the
 [Agent Client Protocol](https://agentclientprotocol.com/get-started/introduction),
 but step-level harness-native routing and ACP delivery remain roadmap items, not
-current features.
+current features. The implemented
+[Adaptive Cell Execution Gate](cell-execution-gate.md) instead performs one
+fresh, non-authorizing whole-cell admission preview.
 
 ## Threat model
 
@@ -492,6 +495,8 @@ The Adaptive Cell Advisor does not yet provide:
 - automatic downloads, online discovery, or remote-model fallback;
 - proof that source evidence came from an authentic producer.
 
-These are separate authority and evaluation problems. The next safe step after
-v1 is to bind a future executor to a fresh advice receipt and recheck resources
-at the execution boundary—not to make the advisory receipt itself executable.
+These are separate authority and evaluation problems. The current dry-run gate
+binds fresh admission to the advice receipt but still reserves nothing. A
+future executor must bind itself to a fresh passing preview, recheck resources
+again at its own execution boundary, and obtain separate authority—not make
+either the advice or preview receipt executable.

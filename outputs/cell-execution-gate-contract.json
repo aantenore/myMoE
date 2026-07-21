@@ -1,0 +1,114 @@
+{
+  "benchmark": "adaptive_cell_execution_gate_contract",
+  "contract_checks_passed": true,
+  "criteria": {
+    "catalog_drift_is_blocked": true,
+    "every_preview_remains_non_authorizing_and_model_free": true,
+    "exact_task_drift_is_blocked": true,
+    "expired_source_receipt_is_blocked": true,
+    "fresh_resource_pressure_is_blocked": true,
+    "fresh_snapshot_is_bound_separately": true,
+    "source_receipt_binding_is_preserved": true,
+    "unchanged_exact_cell_passes_admission": true
+  },
+  "fixture": {
+    "configured_cell_count": 2,
+    "kind": "deterministic_synthetic_contract_fixture",
+    "policy_mode": "dry_run",
+    "policy_sha256": "122c08d3962029380a8b18e4aa5263eda4c174dc512c2c69045793b5d541eb38",
+    "source_task_chars": 33,
+    "task_text_interpreted": false
+  },
+  "limits": [
+    "synthetic_contract_fixture_only",
+    "does_not_measure_model_quality",
+    "does_not_measure_real_latency_or_memory",
+    "does_not_start_stop_or_call_a_model",
+    "does_not_run_tools",
+    "does_not_reserve_resources",
+    "does_not_authorize_or_apply_execution"
+  ],
+  "scenarios": {
+    "catalog_drift": {
+      "applied": false,
+      "authorizes_execution": false,
+      "fresh_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "fresh_resource_snapshot_sha256": "6bfc88f3b93fa323862c49afa8e237aa46f10df86bc449a1b9d841402d4ccd92",
+      "fresh_selected_cell_id": "fast-small-cell",
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "catalog_drift"
+      ],
+      "receipt_sha256": "8353430f95e7013a09e2b7633b316f0cada69b8365a095e71e6e121b25c35b2c",
+      "source_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "source_selected_cell_id": "fast-small-cell",
+      "status": "admission_blocked"
+    },
+    "exact_task_drift": {
+      "applied": false,
+      "authorizes_execution": false,
+      "fresh_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "fresh_resource_snapshot_sha256": "6bfc88f3b93fa323862c49afa8e237aa46f10df86bc449a1b9d841402d4ccd92",
+      "fresh_selected_cell_id": "fast-small-cell",
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "task_fingerprint_mismatch"
+      ],
+      "receipt_sha256": "8f98f3766d7f613b861abe39aa7f9ed9b85a60f7da4fdc7bed50068d687f8a17",
+      "source_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "source_selected_cell_id": "fast-small-cell",
+      "status": "admission_blocked"
+    },
+    "expired_source_receipt": {
+      "applied": false,
+      "authorizes_execution": false,
+      "fresh_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "fresh_resource_snapshot_sha256": "b850a222777a74b33d6864d4642d52013f0801f2f330271c438b01185a5bdf96",
+      "fresh_selected_cell_id": "fast-small-cell",
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "source_receipt_expired"
+      ],
+      "receipt_sha256": "57b37a76f7ab3a433952e7249de7640eefc7aaae31fae0b8f71f7e877c0cf901",
+      "source_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "source_selected_cell_id": "fast-small-cell",
+      "status": "admission_blocked"
+    },
+    "fresh_resource_pressure": {
+      "applied": false,
+      "authorizes_execution": false,
+      "fresh_passport_sha256": null,
+      "fresh_resource_snapshot_sha256": "f9cbb3ceba6038c847d2043e257c7ea00696c2d72fe0944be26fccd640f893b4",
+      "fresh_selected_cell_id": null,
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [
+        "fresh_admission_blocked",
+        "selected_cell_changed",
+        "selected_passport_changed"
+      ],
+      "receipt_sha256": "1db0f9e663d8c48236f25cd27a7f7f895e7631a872c35c36f7cd5f4626acd691",
+      "source_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "source_selected_cell_id": "fast-small-cell",
+      "status": "admission_blocked"
+    },
+    "unchanged_exact_cell": {
+      "applied": false,
+      "authorizes_execution": false,
+      "fresh_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "fresh_resource_snapshot_sha256": "6bfc88f3b93fa323862c49afa8e237aa46f10df86bc449a1b9d841402d4ccd92",
+      "fresh_selected_cell_id": "fast-small-cell",
+      "model_invocations": 0,
+      "network_used": false,
+      "reason_codes": [],
+      "receipt_sha256": "637a26bd985f4a5a1cc370aee05bc4420549c573d369b2653cc9db689bb24ac2",
+      "source_passport_sha256": "f2ea8f3fbf6fa3d93232a073188be1160e8d556beb28743194a8a1c13da4588f",
+      "source_selected_cell_id": "fast-small-cell",
+      "status": "admission_passed"
+    }
+  },
+  "schema_version": "1.0"
+}

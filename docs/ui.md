@@ -26,7 +26,8 @@ mymoe-web --app-config ./.mymoe-advisor/app.json
 ```
 
 The generated workspace contains `app.json`, `adaptive-cells.json`,
-`adaptive-evaluation-contract.json`, `moe.json`, and `context-policy.json`.
+`adaptive-execution-policy.json`, `adaptive-evaluation-contract.json`,
+`moe.json`, and `context-policy.json`.
 Initialization is no-clobber. It uses a `0700` directory and `0600` files on
 POSIX; Windows inherits the destination directory ACL and does not claim an
 owner-only DACL. The catalog and evaluation contract deliberately contain no

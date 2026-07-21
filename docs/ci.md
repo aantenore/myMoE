@@ -43,15 +43,19 @@ The gate currently performs these steps:
    profile-dependent selection, stale and resource-pressure abstention, and
    separate exact paraphrase lineage; it does not measure model quality or real
    performance.
-10. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+10. Run the deterministic Adaptive Cell Execution Gate contract benchmark and
+   write `outputs/cell-execution-gate-contract.json`. Its synthetic fixture
+   checks unchanged admission, exact task and catalog drift, receipt expiry,
+   and current resource pressure. It never runs a model or authorizes execution.
+11. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-11. Refresh the hardware profile artifact.
-12. Run the packaging smoke test, which installs the project in a temporary
+12. Refresh the hardware profile artifact.
+13. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe`, `mymoe-paired`, and
    `mymoe-web` console scripts, packaged browser, desktop, and Advisor templates,
    and the installed workspace initializers. The Advisor smoke runs from an

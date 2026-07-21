@@ -7,6 +7,7 @@ from pathlib import Path
 _DEFAULTS = frozenset(
     {
         "adaptive-cells.json",
+        "adaptive-execution-policy.json",
         "adaptive-evaluation-contract.json",
         "app.json",
         "context-policy.json",

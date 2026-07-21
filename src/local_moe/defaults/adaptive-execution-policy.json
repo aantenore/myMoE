@@ -1,0 +1,11 @@
+{
+  "allowed_risk_classes": [
+    "compute_only"
+  ],
+  "contract": "AdaptiveCellExecutionPolicy",
+  "digest": "122c08d3962029380a8b18e4aa5263eda4c174dc512c2c69045793b5d541eb38",
+  "max_source_receipt_age_seconds": 60,
+  "max_tool_surfaces": 0,
+  "mode": "dry_run",
+  "schema_version": "1.0"
+}

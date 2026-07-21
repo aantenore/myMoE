@@ -83,8 +83,38 @@ outside this cell. The runtime is implemented on POSIX and live-qualified on
 macOS; Linux requires a local bound-window canary, while Windows currently
 receives provider-contract checks only and fails closed at runtime.
 
+The Adaptive Cell Advisor and Execution Gate form a separate, non-authorizing
+admission path. They do not sit inside the generation request path and cannot
+start a runtime:
+
+```mermaid
+flowchart LR
+  D["Declared task demand"] --> A["Adaptive Cell Advisor"]
+  E["Cell passports + live resources"] --> A
+  A --> R["Metadata-only advice receipt"]
+  R --> G["Adaptive Cell Execution Gate"]
+  T["Same exact task"] --> G
+  N["Fresh catalog, contract, and resources"] --> G
+  G --> P["Passed or blocked preview receipt"]
+  P --> X["No execution authority"]
+```
+
+The Advisor chooses only among eligible configured cells. The gate then
+repeats admission and rejects receipt expiry, task drift, policy mismatch,
+catalog or evaluation drift, a changed selected cell/passport, or a fresh
+abstention. This reduces stale-decision risk but does not reserve resources or
+close the time-of-check/time-of-use gap. See
+[Adaptive Cell Execution Gate](cell-execution-gate.md).
+
 ## Core Contracts
 
+- `Adaptive Cell Advisor`: offline whole-cell admission and Pareto selection
+  over exact model/runtime/harness/tool passports, current resources, and
+  applicable evaluation evidence. Its receipt is advisory only.
+- `Adaptive Cell Execution Gate`: strict `dry_run`, `compute_only`, zero-tool
+  re-admission boundary. It binds a recent Advisor receipt to the same task,
+  current evidence, selected passport, and fresh resource snapshot, then emits
+  a non-authorizing passed or blocked preview receipt.
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight,
   declared transport, and declared execution scope.

@@ -4,6 +4,37 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0-alpha.1] - 2026-07-21
+
+### Added
+
+- `mymoe cell-exec preview`, a dry-run Adaptive Cell Execution Gate that
+  reloads a recent Advisor receipt, repeats admission against current local
+  resources, and verifies the same exact task, catalog, evaluation contract,
+  selected cell, and cell passport before emitting a passed or blocked receipt.
+- A content-addressed v1 execution-preview policy fixed to `dry_run`,
+  `compute_only`, and zero tool surfaces. `mymoe advisor-init` now includes the
+  policy in its six-file installed starter and returns the corresponding CLI
+  command template.
+- A deterministic synthetic contract benchmark, integrated into the canonical
+  CI plan, covering an unchanged pass plus task drift, receipt expiry, catalog
+  drift, and fresh resource pressure without a model call.
+
+### Security
+
+- Source receipts and policies are bounded strict JSON, reject symlinks,
+  duplicate keys, non-finite values, unknown fields, and mismatched nested
+  digests, and fail closed on invalid or future-dated evidence.
+- Every v1 preview receipt explicitly records no network use, model invocation,
+  applied action, or execution authority. Raw task text is accepted only from
+  bounded UTF-8 stdin and is not persisted in the receipt.
+
+### Known limitations
+
+- The gate is an admission preview, not an executor or resource reservation.
+  A passing live snapshot can become stale immediately and cannot authorize a
+  later model or tool invocation.
+
 ## [0.9.0-alpha.1] - 2026-07-21
 
 ### Added

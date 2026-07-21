@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import local_moe.cli as cli
 from local_moe.adaptive_advisor_service import evaluate_advisor
+from local_moe.adaptive_execution_gate import load_adaptive_execution_policy
 from local_moe.advisor_setup import materialize_advisor_workspace
 from local_moe.app_config import load_app_config
 from local_moe.cell_passport import load_cell_catalog
@@ -27,6 +28,7 @@ from local_moe.package_defaults import (
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_FILES = {
     "adaptive-cells.json",
+    "adaptive-execution-policy.json",
     "adaptive-evaluation-contract.json",
     "app.json",
     "context-policy.json",
@@ -35,7 +37,9 @@ EXPECTED_FILES = {
 
 
 class AdvisorSetupTests(unittest.TestCase):
-    def test_source_version_fallback_is_safe_without_distribution_metadata(self) -> None:
+    def test_source_version_fallback_is_safe_without_distribution_metadata(
+        self,
+    ) -> None:
         with patch.object(
             cli.importlib_metadata,
             "version",
@@ -58,6 +62,9 @@ class AdvisorSetupTests(unittest.TestCase):
                 app_path,
             )
             catalog = load_cell_catalog(catalog_path)
+            execution_policy = load_adaptive_execution_policy(
+                destination / "adaptive-execution-policy.json"
+            )
             evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
 
             self.assertEqual(result["status"], "created")
@@ -65,10 +72,16 @@ class AdvisorSetupTests(unittest.TestCase):
             self.assertEqual(result["next"]["run_from"], "workspace")
             self.assertEqual(result["next"]["advisor_argv"][0:2], ["mymoe", "advisor"])
             self.assertEqual(
+                result["next"]["advisor_argv"][-3:],
+                ["--json", "--out", "./advisor-receipt.json"],
+            )
+            self.assertEqual(
                 result["next"]["web_argv"],
                 ["mymoe-web", "--app-config", "./app.json"],
             )
-            self.assertEqual({item.name for item in destination.iterdir()}, EXPECTED_FILES)
+            self.assertEqual(
+                {item.name for item in destination.iterdir()}, EXPECTED_FILES
+            )
             self.assertNotIn(str(destination), json.dumps(result))
             self.assertTrue(app.advisor.enabled)
             self.assertEqual(
@@ -84,11 +97,15 @@ class AdvisorSetupTests(unittest.TestCase):
             )
             self.assertEqual(evaluation["qualification"]["status"], "not_qualified")
             self.assertEqual(evaluation["qualification"]["claims"], [])
-            self.assertTrue(all(cell.measured.sample_count == 0 for cell in catalog.cells))
+            self.assertEqual(execution_policy.mode, "dry_run")
+            self.assertEqual(execution_policy.allowed_risk_classes, ("compute_only",))
+            self.assertEqual(execution_policy.max_tool_surfaces, 0)
+            self.assertTrue(
+                all(cell.measured.sample_count == 0 for cell in catalog.cells)
+            )
             self.assertTrue(
                 all(
-                    cell.declaration.risk_classes
-                    == ("compute_only", "write_local")
+                    cell.declaration.risk_classes == ("compute_only", "write_local")
                     for cell in catalog.cells
                 )
             )
@@ -224,7 +241,9 @@ class AdvisorSetupTests(unittest.TestCase):
                 materialize_advisor_workspace(destination)
 
             self.assertTrue(destination.is_symlink())
-            self.assertEqual(marker.read_text(encoding="utf-8"), "victim stays untouched\n")
+            self.assertEqual(
+                marker.read_text(encoding="utf-8"), "victim stays untouched\n"
+            )
             self.assertEqual({path.name for path in victim.iterdir()}, {"app.json"})
             self.assertTrue(moved.is_dir())
             self.assertEqual(list(moved.iterdir()), [])
@@ -303,9 +322,30 @@ class AdvisorSetupTests(unittest.TestCase):
                 app.advisor.evaluation_contract_path,
             )
             self.assertTrue(
-                all(Path(path).is_relative_to(destination.resolve()) for path in owned_paths)
+                all(
+                    Path(path).is_relative_to(destination.resolve())
+                    for path in owned_paths
+                )
             )
             self.assertEqual(result["next"]["run_from"], "workspace")
+            self.assertEqual(
+                result["next"]["cell_execution_preview_argv"],
+                [
+                    "mymoe",
+                    "cell-exec",
+                    "preview",
+                    "--receipt",
+                    "./advisor-receipt.json",
+                    "--task-stdin",
+                    "--catalog",
+                    "./adaptive-cells.json",
+                    "--evaluation-contract",
+                    "./adaptive-evaluation-contract.json",
+                    "--policy",
+                    "./adaptive-execution-policy.json",
+                    "--json",
+                ],
+            )
             self.assertEqual(registry.skills, ())
             self.assertEqual(registry.tools, ())
             self.assertEqual(registry.plugins, ())
