@@ -38,6 +38,7 @@ class CiRunnerTests(unittest.TestCase):
                 "extended smoke eval",
                 "live routing holdout",
                 "verified routing shadow eval",
+                "desktop semantic benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -76,6 +77,18 @@ class CiRunnerTests(unittest.TestCase):
         self.assertIn("outputs/verified-routing-shadow-eval.json", shadow_eval.command)
         quality_gate = next(step for step in steps if step.name == "quality gate")
         self.assertIn("configs/quality-gate-ci.json", quality_gate.command)
+        desktop_benchmark = next(
+            step for step in steps if step.name == "desktop semantic benchmark"
+        )
+        self.assertEqual(
+            desktop_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_desktop_semantic.py",
+                "--out",
+                "outputs/desktop-semantic-benchmark.json",
+            ],
+        )
 
     def test_make_eval_holdout_uses_current_unseen_dataset(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -108,6 +121,12 @@ class CiRunnerTests(unittest.TestCase):
                 "NPM_CONFIG_CACHE: ${{ runner.temp }}/mymoe-npm-cache"
             ),
             2,
+        )
+        self.assertIn("  desktop-provider-contract:\n", active)
+        self.assertIn(
+            "uv run --locked --extra desktop\n"
+            "          python scripts/check_desktop_provider_contract.py",
+            active,
         )
 
     def test_build_env_removes_pythonpath_and_preserves_other_values(self) -> None:

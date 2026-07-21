@@ -94,6 +94,7 @@ class McpServerDefinition:
     timeout_seconds: float = 8.0
     allowed_tools: tuple[str, ...] = ()
     browser_capability: dict[str, Any] = field(default_factory=dict)
+    desktop_capability: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -629,6 +630,20 @@ def _parse_mcp_server(item: dict[str, Any]) -> McpServerDefinition:
         raise ExtensionError(
             f"MCP server {item['name']} browser_capability must be an object."
         )
+    desktop_capability = item.get("desktop_capability", {})
+    if desktop_capability is None:
+        desktop_capability = {}
+    if not isinstance(desktop_capability, dict):
+        raise ExtensionError(
+            f"MCP server {item['name']} desktop_capability must be an object."
+        )
+    if (
+        browser_capability.get("enabled") is True
+        and desktop_capability.get("enabled") is True
+    ):
+        raise ExtensionError(
+            f"MCP server {item['name']} cannot own browser and desktop capabilities together."
+        )
     try:
         timeout_seconds = float(item.get("timeout_seconds", 8.0))
     except (TypeError, ValueError) as exc:
@@ -652,6 +667,7 @@ def _parse_mcp_server(item: dict[str, Any]) -> McpServerDefinition:
         timeout_seconds=timeout_seconds,
         allowed_tools=tuple(str(name) for name in item.get("allowed_tools", [])),
         browser_capability=dict(browser_capability),
+        desktop_capability=dict(desktop_capability),
     )
 
 
@@ -691,6 +707,21 @@ def _mcp_server_payload(entry: McpServerDefinition, *, include_sensitive: bool) 
     payload = _public_payload(entry)
     if not include_sensitive:
         payload.update(public_env_summary(entry.env))
+        desktop = entry.desktop_capability
+        if desktop:
+            target = desktop.get("target", {})
+            payload["desktop_capability"] = {
+                "enabled": desktop.get("enabled") is True,
+                "provider": desktop.get("provider", ""),
+                "version": desktop.get("version", ""),
+                "target": {
+                    "id": target.get("id", "") if isinstance(target, dict) else "",
+                    "bound": isinstance(target, dict) and bool(target),
+                },
+                "max_nodes": desktop.get("max_nodes"),
+                "max_depth": desktop.get("max_depth"),
+                "max_text_chars": desktop.get("max_text_chars"),
+            }
     return payload
 
 

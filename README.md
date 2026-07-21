@@ -1,13 +1,17 @@
 # myMoE
 
 **Run coding agents with local models, qualify each exact runtime cell, and let
-the built-in agent inspect local web apps through a tightly bounded browser.**
+the built-in agent inspect one selected desktop window without screenshots.**
 
 In plain terms: myMoE helps you do AI-assisted coding on your own computer
 without paying for every request. Today it connects local models to a coding
-agent, tests whether one exact setup can complete a controlled coding task, and
-lets its built-in agent exercise simple local web apps. It does not yet control
-the desktop or replace a complete frontier coding agent.
+agent, tests whether one exact setup can complete a controlled coding task,
+lets its built-in agent exercise simple local web apps, and can read the
+semantic controls in one operator-selected desktop window. The desktop cell is
+read-only: it does not click, type, capture screenshots, or replace a complete
+frontier coding agent. Its current runtime is implemented on POSIX and has been
+live-qualified on macOS; Windows currently receives provider-contract checks
+only and the desktop runtime fails closed there.
 
 ## Local coding without per-token model fees
 
@@ -100,6 +104,58 @@ mymoe \
 `browser-init` also returns those two follow-up invocations as JSON argv arrays,
 so paths containing spaces or shell metacharacters remain unambiguous.
 
+The **Desktop Semantic Cell** is a separate read-only boundary for native
+applications. A local model receives one tool, `desktop.observe`, that returns
+a bounded and redacted accessibility tree for one process and window selected
+by the operator. It does not receive Cua Driver's raw tool catalog, and cannot
+enumerate apps or windows, capture screenshots, use coordinates, read the
+clipboard, run commands, or perform an action. The first provider is pinned to
+Cua Driver `0.10.0` over local stdio; `include_screenshot=false` disables
+capture before the provider observes the window. myMoE owns a fresh daemon on
+a private socket, runs it in bounded mode with an exact read-only target policy,
+binds approval to target plus configuration, and tears it down after use.
+
+> **Platform boundary:** the owned-daemon runtime is implemented on POSIX and
+> has been live-qualified on macOS. Linux requires its own bound-window canary
+> because toolkit and compositor behavior varies. Windows CI verifies only the
+> locked provider package/version, 49-tool catalog, and admitted schema, while
+> reporting the observed native executable digest; the runtime deliberately
+> fails closed there.
+
+```bash
+uv sync --locked --extra desktop
+uv run mymoe desktop-init \
+  --out ./.mymoe-desktop \
+  --target-id editor \
+  --target-pid 12345 \
+  --window-id 67890
+uv run mymoe \
+  --app-config .mymoe-desktop/app.desktop.json \
+  --desktop-canary desktop-local \
+  --desktop-canary-confirm
+```
+
+Replace the numeric values with one window selected through the exact
+operator-only discovery sequence in the
+[Desktop Semantic Cell runbook](docs/desktop-semantic-cell.md#operator-only-target-discovery).
+That temporary discovery daemon is never exposed to the model and is stopped
+before the bound cell starts. `desktop-init` then binds the current process
+instance, pins the installed native provider executable, persistently disables
+its telemetry, erases its telemetry identifier, and returns exact canary and
+agent argv arrays. The checked-in desktop files are schemas and examples; their
+zero digests are intentionally not runnable target bindings.
+
+On the shipped deterministic 512-node accessibility fixture, the firewall
+keeps 14 useful nodes within the normal agent-result budget, reduces the
+serialized observation by 98.52%, and reduces the model-visible provider
+surface from 49 tools to 1, with zero secret sentinels or provider-addressing
+keys delivered. This is a payload/safety benchmark, not a desktop task-success
+or accessibility-completeness claim.
+
+See [Desktop Semantic Cell](docs/desktop-semantic-cell.md) for the simple use
+case, target-binding contract, provider admission, platform limits, threat
+model, and semantic-first roadmap.
+
 > **Coding-canary boundary:** this removes per-token cloud-model charges, not hardware,
 > electricity, or model-license obligations. The current canary is a
 > macOS-only diagnostic for one disposable single-file edit-and-test contract.
@@ -141,6 +197,7 @@ cannot perform other coding tasks.
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
 | Local Browser Capability Cell | Let a local model inspect and exercise a local web app through four approval-gated tools, while normal external browser HTTP(S) traffic and raw MCP authority stay blocked. |
+| Local Desktop Semantic Cell | Let a local model read one selected application's semantic controls locally through an owned bounded daemon, without screenshots or desktop actions. |
 | Configuration-driven routing across independent models | Teams can change experts, weights, endpoints, budgets, and fallbacks without retraining one giant model. |
 | Execution Scope Guard before every model call | A local-only request fails closed instead of silently moving to a wider mesh or remote route. |
 | Shared persistent chat, memory, and budget-aware context | The web and terminal experiences can preserve useful history without sending every stored item to every model call. |
@@ -310,6 +367,10 @@ qualification.
 To qualify the separate browser adapter and exercise a local web app, follow
 the [Browser Capability Cell runbook](docs/browser-capability-cell.md).
 
+To qualify the read-only native-window adapter, then expose only
+`desktop.observe` to a local model, follow the
+[Desktop Semantic Cell runbook](docs/desktop-semantic-cell.md).
+
 For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startup runbook, use the [installation guide](docs/installation.md).
 
 ## Choose the Right Entry Point
@@ -324,6 +385,8 @@ For Windows, Linux, Ollama, llama.cpp, optional profiles, and the guarded startu
 | Run a bounded tool task | `.venv/bin/mymoe --agent-prompt "..." --agent-tool memory.search` | Separate CLI-only agent loop; only explicitly selected strict-schema tools are visible. |
 | Test a local web app with the built-in agent | `.venv/bin/mymoe --app-config configs/app.browser.example.json --agent-prompt "..." --agent-browser-server browser-local --agent-interactive-approvals` | One ephemeral, stateful browser; loopback only, normal browser HTTP(S) egress denied, exact approval per call, raw MCP tools hidden. |
 | Qualify the installed browser adapter | `.venv/bin/mymoe --app-config configs/app.browser.example.json --browser-canary browser-local --browser-canary-confirm` | Deterministic navigate/observe/type/click fixture; qualifies only local web-app interaction. |
+| Inspect one selected desktop window | `.venv/bin/mymoe --app-config .mymoe-desktop/app.desktop.json --agent-prompt "..." --agent-desktop-server desktop-local --agent-interactive-approvals` | One read-only `desktop.observe` tool; accessibility-tree output only, with screenshots, discovery, coordinates, actions, clipboard, shell, and secure values unavailable. |
+| Qualify the desktop semantic boundary | `.venv/bin/mymoe --app-config .mymoe-desktop/app.desktop.json --desktop-canary desktop-local --desktop-canary-confirm` | Live provider and bound-window check; it grants no desktop-action authority. |
 | Preflight local versus premium Codex | `.venv/bin/mymoe --assistant-task "..." --assistant-capability code` | Dry-run by default; plans local execution, verification, bounded escalation, or a policy block without exposing task text in the receipt. |
 | Check local Codex compatibility | `.venv/bin/mymoe assistant-probe --json` | Uses a random marker in a disposable read-only workspace; emits public command/runtime/model identity, never authorizes routing, and never invokes the premium provider. |
 | Inspect or collect one frozen paired case | `.venv/bin/mymoe-paired --help` | Status is provider-free. Execution composes a public-trust workflow and private directory sidecar; without both it fails closed instead of manufacturing evidence. |
@@ -355,6 +418,8 @@ The profile uses top-1 `best` aggregation. Routing combines base expert weights,
 | [`configs/tools.json`](configs/tools.json) | Tool metadata, enabled state, risk class, and side-effect declaration. |
 | [`configs/mcp.json`](configs/mcp.json) | Optional MCP processes and per-server tool allowlists. |
 | [`configs/mcp.playwright-browser.example.json`](configs/mcp.playwright-browser.example.json) | Disabled-from-default, pinned local Browser Capability Cell provider, schema digests, loopback hosts, and result budget. |
+| [`configs/app.desktop.example.json`](configs/app.desktop.example.json) | Opt-in application-policy schema for the read-only Desktop Semantic Cell; use `desktop-init` for a runnable binding. |
+| [`configs/mcp.cua-desktop.example.json`](configs/mcp.cua-desktop.example.json) | Non-runnable binding example for the pinned Cua adapter, accepted schema, screenshot denial, and semantic-result budgets. |
 | [`configs/cron.json`](configs/cron.json) | Startup and interval maintenance jobs with risk classes. |
 
 The design is configurable, but not infinitely dynamic. OpenAI-compatible

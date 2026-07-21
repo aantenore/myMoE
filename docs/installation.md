@@ -73,6 +73,14 @@ generates with the configured Qwen and Gemma MLX servers.
 
 Optional extras:
 
+- `.[desktop]`: installs the pinned Cua Driver adapter and process-inspection
+  dependency required by `mymoe desktop-init` and the Desktop Semantic Cell.
+  The locked provider package/version, catalog, and schema are checked on Linux,
+  macOS, and Windows; CI reports but does not independently admit the observed
+  native executable digest. The owned-daemon runtime is implemented on POSIX and
+  live-qualified on macOS; Linux requires a local bound-window canary. Windows
+  receives provider-contract checks only, and the runtime fails closed there
+  until its named-pipe lifecycle is qualified.
 - `.[coding-canary]`: installs the canonical-JSON dependency required by the
   isolated Cline coding-cell qualification command.
 - `.[assistant-bridge]`: installs the dependencies required by the Hybrid

@@ -224,21 +224,23 @@ uses its own exact-origin proxy, but this alpha still does not claim hostile-cod
 Use a disposable account or stronger VM/container/OS policy when the local app
 or dependency is not trusted.
 
-## Desktop-control roadmap
+## Desktop capability separation
 
 Desktop control is a separate capability cell, not a flag on the browser cell.
-The first provider candidate is a replaceable Cua Drivers adapter behind the
-same lifecycle, beginning with an accessibility-tree-only, single-application
-scope. Native AXUIElement, UI Automation, and AT-SPI adapters remain viable
-alternatives if that dependency cannot satisfy the contract.
+The [Desktop Semantic Cell](desktop-semantic-cell.md) now provides the first
+read-only step: one `desktop.observe` tool over a replaceable Cua Driver adapter,
+bound to one process and window with screenshot capture disabled. Native
+AXUIElement, UI Automation, and AT-SPI adapters remain viable alternatives
+behind the same provider-neutral contract.
 
-Each adapter must ship its own tool contracts, permission preview, stale-state
-guard, process attestation, resource budget, destructive-action denylist, and
-local canary. The intended progression is read-only accessibility, then
-state-bound click/type for one process, then vision or coordinate actions only
-inside a disposable VM. Screenshots or arbitrary coordinate clicks will not be
-the default authority surface. Until those contracts and cross-platform tests
-exist, myMoE makes no desktop-control claim.
+This semantic read does not grant desktop control. Any future action adapter
+must ship its own tool contracts, permission preview, stale-state guard,
+process attestation, resource budget, destructive-action denylist, and local
+canary. The intended progression is state-bound click/type for one process,
+then vision or coordinate actions only inside a disposable VM. Screenshots or
+arbitrary coordinate clicks will not be the default authority surface. Until
+those additional contracts and cross-platform tests exist, myMoE makes no
+desktop-action claim.
 
 ## Functional limits of a local-only page
 

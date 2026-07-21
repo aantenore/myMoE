@@ -628,6 +628,11 @@ class LocalToolRunner:
                         "Browser capability servers are exclusive to the guarded browser runner; "
                         "raw MCP discovery and calls are disabled."
                     )
+                if server.desktop_capability.get("enabled") is True:
+                    raise ToolExecutionError(
+                        "Desktop capability servers are exclusive to the guarded desktop runner; "
+                        "raw MCP discovery and calls are disabled."
+                    )
                 return server
         raise ToolExecutionError(f"MCP server is not configured: {name}")
 

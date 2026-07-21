@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -190,6 +191,90 @@ class ExtensionTests(unittest.TestCase):
 
             with self.assertRaises(ExtensionError):
                 load_extension_registry(mcp_config=config)
+
+    def test_loads_desktop_capability_and_rejects_dual_owned_server(self) -> None:
+        registry = load_extension_registry(
+            mcp_config="configs/mcp.cua-desktop.example.json"
+        )
+        self.assertTrue(registry.mcp_servers[0].desktop_capability["enabled"])
+        public = registry_payload(registry)["mcp_servers"][0][
+            "desktop_capability"
+        ]
+        self.assertTrue(public["target"]["bound"])
+        self.assertNotIn("pid", public["target"])
+        self.assertNotIn("window_id", public["target"])
+        self.assertNotIn("process_executable_sha256", public["target"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = json.loads(
+                Path("configs/mcp.cua-desktop.example.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            source["servers"][0]["browser_capability"] = {"enabled": True}
+            config = Path(tmp) / "mcp.json"
+            config.write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaisesRegex(ExtensionError, "cannot own browser and desktop"):
+                load_extension_registry(mcp_config=config)
+
+    def test_disabled_desktop_capability_does_not_leak_target_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "mcp.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "servers": [
+                            {
+                                "name": "disabled-desktop",
+                                "command": "cua-driver",
+                                "enabled": False,
+                                "risk_class": "identity_access",
+                                "desktop_capability": {
+                                    "enabled": False,
+                                    "provider": "cua_driver",
+                                    "version": "0.10.0",
+                                    "target": {
+                                        "id": "private-target",
+                                        "pid": 987654321,
+                                        "window_id": 555666777,
+                                        "process_name": "Private Editor",
+                                        "process_started_at": "1753084800.000000",
+                                        "process_executable_sha256": "b" * 64,
+                                    },
+                                    "provider_executable_sha256": "a" * 64,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry = load_extension_registry(mcp_config=config)
+
+        public = registry_payload(registry)
+        serialized = json.dumps(public, sort_keys=True)
+        desktop = public["mcp_servers"][0]["desktop_capability"]
+        target = desktop["target"]
+
+        self.assertFalse(desktop["enabled"])
+        self.assertNotIn("provider_executable_sha256", desktop)
+        for key in (
+            "pid",
+            "window_id",
+            "process_name",
+            "process_started_at",
+            "process_executable_sha256",
+        ):
+            self.assertNotIn(key, target)
+        for secret in (
+            "987654321",
+            "555666777",
+            "Private Editor",
+            "1753084800.000000",
+            "a" * 64,
+            "b" * 64,
+        ):
+            self.assertNotIn(secret, serialized)
 
     def test_scheduler_returns_due_interval_jobs(self) -> None:
         registry = load_extension_registry()

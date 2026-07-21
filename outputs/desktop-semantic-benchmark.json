@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "benchmark": "desktop_semantic_payload_firewall",
+  "fixture": {
+    "kind": "deterministic_synthetic_accessibility_tree",
+    "raw_nodes": 512,
+    "max_delivered_nodes": 128,
+    "max_depth": 12,
+    "max_text_chars": 160,
+    "iterations": 40
+  },
+  "measurements": {
+    "raw_payload_bytes": 398547,
+    "delivered_payload_bytes": 5911,
+    "payload_reduction_percent": 98.52,
+    "raw_provider_tool_count": 49,
+    "model_visible_tool_count": 1,
+    "tool_surface_reduction_percent": 97.96,
+    "delivered_nodes": 14,
+    "omitted_nodes": 114
+  },
+  "security": {
+    "secret_sentinel_leaks": [],
+    "forbidden_model_visible_keys": []
+  },
+  "criteria": {
+    "payload_reduction_at_least_70_percent": true,
+    "tool_surface_reduction_at_least_95_percent": true,
+    "delivered_node_bound_respected": true,
+    "large_tree_reports_truncation": true,
+    "secret_sentinels_absent": true,
+    "provider_addressing_absent": true,
+    "images_not_requested": true
+  },
+  "release_ready": true,
+  "limits": [
+    "synthetic_tree_not_end_to_end_os_latency",
+    "does_not_measure_model_task_success",
+    "does_not_qualify_input_or_visual_control"
+  ]
+}

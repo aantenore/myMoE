@@ -8,6 +8,7 @@ __all__ = [
     "agent_types",
     "assistant_bridge",
     "config",
+    "desktop_capability",
     "http_boundary",
     "router",
     "route_outcomes",

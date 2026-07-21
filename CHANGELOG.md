@@ -4,6 +4,74 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0-alpha.1] - 2026-07-21
+
+### Added
+
+- An opt-in Desktop Semantic Cell that lets the built-in local-model agent read
+  the bounded accessibility state of one operator-selected application process
+  and window through a single `desktop.observe` contract.
+- A provider-neutral `attest/start/observe/close` lifecycle with Cua Driver
+  `0.10.0` as the first pinned local MCP stdio adapter.
+- An owned-daemon boundary that launches Cua in `bounded` mode on a private
+  POSIX socket, applies exact session and target-argument policies, verifies
+  daemon process and policy state, and revokes and stops the daemon on close.
+- Dedicated app and provider configuration examples plus a deterministic
+  live canary for the read-only desktop contract.
+- A `desktop-init` binder that hashes the installed native provider and current
+  target process, disables provider telemetry, erases its telemetry identifier,
+  and writes an installable workspace with exclusive creation. Files request
+  mode `0600` on POSIX; Windows retains the destination directory's inherited
+  ACL rather than claiming an owner-only DACL.
+- A Desktop Semantic Cell guide covering the plain-language use case,
+  originality boundary, provider admission, threat model, platform limits, and
+  future resource-aware semantic-versus-vision routing.
+- A deterministic 512-node payload benchmark that gates redaction, forbidden
+  addressing removal, bounded output, and reductions in model-visible tools and
+  serialized observation size.
+- A Linux, macOS, and Windows CI contract job that installs the exact optional
+  provider wheel, checks its locked version, 49-tool catalog, and semantic
+  schema, and reports the observed native executable digest without GUI access,
+  telemetry, or update checks.
+- A repository security policy describing supported alpha versions, private
+  vulnerability reporting, and the project's main trust boundaries.
+
+### Security
+
+- The model sees only `desktop.observe`; upstream application and window
+  discovery, screenshots, coordinates, mouse and keyboard actions, clipboard,
+  files, shell, process control, and every other provider tool remain hidden.
+- Every observation is bound to one configured target and live provider state.
+  Exact approval also binds the target and configuration digest. Application
+  restart during a call, target drift, provider, daemon, policy, or schema
+  mismatch, empty, fully invalid after normalization, or degraded output,
+  unexpected image content, oversized output, and invalid structure fail closed.
+- Screenshot capture is disabled in the upstream request with
+  `include_screenshot=false`. Semantic output is bounded, normalized, redacted,
+  stripped of secure values, and labelled as untrusted content before it reaches
+  the model.
+- The serialized-result budget drops only trailing nodes, retaining a useful
+  semantic prefix inside the normal agent-loop limit instead of replacing the
+  entire accessibility tree with a truncation marker.
+
+### Known limitations
+
+- This alpha is read-only and accessibility-tree-only. It does not prove visual
+  layout, colors, canvas content, images, animation, or pixel correctness, and
+  it grants no authority to perform desktop actions.
+- macOS TCC permissions and Linux toolkit and Wayland behavior vary by host and
+  target application. An application can expose an incomplete or misleading
+  accessibility tree; provider completeness remains explicitly unknown. The
+  POSIX runtime is live-qualified on macOS; Linux requires a local bound-window
+  canary.
+- Only the provider/schema wheel contract is tested on Windows. The owned-daemon
+  runtime fails closed there until private named-pipe ownership and teardown are
+  qualified.
+- Cua Driver is a pre-1.0 trusted dependency. The private socket and bounded
+  policies narrow authority but do not sandbox a compromised admitted provider
+  process. A host-level egress boundary is still required for an independently
+  enforced air-gap claim.
+
 ## [0.7.0-alpha.1] - 2026-07-21
 
 ### Added

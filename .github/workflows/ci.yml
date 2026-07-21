@@ -91,3 +91,32 @@ jobs:
           --app-config configs/app.browser.example.json
           --browser-canary browser-local
           --browser-canary-confirm
+
+  desktop-provider-contract:
+    name: Desktop provider contract / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.28"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Verify locked provider version, catalog, and schema without GUI access
+        run: >-
+          uv run --locked --extra desktop
+          python scripts/check_desktop_provider_contract.py

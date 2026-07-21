@@ -1,0 +1,40 @@
+{
+  "servers": [
+    {
+      "name": "desktop-local",
+      "description": "Pinned Cua Driver adapter for one read-only semantic desktop target.",
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "enabled": true,
+      "risk_class": "identity_access",
+      "capabilities": ["desktop", "tools"],
+      "transport": "stdio",
+      "cwd": ".",
+      "env": {},
+      "timeout_seconds": 45,
+      "allowed_tools": ["get_window_state"],
+      "desktop_capability": {
+        "enabled": true,
+        "provider": "cua_driver",
+        "version": "0.10.0",
+        "provider_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "telemetry_enabled": false,
+        "tool_schema_sha256": {
+          "get_window_state": "a1685e0da284cf8445e9d2e11bdbd7249e20b72ee9109800aba798ee7ff322c3"
+        },
+        "target": {
+          "id": "replace-target",
+          "pid": 1,
+          "window_id": 1,
+          "process_name": "replace-with-target-process",
+          "process_started_at": "0.000000",
+          "process_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "max_nodes": 256,
+        "max_depth": 12,
+        "max_text_chars": 240,
+        "max_result_chars": 6000
+      }
+    }
+  ]
+}

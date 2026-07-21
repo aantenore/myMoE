@@ -120,13 +120,29 @@ class StdioMcpSession:
             or self._protocol_version
         )
 
+    @property
+    def server_info(self) -> dict[str, str]:
+        raw = self._initialize.get("serverInfo", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            "name": str(raw.get("name", "")),
+            "version": str(raw.get("version", "")),
+        }
+
     def __enter__(self) -> StdioMcpSession:
         return self.start()
 
     def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
         self.close()
 
-    def start(self) -> StdioMcpSession:
+    def start(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> StdioMcpSession:
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise McpClientError("MCP session timeout must be positive.")
         if self.active:
             return self
         if self._process is not None or self._reader is not None or self._windows_job is not None:
@@ -225,6 +241,7 @@ class StdioMcpSession:
                     "capabilities": {},
                     "clientInfo": {"name": "myMoE", "version": "0.1.0"},
                 },
+                timeout_seconds=timeout_seconds,
             )
             self._notify("notifications/initialized", {})
         except Exception:
@@ -309,6 +326,8 @@ class StdioMcpSession:
         stdout_queue = self._stdout_queue
         if process is None or stdout_queue is None or process.poll() is not None:
             raise McpClientError("MCP session is not active.")
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise McpClientError("MCP request timeout must be positive.")
         with self._lock:
             _write_message(
                 process,
@@ -326,7 +345,7 @@ class StdioMcpSession:
                     request_id,
                     self._timeout_seconds
                     if timeout_seconds is None
-                    else min(self._timeout_seconds, max(0.05, timeout_seconds)),
+                    else min(self._timeout_seconds, timeout_seconds),
                 )
             except Exception:
                 self.close()
@@ -424,7 +443,12 @@ def _read_response(
         if process.poll() is not None:
             raise McpClientError(f"MCP process exited with code {process.returncode}.")
         try:
-            event = stdout_queue.get(timeout=max(0.05, min(0.25, deadline - time.monotonic())))
+            event = stdout_queue.get(
+                timeout=max(
+                    0.001,
+                    min(0.25, deadline - time.monotonic()),
+                )
+            )
         except Empty:
             continue
         if isinstance(event, McpClientError):

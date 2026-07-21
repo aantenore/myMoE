@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, redirect_stderr
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -646,6 +647,113 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("--browser-canary requires --browser-canary-confirm", completed.stderr)
+
+    def test_agent_prompt_accepts_desktop_as_the_only_explicit_tool_surface(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--app-config",
+                "configs/app.desktop.example.json",
+                "--config",
+                "tests/fixtures/moe.synthetic.json",
+                "--agent-prompt",
+                "Inspect the configured application.",
+                "--agent-desktop-server",
+                "desktop-local",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("requires at least one explicit --agent-tool", completed.stderr)
+        self.assertIn("No OpenAI-compatible expert", completed.stderr)
+
+    def test_desktop_canary_requires_explicit_confirmation(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "local_moe.cli",
+                "--desktop-canary",
+                "desktop-local",
+            ],
+            cwd=ROOT,
+            env=_env(),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--desktop-canary requires --desktop-canary-confirm", completed.stderr)
+
+    def test_desktop_canary_success_prints_result_and_closes_runner(self) -> None:
+        class CanaryRunner:
+            def __init__(self) -> None:
+                self.canary_calls = 0
+                self.closed = False
+
+            def canary(self) -> dict[str, object]:
+                self.canary_calls += 1
+                return {
+                    "schema_version": "1.0",
+                    "status": "passed",
+                    "scope": "desktop_semantic_read_only",
+                }
+
+            def close(self) -> None:
+                self.closed = True
+
+        runner = CanaryRunner()
+        registry = object()
+        app_config = SimpleNamespace(
+            permissions=SimpleNamespace(allow_process_execution=True)
+        )
+        stdout = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "mymoe",
+                    "--app-config",
+                    "desktop.json",
+                    "--desktop-canary",
+                    "desktop-local",
+                    "--desktop-canary-confirm",
+                    "--json",
+                ],
+            ),
+            patch.object(cli, "load_app_config", return_value=app_config),
+            patch.object(cli, "_registry", return_value=registry),
+            patch.object(
+                cli.DesktopToolRunner,
+                "from_registry",
+                return_value=runner,
+            ) as from_registry,
+            redirect_stdout(stdout),
+        ):
+            cli.main()
+
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "schema_version": "1.0",
+                "status": "passed",
+                "scope": "desktop_semantic_read_only",
+            },
+        )
+        self.assertEqual(runner.canary_calls, 1)
+        self.assertTrue(runner.closed)
+        from_registry.assert_called_once_with(
+            registry,
+            "desktop-local",
+            allow_process_execution=True,
+        )
 
     def test_agent_approval_token_is_single_use_within_one_run(self) -> None:
         arguments_sha256 = "a" * 64

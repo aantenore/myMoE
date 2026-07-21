@@ -766,12 +766,30 @@ class BrowserToolRunner:
 class CompositeToolRunner:
     """Route canonical tool names without coupling the agent loop to providers."""
 
-    def __init__(self, default_runner: object, browser_runner: BrowserToolRunner):
+    def __init__(self, default_runner: object, *specialized_runners: object):
         self._default_runner = default_runner
-        self._browser_runner = browser_runner
+        self._specialized_runners = specialized_runners
+        self._runner_by_tool: dict[str, object] = {}
+        for runner in specialized_runners:
+            specs = getattr(runner, "specs", ())
+            for spec in specs:
+                name = str(getattr(spec, "name", ""))
+                if not name:
+                    raise ToolExecutionError(
+                        "Specialized tool runner published an invalid tool spec."
+                    )
+                if name in self._runner_by_tool:
+                    raise ToolExecutionError(
+                        f"Specialized tool runner duplicated canonical tool: {name}"
+                    )
+                self._runner_by_tool[name] = runner
 
     def close(self) -> None:
-        self._browser_runner.close()
+        for runner in reversed(self._specialized_runners):
+            closer = getattr(runner, "close", None)
+            if closer is None:
+                continue
+            closer()
 
     def run(
         self,
@@ -780,8 +798,12 @@ class CompositeToolRunner:
         *,
         timeout_seconds: float | None = None,
     ) -> ToolRunResult:
-        if name.startswith("browser."):
-            return self._browser_runner.run(
+        specialized = self._runner_by_tool.get(name)
+        if specialized is not None:
+            run_specialized = getattr(specialized, "run", None)
+            if run_specialized is None:
+                raise ToolExecutionError("Specialized tool runner is invalid.")
+            return run_specialized(
                 name,
                 payload,
                 timeout_seconds=timeout_seconds,

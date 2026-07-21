@@ -1,0 +1,50 @@
+{
+  "name": "myMoE",
+  "mode": "local_model_required",
+  "default_moe_config": "configs/moe.live.ollama.example.json",
+  "language": {
+    "mode": "auto",
+    "respond_in_user_language": true,
+    "supported": ["auto", "it", "en", "fr", "de", "es", "pt", "nl", "pl", "ar", "hi", "ja", "ko", "zh"]
+  },
+  "runtime": {
+    "auto_configure": true,
+    "preferred_backends": {
+      "darwin_arm64": "ollama",
+      "windows": "ollama",
+      "linux": "ollama",
+      "fallback": "llama_cpp"
+    },
+    "model_cache_dir": "~/.cache/huggingface",
+    "work_dir": "work/runtime",
+    "context_policy_config": "configs/context-policy.json",
+    "context_policy_profile": "qwen3_4b_general_24gb",
+    "profile_dir": "configs",
+    "evaluation_dir": "experiments",
+    "cron_auto_run": true,
+    "cron_poll_seconds": 300,
+    "cron_confirm_writes": false
+  },
+  "extensions": {
+    "plugins_dir": "plugins",
+    "skills_dir": "skills",
+    "tools_config": "configs/tools.json",
+    "mcp_config": "configs/mcp.cua-desktop.example.json",
+    "cron_config": "configs/cron.json"
+  },
+  "permissions": {
+    "default_write_policy": "approval_required",
+    "allow_process_execution": true,
+    "assistant_bridge_execution_policy": "hybrid_receipt_confirmation",
+    "connector_install_policy": "approval_required",
+    "external_communication_policy": "draft_only"
+  },
+  "gateway": {
+    "enabled": true,
+    "model_alias": "mymoe",
+    "max_request_bytes": 8388608,
+    "max_response_bytes": 33554432,
+    "allow_non_loopback": false,
+    "api_key_env": ""
+  }
+}

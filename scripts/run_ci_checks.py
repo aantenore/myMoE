@@ -100,6 +100,15 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "desktop semantic benchmark",
+            [
+                python,
+                "experiments/benchmark_desktop_semantic.py",
+                "--out",
+                "outputs/desktop-semantic-benchmark.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,

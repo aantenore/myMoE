@@ -152,6 +152,14 @@ def main() -> None:
                 "Installed wheel did not materialize the packaged browser workspace."
             )
 
+        _run_installed_desktop_smoke(
+            python,
+            mymoe,
+            temporary / "Desktop & Workspace",
+            runtime_dir,
+            environment=runtime_environment,
+        )
+
         paired_help_result = subprocess.run(
             [str(mymoe_paired), "--help"],
             cwd=runtime_dir,
@@ -187,6 +195,96 @@ def main() -> None:
                 },
                 indent=2,
             )
+        )
+
+
+def _run_installed_desktop_smoke(
+    python: Path,
+    mymoe: Path,
+    desktop_workspace: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    help_result = subprocess.run(
+        [str(mymoe), "desktop-init", "--help"],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    if not all(
+        marker in help_result.stdout
+        for marker in ("--target-id", "--target-pid", "--window-id")
+    ):
+        raise SystemExit(
+            "Installed mymoe console script omitted the desktop-init interface."
+        )
+
+    probe = "\n".join(
+        (
+            "import sys",
+            "from contextlib import ExitStack",
+            "from pathlib import Path",
+            "from unittest.mock import patch",
+            "from local_moe import cli",
+            "workspace = sys.argv[1]",
+            "binary = Path(sys.executable).resolve()",
+            "identity = {",
+            "    'pid': 4242,",
+            "    'name': 'Installed Wheel Editor',",
+            "    'started_at': '1753084800.000000',",
+            "    'executable_sha256': 'b' * 64,",
+            "}",
+            "with ExitStack() as stack:",
+            "    stack.enter_context(patch('local_moe.desktop_setup._provider_binary', return_value=binary))",
+            "    stack.enter_context(patch('local_moe.desktop_setup._provider_version', return_value='0.10.0'))",
+            "    stack.enter_context(patch('local_moe.desktop_setup._disable_provider_telemetry'))",
+            "    stack.enter_context(patch('local_moe.desktop_setup._resolve_process_identity', return_value=identity))",
+            "    sys.argv = [",
+            "        'mymoe', 'desktop-init', '--out', workspace,",
+            "        '--target-id', 'installed-editor',",
+            "        '--target-pid', '4242', '--window-id', '17',",
+            "    ]",
+            "    cli.main()",
+        )
+    )
+    completed = subprocess.run(
+        [str(python), "-c", probe, str(desktop_workspace)],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    payload = json.loads(completed.stdout)
+    expected_files = {
+        "app.desktop.json",
+        "mcp.cua-desktop.json",
+        "moe.json",
+        "context-policy.json",
+        "tools.json",
+        "cron.json",
+    }
+    actual_files = {
+        path.name for path in desktop_workspace.iterdir() if path.is_file()
+    }
+    mcp = json.loads(
+        (desktop_workspace / "mcp.cua-desktop.json").read_text(encoding="utf-8")
+    )
+    server = mcp.get("servers", [{}])[0]
+    target = server.get("desktop_capability", {}).get("target", {})
+    if (
+        payload.get("status") != "created"
+        or actual_files != expected_files
+        or server.get("command") != str(python.resolve())
+        or target.get("pid") != 4242
+        or target.get("window_id") != 17
+        or not isinstance(payload.get("next", {}).get("offline_canary_argv"), list)
+    ):
+        raise SystemExit(
+            "Installed wheel did not materialize the packaged desktop workspace."
         )
 
 

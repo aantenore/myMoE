@@ -69,6 +69,20 @@ The built-in CLI agent has a separate, opt-in
 browser authority: myMoE owns four strict local-web contracts over one pinned,
 persistent Playwright MCP process, and keeps raw MCP tools hidden.
 
+The opt-in [Desktop Semantic Cell](desktop-semantic-cell.md) applies the same
+provider-neutral lifecycle to native applications but grants less authority.
+The operator binds one process and window before the agent starts; the model
+sees only `desktop.observe`, and myMoE converts one bounded, screenshot-disabled
+upstream accessibility snapshot into redacted untrusted data. The first Cua
+Driver `0.10.0` adapter owns a dedicated embedded daemon, private POSIX socket,
+and exact bounded policies for the configured target; process identity is
+rechecked after every read and the lifecycle revokes and stops the daemon on
+close. The provider is not part of the model-visible contract. Discovery,
+screenshots, coordinates, clipboard, shell, and every desktop action remain
+outside this cell. The runtime is implemented on POSIX and live-qualified on
+macOS; Linux requires a local bound-window canary, while Windows currently
+receives provider-contract checks only and fails closed at runtime.
+
 ## Core Contracts
 
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
@@ -107,6 +121,15 @@ persistent Playwright MCP process, and keeps raw MCP tools hidden.
   boundary. The current Playwright MCP adapter is local-only, schema-bound,
   cached-archive-verified, exact-origin proxied, ephemeral, pre-action-state
   checked, and exact-approval gated.
+- `Desktop Semantic Provider`: replaceable `attest/start/observe/close`
+  boundary for one operator-selected application instance and window. The first
+  Cua Driver adapter accepts only `get_window_state` with screenshot capture
+  disabled, launches an owned bounded daemon with exact target arguments,
+  verifies its process, socket namespace, and policy state, normalizes a
+  serialized-budgeted accessibility tree, removes secure values, rejects empty,
+  fully invalid after normalization, or degraded output, images, and schema
+  drift, and exposes only
+  `desktop.observe` with an approval-visible target/configuration binding.
 - `Quality Benchmark`: deterministic answer-quality comparison harness for single-general, routed top-1, and routed top-2 variants, with endpoint/model readiness checks and provenance-rich artifacts.
 - `Hybrid Assistant Bridge`: local-first task planner that preserves capability,
   privacy, budget, verification, workspace, and provider-authority boundaries
@@ -287,6 +310,14 @@ The practical policy is:
   one approved loopback scheme + host + port, but its trusted Node provider
   process is not VM or OS-user containment and does not qualify hostile
   dependencies or server-side egress by the local app.
+- The Desktop Semantic Cell cannot infer visual layout or canvas content from
+  an accessibility tree. macOS TCC grants and Linux toolkit or Wayland behavior
+  vary by host and application. This alpha's owned-daemon runtime is implemented
+  on POSIX and live-qualified on macOS; Linux requires a local bound-window
+  canary, and Windows receives provider-contract checks only and fails closed at
+  runtime. The trusted desktop provider still runs with the current
+  operating-system user's authority; bounded policies and a narrow model-facing
+  contract are not process containment.
 
 ## Validation Gates
 
@@ -324,3 +355,9 @@ The practical policy is:
     policy mentions non-loopback access. Provider-dereferenced media inputs are
     limited to inline `data:` URLs, streaming reads use bounded chunks, and each
     opened provider request must end with a terminal audit status.
+14. The Desktop Semantic Cell must bind every observation to one preselected
+    live application instance and window, expose only `desktop.observe`, disable
+    screenshot capture upstream, reject image-bearing or drifting provider
+    results and empty, fully invalid after normalization, or degraded semantic
+    trees, remove secure values, enforce tree and text budgets, and invalidate
+    the lifecycle after target, process, schema, or provider drift.

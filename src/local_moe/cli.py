@@ -29,6 +29,8 @@ from .browser_capability import (
     prefetch_browser_provider,
 )
 from .browser_setup import materialize_browser_workspace
+from .desktop_capability import DesktopToolRunner
+from .desktop_setup import materialize_desktop_workspace
 from .chat_runtime import generate_chat_turn
 from .chat_store import (
     ChatSession,
@@ -155,6 +157,40 @@ class _MymoeArgumentParser(argparse.ArgumentParser):
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["desktop-init"]:
+        desktop_parser = argparse.ArgumentParser(
+            prog="mymoe desktop-init",
+            description=(
+                "Bind an opt-in desktop workspace to one current process and window."
+            ),
+            allow_abbrev=False,
+        )
+        desktop_parser.add_argument("--out", required=True)
+        desktop_parser.add_argument("--target-id", required=True)
+        desktop_parser.add_argument("--target-pid", required=True, type=int)
+        desktop_parser.add_argument("--window-id", required=True, type=int)
+        desktop_parser.add_argument("--provider-binary")
+        desktop_args = desktop_parser.parse_args(sys.argv[2:])
+        try:
+            result = materialize_desktop_workspace(
+                desktop_args.out,
+                target_id=desktop_args.target_id,
+                target_pid=desktop_args.target_pid,
+                window_id=desktop_args.window_id,
+                provider_binary=desktop_args.provider_binary,
+            )
+        except (FileExistsError, OSError, ValueError, ToolExecutionError) as exc:
+            print(
+                json.dumps(
+                    {"error": "desktop_init_failed", "message": str(exc)},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        print(json.dumps(result, indent=2))
+        return
+
     if sys.argv[1:2] == ["browser-init"]:
         browser_parser = argparse.ArgumentParser(
             prog="mymoe browser-init",
@@ -233,6 +269,7 @@ def main() -> None:
             "  assistant-probe  Check local Codex tool compatibility in a disposable workspace.\n"
             "  browser-init     Create packaged config files for the local browser cell.\n"
             "  browser-prefetch Cache a pinned browser provider without executing its package.\n"
+            "  desktop-init     Bind packaged desktop-cell config to one app window.\n"
             "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
         ),
     )
@@ -335,6 +372,13 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--agent-desktop-server",
+        help=(
+            "Expose read-only semantic state from one explicitly configured "
+            "desktop capability server."
+        ),
+    )
+    parser.add_argument(
         "--agent-interactive-approvals",
         action="store_true",
         default=None,
@@ -373,6 +417,16 @@ def main() -> None:
         "--browser-canary-confirm",
         action="store_true",
         help="Confirm the deterministic local browser process and fixture interactions.",
+    )
+    parser.add_argument(
+        "--desktop-canary",
+        metavar="SERVER",
+        help="Qualify one configured read-only semantic desktop provider.",
+    )
+    parser.add_argument(
+        "--desktop-canary-confirm",
+        action="store_true",
+        help="Confirm the read-only observation of the configured app window.",
     )
     parser.add_argument("--eval")
     parser.add_argument("--interactive", action="store_true")
@@ -462,6 +516,7 @@ def main() -> None:
     _validate_assistant_bridge_cli_mode(parser, args)
     _validate_agent_cli_mode(parser, args)
     _validate_browser_canary_cli_mode(parser, args)
+    _validate_desktop_canary_cli_mode(parser, args)
 
     lifecycle_cli_mode = assistant_bridge_lifecycle_mode(args)
     if lifecycle_cli_mode is not None:
@@ -502,6 +557,43 @@ def main() -> None:
         finally:
             if browser_runner is not None:
                 browser_runner.close()
+        print(json.dumps(result, indent=2))
+        if result.get("status") != "passed":
+            raise SystemExit(2)
+        return
+
+    if args.desktop_canary:
+        desktop_runner: DesktopToolRunner | None = None
+        try:
+            allow_process_execution = bool(
+                getattr(
+                    getattr(app_config, "permissions", None),
+                    "allow_process_execution",
+                    False,
+                )
+            )
+            if not allow_process_execution:
+                raise ToolExecutionError(
+                    "Desktop canary is disabled by the app process-execution policy."
+                )
+            desktop_runner = DesktopToolRunner.from_registry(
+                _registry(app_config),
+                args.desktop_canary,
+                allow_process_execution=True,
+            )
+            result = desktop_runner.canary()
+        except (ToolExecutionError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {"error": "desktop_canary_error", "message": str(exc)},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
+        finally:
+            if desktop_runner is not None:
+                desktop_runner.close()
         print(json.dumps(result, indent=2))
         if result.get("status") != "passed":
             raise SystemExit(2)
@@ -602,6 +694,7 @@ def main() -> None:
 
     if args.agent_prompt is not None:
         browser_runner: BrowserToolRunner | None = None
+        desktop_runner: DesktopToolRunner | None = None
         try:
             if (
                 str(getattr(app_config, "mode", "")).strip().lower()
@@ -617,7 +710,7 @@ def main() -> None:
                 active_config_path=config_path,
             )
             runner: object = local_runner
-            additional_specs = ()
+            specialized_runners: list[object] = []
             if args.agent_browser_server:
                 browser_runner = BrowserToolRunner.from_registry(
                     registry,
@@ -630,8 +723,27 @@ def main() -> None:
                         )
                     ),
                 )
-                runner = CompositeToolRunner(local_runner, browser_runner)
-                additional_specs = browser_runner.specs
+                specialized_runners.append(browser_runner)
+            if args.agent_desktop_server:
+                desktop_runner = DesktopToolRunner.from_registry(
+                    registry,
+                    args.agent_desktop_server,
+                    allow_process_execution=bool(
+                        getattr(
+                            getattr(app_config, "permissions", None),
+                            "allow_process_execution",
+                            False,
+                        )
+                    ),
+                )
+                specialized_runners.append(desktop_runner)
+            if specialized_runners:
+                runner = CompositeToolRunner(local_runner, *specialized_runners)
+            additional_specs = tuple(
+                spec
+                for specialized in specialized_runners
+                for spec in getattr(specialized, "specs", ())
+            )
             agent = build_local_agent_loop(
                 config,
                 runner,
@@ -662,8 +774,9 @@ def main() -> None:
             )
             raise SystemExit(2) from exc
         finally:
-            if browser_runner is not None:
-                browser_runner.close()
+            for specialized in (desktop_runner, browser_runner):
+                if specialized is not None:
+                    specialized.close()
         _print_agent_result(result, json_output=args.json_output)
         if result.status != "completed":
             raise SystemExit(2)
@@ -1675,6 +1788,10 @@ def _approval_summary(request: ApprovalRequest) -> str:
             f"Type {preview!r} into "
             f"{arguments.get('target_label', arguments.get('target', ''))}"
         )
+    if request.tool_name == "desktop.observe":
+        target = str(arguments.get("target_id", "configured-target"))
+        binding = str(arguments.get("binding_sha256", ""))[:12]
+        return f"Read semantic state from desktop target {target} (binding {binding})"
     return f"Run {request.tool_name} with the shown exact arguments"
 
 
@@ -2001,6 +2118,7 @@ def _validate_agent_cli_mode(
         "agent_tool",
         "agent_approve",
         "agent_browser_server",
+        "agent_desktop_server",
         "agent_interactive_approvals",
         "agent_correlation_id",
         "agent_max_model_turns",
@@ -2018,10 +2136,14 @@ def _validate_agent_cli_mode(
         parser.error("--agent-* options require --agent-prompt")
     if args.agent_prompt is None:
         return
-    if not args.agent_tool and not args.agent_browser_server:
+    if (
+        not args.agent_tool
+        and not args.agent_browser_server
+        and not args.agent_desktop_server
+    ):
         parser.error(
             "--agent-prompt requires at least one explicit --agent-tool or "
-            "--agent-browser-server; use --prompt for tool-free generation"
+            "specialized browser/desktop server; use --prompt for tool-free generation"
         )
     if (
         args.agent_soft_wall_time_seconds is not None
@@ -2144,6 +2266,29 @@ def _validate_browser_canary_cli_mode(
     if conflicts:
         rendered = ", ".join(f"--{name.replace('_', '-')}" for name in conflicts)
         parser.error(f"--browser-canary cannot be combined with {rendered}")
+
+
+def _validate_desktop_canary_cli_mode(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.desktop_canary is None:
+        if args.desktop_canary_confirm:
+            parser.error("--desktop-canary-confirm requires --desktop-canary")
+        return
+    if not args.desktop_canary_confirm:
+        parser.error("--desktop-canary requires --desktop-canary-confirm")
+    allowed = {
+        "app_config",
+        "desktop_canary",
+        "desktop_canary_confirm",
+        "json_output",
+    }
+    explicit = _explicit_argument_destinations(parser)
+    conflicts = sorted(name for name in explicit if name not in allowed)
+    if conflicts:
+        rendered = ", ".join(f"--{name.replace('_', '-')}" for name in conflicts)
+        parser.error(f"--desktop-canary cannot be combined with {rendered}")
 
 
 def _response_payload(response: object) -> dict[str, object]:

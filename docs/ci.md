@@ -35,17 +35,21 @@ The gate currently performs these steps:
 7. Run the 64-case deterministic Verified Outcome Routing shadow simulation.
    The fixture validates metrics, pairwise axis coverage, and privacy/cost
    accounting; it is explicitly synthetic and makes no empirical quality claim.
-8. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+8. Run the deterministic Desktop Semantic Cell payload and tool-surface
+   benchmark. Its canonical artifact excludes host wall-clock timing so repeated
+   runs over the same fixture are byte-for-byte reproducible.
+9. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-9. Refresh the hardware profile artifact.
-10. Run the packaging smoke test, which installs the project in a temporary
+10. Refresh the hardware profile artifact.
+11. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe`, `mymoe-paired`, and
-   `mymoe-web` console scripts.
+   `mymoe-web` console scripts, packaged browser and desktop templates, and the
+   installed desktop workspace initializer with provider/process probes stubbed.
 
 `make check` and `scripts/run_all_checks.sh` both delegate to the same Python runner.
 
@@ -58,6 +62,11 @@ dependency caching, concurrency cancellation, and `uv run --locked` so CI
 rejects stale dependency state. Linux jobs install Bubblewrap before the gate so
 the verifier isolation contract runs against its real OS-backed backend; macOS
 and Windows use their platform-specific capability paths.
+
+A separate Desktop Semantic Cell contract matrix installs the exact `desktop`
+extra on Linux, macOS, and Windows under both Python 3.10 and 3.12. It executes
+no GUI action; it verifies the pinned native provider version, exact 49-tool
+catalog size, and admitted `get_window_state` schema.
 
 The matrix runs once for each pull request and again after changes reach
 `main`. Feature-branch pushes do not start a duplicate matrix alongside the
