@@ -234,27 +234,50 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             binding, requirement, private_key = _binding()
             producer = _producer(exchange)
             captured: list[bytes] = []
+            real_publish = directory_adapter._atomic_no_clobber
 
-            def first(request: dict[str, object]) -> None:
-                envelope = _envelope(binding, requirement, private_key)
-                response = _response(request, (envelope,))
-                captured.append(response)
-                _publish_response(exchange, request, response)
+            def publish_first_response(path: Path, value: bytes) -> None:
+                real_publish(path, value)
+                if path.parent == exchange / "requests":
+                    request = json.loads(value)
+                    response = _response(
+                        request,
+                        (_envelope(binding, requirement, private_key),),
+                    )
+                    captured.append(response)
+                    response_path = exchange / "responses" / (
+                        f"response-{request['requestId']}.json"
+                    )
+                    real_publish(response_path, response)
 
-            watcher, errors = _watch_once(exchange, first)
-            producer.attest(binding, workspace, time.time() + 0.5)
-            _finish_watcher(watcher, errors)
-
-            def replay(request: dict[str, object]) -> None:
-                _publish_response(exchange, request, captured[0])
-
-            watcher, errors = _watch_once(exchange, replay)
-            with self.assertRaisesRegex(
-                DirectoryPairedAttestationError,
-                "exact request binding",
+            with patch.object(
+                directory_adapter,
+                "_atomic_no_clobber",
+                side_effect=publish_first_response,
             ):
                 producer.attest(binding, workspace, time.time() + 0.5)
-            _finish_watcher(watcher, errors)
+
+            def publish_replayed_response(path: Path, value: bytes) -> None:
+                real_publish(path, value)
+                if path.parent == exchange / "requests":
+                    request = json.loads(value)
+                    response_path = exchange / "responses" / (
+                        f"response-{request['requestId']}.json"
+                    )
+                    real_publish(response_path, captured[0])
+
+            with (
+                patch.object(
+                    directory_adapter,
+                    "_atomic_no_clobber",
+                    side_effect=publish_replayed_response,
+                ),
+                self.assertRaisesRegex(
+                    DirectoryPairedAttestationError,
+                    "exact request binding",
+                ),
+            ):
+                producer.attest(binding, workspace, time.time() + 0.5)
 
     def test_response_symlink_hardlink_and_permissive_mode_fail_closed(self) -> None:
         modes = (
