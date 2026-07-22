@@ -958,6 +958,11 @@ class LocalCascadeMcpTests(unittest.TestCase):
             (ROOT / "docs" / "local-cascade.md").read_text(encoding="utf-8"),
         )
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "bundled Codex plugin launcher is POSIX/macOS alpha; "
+        "Windows uses the installed console entrypoint",
+    )
     def test_standalone_plugin_launcher_uses_explicit_project_root_offline(
         self,
     ) -> None:
@@ -987,6 +992,11 @@ class LocalCascadeMcpTests(unittest.TestCase):
         self.assertEqual(payload, {"status": "ready", "mode": "project_root_offline"})
         self.assertNotIn(str(ROOT), completed.stdout)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "bundled Codex plugin launcher is POSIX/macOS alpha; "
+        "Windows uses the installed console entrypoint",
+    )
     def test_standalone_plugin_launcher_serves_four_tools_over_stdio(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             copied = Path(tmp) / "cached-plugin"
