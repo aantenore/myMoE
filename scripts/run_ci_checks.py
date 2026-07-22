@@ -152,6 +152,15 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "bound cell run contract benchmark",
+            [
+                python,
+                "experiments/benchmark_bound_cell_run.py",
+                "--out",
+                "outputs/bound-cell-run-contract.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,

@@ -47,7 +47,7 @@ The Cline path is intentionally separate from persistent myMoE chat:
 
 ```mermaid
 flowchart LR
-  C["Cline or compatible client"] -->|"localhost /v1"| G["OpenAI-compatible gateway"]
+  C["Cline or compatible client"] -->|"loopback /v1"| G["OpenAI-compatible gateway"]
   G --> A{"Requested alias"}
   A -->|"mymoe"| R["Configured router"]
   A -->|"mymoe/expert-id"| P["Pinned expert"]
@@ -145,6 +145,47 @@ artifact root. A future authenticated producer could wrap this contract, but
 the receipt itself must never become execution authority. See the
 [Bound Cell Attestor guide](cell-runtime-binding.md).
 
+Bound Cell Run v1 is the deliberately narrow execution bridge between those
+two non-authorizing checks and an already-resident local runtime. It does not
+join the normal router, persistent chat, Cline, or agent-tool paths:
+
+```mermaid
+flowchart LR
+  C["Explicit one-shot confirmation"] --> B["Verified pre-run binding sample"]
+  B --> P["Final fresh Advisor preview"]
+  P --> G1["GET /models pre-probe"]
+  G1 --> I["One POST /chat/completions inference attempt"]
+  I --> G2["GET /models post-probe"]
+  G2 --> S["Post-run binding sample"]
+  S --> O["Metadata-only run receipt"]
+  I --> A["Answer returned separately"]
+```
+
+`mymoe cell-exec run` requires explicit one-shot confirmation, the same exact
+task and selected cell, verified pre-run static bindings, and then a final fresh
+passing preview as the last admission step before endpoint traffic. The full
+attempted path performs two bounded `GET /models` probes around exactly one
+`POST /chat/completions` inference attempt, then records any post-call drift. A
+failed precondition makes zero inference calls; an attempted inference is never
+retried or sent to a fallback. The configured endpoint must use an explicit
+numeric loopback IP and port; `localhost` is not accepted.
+
+The two inspections sample declared files and configuration before and after
+the call; they are not continuous monitoring. The receipt stores task/response
+hashes, sizes, status, counters, timestamps, and evidence digests rather than
+task or answer bodies. The runner neither starts, loads, unloads, swaps, nor
+stops a model and exposes no tool surface. It cannot prove which operating-
+system process owns the loopback port, attest that the inspected runtime is the
+resident server, identify which executable generated the answer, or establish
+that the answer is semantically correct. See
+[Bound Cell Run v1](bound-cell-run.md).
+
+Receipt durability is a separate CLI boundary: an owner-only sibling journal is
+created before endpoint traffic and finalized before the canonical no-clobber
+receipt. It is removed after successful publication and otherwise retained as
+a metadata-only recovery artifact, so a post-invocation publication race does
+not silently erase the delivery state.
+
 ## Core Contracts
 
 - `Bound Cell Attestor`: bounded offline inspection of one explicitly selected
@@ -158,6 +199,12 @@ the receipt itself must never become execution authority. See the
   re-admission boundary. It binds a recent Advisor receipt to the same task,
   current evidence, selected passport, and fresh resource snapshot, then emits
   a non-authorizing passed or blocked preview receipt.
+- `Bound Cell Run`: alpha one-shot executor that performs a pre-run Bound Cell
+  inspection, a final fresh preview, two model-list probes, one completion
+  inference attempt, and a post-run inspection against an explicit numeric
+  loopback endpoint. Its metadata-only receipt records lineage and sampled
+  drift but grants no future authority and makes no process/residency-
+  attestation or semantic-correctness claim.
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight,
   declared transport, and declared execution scope.

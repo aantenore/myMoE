@@ -6,7 +6,8 @@ the built-in agent inspect one selected desktop window without screenshots.**
 In plain terms: myMoE helps you do AI-assisted coding on your own computer
 without paying for every request. Today it connects local models to a coding
 agent, explains which fully evidenced local setup is eligible for a task, can
-recheck that exact recommendation against current resources before later use,
+recheck that exact recommendation against current resources and use the bound
+cell for one guarded local attempt,
 tests whether one exact setup can complete a controlled coding task, lets its
 built-in agent exercise simple local web apps, and can read the semantic
 controls in one operator-selected desktop window. The desktop cell is read-only:
@@ -149,6 +150,57 @@ authority. `mymoe advisor-init` includes the strict policy file and the command
 template in its six-file starter. See the
 [Adaptive Cell Execution Gate guide](docs/cell-execution-gate.md) for the
 workflow, policy, reason codes, receipt contract, and deterministic benchmark.
+
+## Can myMoE use that exact cell once?
+
+The alpha **Bound Cell Run** turns one passing recommendation into one narrowly
+bounded local attempt. It composes the fresh execution preview with Bound Cell
+inspection, requires the selected model endpoint to be already running on the
+configured explicit numeric loopback address, and performs one inference
+attempt bracketed by model-list and static-binding checks.
+
+```bash
+mymoe cell-exec run \
+  --receipt ./advisor-receipt.json \
+  --binding-request ./cell-binding-request.json \
+  --task-file ./task.txt \
+  --catalog ./adaptive-cells.json \
+  --evaluation-contract ./adaptive-evaluation-contract.json \
+  --policy ./adaptive-execution-policy.json \
+  --confirm \
+  --receipt-out ./bound-cell-run-receipt.json \
+  > ./answer.txt
+```
+
+The answer and receipt are deliberately separate. The answer goes to standard
+output; the receipt contains metadata and content digests, not the task or
+answer bodies. Any failed precondition causes zero inference attempts, and
+there is no retry or fallback after an attempted inference. `--confirm` is
+explicit one-shot authority for this invocation only; it cannot authorize a
+later run.
+
+An owner-only sibling recovery journal is reserved before endpoint traffic and
+contains no task or answer body. The full metadata receipt is synced there
+before canonical no-clobber publication; the journal is removed on success and
+retained for recovery if final publication races or fails.
+
+On the complete attempted path, endpoint traffic is exactly two read-only
+`GET /models` probes plus one `POST /chat/completions` inference request. The
+endpoint must use a numeric loopback IP such as `127.0.0.1` or `[::1]`, with an
+explicit port; the hostname `localhost` is rejected. The first static binding
+inspection happens before the final fresh Advisor preview, which is the last
+admission check before endpoint traffic. The post-inference model probe and
+binding inspection sample drift after the attempt.
+
+This alpha does not start, load, unload, swap, or stop a model, reserve memory,
+or invoke tools, MCP, browser, shell, editor, or an agent loop. Pre/post
+inspection can detect changes in the declared static artifacts and
+configuration, but it does not prove which operating-system process owns the
+loopback port, that the inspected runtime is the resident server, or which
+binary produced the response. A completed request also does not prove that its
+answer is semantically correct. See
+[Bound Cell Run v1](docs/bound-cell-run.md) for the workflow, receipt,
+architecture, threat model, and exact non-guarantees.
 
 ## Local coding without per-token model fees
 
@@ -336,6 +388,7 @@ cannot perform other coding tasks.
 | Bound Cell Attestor | Fingerprint the local model, runtime, driver, harness, and configuration bindings you declared, then detect drift against separately reviewed catalog anchors without starting the cell. |
 | Adaptive Cell Advisor | See the best eligible configured cell with current verified evidence—or a precise abstention—before spending time or memory loading a model. The v1 command is offline, read-only, and non-authorizing. |
 | Adaptive Cell Execution Gate | Recheck the exact advised cell, receipt freshness, catalog identity, task binding, and current resource pressure immediately before a later launcher makes its own execution decision. |
+| Bound Cell Run (alpha) | Use that exact configured numeric-loopback cell for one compute-only inference attempt, bracketed by two `GET /models` probes and pre/post sampled static evidence, with a separate metadata-only receipt. It does not run tools or prove process/residency identity or answer correctness. |
 | Loopback OpenAI-compatible gateway for Cline | Use a familiar VS Code coding agent with local inference and no implicit paid-model fallback. |
 | Local Coding Cell Canary | Test one exact Cline CLI, gateway/runtime, pinned model, and hardware cell on a disposable edit-and-test task before trusting it with real code. |
 | Local Browser Capability Cell | Let a local model inspect and exercise a local web app through four approval-gated tools, while normal external browser HTTP(S) traffic and raw MCP authority stay blocked. |
@@ -580,6 +633,7 @@ response or tool metadata cannot create a new executable implementation.
 - The Cline gateway is a separate path: myMoE forwards OpenAI-compatible model requests, while Cline owns file and tool execution. The coding canary adds a narrow pre-tool hook policy and targeted macOS sandbox only for its disposable fixture; ordinary Cline sessions, browser/desktop actions, MCP servers, Git, and real repositories remain separate, unqualified trust boundaries.
 - The Execution Scope Guard applies to every local-orchestration generation entry point. The default is `device_only`, fallback scope widening is disabled, and missing or contradictory evidence fails with `scope_blocked` before an ineligible provider call.
 - A loopback URL proves only the first network hop. Mesh and gateway transports require an external attestor even when they listen on `127.0.0.1`; the current Mesh adapter is disabled and fail-closed.
+- Bound Cell Run makes one inference attempt against an already-running explicit numeric-loopback endpoint after pre-inspection and a final fresh admission check. The complete attempted path uses two `GET /models` probes and one completion `POST`; it performs no lifecycle or tool action, never retries or falls back, and cannot attest process/residency identity or arbitrary semantic correctness.
 - Read-only and compute-only agent tools may run automatically; risky calls pause and require an approval bound to the canonical tool name and exact argument SHA-256.
 - `chats.json` and `memory.jsonl` contain user content. `runs.jsonl` and `audit.jsonl` contain operational metadata, not prompt or answer bodies.
 - The portable local-data backup contains private chats and memory and requires confirmation. The support bundle is a different, metadata-focused diagnostic artifact, but it still includes configured Git/model URLs and must be reviewed before sharing; credentials should never be embedded in URLs.
@@ -598,6 +652,7 @@ Start with the [documentation hub](docs/README.md).
 - [Installation](docs/installation.md) — platforms, runtimes, models, and startup.
 - [Architecture](docs/architecture.md) — design decisions, components, modes, and validation gates.
 - [Adaptive Cell Execution Gate](docs/cell-execution-gate.md) — fresh exact-cell admission preview, drift reasons, and non-authorizing receipt.
+- [Bound Cell Run v1](docs/bound-cell-run.md) — one guarded inference attempt on an explicit numeric-loopback cell, two model probes, pre/post sampled static evidence, a metadata-only receipt, and explicit alpha limits.
 - [Execution Scope Guard](docs/execution-scopes.md) — scope/transport policy, fail-closed behavior, and Mesh trust boundary.
 - [Routing](docs/router.md) — scoring, multilingual coverage, distillation, and fallback behavior.
 - [Context and Memory](docs/context-architecture.md) — prompt budgets, persistence, compaction, and observability.

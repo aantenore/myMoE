@@ -317,7 +317,7 @@ def main() -> None:
             "  browser-init     Create packaged config files for the local browser cell.\n"
             "  browser-prefetch Cache a pinned browser provider without executing its package.\n"
             "  cell-bind        Inspect exact local-cell files without starting a model.\n"
-            "  cell-exec        Preview exact local-cell admission without executing it.\n"
+            "  cell-exec        Preview admission or run one evidence-bound local cell once.\n"
             "  desktop-init     Bind packaged desktop-cell config to one app window.\n"
             "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
         ),
@@ -2312,11 +2312,7 @@ def _validate_browser_canary_cli_mode(
         "json_output",
     }
     explicit = _explicit_argument_destinations(parser)
-    conflicts = sorted(
-        name
-        for name in explicit
-        if name not in allowed
-    )
+    conflicts = sorted(name for name in explicit if name not in allowed)
     if conflicts:
         rendered = ", ".join(f"--{name.replace('_', '-')}" for name in conflicts)
         parser.error(f"--browser-canary cannot be combined with {rendered}")

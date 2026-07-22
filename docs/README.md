@@ -9,6 +9,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | Fingerprint the bindings declared for a local cell without starting it | [Bound Cell Attestor](cell-runtime-binding.md) |
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
 | Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |
+| Use that exact already-running numeric-loopback cell for one guarded inference attempt | [Bound Cell Run v1](bound-cell-run.md) |
 | Use Cline as a private local coding agent | [Local Coding Fabric](local-coding-fabric.md) |
 | Exercise a local web app with a local model | [Browser Capability Cell](browser-capability-cell.md) |
 | Read one selected desktop window with a local model | [Desktop Semantic Cell](desktop-semantic-cell.md) |
@@ -32,6 +33,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Bound Cell Attestor](cell-runtime-binding.md) — bounded fingerprints of declared local runtime/model/harness bindings, short-lived receipts, and explicit non-authority.
 - [Adaptive Cell Advisor](adaptive-cell-advisor.md) — whole-cell passports, live resource admission, safe abstention, mini-app/API, deterministic contract benchmark, and market boundary.
 - [Adaptive Cell Execution Gate](cell-execution-gate.md) — receipt-bound fresh admission, exact drift checks, strict dry-run policy, and a non-authorizing result.
+- [Bound Cell Run v1](bound-cell-run.md) — implemented alpha with pre-inspection, a final fresh admission preview, two `GET /models` probes, one compute-only completion `POST`, and a post-inspection; no tools, lifecycle, retry, process/residency attestation, or arbitrary semantic-correctness claim.
 - [Local Coding Fabric](local-coding-fabric.md) — exact Cline connection, gateway contract, 24 GiB resource modes, network boundaries, and desktop sidecar roadmap.
 - [Browser Capability Cell](browser-capability-cell.md) — persistent local-only browser tools, deterministic canary, exact approvals, schema attestation, and desktop adapter roadmap.
 - [Desktop Semantic Cell](desktop-semantic-cell.md) — one read-only semantic window tool, exact target binding, bounded redaction, Cua Driver admission, threat model, and platform limits.
@@ -48,6 +50,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 - [Installation](installation.md) — Apple Silicon MLX, Windows/Linux Ollama, llama.cpp, model profiles, startup, and Doctor.
 - [Local Coding Fabric](local-coding-fabric.md#five-minute-cline-setup) — connect Cline to the running local gateway.
+- [Bound Cell Run v1](bound-cell-run.md#command-workflow) — explicitly confirm one exact admitted inference attempt and keep its metadata-only receipt separate from the answer; confirmation authorizes only that invocation.
 - [UI and CLI](ui.md) — chat behavior, streaming, session management, memory, local data, Advanced panels, API examples, and screenshots.
 - [Gemma 4 E4B Runtime](gemma-e4b-runtime.md) — pinned dependency compatibility and measured result for that optional profile.
 - [CI](ci.md) — local and GitHub Actions verification.
@@ -74,10 +77,11 @@ None of these lists is a universal language-quality guarantee. Answer quality st
 
 ## Documentation Rules
 
-- Runtime diagrams describe implemented behavior, not planned behavior.
+- Runtime diagrams describe only implemented behavior.
 - The online generation path ends when a response is returned and persisted; release quality gates run offline.
 - Normal generation retrieves memory but does not create durable memory records automatically.
 - Cline owns its file, terminal, browser, MCP, approval, and conversation state; the myMoE gateway supplies inference and records operational metadata only.
+- Bound Cell Run requires explicit `--confirm` one-shot authority, permits one compute-only inference attempt, and never turns that confirmation into future authority. Its full endpoint sequence is two `GET /models` probes around one completion `POST`, with sampled static evidence before and after; it does not manage model lifecycle, use tools, attest process/residency identity, or verify arbitrary answer semantics. The endpoint must use an explicit numeric loopback IP, never `localhost`.
 - A chat exchange is persisted only after a successful final response.
 - `compaction_needed` is an advisory signal; durable model-generated compaction is an explicit action.
 - Examples use the locked Python 3.12 environment because the project requires Python 3.10 or newer.

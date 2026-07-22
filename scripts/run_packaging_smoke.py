@@ -22,8 +22,11 @@ BUILD_REQUIREMENTS = (
 REQUIRED_SDIST_ARTIFACTS = (
     "configs/cell-binding-request.example.json",
     "docs/cell-runtime-binding.md",
+    "docs/bound-cell-run.md",
     "experiments/benchmark_runtime_binding.py",
+    "experiments/benchmark_bound_cell_run.py",
     "outputs/runtime-binding-contract.json",
+    "outputs/bound-cell-run-contract.json",
 )
 
 
@@ -98,11 +101,14 @@ def main() -> None:
                 "-c",
                 "from pathlib import Path; import local_moe; "
                 "from local_moe import ("
-                "_win32_fs, artifact_tree, runtime_binding_cli, "
+                "_win32_fs, artifact_tree, bound_cell_run, bound_cell_run_contracts, "
+                "runtime_binding_cli, "
                 "runtime_binding_contracts, runtime_binding_inspector); "
                 "print(Path(local_moe.__file__).resolve()); "
                 "print(Path(_win32_fs.__file__).resolve()); "
                 "print(Path(artifact_tree.__file__).resolve()); "
+                "print(Path(bound_cell_run.__file__).resolve()); "
+                "print(Path(bound_cell_run_contracts.__file__).resolve()); "
                 "print(Path(runtime_binding_cli.__file__).resolve()); "
                 "print(Path(runtime_binding_contracts.__file__).resolve()); "
                 "print(Path(runtime_binding_inspector.__file__).resolve())",
@@ -116,7 +122,7 @@ def main() -> None:
         package_locations = tuple(
             Path(line) for line in location_result.stdout.splitlines() if line
         )
-        if len(package_locations) != 6 or any(
+        if len(package_locations) != 8 or any(
             not location.is_relative_to(venv_dir.resolve())
             for location in package_locations
         ):
@@ -150,6 +156,23 @@ def main() -> None:
             runtime_dir,
             environment=runtime_environment,
         )
+        run_help_result = subprocess.run(
+            [str(mymoe), "cell-exec", "run", "--help"],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        for required in (
+            "--binding-request",
+            "--receipt-out",
+            "--confirm",
+            "--timeout-seconds",
+            "--max-output-tokens",
+        ):
+            if required not in run_help_result.stdout:
+                raise SystemExit(f"Installed cell-exec run help omitted {required}.")
         version_result = subprocess.run(
             [str(mymoe), "--version"],
             cwd=runtime_dir,

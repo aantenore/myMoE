@@ -4,6 +4,48 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0-alpha.1] - 2026-07-22
+
+### Added
+
+- Bound Cell Run v1, exposed as `mymoe cell-exec run`, which performs verified
+  pre-run Bound Cell inspection, a final fresh Advisor preview, one pre-model
+  probe, one explicitly confirmed completion inference attempt, one post-model
+  probe, and post-run binding inspection against the exact configured
+  already-running numeric-loopback model endpoint.
+- A content-addressed metadata-only run receipt that binds the selected cell,
+  policy, task and response digests and sizes, pre/post binding and model-set
+  identities, invocation/probe counters, status, timestamps, and stable drift
+  reasons while returning the model answer separately.
+- An owner-only recovery journal that is reserved before endpoint traffic,
+  durably finalized with the metadata-only receipt before canonical no-clobber
+  publication, removed after success, and retained when final publication
+  cannot be completed safely.
+
+### Security
+
+- The v1 run policy is fixed to one inference attempt, `compute_only`,
+  `device_only`, `direct_local`, an explicit numeric loopback IP and port, and
+  zero tool surfaces. Hostnames such as `localhost` are rejected. A completed
+  endpoint sequence contains two bounded `GET /models` probes and one bounded
+  `POST /chat/completions`; only the POST invokes inference.
+  Missing confirmation or any failed precondition blocks before inference;
+  attempted calls are never retried or sent to another model.
+- Bound Cell Run performs no model download, start, load, unload, swap, stop,
+  resource reservation, tool call, MCP action, or other process mutation.
+
+### Known limitations
+
+- Pre/post inspection samples declared static artifacts and configuration; it
+  is not continuous observation and cannot eliminate time-of-check/time-of-use
+  races. It does not attest the identity of the process listening on the
+  loopback port, prove that the inspected runtime/model is resident there, or
+  prove which executable produced the response.
+- A completed run records sampled evidence continuity around one inference
+  attempt. It does not
+  verify arbitrary semantic correctness, truthfulness, or task success, and
+  its one-shot confirmation never authorizes a later execution.
+
 ## [0.11.0-alpha.1] - 2026-07-22
 
 ### Added

@@ -1,4 +1,7 @@
 include configs/cell-binding-request.example.json
 include docs/cell-runtime-binding.md
+include docs/bound-cell-run.md
 include experiments/benchmark_runtime_binding.py
+include experiments/benchmark_bound_cell_run.py
 include outputs/runtime-binding-contract.json
+include outputs/bound-cell-run-contract.json

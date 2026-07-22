@@ -44,6 +44,7 @@ class CiRunnerTests(unittest.TestCase):
                 "adaptive cell advisor contract benchmark",
                 "adaptive cell execution gate contract benchmark",
                 "bound cell attestor contract benchmark",
+                "bound cell run contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -134,6 +135,18 @@ class CiRunnerTests(unittest.TestCase):
                 "experiments/benchmark_runtime_binding.py",
                 "--out",
                 "outputs/runtime-binding-contract.json",
+            ],
+        )
+        bound_cell_run_benchmark = next(
+            step for step in steps if step.name == "bound cell run contract benchmark"
+        )
+        self.assertEqual(
+            bound_cell_run_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_bound_cell_run.py",
+                "--out",
+                "outputs/bound-cell-run-contract.json",
             ],
         )
 
