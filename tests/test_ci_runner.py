@@ -179,7 +179,8 @@ class CiRunnerTests(unittest.TestCase):
 
         self.assertEqual(active, template)
         self.assertIn(
-            "uv run --locked --extra assistant-bridge python scripts/run_ci_checks.py",
+            "uv run --locked --extra assistant-bridge --extra local-cascade\n"
+            "          python scripts/run_ci_checks.py",
             active,
         )
         self.assertIn('python-version: ["3.10", "3.12"]', active)
