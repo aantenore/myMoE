@@ -923,11 +923,12 @@ def _artifact_changed_during_read(
             and opened.st_ctime_ns == after.st_ctime_ns
         ):
             return False
-        if (
-            opened.st_nlink == 2
-            and after.st_nlink == 1
-            and opened.st_ctime_ns != after.st_ctime_ns
-        ):
+        # Publication briefly gives the fsynced inode two links: the private
+        # temporary name and the immutable digest name. Some filesystems can
+        # coalesce the link/unlink ctime updates, so the exact 2 -> 1 link
+        # settlement is the portable invariant. Every byte and all other
+        # security-relevant metadata remain bound above and by the digest.
+        if opened.st_nlink == 2 and after.st_nlink == 1:
             return False
     return True
 

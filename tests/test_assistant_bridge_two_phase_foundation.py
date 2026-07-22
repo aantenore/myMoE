@@ -278,7 +278,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             release_publisher = threading.Event()
             reader_observed = threading.Event()
             reader_coordination = threading.Lock()
-            transitions: list[tuple[int, int, int, int]] = []
+            transitions: list[tuple[int, int]] = []
             real_link = os.link
             real_read = os.read
 
@@ -310,14 +310,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 while os.fstat(descriptor).st_nlink > 1 and time.monotonic() < deadline:
                     time.sleep(0.001)
                 after = os.fstat(descriptor)
-                transitions.append(
-                    (
-                        before.st_nlink,
-                        after.st_nlink,
-                        before.st_ctime_ns,
-                        after.st_ctime_ns,
-                    )
-                )
+                transitions.append((before.st_nlink, after.st_nlink))
                 return data
 
             def put() -> ArtifactDescriptor:
@@ -337,9 +330,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 descriptors = tuple(future.result(timeout=10) for future in futures)
 
             self.assertEqual(descriptors[0], descriptors[1])
-            self.assertEqual(len(transitions), 1)
-            self.assertEqual(transitions[0][:2], (2, 1))
-            self.assertNotEqual(transitions[0][2], transitions[0][3])
+            self.assertEqual(transitions, [(2, 1)])
             target = store._object_path(
                 descriptors[0].sha256,
                 create_parent=False,
@@ -361,6 +352,9 @@ class TwoPhaseFoundationTests(unittest.TestCase):
         }
         opened = SimpleNamespace(**base)
         settled = SimpleNamespace(**{**base, "st_nlink": 1, "st_ctime_ns": 8})
+        settled_without_ctime_tick = SimpleNamespace(
+            **{**base, "st_nlink": 1}
+        )
 
         self.assertFalse(
             cas_module._artifact_changed_during_read(
@@ -369,6 +363,12 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             )
         )
         self.assertFalse(cas_module._artifact_changed_during_read(opened, settled))
+        self.assertFalse(
+            cas_module._artifact_changed_during_read(
+                opened,
+                settled_without_ctime_tick,
+            )
+        )
         self.assertTrue(
             cas_module._artifact_changed_during_read(
                 opened,
@@ -384,7 +384,6 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             ("st_nlink", 3),
             ("st_size", 10),
             ("st_mtime_ns", 10),
-            ("st_ctime_ns", 7),
         ):
             with self.subTest(field=field):
                 changed = SimpleNamespace(**{**settled.__dict__, field: value})
