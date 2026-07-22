@@ -6,8 +6,10 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import queue
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +40,9 @@ SHA_B = "b" * 64
 SHA_C = "c" * 64
 SHA_D = "d" * 64
 NOW = "2026-07-22T12:00:00+00:00"
+CONTENTION_DEADLINE_SECONDS = 45.0
+PROCESS_POLL_SECONDS = 0.1
+EXITED_QUEUE_DRAIN_SECONDS = 0.5
 
 
 def _snapshot(
@@ -152,6 +157,74 @@ def _worker_crash(database: str, ready, arm_delivery: bool) -> None:
             os._exit(5)
     ready.set()
     os._exit(0)
+
+
+def _worker_states(workers) -> str:
+    return ", ".join(
+        (f"pid={worker.pid} alive={worker.is_alive()} exitcode={worker.exitcode}")
+        for worker in workers
+    )
+
+
+def _collect_worker_results(results, workers, *, count: int, deadline: float):
+    observed = []
+    all_exited_at = None
+    while len(observed) < count:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError(
+                f"timed out after {len(observed)}/{count} results; "
+                f"workers: {_worker_states(workers)}"
+            )
+        try:
+            observed.append(results.get(timeout=min(PROCESS_POLL_SECONDS, remaining)))
+            all_exited_at = None
+        except queue.Empty:
+            failed = [worker for worker in workers if worker.exitcode not in (None, 0)]
+            if failed:
+                raise AssertionError(
+                    f"worker exited before publishing all results; "
+                    f"received {len(observed)}/{count}; "
+                    f"workers: {_worker_states(workers)}"
+                )
+            if workers and all(worker.exitcode is not None for worker in workers):
+                if all_exited_at is None:
+                    all_exited_at = time.monotonic()
+                elif time.monotonic() - all_exited_at >= EXITED_QUEUE_DRAIN_SECONDS:
+                    raise AssertionError(
+                        f"all workers exited before publishing all results; "
+                        f"received {len(observed)}/{count}; "
+                        f"workers: {_worker_states(workers)}"
+                    )
+            else:
+                all_exited_at = None
+    return observed
+
+
+def _join_workers_until(workers, *, deadline: float) -> None:
+    for worker in workers:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        worker.join(timeout=remaining)
+
+
+def _cleanup_workers(workers, release_event, results, *, deadline: float) -> None:
+    release_event.set()
+    cleanup_deadline = min(deadline, time.monotonic() + 5.0)
+    _join_workers_until(workers, deadline=cleanup_deadline)
+    lingering = [worker for worker in workers if worker.is_alive()]
+    for worker in lingering:
+        worker.terminate()
+    termination_deadline = time.monotonic() + 5.0
+    _join_workers_until(lingering, deadline=termination_deadline)
+    unresponsive = [worker for worker in lingering if worker.is_alive()]
+    for worker in unresponsive:
+        worker.kill()
+    kill_deadline = time.monotonic() + 5.0
+    _join_workers_until(unresponsive, deadline=kill_deadline)
+    results.close()
+    results.join_thread()
 
 
 class CooperativeResourceLeaseTests(unittest.TestCase):
@@ -646,14 +719,32 @@ class CooperativeResourceLeaseMultiprocessTests(unittest.TestCase):
             )
             for _ in range(2)
         ]
-        for worker in workers:
-            worker.start()
-        statuses = sorted(results.get(timeout=15) for _ in workers)
-        self.assertEqual(statuses, ["acquired", "denied"])
-        release_event.set()
-        for worker in workers:
-            worker.join(timeout=15)
-            self.assertEqual(worker.exitcode, 0)
+        started_workers = []
+        deadline = time.monotonic() + CONTENTION_DEADLINE_SECONDS
+        try:
+            for worker in workers:
+                worker.start()
+                started_workers.append(worker)
+            statuses = sorted(
+                _collect_worker_results(
+                    results,
+                    started_workers,
+                    count=len(workers),
+                    deadline=deadline,
+                )
+            )
+            self.assertEqual(statuses, ["acquired", "denied"])
+            release_event.set()
+            _join_workers_until(started_workers, deadline=deadline)
+            for worker in started_workers:
+                self.assertEqual(worker.exitcode, 0, _worker_states(started_workers))
+        finally:
+            _cleanup_workers(
+                started_workers,
+                release_event,
+                results,
+                deadline=deadline,
+            )
 
     def test_capacity_for_one_authorizes_exactly_one_delivery(self) -> None:
         context = multiprocessing.get_context("spawn")
@@ -667,17 +758,37 @@ class CooperativeResourceLeaseMultiprocessTests(unittest.TestCase):
             )
             for _ in range(2)
         ]
-        for worker in workers:
-            worker.start()
-        observed = [results.get(timeout=15) for _ in range(3)]
-        admissions = sorted(value for kind, value in observed if kind == "admission")
-        deliveries = [value for kind, value in observed if kind == "post_authorized"]
-        self.assertEqual(admissions, ["acquired", "denied"])
-        self.assertEqual(deliveries, [True])
-        release_event.set()
-        for worker in workers:
-            worker.join(timeout=15)
-            self.assertEqual(worker.exitcode, 0)
+        started_workers = []
+        deadline = time.monotonic() + CONTENTION_DEADLINE_SECONDS
+        try:
+            for worker in workers:
+                worker.start()
+                started_workers.append(worker)
+            observed = _collect_worker_results(
+                results,
+                started_workers,
+                count=3,
+                deadline=deadline,
+            )
+            admissions = sorted(
+                value for kind, value in observed if kind == "admission"
+            )
+            deliveries = [
+                value for kind, value in observed if kind == "post_authorized"
+            ]
+            self.assertEqual(admissions, ["acquired", "denied"])
+            self.assertEqual(deliveries, [True])
+            release_event.set()
+            _join_workers_until(started_workers, deadline=deadline)
+            for worker in started_workers:
+                self.assertEqual(worker.exitcode, 0, _worker_states(started_workers))
+        finally:
+            _cleanup_workers(
+                started_workers,
+                release_event,
+                results,
+                deadline=deadline,
+            )
 
     def test_pre_arm_crash_is_reaped_but_post_arm_crash_becomes_sticky(self) -> None:
         context = multiprocessing.get_context("spawn")
