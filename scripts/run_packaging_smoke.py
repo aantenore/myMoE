@@ -23,17 +23,37 @@ RUNTIME_REQUIREMENTS = (
     "filelock==3.29.7",
     "platformdirs==4.10.1",
 )
+MINIMUM_SUPPORTED_MCP_VERSION = "1.27.2"
+LOCAL_CASCADE_RUNTIME_REQUIREMENTS = (f"mcp=={MINIMUM_SUPPORTED_MCP_VERSION}",)
+EXPECTED_LOCAL_CASCADE_TOOLS = (
+    "delegate_plan",
+    "delegate_run",
+    "machine_inspect",
+    "receipt_inspect",
+)
 REQUIRED_SDIST_ARTIFACTS = (
+    ".agents/plugins/marketplace.json",
     "configs/cell-binding-request.example.json",
+    "configs/local-cascade.example.json",
+    "configs/local-cascade-moe.example.json",
     "docs/cell-runtime-binding.md",
     "docs/bound-cell-run.md",
     "docs/cooperative-resource-lease.md",
+    "docs/local-cascade.md",
     "experiments/benchmark_runtime_binding.py",
     "experiments/benchmark_bound_cell_run.py",
     "experiments/benchmark_cooperative_resource_lease.py",
+    "experiments/benchmark_local_cascade.py",
     "outputs/runtime-binding-contract.json",
     "outputs/bound-cell-run-contract.json",
     "outputs/cooperative-resource-lease-contract.json",
+    "outputs/local-cascade-contract-benchmark.json",
+    "scripts/run_packaging_smoke.py",
+    "plugins/mymoe-local-cascade/.codex-plugin/plugin.json",
+    "plugins/mymoe-local-cascade/.mcp.json",
+    "plugins/mymoe-local-cascade/scripts/launch_mcp.py",
+    "plugins/mymoe-local-cascade/skills/mymoe-local-cascade/SKILL.md",
+    "plugins/mymoe-local-cascade/skills/mymoe-local-cascade/agents/openai.yaml",
 )
 
 
@@ -106,6 +126,18 @@ def main() -> None:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                *LOCAL_CASCADE_RUNTIME_REQUIREMENTS,
+            ],
+            cwd=runtime_dir,
+            check=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
                 "--no-deps",
                 str(wheel),
             ],
@@ -154,8 +186,17 @@ def main() -> None:
             )
 
         mymoe = _console_script(scripts_dir, "mymoe")
+        mymoe_local_cascade_mcp = _console_script(
+            scripts_dir, "mymoe-local-cascade-mcp"
+        )
         mymoe_paired = _console_script(scripts_dir, "mymoe-paired")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
+        _run_installed_local_cascade_mcp_smoke(
+            python,
+            mymoe_local_cascade_mcp,
+            runtime_dir,
+            environment=runtime_environment,
+        )
         help_result = subprocess.run(
             [str(mymoe), "--help"],
             cwd=runtime_dir,
@@ -314,11 +355,20 @@ def main() -> None:
                     "status": "passed",
                     "build_requirements": list(BUILD_REQUIREMENTS),
                     "runtime_requirements": list(RUNTIME_REQUIREMENTS),
+                    "local_cascade_runtime_requirements": list(
+                        LOCAL_CASCADE_RUNTIME_REQUIREMENTS
+                    ),
+                    "local_cascade_tools": list(EXPECTED_LOCAL_CASCADE_TOOLS),
                     "packaging_python": str(packaging_python),
                     "python": str(python),
                     "sdist": sdist.name,
                     "wheel": wheel.name,
-                    "scripts": [str(mymoe), str(mymoe_paired), str(mymoe_web)],
+                    "scripts": [
+                        str(mymoe),
+                        str(mymoe_local_cascade_mcp),
+                        str(mymoe_paired),
+                        str(mymoe_web),
+                    ],
                 },
                 indent=2,
             )
@@ -435,6 +485,127 @@ def _run_installed_cell_binding_help_smoke(
         raise SystemExit(
             "Installed mymoe console script omitted the read-only cell-bind "
             "inspection contract."
+        )
+
+
+def _run_installed_local_cascade_mcp_smoke(
+    python: Path,
+    executable: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    installed_version = subprocess.run(
+        [
+            str(python),
+            "-c",
+            "from importlib.metadata import version; print(version('mcp'))",
+        ],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    if installed_version != MINIMUM_SUPPORTED_MCP_VERSION:
+        raise SystemExit(
+            "Packaging smoke did not install the minimum supported MCP SDK: "
+            f"expected {MINIMUM_SUPPORTED_MCP_VERSION}, got {installed_version}."
+        )
+
+    protocol_requests = "\n".join(
+        json.dumps(item, separators=(",", ":"))
+        for item in (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "mymoe-packaging-smoke",
+                        "version": "1.0",
+                    },
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+    )
+    completed = subprocess.run(
+        [str(executable)],
+        cwd=runtime_dir,
+        env=environment,
+        input=protocol_requests + "\n",
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            "Installed mymoe-local-cascade-mcp failed its stdio protocol smoke.\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+
+    responses: list[dict[str, object]] = []
+    for line in completed.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                "Installed mymoe-local-cascade-mcp emitted non-JSON stdout."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise SystemExit(
+                "Installed mymoe-local-cascade-mcp emitted a non-object response."
+            )
+        responses.append(payload)
+
+    by_id = {response.get("id"): response for response in responses}
+    initialized = by_id.get(1)
+    listed = by_id.get(2)
+    if (
+        not isinstance(initialized, dict)
+        or initialized.get("jsonrpc") != "2.0"
+        or "result" not in initialized
+        or not isinstance(listed, dict)
+        or listed.get("jsonrpc") != "2.0"
+        or "error" in listed
+    ):
+        raise SystemExit(
+            "Installed mymoe-local-cascade-mcp did not complete initialize/tools-list."
+        )
+    listed_result = listed.get("result")
+    if not isinstance(listed_result, dict):
+        raise SystemExit(
+            "Installed mymoe-local-cascade-mcp returned an invalid tools-list result."
+        )
+    tools = listed_result.get("tools")
+    if not isinstance(tools, list) or not all(isinstance(tool, dict) for tool in tools):
+        raise SystemExit(
+            "Installed mymoe-local-cascade-mcp returned an invalid tool catalog."
+        )
+    tool_names = [tool.get("name") for tool in tools]
+    if (
+        not all(isinstance(name, str) for name in tool_names)
+        or len(tool_names) != len(EXPECTED_LOCAL_CASCADE_TOOLS)
+        or sorted(tool_names) != list(EXPECTED_LOCAL_CASCADE_TOOLS)
+    ):
+        raise SystemExit(
+            "Installed mymoe-local-cascade-mcp did not expose exactly the four "
+            f"expected tools: {tool_names!r}."
         )
 
 

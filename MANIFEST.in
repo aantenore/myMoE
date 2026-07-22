@@ -13,6 +13,7 @@ include outputs/runtime-binding-contract.json
 include outputs/bound-cell-run-contract.json
 include outputs/cooperative-resource-lease-contract.json
 include outputs/local-cascade-contract-benchmark.json
+include scripts/run_packaging_smoke.py
 include .agents/plugins/marketplace.json
 include plugins/mymoe-local-cascade/.codex-plugin/plugin.json
 include plugins/mymoe-local-cascade/.mcp.json

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
+from scripts import run_packaging_smoke
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,6 +52,7 @@ class LocalCascadePackagingContractTests(unittest.TestCase):
             with self.subTest(asset=relative):
                 self.assertTrue((ROOT / relative).is_file())
                 self.assertIn(f"include {relative}", declarations)
+        self.assertIn("include scripts/run_packaging_smoke.py", declarations)
 
         local_cascade_declarations = {
             declaration
@@ -63,6 +66,26 @@ class LocalCascadePackagingContractTests(unittest.TestCase):
                 for declaration in local_cascade_declarations
                 for token in ("*", "?", "recursive-include")
             )
+        )
+
+    def test_packaging_smoke_covers_local_cascade_release_contract(self) -> None:
+        self.assertTrue(
+            set(REQUIRED_SDIST_ASSETS).issubset(
+                run_packaging_smoke.REQUIRED_SDIST_ARTIFACTS
+            )
+        )
+        self.assertEqual(
+            run_packaging_smoke.LOCAL_CASCADE_RUNTIME_REQUIREMENTS,
+            ("mcp==1.27.2",),
+        )
+        self.assertEqual(
+            run_packaging_smoke.EXPECTED_LOCAL_CASCADE_TOOLS,
+            (
+                "delegate_plan",
+                "delegate_run",
+                "machine_inspect",
+                "receipt_inspect",
+            ),
         )
 
 
