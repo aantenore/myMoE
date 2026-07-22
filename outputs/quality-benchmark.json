@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "complete",
-  "created_at": "2026-07-21T23:20:27+00:00",
+  "created_at": "2026-07-22T01:28:49+00:00",
   "provenance": {
     "manifest_path": "configs/quality-benchmark.json",
     "manifest_sha256": "777f5e4dab514b6274d1cd2f9b8d47c64301bd1a78de3101a74100512099a4d6",
@@ -31,7 +31,7 @@
     },
     "benchmark_implementation_sha256": "5aef4b340f7ea2204c97bd55f2ca824b1b1a65c1fbbab8f072b70ea7644f43d0",
     "evaluator_implementation_sha256": "3158f6447a5590f107ce39db164c18fe586ae647cff457447d19ab06085110be",
-    "git_commit": "6fff201099a541087b08d0e945cf1b7e006d71e6",
+    "git_commit": "bf1fc4b60c9f70c6e13044802f6bda6b0ec290a5",
     "git_dirty": false,
     "python": "3.12.13",
     "platform": "macOS-26.5.2-arm64-arm-64bit",
@@ -47,7 +47,7 @@
       "packages": {
         "local-moe-orchestrator": {
           "status": "installed",
-          "version": "0.11.0a1"
+          "version": "0.12.0a1"
         },
         "mlx": {
           "status": "installed",
@@ -152,7 +152,7 @@
   },
   "readiness": {
     "status": "ready",
-    "checked_at": "2026-07-21T23:17:07+00:00",
+    "checked_at": "2026-07-22T01:25:26+00:00",
     "model_match": "exact",
     "experts": [
       {
@@ -162,7 +162,7 @@
         "base_url": "http://127.0.0.1:8101/v1",
         "status": "ready",
         "models_url": "http://127.0.0.1:8101/v1/models",
-        "latency_ms": 22.82,
+        "latency_ms": 12.08,
         "available_model_ids": [
           "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
           "mlx-community/Qwen3-1.7B-4bit",
@@ -180,7 +180,7 @@
         "base_url": "http://127.0.0.1:8102/v1",
         "status": "ready",
         "models_url": "http://127.0.0.1:8102/v1/models",
-        "latency_ms": 18.16,
+        "latency_ms": 9.4,
         "available_model_ids": [
           "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-4bit",
           "mlx-community/Qwen3-1.7B-4bit",
@@ -206,7 +206,7 @@
         "correlation_id": "quality-architecture_decision-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.8306,
+          "latency_seconds": 2.5792,
           "selected_experts": [
             "general"
           ],
@@ -241,16 +241,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11979259904,
-                "used_bytes": 13790543872,
-                "used_percent": 53.5144
+                "available_bytes": 9848143872,
+                "used_bytes": 15921659904,
+                "used_percent": 61.7842
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 388623237,
-                "used_bytes": 10348795003,
-                "used_percent": 96.3807
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -260,26 +260,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11471028224,
-                "used_bytes": 14298775552,
-                "used_percent": 55.4866
+                "available_bytes": 9636102144,
+                "used_bytes": 16133701632,
+                "used_percent": 62.607
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 455732101,
-                "used_bytes": 10281686139,
-                "used_percent": 95.7557
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14302560256
+                "used_bytes": 16136863744
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 10348795003
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -423,7 +423,7 @@
         "correlation_id": "quality-architecture_decision-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.3659,
+          "latency_seconds": 2.3596,
           "selected_experts": [
             "general"
           ],
@@ -458,16 +458,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11469357056,
-                "used_bytes": 14300446720,
-                "used_percent": 55.493
+                "available_bytes": 9632743424,
+                "used_bytes": 16137060352,
+                "used_percent": 62.62
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 455732101,
-                "used_bytes": 10281686139,
-                "used_percent": 95.7557
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -477,26 +477,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11493605376,
-                "used_bytes": 14276198400,
-                "used_percent": 55.3989
+                "available_bytes": 9495560192,
+                "used_bytes": 16274243584,
+                "used_percent": 63.1524
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 464120709,
-                "used_bytes": 10273297531,
-                "used_percent": 95.6775
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14300446720
+                "used_bytes": 16274243584
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 10281686139
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -640,7 +640,7 @@
         "correlation_id": "quality-architecture_decision-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.8053,
+          "latency_seconds": 2.8363,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -681,16 +681,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11491524608,
-                "used_bytes": 14278279168,
-                "used_percent": 55.407
+                "available_bytes": 9494822912,
+                "used_bytes": 16274980864,
+                "used_percent": 63.1552
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 464120709,
-                "used_bytes": 10273297531,
-                "used_percent": 95.6775
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -700,26 +700,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11149869056,
-                "used_bytes": 14619934720,
-                "used_percent": 56.7328
+                "available_bytes": 9400844288,
+                "used_bytes": 16368959488,
+                "used_percent": 63.5199
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 774499205,
-                "used_bytes": 9962919035,
-                "used_percent": 92.7869
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14623080448
+                "used_bytes": 16481861632
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 10273297531
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -866,7 +866,7 @@
         "correlation_id": "quality-context_strategy-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.178,
+          "latency_seconds": 2.2136,
           "selected_experts": [
             "general"
           ],
@@ -901,16 +901,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11148591104,
-                "used_bytes": 14621212672,
-                "used_percent": 56.7378
+                "available_bytes": 9401925632,
+                "used_bytes": 16367878144,
+                "used_percent": 63.5157
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 774499205,
-                "used_bytes": 9962919035,
-                "used_percent": 92.7869
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -920,26 +920,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10990764032,
-                "used_bytes": 14779039744,
-                "used_percent": 57.3502
+                "available_bytes": 9370238976,
+                "used_bytes": 16399564800,
+                "used_percent": 63.6387
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 782887813,
-                "used_bytes": 9954530427,
-                "used_percent": 92.7088
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14818000896
+                "used_bytes": 16403890176
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9962919035
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -1096,7 +1096,7 @@
         "correlation_id": "quality-context_strategy-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.4971,
+          "latency_seconds": 2.4885,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -1137,16 +1137,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10997006336,
-                "used_bytes": 14772797440,
-                "used_percent": 57.326
+                "available_bytes": 9371041792,
+                "used_bytes": 16398761984,
+                "used_percent": 63.6356
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 782887813,
-                "used_bytes": 9954530427,
-                "used_percent": 92.7088
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -1156,26 +1156,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11236835328,
-                "used_bytes": 14532968448,
-                "used_percent": 56.3953
+                "available_bytes": 9392619520,
+                "used_bytes": 16377184256,
+                "used_percent": 63.5518
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 782887813,
-                "used_bytes": 9954530427,
-                "used_percent": 92.7088
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14772797440
+                "used_bytes": 16527851520
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9954530427
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -1332,7 +1332,7 @@
         "correlation_id": "quality-context_strategy-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.1728,
+          "latency_seconds": 2.1517,
           "selected_experts": [
             "general"
           ],
@@ -1367,16 +1367,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11237785600,
-                "used_bytes": 14532018176,
-                "used_percent": 56.3917
+                "available_bytes": 9395863552,
+                "used_bytes": 16373940224,
+                "used_percent": 63.5393
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 782887813,
-                "used_bytes": 9954530427,
-                "used_percent": 92.7088
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -1386,26 +1386,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11322834944,
-                "used_bytes": 14446968832,
-                "used_percent": 56.0616
+                "available_bytes": 9352986624,
+                "used_bytes": 16416817152,
+                "used_percent": 63.7056
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14571225088
+                "used_bytes": 16422830080
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9954530427
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -1562,7 +1562,7 @@
         "correlation_id": "quality-incident_plan-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.3766,
+          "latency_seconds": 3.4359,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -1603,16 +1603,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11325915136,
-                "used_bytes": 14443888640,
-                "used_percent": 56.0497
+                "available_bytes": 9354051584,
+                "used_bytes": 16415752192,
+                "used_percent": 63.7015
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -1622,26 +1622,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11009769472,
-                "used_bytes": 14760034304,
-                "used_percent": 57.2765
+                "available_bytes": 9158836224,
+                "used_bytes": 16610967552,
+                "used_percent": 64.459
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14760034304
+                "used_bytes": 16610967552
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -1818,7 +1818,7 @@
         "correlation_id": "quality-incident_plan-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.5887,
+          "latency_seconds": 2.5768,
           "selected_experts": [
             "general"
           ],
@@ -1853,16 +1853,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11011555328,
-                "used_bytes": 14758248448,
-                "used_percent": 57.2695
+                "available_bytes": 9159835648,
+                "used_bytes": 16609968128,
+                "used_percent": 64.4552
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -1872,26 +1872,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11352358912,
-                "used_bytes": 14417444864,
-                "used_percent": 55.947
+                "available_bytes": 9111011328,
+                "used_bytes": 16658792448,
+                "used_percent": 64.6446
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14758248448
+                "used_bytes": 16658792448
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -2060,7 +2060,7 @@
         "correlation_id": "quality-incident_plan-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.5693,
+          "latency_seconds": 2.557,
           "selected_experts": [
             "general"
           ],
@@ -2095,16 +2095,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11356618752,
-                "used_bytes": 14413185024,
-                "used_percent": 55.9305
+                "available_bytes": 9108766720,
+                "used_bytes": 16661037056,
+                "used_percent": 64.6533
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -2114,26 +2114,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11390107648,
-                "used_bytes": 14379696128,
-                "used_percent": 55.8006
+                "available_bytes": 9059991552,
+                "used_bytes": 16709812224,
+                "used_percent": 64.8426
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14413185024
+                "used_bytes": 16709812224
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -2302,7 +2302,7 @@
         "correlation_id": "quality-privacy_flow-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.9257,
+          "latency_seconds": 3.011,
           "selected_experts": [
             "general"
           ],
@@ -2337,16 +2337,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11395072000,
-                "used_bytes": 14374731776,
-                "used_percent": 55.7813
+                "available_bytes": 9061924864,
+                "used_bytes": 16707878912,
+                "used_percent": 64.8351
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -2356,26 +2356,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11428167680,
-                "used_bytes": 14341636096,
-                "used_percent": 55.6529
+                "available_bytes": 8998715392,
+                "used_bytes": 16771088384,
+                "used_percent": 65.0804
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14374731776
+                "used_bytes": 16771088384
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -2559,7 +2559,7 @@
         "correlation_id": "quality-privacy_flow-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.9309,
+          "latency_seconds": 3.1934,
           "selected_experts": [
             "general"
           ],
@@ -2582,8 +2582,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 4,
-            "available_sample_count": 4,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -2594,16 +2594,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11433148416,
-                "used_bytes": 14336655360,
-                "used_percent": 55.6335
+                "available_bytes": 9000124416,
+                "used_bytes": 16769679360,
+                "used_percent": 65.0749
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -2613,26 +2613,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11437211648,
-                "used_bytes": 14332592128,
-                "used_percent": 55.6178
+                "available_bytes": 5056937984,
+                "used_bytes": 20712865792,
+                "used_percent": 80.3765
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14336655360
+                "used_bytes": 20712865792
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9047575101
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -2816,7 +2816,7 @@
         "correlation_id": "quality-privacy_flow-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.5396,
+          "latency_seconds": 4.2042,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -2845,8 +2845,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 5,
-            "available_sample_count": 5,
+            "sample_count": 6,
+            "available_sample_count": 6,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -2857,16 +2857,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11438931968,
-                "used_bytes": 14330871808,
-                "used_percent": 55.6111
+                "available_bytes": 5070913536,
+                "used_bytes": 20698890240,
+                "used_percent": 80.3223
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 791276421,
-                "used_bytes": 9946141819,
-                "used_percent": 92.6307
+                "free_bytes": 1689843139,
+                "used_bytes": 9047575101,
+                "used_percent": 84.2621
               }
             },
             "after": {
@@ -2876,26 +2876,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10731864064,
-                "used_bytes": 15037939712,
-                "used_percent": 58.3549
+                "available_bytes": 3695837184,
+                "used_bytes": 22073966592,
+                "used_percent": 85.6583
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1331429376,
+                "used_bytes": 9405988864,
+                "used_percent": 87.6001
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15037939712
+                "used_bytes": 22402809856
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9946141819
+                "used_bytes": 9405988864
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -3080,7 +3080,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.2295,
+          "latency_seconds": 0.345,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -3115,16 +3115,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10731290624,
-                "used_bytes": 15038513152,
-                "used_percent": 58.3571
+                "available_bytes": 3810951168,
+                "used_bytes": 21958852608,
+                "used_percent": 85.2116
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1331429376,
+                "used_bytes": 9405988864,
+                "used_percent": 87.6001
               }
             },
             "after": {
@@ -3134,26 +3134,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10888347648,
-                "used_bytes": 14881456128,
-                "used_percent": 57.7477
+                "available_bytes": 4347445248,
+                "used_bytes": 21422358528,
+                "used_percent": 83.1297
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1331429376,
+                "used_bytes": 9405988864,
+                "used_percent": 87.6001
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15038513152
+                "used_bytes": 21958852608
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9405988864
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -3266,7 +3266,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.6089,
+          "latency_seconds": 0.7772,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -3307,16 +3307,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10887692288,
-                "used_bytes": 14882111488,
-                "used_percent": 57.7502
+                "available_bytes": 4346216448,
+                "used_bytes": 21423587328,
+                "used_percent": 83.1345
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1331429376,
+                "used_bytes": 9405988864,
+                "used_percent": 87.6001
               }
             },
             "after": {
@@ -3326,26 +3326,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10764271616,
-                "used_bytes": 15005532160,
-                "used_percent": 58.2291
+                "available_bytes": 4873797632,
+                "used_bytes": 20896006144,
+                "used_percent": 81.0872
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1448869888,
+                "used_bytes": 9288548352,
+                "used_percent": 86.5063
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15005532160
+                "used_bytes": 21423587328
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9405988864
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -3459,7 +3459,7 @@
         "correlation_id": "quality-concise_rewrite-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.5156,
+          "latency_seconds": 0.7777,
           "selected_experts": [
             "general"
           ],
@@ -3494,16 +3494,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10763386880,
-                "used_bytes": 15006416896,
-                "used_percent": 58.2326
+                "available_bytes": 4796891136,
+                "used_bytes": 20972912640,
+                "used_percent": 81.3856
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1448869888,
+                "used_bytes": 9288548352,
+                "used_percent": 86.5063
               }
             },
             "after": {
@@ -3513,26 +3513,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10766630912,
-                "used_bytes": 15003172864,
-                "used_percent": 58.22
+                "available_bytes": 3331850240,
+                "used_bytes": 22437953536,
+                "used_percent": 87.0707
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1273694781,
+                "used_bytes": 9463723459,
+                "used_percent": 88.1378
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15006416896
+                "used_bytes": 22437953536
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9463723459
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -3645,7 +3645,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.886,
+          "latency_seconds": 1.2,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -3674,8 +3674,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 2,
-            "available_sample_count": 2,
+            "sample_count": 3,
+            "available_sample_count": 3,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -3686,16 +3686,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10764107776,
-                "used_bytes": 15005696000,
-                "used_percent": 58.2298
+                "available_bytes": 3340419072,
+                "used_bytes": 22429384704,
+                "used_percent": 87.0375
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 1267728384,
+                "used_bytes": 9469689856,
+                "used_percent": 88.1934
               }
             },
             "after": {
@@ -3705,26 +3705,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10699784192,
-                "used_bytes": 15070019584,
-                "used_percent": 58.4794
+                "available_bytes": 6959120384,
+                "used_bytes": 18810683392,
+                "used_percent": 72.9951
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 822083584,
+                "used_bytes": 9915334656,
+                "used_percent": 92.3438
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15070019584
+                "used_bytes": 22429384704
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9915334656
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -3843,7 +3843,7 @@
         "correlation_id": "quality-three_bullet_summary-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.7412,
+          "latency_seconds": 0.7844,
           "selected_experts": [
             "general"
           ],
@@ -3878,16 +3878,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10701324288,
-                "used_bytes": 15068479488,
-                "used_percent": 58.4734
+                "available_bytes": 6986334208,
+                "used_bytes": 18783469568,
+                "used_percent": 72.8895
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 822083584,
+                "used_bytes": 9915334656,
+                "used_percent": 92.3438
               }
             },
             "after": {
@@ -3897,26 +3897,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10740449280,
-                "used_bytes": 15029354496,
-                "used_percent": 58.3216
+                "available_bytes": 7305560064,
+                "used_bytes": 18464243712,
+                "used_percent": 71.6507
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 838860800,
+                "used_bytes": 9898557440,
+                "used_percent": 92.1875
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15068479488
+                "used_bytes": 18783469568
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9915334656
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -4035,7 +4035,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.3164,
+          "latency_seconds": 0.3467,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -4070,16 +4070,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10740006912,
-                "used_bytes": 15029796864,
-                "used_percent": 58.3233
+                "available_bytes": 7306559488,
+                "used_bytes": 18463244288,
+                "used_percent": 71.6468
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 838860800,
+                "used_bytes": 9898557440,
+                "used_percent": 92.1875
               }
             },
             "after": {
@@ -4089,26 +4089,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10730848256,
-                "used_bytes": 15038955520,
-                "used_percent": 58.3588
+                "available_bytes": 7182090240,
+                "used_bytes": 18587713536,
+                "used_percent": 72.1298
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 838860800,
+                "used_bytes": 9898557440,
+                "used_percent": 92.1875
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15038955520
+                "used_bytes": 18587713536
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9898557440
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -4227,7 +4227,7 @@
         "correlation_id": "quality-italian_product_plan-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.4964,
+          "latency_seconds": 3.7334,
           "selected_experts": [
             "general"
           ],
@@ -4262,16 +4262,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10728259584,
-                "used_bytes": 15041544192,
-                "used_percent": 58.3689
+                "available_bytes": 7182123008,
+                "used_bytes": 18587680768,
+                "used_percent": 72.1297
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 838860800,
+                "used_bytes": 9898557440,
+                "used_percent": 92.1875
               }
             },
             "after": {
@@ -4281,26 +4281,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10916364288,
-                "used_bytes": 14853439488,
-                "used_percent": 57.6389
+                "available_bytes": 11503681536,
+                "used_bytes": 14266122240,
+                "used_percent": 55.3598
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 855638016,
+                "used_bytes": 9881780224,
+                "used_percent": 92.0312
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15041544192
+                "used_bytes": 18846941184
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9898557440
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -4451,7 +4451,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.4963,
+          "latency_seconds": 3.4877,
           "selected_experts": [
             "general"
           ],
@@ -4486,16 +4486,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10923884544,
-                "used_bytes": 14845919232,
-                "used_percent": 57.6097
+                "available_bytes": 11502944256,
+                "used_bytes": 14266859520,
+                "used_percent": 55.3627
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 855638016,
+                "used_bytes": 9881780224,
+                "used_percent": 92.0312
               }
             },
             "after": {
@@ -4505,26 +4505,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11097112576,
-                "used_bytes": 14672691200,
-                "used_percent": 56.9375
+                "available_bytes": 11330846720,
+                "used_bytes": 14438957056,
+                "used_percent": 56.0305
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 872415232,
+                "used_bytes": 9865003008,
+                "used_percent": 91.875
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14845919232
+                "used_bytes": 14746091520
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9881780224
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -4675,7 +4675,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 4.0431,
+          "latency_seconds": 3.928,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -4716,16 +4716,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11102568448,
-                "used_bytes": 14667235328,
-                "used_percent": 56.9164
+                "available_bytes": 11330797568,
+                "used_bytes": 14439006208,
+                "used_percent": 56.0307
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 872415232,
+                "used_bytes": 9865003008,
+                "used_percent": 91.875
               }
             },
             "after": {
@@ -4735,26 +4735,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8566882304,
-                "used_bytes": 17202921472,
-                "used_percent": 66.7561
+                "available_bytes": 10305912832,
+                "used_bytes": 15463890944,
+                "used_percent": 60.0078
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 880803840,
+                "used_bytes": 9856614400,
+                "used_percent": 91.7969
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 17202921472
+                "used_bytes": 15463890944
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9865003008
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -4906,7 +4906,7 @@
         "correlation_id": "quality-security_review-moe_top1-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.5976,
+          "latency_seconds": 5.7977,
           "selected_experts": [
             "general"
           ],
@@ -4941,16 +4941,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8487862272,
-                "used_bytes": 17281941504,
-                "used_percent": 67.0628
+                "available_bytes": 10305241088,
+                "used_bytes": 15464562688,
+                "used_percent": 60.0104
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 880803840,
+                "used_bytes": 9856614400,
+                "used_percent": 91.7969
               }
             },
             "after": {
@@ -4960,26 +4960,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8368979968,
-                "used_bytes": 17400823808,
-                "used_percent": 67.5241
+                "available_bytes": 10076061696,
+                "used_bytes": 15693742080,
+                "used_percent": 60.8997
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 889192448,
+                "used_bytes": 9848225792,
+                "used_percent": 91.7188
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 21181595648
+                "used_bytes": 15693742080
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9856614400
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -5143,7 +5143,7 @@
         "correlation_id": "quality-security_review-moe_top2-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.3313,
+          "latency_seconds": 6.0785,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -5172,8 +5172,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 8,
-            "available_sample_count": 8,
+            "sample_count": 7,
+            "available_sample_count": 7,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -5184,16 +5184,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8366538752,
-                "used_bytes": 17403265024,
-                "used_percent": 67.5336
+                "available_bytes": 10078257152,
+                "used_bytes": 15691546624,
+                "used_percent": 60.8912
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 889192448,
+                "used_bytes": 9848225792,
+                "used_percent": 91.7188
               }
             },
             "after": {
@@ -5203,26 +5203,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11360976896,
-                "used_bytes": 14408826880,
-                "used_percent": 55.9136
+                "available_bytes": 9905242112,
+                "used_bytes": 15864561664,
+                "used_percent": 61.5626
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 897581056,
+                "used_bytes": 9839837184,
+                "used_percent": 91.6406
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 17761943552
+                "used_bytes": 15955181568
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9848225792
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -5386,7 +5386,7 @@
         "correlation_id": "quality-security_review-single_general-1",
         "execution": {
           "status": "ok",
-          "latency_seconds": 5.8023,
+          "latency_seconds": 5.7428,
           "selected_experts": [
             "general"
           ],
@@ -5421,16 +5421,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11361959936,
-                "used_bytes": 14407843840,
-                "used_percent": 55.9098
+                "available_bytes": 9904848896,
+                "used_bytes": 15864954880,
+                "used_percent": 61.5641
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 808127037,
-                "used_bytes": 9929291203,
-                "used_percent": 92.4737
+                "free_bytes": 897581056,
+                "used_bytes": 9839837184,
+                "used_percent": 91.6406
               }
             },
             "after": {
@@ -5440,26 +5440,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11426283520,
-                "used_bytes": 14343520256,
-                "used_percent": 55.6602
+                "available_bytes": 9906208768,
+                "used_bytes": 15863595008,
+                "used_percent": 61.5589
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14407843840
+                "used_bytes": 15868051456
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9929291203
+                "used_bytes": 9839837184
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -5623,7 +5623,7 @@
         "correlation_id": "quality-architecture_decision-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.3778,
+          "latency_seconds": 2.3762,
           "selected_experts": [
             "general"
           ],
@@ -5658,16 +5658,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11428167680,
-                "used_bytes": 14341636096,
-                "used_percent": 55.6529
+                "available_bytes": 9906405376,
+                "used_bytes": 15863398400,
+                "used_percent": 61.5581
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -5677,26 +5677,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11606982656,
-                "used_bytes": 14162821120,
-                "used_percent": 54.959
+                "available_bytes": 10129342464,
+                "used_bytes": 15640461312,
+                "used_percent": 60.693
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14511308800
+                "used_bytes": 15863398400
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -5840,7 +5840,7 @@
         "correlation_id": "quality-architecture_decision-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.7716,
+          "latency_seconds": 2.7651,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -5881,16 +5881,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11608850432,
-                "used_bytes": 14160953344,
-                "used_percent": 54.9517
+                "available_bytes": 10133651456,
+                "used_bytes": 15636152320,
+                "used_percent": 60.6763
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -5900,26 +5900,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11159486464,
-                "used_bytes": 14610317312,
-                "used_percent": 56.6955
+                "available_bytes": 9816014848,
+                "used_bytes": 15953788928,
+                "used_percent": 61.9088
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14792753152
+                "used_bytes": 15972122624
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -6066,7 +6066,7 @@
         "correlation_id": "quality-architecture_decision-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.3693,
+          "latency_seconds": 2.381,
           "selected_experts": [
             "general"
           ],
@@ -6101,16 +6101,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11161321472,
-                "used_bytes": 14608482304,
-                "used_percent": 56.6884
+                "available_bytes": 9814048768,
+                "used_bytes": 15955755008,
+                "used_percent": 61.9165
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -6120,26 +6120,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11347558400,
-                "used_bytes": 14422245376,
-                "used_percent": 55.9657
+                "available_bytes": 9899950080,
+                "used_bytes": 15869853696,
+                "used_percent": 61.5831
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14608482304
+                "used_bytes": 15967240192
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -6283,7 +6283,7 @@
         "correlation_id": "quality-context_strategy-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.4689,
+          "latency_seconds": 2.4811,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -6324,16 +6324,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11349049344,
-                "used_bytes": 14420754432,
-                "used_percent": 55.9599
+                "available_bytes": 9904308224,
+                "used_bytes": 15865495552,
+                "used_percent": 61.5662
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -6343,26 +6343,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11036950528,
-                "used_bytes": 14732853248,
-                "used_percent": 57.171
+                "available_bytes": 9756770304,
+                "used_bytes": 16013033472,
+                "used_percent": 62.1387
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14752727040
+                "used_bytes": 16013033472
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -6519,7 +6519,7 @@
         "correlation_id": "quality-context_strategy-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.1489,
+          "latency_seconds": 2.1418,
           "selected_experts": [
             "general"
           ],
@@ -6554,16 +6554,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11036590080,
-                "used_bytes": 14733213696,
-                "used_percent": 57.1724
+                "available_bytes": 9758752768,
+                "used_bytes": 16011051008,
+                "used_percent": 62.1311
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -6573,26 +6573,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11090051072,
-                "used_bytes": 14679752704,
-                "used_percent": 56.9649
+                "available_bytes": 9752494080,
+                "used_bytes": 16017309696,
+                "used_percent": 62.1553
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14733213696
+                "used_bytes": 16056434688
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -6749,7 +6749,7 @@
         "correlation_id": "quality-context_strategy-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.1718,
+          "latency_seconds": 2.1649,
           "selected_experts": [
             "general"
           ],
@@ -6784,16 +6784,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11094638592,
-                "used_bytes": 14675165184,
-                "used_percent": 56.9471
+                "available_bytes": 9756655616,
+                "used_bytes": 16013148160,
+                "used_percent": 62.1392
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -6803,26 +6803,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11635277824,
-                "used_bytes": 14134525952,
-                "used_percent": 54.8492
+                "available_bytes": 9852518400,
+                "used_bytes": 15917285376,
+                "used_percent": 61.7672
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14675165184
+                "used_bytes": 16013148160
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -6979,7 +6979,7 @@
         "correlation_id": "quality-incident_plan-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.5908,
+          "latency_seconds": 2.5687,
           "selected_experts": [
             "general"
           ],
@@ -7014,16 +7014,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11642372096,
-                "used_bytes": 14127431680,
-                "used_percent": 54.8217
+                "available_bytes": 9859039232,
+                "used_bytes": 15910764544,
+                "used_percent": 61.7419
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -7033,26 +7033,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11451416576,
-                "used_bytes": 14318387200,
-                "used_percent": 55.5627
+                "available_bytes": 9900670976,
+                "used_bytes": 15869132800,
+                "used_percent": 61.5803
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14318387200
+                "used_bytes": 15990898688
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -7221,7 +7221,7 @@
         "correlation_id": "quality-incident_plan-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.5768,
+          "latency_seconds": 2.5773,
           "selected_experts": [
             "general"
           ],
@@ -7256,16 +7256,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11451138048,
-                "used_bytes": 14318665728,
-                "used_percent": 55.5637
+                "available_bytes": 9901359104,
+                "used_bytes": 15868444672,
+                "used_percent": 61.5777
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -7275,26 +7275,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11554471936,
-                "used_bytes": 14215331840,
-                "used_percent": 55.1627
+                "available_bytes": 10066755584,
+                "used_bytes": 15703048192,
+                "used_percent": 60.9358
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14318665728
+                "used_bytes": 15873654784
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -7463,7 +7463,7 @@
         "correlation_id": "quality-incident_plan-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.3602,
+          "latency_seconds": 3.6432,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -7504,16 +7504,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11556241408,
-                "used_bytes": 14213562368,
-                "used_percent": 55.1559
+                "available_bytes": 10064822272,
+                "used_bytes": 15704981504,
+                "used_percent": 60.9433
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -7523,26 +7523,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10853662720,
-                "used_bytes": 14916141056,
-                "used_percent": 57.8822
+                "available_bytes": 7107919872,
+                "used_bytes": 18661883904,
+                "used_percent": 72.4176
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14916141056
+                "used_bytes": 18661883904
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 9831448576
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -7719,7 +7719,7 @@
         "correlation_id": "quality-privacy_flow-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.9255,
+          "latency_seconds": 3.369,
           "selected_experts": [
             "general"
           ],
@@ -7742,8 +7742,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 4,
-            "available_sample_count": 4,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -7754,16 +7754,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10855448576,
-                "used_bytes": 14914355200,
-                "used_percent": 57.8753
+                "available_bytes": 7114670080,
+                "used_bytes": 18655133696,
+                "used_percent": 72.3914
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 905969664,
+                "used_bytes": 9831448576,
+                "used_percent": 91.5625
               }
             },
             "after": {
@@ -7773,26 +7773,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10910482432,
-                "used_bytes": 14859321344,
-                "used_percent": 57.6618
+                "available_bytes": 5688377344,
+                "used_bytes": 20081426432,
+                "used_percent": 77.9262
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 535235133,
+                "used_bytes": 10202183107,
+                "used_percent": 95.0152
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15036317696
+                "used_bytes": 21987409920
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10202183107
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -7976,7 +7976,7 @@
         "correlation_id": "quality-privacy_flow-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.5175,
+          "latency_seconds": 4.5706,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -8005,8 +8005,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 5,
-            "available_sample_count": 5,
+            "sample_count": 6,
+            "available_sample_count": 6,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -8017,16 +8017,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10912301056,
-                "used_bytes": 14857502720,
-                "used_percent": 57.6547
+                "available_bytes": 5680185344,
+                "used_bytes": 20089618432,
+                "used_percent": 77.958
               },
               "swap": {
                 "status": "available",
                 "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "free_bytes": 535235133,
+                "used_bytes": 10202183107,
+                "used_percent": 95.0152
               }
             },
             "after": {
@@ -8036,26 +8036,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10880548864,
-                "used_bytes": 14889254912,
-                "used_percent": 57.7779
+                "available_bytes": 8177860608,
+                "used_bytes": 17591943168,
+                "used_percent": 68.2657
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 852093829,
+                "used_bytes": 10959066235,
+                "used_percent": 92.7857
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15060402176
+                "used_bytes": 22583705600
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10959066235
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -8240,7 +8240,7 @@
         "correlation_id": "quality-privacy_flow-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.9299,
+          "latency_seconds": 3.1841,
           "selected_experts": [
             "general"
           ],
@@ -8263,8 +8263,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 4,
-            "available_sample_count": 4,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -8275,16 +8275,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10880483328,
-                "used_bytes": 14889320448,
-                "used_percent": 57.7782
+                "available_bytes": 8171077632,
+                "used_bytes": 17598726144,
+                "used_percent": 68.292
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 852093829,
+                "used_bytes": 10959066235,
+                "used_percent": 92.7857
               }
             },
             "after": {
@@ -8294,26 +8294,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10950049792,
-                "used_bytes": 14819753984,
-                "used_percent": 57.5082
+                "available_bytes": 12410322944,
+                "used_bytes": 13359480832,
+                "used_percent": 51.8416
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 868871045,
+                "used_bytes": 10942289019,
+                "used_percent": 92.6436
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14889320448
+                "used_bytes": 17598726144
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10959066235
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -8497,7 +8497,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.6085,
+          "latency_seconds": 0.6284,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -8538,16 +8538,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10951524352,
-                "used_bytes": 14818279424,
-                "used_percent": 57.5025
+                "available_bytes": 12412108800,
+                "used_bytes": 13357694976,
+                "used_percent": 51.8347
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 868871045,
+                "used_bytes": 10942289019,
+                "used_percent": 92.6436
               }
             },
             "after": {
@@ -8557,26 +8557,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10737467392,
-                "used_bytes": 15032336384,
-                "used_percent": 58.3331
+                "available_bytes": 11054317568,
+                "used_bytes": 14715486208,
+                "used_percent": 57.1036
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15032336384
+                "used_bytes": 14715486208
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10942289019
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -8690,7 +8690,7 @@
         "correlation_id": "quality-concise_rewrite-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.5091,
+          "latency_seconds": 0.528,
           "selected_experts": [
             "general"
           ],
@@ -8725,16 +8725,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10736566272,
-                "used_bytes": 15033237504,
-                "used_percent": 58.3366
+                "available_bytes": 11055104000,
+                "used_bytes": 14714699776,
+                "used_percent": 57.1006
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -8744,26 +8744,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10735534080,
-                "used_bytes": 15034269696,
-                "used_percent": 58.3406
+                "available_bytes": 11013849088,
+                "used_bytes": 14755954688,
+                "used_percent": 57.2606
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15034269696
+                "used_bytes": 14755954688
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -8876,7 +8876,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.2191,
+          "latency_seconds": 0.2212,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -8911,16 +8911,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10734911488,
-                "used_bytes": 15034892288,
-                "used_percent": 58.3431
+                "available_bytes": 11015897088,
+                "used_bytes": 14753906688,
+                "used_percent": 57.2527
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -8930,26 +8930,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10730897408,
-                "used_bytes": 15038906368,
-                "used_percent": 58.3586
+                "available_bytes": 10992943104,
+                "used_bytes": 14776860672,
+                "used_percent": 57.3418
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15038906368
+                "used_bytes": 14776860672
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -9062,7 +9062,7 @@
         "correlation_id": "quality-three_bullet_summary-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.7311,
+          "latency_seconds": 0.744,
           "selected_experts": [
             "general"
           ],
@@ -9097,16 +9097,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10732584960,
-                "used_bytes": 15037218816,
-                "used_percent": 58.3521
+                "available_bytes": 10991058944,
+                "used_bytes": 14778744832,
+                "used_percent": 57.3491
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -9116,26 +9116,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10693050368,
-                "used_bytes": 15076753408,
-                "used_percent": 58.5055
+                "available_bytes": 10953572352,
+                "used_bytes": 14816231424,
+                "used_percent": 57.4945
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15076753408
+                "used_bytes": 14816231424
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -9254,7 +9254,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.3198,
+          "latency_seconds": 0.3399,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -9289,16 +9289,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10696671232,
-                "used_bytes": 15073132544,
-                "used_percent": 58.4915
+                "available_bytes": 10950180864,
+                "used_bytes": 14819622912,
+                "used_percent": 57.5077
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -9308,26 +9308,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10671243264,
-                "used_bytes": 15098560512,
-                "used_percent": 58.5901
+                "available_bytes": 10920329216,
+                "used_bytes": 14849474560,
+                "used_percent": 57.6235
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15098560512
+                "used_bytes": 14849474560
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -9446,7 +9446,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.8909,
+          "latency_seconds": 0.8966,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -9487,16 +9487,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10670260224,
-                "used_bytes": 15099543552,
-                "used_percent": 58.5939
+                "available_bytes": 10918150144,
+                "used_bytes": 14851653632,
+                "used_percent": 57.632
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -9506,26 +9506,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10665934848,
-                "used_bytes": 15103868928,
-                "used_percent": 58.6107
+                "available_bytes": 10908745728,
+                "used_bytes": 14861058048,
+                "used_percent": 57.6685
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15103868928
+                "used_bytes": 14861058048
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -9644,7 +9644,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.5045,
+          "latency_seconds": 3.5291,
           "selected_experts": [
             "general"
           ],
@@ -9679,16 +9679,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10665721856,
-                "used_bytes": 15104081920,
-                "used_percent": 58.6116
+                "available_bytes": 10908925952,
+                "used_bytes": 14860877824,
+                "used_percent": 57.6678
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -9698,26 +9698,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10777886720,
-                "used_bytes": 14991917056,
-                "used_percent": 58.1763
+                "available_bytes": 11256020992,
+                "used_bytes": 14513782784,
+                "used_percent": 56.3209
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15243296768
+                "used_bytes": 14987493376
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -9868,7 +9868,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 4.3191,
+          "latency_seconds": 3.9686,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -9897,8 +9897,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 6,
-            "available_sample_count": 6,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -9909,16 +9909,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10781949952,
-                "used_bytes": 14987853824,
-                "used_percent": 58.1605
+                "available_bytes": 11258478592,
+                "used_bytes": 14511325184,
+                "used_percent": 56.3114
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -9928,26 +9928,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 5377638400,
-                "used_bytes": 20392165376,
-                "used_percent": 79.132
+                "available_bytes": 10970677248,
+                "used_bytes": 14799126528,
+                "used_percent": 57.4282
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 20392165376
+                "used_bytes": 14799126528
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -10099,7 +10099,7 @@
         "correlation_id": "quality-italian_product_plan-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 4.1249,
+          "latency_seconds": 3.4857,
           "selected_experts": [
             "general"
           ],
@@ -10134,16 +10134,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 5319213056,
-                "used_bytes": 20450590720,
-                "used_percent": 79.3587
+                "available_bytes": 10970939392,
+                "used_bytes": 14798864384,
+                "used_percent": 57.4272
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -10153,26 +10153,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8878686208,
-                "used_bytes": 16891117568,
-                "used_percent": 65.5462
+                "available_bytes": 11438555136,
+                "used_bytes": 14331248640,
+                "used_percent": 55.6126
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 20726251520
+                "used_bytes": 14798864384
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -10323,7 +10323,7 @@
         "correlation_id": "quality-security_review-moe_top2-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.2068,
+          "latency_seconds": 6.1326,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -10364,16 +10364,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8877932544,
-                "used_bytes": 16891871232,
-                "used_percent": 65.5491
+                "available_bytes": 11438407680,
+                "used_bytes": 14331396096,
+                "used_percent": 55.6131
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 877259653,
+                "used_bytes": 10933900411,
+                "used_percent": 92.5726
               }
             },
             "after": {
@@ -10383,26 +10383,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11450155008,
-                "used_bytes": 14319648768,
-                "used_percent": 55.5676
+                "available_bytes": 11004788736,
+                "used_bytes": 14765015040,
+                "used_percent": 57.2958
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 16891871232
+                "used_bytes": 15136800768
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10933900411
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -10566,7 +10566,7 @@
         "correlation_id": "quality-security_review-single_general-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 5.7471,
+          "latency_seconds": 5.7577,
           "selected_experts": [
             "general"
           ],
@@ -10601,16 +10601,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11446190080,
-                "used_bytes": 14323613696,
-                "used_percent": 55.5829
+                "available_bytes": 11012456448,
+                "used_bytes": 14757347328,
+                "used_percent": 57.266
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -10620,26 +10620,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11470962688,
-                "used_bytes": 14298841088,
-                "used_percent": 55.4868
+                "available_bytes": 11271798784,
+                "used_bytes": 14498004992,
+                "used_percent": 56.2597
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14403534848
+                "used_bytes": 14757347328
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -10803,7 +10803,7 @@
         "correlation_id": "quality-security_review-moe_top1-2",
         "execution": {
           "status": "ok",
-          "latency_seconds": 5.7475,
+          "latency_seconds": 5.7738,
           "selected_experts": [
             "general"
           ],
@@ -10838,16 +10838,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11472715776,
-                "used_bytes": 14297088000,
-                "used_percent": 55.48
+                "available_bytes": 11271815168,
+                "used_bytes": 14497988608,
+                "used_percent": 56.2596
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -10857,26 +10857,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11435261952,
-                "used_bytes": 14334541824,
-                "used_percent": 55.6253
+                "available_bytes": 11215536128,
+                "used_bytes": 14554267648,
+                "used_percent": 56.478
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14379155456
+                "used_bytes": 14632124416
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -11040,7 +11040,7 @@
         "correlation_id": "quality-architecture_decision-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.7767,
+          "latency_seconds": 2.7869,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -11081,16 +11081,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11433951232,
-                "used_bytes": 14335852544,
-                "used_percent": 55.6304
+                "available_bytes": 11213504512,
+                "used_bytes": 14556299264,
+                "used_percent": 56.4859
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 816515645,
-                "used_bytes": 9920902595,
-                "used_percent": 92.3956
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -11100,26 +11100,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10934599680,
-                "used_bytes": 14835204096,
-                "used_percent": 57.5682
+                "available_bytes": 10334093312,
+                "used_bytes": 15435710464,
+                "used_percent": 59.8984
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14835204096
+                "used_bytes": 15451488256
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9920902595
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -11266,7 +11266,7 @@
         "correlation_id": "quality-architecture_decision-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.3639,
+          "latency_seconds": 2.3673,
           "selected_experts": [
             "general"
           ],
@@ -11301,16 +11301,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10936680448,
-                "used_bytes": 14833123328,
-                "used_percent": 57.5601
+                "available_bytes": 10336337920,
+                "used_bytes": 15433465856,
+                "used_percent": 59.8897
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -11320,26 +11320,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11215962112,
-                "used_bytes": 14553841664,
-                "used_percent": 56.4763
+                "available_bytes": 10648895488,
+                "used_bytes": 15120908288,
+                "used_percent": 58.6768
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14833123328
+                "used_bytes": 15433465856
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9912513987
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -11483,7 +11483,7 @@
         "correlation_id": "quality-architecture_decision-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.3763,
+          "latency_seconds": 2.3764,
           "selected_experts": [
             "general"
           ],
@@ -11518,16 +11518,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11220156416,
-                "used_bytes": 14549647360,
-                "used_percent": 56.4601
+                "available_bytes": 10654466048,
+                "used_bytes": 15115337728,
+                "used_percent": 58.6552
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -11537,26 +11537,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11317248000,
-                "used_bytes": 14452555776,
-                "used_percent": 56.0833
+                "available_bytes": 10647715840,
+                "used_bytes": 15122087936,
+                "used_percent": 58.6814
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14569635840
+                "used_bytes": 15144779776
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9912513987
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -11700,7 +11700,7 @@
         "correlation_id": "quality-context_strategy-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.1479,
+          "latency_seconds": 2.1548,
           "selected_experts": [
             "general"
           ],
@@ -11735,16 +11735,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11323981824,
-                "used_bytes": 14445821952,
-                "used_percent": 56.0572
+                "available_bytes": 10654728192,
+                "used_bytes": 15115075584,
+                "used_percent": 58.6542
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 824904253,
-                "used_bytes": 9912513987,
-                "used_percent": 92.3175
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -11754,26 +11754,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11687526400,
-                "used_bytes": 14082277376,
-                "used_percent": 54.6464
+                "available_bytes": 10789322752,
+                "used_bytes": 14980481024,
+                "used_percent": 58.1319
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14445821952
+                "used_bytes": 15134605312
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9912513987
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -11930,7 +11930,7 @@
         "correlation_id": "quality-context_strategy-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.164,
+          "latency_seconds": 2.1607,
           "selected_experts": [
             "general"
           ],
@@ -11965,16 +11965,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11687510016,
-                "used_bytes": 14082293760,
-                "used_percent": 54.6465
+                "available_bytes": 10793992192,
+                "used_bytes": 14975811584,
+                "used_percent": 58.1138
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -11984,26 +11984,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11566252032,
-                "used_bytes": 14203551744,
-                "used_percent": 55.117
+                "available_bytes": 10790993920,
+                "used_bytes": 14978809856,
+                "used_percent": 58.1254
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14204026880
+                "used_bytes": 15010938880
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -12160,7 +12160,7 @@
         "correlation_id": "quality-context_strategy-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.4769,
+          "latency_seconds": 2.6227,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -12201,16 +12201,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11563925504,
-                "used_bytes": 14205878272,
-                "used_percent": 55.1261
+                "available_bytes": 10799218688,
+                "used_bytes": 14970585088,
+                "used_percent": 58.0935
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 885648261,
+                "used_bytes": 10925511803,
+                "used_percent": 92.5016
               }
             },
             "after": {
@@ -12220,26 +12220,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10954489856,
-                "used_bytes": 14815313920,
-                "used_percent": 57.491
+                "available_bytes": 9066676224,
+                "used_bytes": 16703127552,
+                "used_percent": 64.8167
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 894036869,
+                "used_bytes": 10917123195,
+                "used_percent": 92.4306
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14830518272
+                "used_bytes": 16703127552
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10925511803
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -12396,7 +12396,7 @@
         "correlation_id": "quality-incident_plan-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.5757,
+          "latency_seconds": 2.986,
           "selected_experts": [
             "general"
           ],
@@ -12431,16 +12431,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10956570624,
-                "used_bytes": 14813233152,
-                "used_percent": 57.4829
+                "available_bytes": 9070624768,
+                "used_bytes": 16699179008,
+                "used_percent": 64.8013
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 894036869,
+                "used_bytes": 10917123195,
+                "used_percent": 92.4306
               }
             },
             "after": {
@@ -12450,26 +12450,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11116462080,
-                "used_bytes": 14653341696,
-                "used_percent": 56.8624
+                "available_bytes": 7113146368,
+                "used_bytes": 18656657408,
+                "used_percent": 72.3974
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 894036869,
+                "used_bytes": 10917123195,
+                "used_percent": 92.4306
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14813233152
+                "used_bytes": 18739658752
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10917123195
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -12638,7 +12638,7 @@
         "correlation_id": "quality-incident_plan-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.4606,
+          "latency_seconds": 4.3453,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -12667,8 +12667,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 5,
-            "available_sample_count": 5,
+            "sample_count": 6,
+            "available_sample_count": 6,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -12679,16 +12679,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11122393088,
-                "used_bytes": 14647410688,
-                "used_percent": 56.8394
+                "available_bytes": 6987448320,
+                "used_bytes": 18782355456,
+                "used_percent": 72.8851
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 894036869,
+                "used_bytes": 10917123195,
+                "used_percent": 92.4306
               }
             },
             "after": {
@@ -12698,26 +12698,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10790993920,
-                "used_bytes": 14978809856,
-                "used_percent": 58.1254
+                "available_bytes": 3655434240,
+                "used_bytes": 22114369536,
+                "used_percent": 85.815
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14978809856
+                "used_bytes": 22232776704
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10936249221
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -12894,7 +12894,7 @@
         "correlation_id": "quality-incident_plan-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 2.6177,
+          "latency_seconds": 2.9611,
           "selected_experts": [
             "general"
           ],
@@ -12929,16 +12929,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10788880384,
-                "used_bytes": 14980923392,
-                "used_percent": 58.1336
+                "available_bytes": 3898228736,
+                "used_bytes": 21871575040,
+                "used_percent": 84.8729
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "after": {
@@ -12948,26 +12948,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10883170304,
-                "used_bytes": 14886633472,
-                "used_percent": 57.7677
+                "available_bytes": 11959140352,
+                "used_bytes": 13810663424,
+                "used_percent": 53.5924
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14980923392
+                "used_bytes": 21871575040
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10936249221
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -13136,7 +13136,7 @@
         "correlation_id": "quality-privacy_flow-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.6798,
+          "latency_seconds": 3.6866,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -13177,16 +13177,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10887069696,
-                "used_bytes": 14882734080,
-                "used_percent": 57.7526
+                "available_bytes": 11957010432,
+                "used_bytes": 13812793344,
+                "used_percent": 53.6007
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "after": {
@@ -13196,26 +13196,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10852401152,
-                "used_bytes": 14917402624,
-                "used_percent": 57.8871
+                "available_bytes": 11224940544,
+                "used_bytes": 14544863232,
+                "used_percent": 56.4415
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14927151104
+                "used_bytes": 14544863232
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10936249221
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -13400,7 +13400,7 @@
         "correlation_id": "quality-privacy_flow-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.0213,
+          "latency_seconds": 3.0852,
           "selected_experts": [
             "general"
           ],
@@ -13423,8 +13423,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 4,
-            "available_sample_count": 4,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -13435,16 +13435,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10852270080,
-                "used_bytes": 14917533696,
-                "used_percent": 57.8876
+                "available_bytes": 11225153536,
+                "used_bytes": 14544650240,
+                "used_percent": 56.4407
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 874910843,
+                "used_bytes": 10936249221,
+                "used_percent": 92.5925
               }
             },
             "after": {
@@ -13454,26 +13454,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10959814656,
-                "used_bytes": 14809989120,
-                "used_percent": 57.4703
+                "available_bytes": 11399200768,
+                "used_bytes": 14370603008,
+                "used_percent": 55.7653
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14917533696
+                "used_bytes": 14604632064
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10936249221
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -13657,7 +13657,7 @@
         "correlation_id": "quality-privacy_flow-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.076,
+          "latency_seconds": 3.1218,
           "selected_experts": [
             "general"
           ],
@@ -13692,16 +13692,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10963599360,
-                "used_bytes": 14806204416,
-                "used_percent": 57.4556
+                "available_bytes": 11403509760,
+                "used_bytes": 14366294016,
+                "used_percent": 55.7486
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -13711,26 +13711,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11063181312,
-                "used_bytes": 14706622464,
-                "used_percent": 57.0692
+                "available_bytes": 11490312192,
+                "used_bytes": 14279491584,
+                "used_percent": 55.4117
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14806204416
+                "used_bytes": 14366294016
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -13914,7 +13914,7 @@
         "correlation_id": "quality-concise_rewrite-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.5298,
+          "latency_seconds": 0.5464,
           "selected_experts": [
             "general"
           ],
@@ -13949,16 +13949,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11066884096,
-                "used_bytes": 14702919680,
-                "used_percent": 57.0548
+                "available_bytes": 11490623488,
+                "used_bytes": 14279180288,
+                "used_percent": 55.4105
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -13968,26 +13968,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11012128768,
-                "used_bytes": 14757675008,
-                "used_percent": 57.2673
+                "available_bytes": 11405312000,
+                "used_bytes": 14364491776,
+                "used_percent": 55.7416
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14757675008
+                "used_bytes": 14364491776
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -14100,7 +14100,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.2285,
+          "latency_seconds": 0.2385,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -14135,16 +14135,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11014012928,
-                "used_bytes": 14755790848,
-                "used_percent": 57.26
+                "available_bytes": 11410374656,
+                "used_bytes": 14359429120,
+                "used_percent": 55.7219
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -14154,26 +14154,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10723917824,
-                "used_bytes": 15045885952,
-                "used_percent": 58.3857
+                "available_bytes": 11046191104,
+                "used_bytes": 14723612672,
+                "used_percent": 57.1351
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15045885952
+                "used_bytes": 14723612672
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -14286,7 +14286,7 @@
         "correlation_id": "quality-concise_rewrite-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.6172,
+          "latency_seconds": 0.6242,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -14327,16 +14327,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10723115008,
-                "used_bytes": 15046688768,
-                "used_percent": 58.3888
+                "available_bytes": 11042652160,
+                "used_bytes": 14727151616,
+                "used_percent": 57.1489
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -14346,26 +14346,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10857562112,
-                "used_bytes": 14912241664,
-                "used_percent": 57.8671
+                "available_bytes": 11038883840,
+                "used_bytes": 14730919936,
+                "used_percent": 57.1635
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15046688768
+                "used_bytes": 14730919936
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -14479,7 +14479,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.3362,
+          "latency_seconds": 0.3323,
           "selected_experts": [
             "fast_fallback"
           ],
@@ -14514,16 +14514,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10859331584,
-                "used_bytes": 14910472192,
-                "used_percent": 57.8602
+                "available_bytes": 11036934144,
+                "used_bytes": 14732869632,
+                "used_percent": 57.1711
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -14533,26 +14533,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10693787648,
-                "used_bytes": 15076016128,
-                "used_percent": 58.5026
+                "available_bytes": 11016617984,
+                "used_bytes": 14753185792,
+                "used_percent": 57.2499
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 15076016128
+                "used_bytes": 14753185792
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -14671,7 +14671,7 @@
         "correlation_id": "quality-three_bullet_summary-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.9993,
+          "latency_seconds": 0.9067,
           "selected_experts": [
             "fast_fallback",
             "general"
@@ -14712,16 +14712,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 10691690496,
-                "used_bytes": 15078113280,
-                "used_percent": 58.5108
+                "available_bytes": 11014766592,
+                "used_bytes": 14755037184,
+                "used_percent": 57.2571
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -14731,26 +14731,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 9017114624,
-                "used_bytes": 16752689152,
-                "used_percent": 65.009
+                "available_bytes": 11395416064,
+                "used_bytes": 14374387712,
+                "used_percent": 55.78
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 16752689152
+                "used_bytes": 14755037184
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -14869,7 +14869,7 @@
         "correlation_id": "quality-three_bullet_summary-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 0.8721,
+          "latency_seconds": 0.7956,
           "selected_experts": [
             "general"
           ],
@@ -14904,16 +14904,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 9023553536,
-                "used_bytes": 16746250240,
-                "used_percent": 64.984
+                "available_bytes": 11393695744,
+                "used_bytes": 14376108032,
+                "used_percent": 55.7866
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -14923,26 +14923,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 7450869760,
-                "used_bytes": 18318934016,
-                "used_percent": 71.0868
+                "available_bytes": 11318820864,
+                "used_bytes": 14450982912,
+                "used_percent": 56.0772
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 18318934016
+                "used_bytes": 14450982912
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -15061,7 +15061,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 4.6132,
+          "latency_seconds": 4.2417,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -15102,16 +15102,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 7459586048,
-                "used_bytes": 18310217728,
-                "used_percent": 71.053
+                "available_bytes": 11319197696,
+                "used_bytes": 14450606080,
+                "used_percent": 56.0757
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 833292861,
-                "used_bytes": 9904125379,
-                "used_percent": 92.2394
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -15121,26 +15121,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 6491799552,
-                "used_bytes": 19278004224,
-                "used_percent": 74.8085
+                "available_bytes": 11416944640,
+                "used_bytes": 14352859136,
+                "used_percent": 55.6964
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 21928558592
+                "used_bytes": 14697381888
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9904125379
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -15292,7 +15292,7 @@
         "correlation_id": "quality-italian_product_plan-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 4.1114,
+          "latency_seconds": 3.7444,
           "selected_experts": [
             "general"
           ],
@@ -15315,8 +15315,8 @@
             "status": "available",
             "scope": "host",
             "unit": "bytes",
-            "sample_count": 6,
-            "available_sample_count": 6,
+            "sample_count": 5,
+            "available_sample_count": 5,
             "sources": [
               "macos_vm_stat_and_sysctl"
             ],
@@ -15327,16 +15327,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 6525976576,
-                "used_bytes": 19243827200,
-                "used_percent": 74.6759
+                "available_bytes": 11417288704,
+                "used_bytes": 14352515072,
+                "used_percent": 55.6951
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -15346,26 +15346,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8591736832,
-                "used_bytes": 17178066944,
-                "used_percent": 66.6597
+                "available_bytes": 11513823232,
+                "used_bytes": 14255980544,
+                "used_percent": 55.3205
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 21962915840
+                "used_bytes": 14352515072
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9895736771
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -15516,7 +15516,7 @@
         "correlation_id": "quality-italian_product_plan-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 3.7179,
+          "latency_seconds": 3.7504,
           "selected_experts": [
             "general"
           ],
@@ -15551,16 +15551,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 8581414912,
-                "used_bytes": 17188388864,
-                "used_percent": 66.6997
+                "available_bytes": 11513970688,
+                "used_bytes": 14255833088,
+                "used_percent": 55.3199
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -15570,26 +15570,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 12206653440,
-                "used_bytes": 13563150336,
-                "used_percent": 52.632
+                "available_bytes": 11592630272,
+                "used_bytes": 14177173504,
+                "used_percent": 55.0147
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 17188388864
+                "used_bytes": 14271791104
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9895736771
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -15740,7 +15740,7 @@
         "correlation_id": "quality-security_review-single_general-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.1427,
+          "latency_seconds": 6.2415,
           "selected_experts": [
             "general"
           ],
@@ -15775,16 +15775,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 12205686784,
-                "used_bytes": 13564116992,
-                "used_percent": 52.6357
+                "available_bytes": 11590909952,
+                "used_bytes": 14178893824,
+                "used_percent": 55.0213
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 891688059,
+                "used_bytes": 10919472005,
+                "used_percent": 92.4505
               }
             },
             "after": {
@@ -15794,26 +15794,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11903336448,
-                "used_bytes": 13866467328,
-                "used_percent": 53.809
+                "available_bytes": 11416633344,
+                "used_bytes": 14353170432,
+                "used_percent": 55.6976
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 900076667,
+                "used_bytes": 10911083397,
+                "used_percent": 92.3794
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14027096064
+                "used_bytes": 14500659200
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9895736771
+                "used_bytes": 10919472005
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -15977,7 +15977,7 @@
         "correlation_id": "quality-security_review-moe_top1-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.1574,
+          "latency_seconds": 6.2737,
           "selected_experts": [
             "general"
           ],
@@ -16012,16 +16012,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11896373248,
-                "used_bytes": 13873430528,
-                "used_percent": 53.836
+                "available_bytes": 11419156480,
+                "used_bytes": 14350647296,
+                "used_percent": 55.6878
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 900076667,
+                "used_bytes": 10911083397,
+                "used_percent": 92.3794
               }
             },
             "after": {
@@ -16031,26 +16031,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11786764288,
-                "used_bytes": 13983039488,
-                "used_percent": 54.2613
+                "available_bytes": 11427790848,
+                "used_bytes": 14342012928,
+                "used_percent": 55.6543
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 900076667,
+                "used_bytes": 10911083397,
+                "used_percent": 92.3794
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14042890240
+                "used_bytes": 14412939264
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9895736771
+                "used_bytes": 10911083397
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -16214,7 +16214,7 @@
         "correlation_id": "quality-security_review-moe_top2-3",
         "execution": {
           "status": "ok",
-          "latency_seconds": 6.4961,
+          "latency_seconds": 6.614,
           "selected_experts": [
             "general",
             "fast_fallback"
@@ -16255,16 +16255,16 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11786764288,
-                "used_bytes": 13983039488,
-                "used_percent": 54.2613
+                "available_bytes": 11430215680,
+                "used_bytes": 14339588096,
+                "used_percent": 55.6449
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 900076667,
+                "used_bytes": 10911083397,
+                "used_percent": 92.3794
               }
             },
             "after": {
@@ -16274,26 +16274,26 @@
               "memory": {
                 "status": "available",
                 "total_bytes": 25769803776,
-                "available_bytes": 11634900992,
-                "used_bytes": 14134902784,
-                "used_percent": 54.8506
+                "available_bytes": 10931388416,
+                "used_bytes": 14838415360,
+                "used_percent": 57.5806
               },
               "swap": {
                 "status": "available",
-                "total_bytes": 10737418240,
-                "free_bytes": 841681469,
-                "used_bytes": 9895736771,
-                "used_percent": 92.1612
+                "total_bytes": 11811160064,
+                "free_bytes": 900076667,
+                "used_bytes": 10911083397,
+                "used_percent": 92.3794
               }
             },
             "peak_observed": {
               "memory": {
                 "status": "available",
-                "used_bytes": 14199914496
+                "used_bytes": 15037431808
               },
               "swap": {
                 "status": "available",
-                "used_bytes": 9895736771
+                "used_bytes": 10911083397
               }
             },
             "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -16453,8 +16453,8 @@
       "status": "available",
       "scope": "host",
       "unit": "bytes",
-      "sample_count": 305,
-      "available_sample_count": 305,
+      "sample_count": 310,
+      "available_sample_count": 310,
       "sources": [
         "macos_vm_stat_and_sysctl"
       ],
@@ -16465,16 +16465,16 @@
         "memory": {
           "status": "available",
           "total_bytes": 25769803776,
-          "available_bytes": 11983798272,
-          "used_bytes": 13786005504,
-          "used_percent": 53.4967
+          "available_bytes": 9849864192,
+          "used_bytes": 15919939584,
+          "used_percent": 61.7775
         },
         "swap": {
           "status": "available",
           "total_bytes": 10737418240,
-          "free_bytes": 388623237,
-          "used_bytes": 10348795003,
-          "used_percent": 96.3807
+          "free_bytes": 1689843139,
+          "used_bytes": 9047575101,
+          "used_percent": 84.2621
         }
       },
       "after": {
@@ -16484,26 +16484,26 @@
         "memory": {
           "status": "available",
           "total_bytes": 25769803776,
-          "available_bytes": 11630788608,
-          "used_bytes": 14139015168,
-          "used_percent": 54.8666
+          "available_bytes": 10934779904,
+          "used_bytes": 14835023872,
+          "used_percent": 57.5675
         },
         "swap": {
           "status": "available",
-          "total_bytes": 10737418240,
-          "free_bytes": 841681469,
-          "used_bytes": 9895736771,
-          "used_percent": 92.1612
+          "total_bytes": 11811160064,
+          "free_bytes": 900076667,
+          "used_bytes": 10911083397,
+          "used_percent": 92.3794
         }
       },
       "peak_observed": {
         "memory": {
           "status": "available",
-          "used_bytes": 21962915840
+          "used_bytes": 22583705600
         },
         "swap": {
           "status": "available",
-          "used_bytes": 10348795003
+          "used_bytes": 10959066235
         }
       },
       "peak_semantics": "maximum used_bytes among samples actually observed"
@@ -16537,35 +16537,35 @@
       },
       "truncation_rate": 0.0,
       "latency_seconds": {
-        "mean": 2.668,
-        "p50": 2.5887,
-        "p95": 5.8023
+        "mean": 2.6685,
+        "p50": 2.5687,
+        "p95": 5.7577
       },
       "latency_seconds_by_case": {
-        "architecture_decision#1": 2.8306,
-        "context_strategy#1": 2.1728,
-        "incident_plan#1": 2.5887,
-        "privacy_flow#1": 2.9257,
-        "concise_rewrite#1": 0.5156,
-        "three_bullet_summary#1": 0.7412,
-        "italian_product_plan#1": 3.4964,
-        "security_review#1": 5.8023,
-        "architecture_decision#2": 2.3693,
-        "context_strategy#2": 2.1489,
-        "incident_plan#2": 2.5908,
-        "privacy_flow#2": 2.9299,
-        "concise_rewrite#2": 0.5091,
-        "three_bullet_summary#2": 0.7311,
-        "italian_product_plan#2": 4.1249,
-        "security_review#2": 5.7471,
-        "architecture_decision#3": 2.3639,
-        "context_strategy#3": 2.1479,
-        "incident_plan#3": 2.6177,
-        "privacy_flow#3": 3.0213,
-        "concise_rewrite#3": 0.5298,
-        "three_bullet_summary#3": 0.8721,
-        "italian_product_plan#3": 4.1114,
-        "security_review#3": 6.1427
+        "architecture_decision#1": 2.5792,
+        "context_strategy#1": 2.1517,
+        "incident_plan#1": 2.5768,
+        "privacy_flow#1": 3.011,
+        "concise_rewrite#1": 0.7777,
+        "three_bullet_summary#1": 0.7844,
+        "italian_product_plan#1": 3.7334,
+        "security_review#1": 5.7428,
+        "architecture_decision#2": 2.381,
+        "context_strategy#2": 2.1418,
+        "incident_plan#2": 2.5687,
+        "privacy_flow#2": 3.1841,
+        "concise_rewrite#2": 0.528,
+        "three_bullet_summary#2": 0.744,
+        "italian_product_plan#2": 3.4857,
+        "security_review#2": 5.7577,
+        "architecture_decision#3": 2.3673,
+        "context_strategy#3": 2.1548,
+        "incident_plan#3": 2.9611,
+        "privacy_flow#3": 3.0852,
+        "concise_rewrite#3": 0.5464,
+        "three_bullet_summary#3": 0.7956,
+        "italian_product_plan#3": 3.7444,
+        "security_review#3": 6.2415
       },
       "completion_tokens_mean": 232.5,
       "host_memory": {
@@ -16579,17 +16579,17 @@
         ],
         "memory_used_bytes": {
           "status": "available",
-          "before_mean": 15150727168.0,
-          "after_mean": 14947054933.3333,
-          "peak_observed_mean": 15398553600.0,
-          "peak_observed_max": 21962915840
+          "before_mean": 16187495082.6667,
+          "after_mean": 15509867178.6667,
+          "peak_observed_mean": 16307525632.0,
+          "peak_observed_max": 22437953536
         },
         "swap_used_bytes": {
           "status": "available",
-          "before_mean": 9938041569.6667,
-          "after_mean": 9934196791.0,
-          "peak_observed_mean": 9938041569.6667,
-          "peak_observed_max": 10348795003
+          "before_mean": 10279775545.9583,
+          "after_mean": 10283579255.4167,
+          "peak_observed_mean": 10287074508.75,
+          "peak_observed_max": 10959066235
         },
         "peak_semantics": "maximum used_bytes among samples actually observed"
       },
@@ -16687,35 +16687,35 @@
       },
       "truncation_rate": 0.0,
       "latency_seconds": {
-        "mean": 2.5483,
-        "p50": 2.3778,
-        "p95": 6.1574
+        "mean": 2.5788,
+        "p50": 2.3764,
+        "p95": 5.7977
       },
       "latency_seconds_by_case": {
-        "architecture_decision#1": 2.3659,
-        "context_strategy#1": 2.178,
-        "incident_plan#1": 2.5693,
-        "privacy_flow#1": 2.9309,
-        "concise_rewrite#1": 0.2295,
-        "three_bullet_summary#1": 0.3164,
-        "italian_product_plan#1": 3.4963,
-        "security_review#1": 6.5976,
-        "architecture_decision#2": 2.3778,
-        "context_strategy#2": 2.1718,
-        "incident_plan#2": 2.5768,
-        "privacy_flow#2": 2.9255,
-        "concise_rewrite#2": 0.2191,
-        "three_bullet_summary#2": 0.3198,
-        "italian_product_plan#2": 3.5045,
-        "security_review#2": 5.7475,
-        "architecture_decision#3": 2.3763,
-        "context_strategy#3": 2.164,
-        "incident_plan#3": 2.5757,
-        "privacy_flow#3": 3.076,
-        "concise_rewrite#3": 0.2285,
-        "three_bullet_summary#3": 0.3362,
-        "italian_product_plan#3": 3.7179,
-        "security_review#3": 6.1574
+        "architecture_decision#1": 2.3596,
+        "context_strategy#1": 2.2136,
+        "incident_plan#1": 2.557,
+        "privacy_flow#1": 3.1934,
+        "concise_rewrite#1": 0.345,
+        "three_bullet_summary#1": 0.3467,
+        "italian_product_plan#1": 3.4877,
+        "security_review#1": 5.7977,
+        "architecture_decision#2": 2.3762,
+        "context_strategy#2": 2.1649,
+        "incident_plan#2": 2.5773,
+        "privacy_flow#2": 3.369,
+        "concise_rewrite#2": 0.2212,
+        "three_bullet_summary#2": 0.3399,
+        "italian_product_plan#2": 3.5291,
+        "security_review#2": 5.7738,
+        "architecture_decision#3": 2.3764,
+        "context_strategy#3": 2.1607,
+        "incident_plan#3": 2.986,
+        "privacy_flow#3": 3.1218,
+        "concise_rewrite#3": 0.2385,
+        "three_bullet_summary#3": 0.3323,
+        "italian_product_plan#3": 3.7504,
+        "security_review#3": 6.2737
       },
       "completion_tokens_mean": 228.625,
       "host_memory": {
@@ -16729,17 +16729,17 @@
         ],
         "memory_used_bytes": {
           "status": "available",
-          "before_mean": 14858589525.3333,
-          "after_mean": 14678397610.6667,
-          "peak_observed_mean": 15084205397.3333,
-          "peak_observed_max": 21181595648
+          "before_mean": 15844879018.6667,
+          "after_mean": 16137870677.3333,
+          "peak_observed_mean": 16312249002.6667,
+          "peak_observed_max": 21987409920
         },
         "swap_used_bytes": {
           "status": "available",
-          "before_mean": 9935245367.0,
-          "after_mean": 9934546316.3333,
-          "peak_observed_mean": 9935245367.0,
-          "peak_observed_max": 10281686139
+          "before_mean": 10235140287.0833,
+          "after_mean": 10249538983.2083,
+          "peak_observed_mean": 10250587559.2083,
+          "peak_observed_max": 10933900411
         },
         "peak_semantics": "maximum used_bytes among samples actually observed"
       },
@@ -16830,35 +16830,35 @@
       },
       "truncation_rate": 0.0,
       "latency_seconds": {
-        "mean": 3.0563,
-        "p50": 2.8053,
-        "p95": 6.3313
+        "mean": 3.161,
+        "p50": 2.8363,
+        "p95": 6.1326
       },
       "latency_seconds_by_case": {
-        "architecture_decision#1": 2.8053,
-        "context_strategy#1": 2.4971,
-        "incident_plan#1": 3.3766,
-        "privacy_flow#1": 3.5396,
-        "concise_rewrite#1": 0.6089,
-        "three_bullet_summary#1": 0.886,
-        "italian_product_plan#1": 4.0431,
-        "security_review#1": 6.3313,
-        "architecture_decision#2": 2.7716,
-        "context_strategy#2": 2.4689,
-        "incident_plan#2": 3.3602,
-        "privacy_flow#2": 3.5175,
-        "concise_rewrite#2": 0.6085,
-        "three_bullet_summary#2": 0.8909,
-        "italian_product_plan#2": 4.3191,
-        "security_review#2": 6.2068,
-        "architecture_decision#3": 2.7767,
-        "context_strategy#3": 2.4769,
-        "incident_plan#3": 3.4606,
-        "privacy_flow#3": 3.6798,
-        "concise_rewrite#3": 0.6172,
-        "three_bullet_summary#3": 0.9993,
-        "italian_product_plan#3": 4.6132,
-        "security_review#3": 6.4961
+        "architecture_decision#1": 2.8363,
+        "context_strategy#1": 2.4885,
+        "incident_plan#1": 3.4359,
+        "privacy_flow#1": 4.2042,
+        "concise_rewrite#1": 0.7772,
+        "three_bullet_summary#1": 1.2,
+        "italian_product_plan#1": 3.928,
+        "security_review#1": 6.0785,
+        "architecture_decision#2": 2.7651,
+        "context_strategy#2": 2.4811,
+        "incident_plan#2": 3.6432,
+        "privacy_flow#2": 4.5706,
+        "concise_rewrite#2": 0.6284,
+        "three_bullet_summary#2": 0.8966,
+        "italian_product_plan#2": 3.9686,
+        "security_review#2": 6.1326,
+        "architecture_decision#3": 2.7869,
+        "context_strategy#3": 2.6227,
+        "incident_plan#3": 4.3453,
+        "privacy_flow#3": 3.6866,
+        "concise_rewrite#3": 0.6242,
+        "three_bullet_summary#3": 0.9067,
+        "italian_product_plan#3": 4.2417,
+        "security_review#3": 6.614
       },
       "completion_tokens_mean": 363.875,
       "host_memory": {
@@ -16872,17 +16872,17 @@
         ],
         "memory_used_bytes": {
           "status": "available",
-          "before_mean": 14988516693.3333,
-          "after_mean": 15385805482.6667,
-          "peak_observed_mean": 15778169514.6667,
-          "peak_observed_max": 21928558592
+          "before_mean": 16188110165.3333,
+          "after_mean": 16538425344.0,
+          "peak_observed_mean": 17007990784.0,
+          "peak_observed_max": 22583705600
         },
         "swap_used_bytes": {
           "status": "available",
-          "before_mean": 9935245367.0,
-          "after_mean": 9920911770.0,
-          "peak_observed_mean": 9935245367.0,
-          "peak_observed_max": 10273297531
+          "before_mean": 10233067601.875,
+          "after_mean": 10292262775.4167,
+          "peak_observed_mean": 10298903756.75,
+          "peak_observed_max": 10959066235
         },
         "peak_semantics": "maximum used_bytes among samples actually observed"
       },
@@ -16955,16 +16955,16 @@
         "quality_delta": 0.0,
         "task_success_delta": 0.0,
         "failure_rate_delta": 0.0,
-        "latency_ratio": 0.9551,
-        "routed_latency_ratio": 0.4309,
+        "latency_ratio": 0.9664,
+        "routed_latency_ratio": 0.4393,
         "routed_latency_ratio_statistic": "median_of_per_case_ratios",
         "routed_latency_ratios_by_case": {
-          "concise_rewrite#1": 0.4451,
-          "three_bullet_summary#1": 0.4269,
-          "concise_rewrite#2": 0.4304,
-          "three_bullet_summary#2": 0.4374,
-          "concise_rewrite#3": 0.4313,
-          "three_bullet_summary#3": 0.3855
+          "concise_rewrite#1": 0.4436,
+          "three_bullet_summary#1": 0.442,
+          "concise_rewrite#2": 0.4189,
+          "three_bullet_summary#2": 0.4569,
+          "concise_rewrite#3": 0.4365,
+          "three_bullet_summary#3": 0.4177
         },
         "routed_case_count": 6
       },
@@ -16972,7 +16972,7 @@
         "quality_delta": -0.0562,
         "task_success_delta": -0.25,
         "failure_rate_delta": 0.0,
-        "latency_ratio": 1.1455,
+        "latency_ratio": 1.1846,
         "routed_latency_ratio": null,
         "routed_latency_ratio_statistic": "median_of_per_case_ratios",
         "routed_latency_ratios_by_case": {},
@@ -17022,7 +17022,7 @@
         "quality_score": 0.975,
         "failure_rate": 0.0,
         "truncation_rate": 0.0,
-        "mean_latency_seconds": 2.668,
+        "mean_latency_seconds": 2.6685,
         "maximum_mean_latency_seconds": 30.0,
         "absolute_latency_passed": true
       },
@@ -17034,7 +17034,7 @@
         "quality_score": 0.975,
         "failure_rate": 0.0,
         "truncation_rate": 0.0,
-        "mean_latency_seconds": 2.5483,
+        "mean_latency_seconds": 2.5788,
         "maximum_mean_latency_seconds": 30.0,
         "absolute_latency_passed": true
       }
@@ -17046,16 +17046,16 @@
         "quality_delta": 0.0,
         "task_success_delta": 0.0,
         "failure_rate_delta": 0.0,
-        "latency_ratio": 0.9551,
-        "routed_latency_ratio": 0.4309,
+        "latency_ratio": 0.9664,
+        "routed_latency_ratio": 0.4393,
         "routed_latency_ratio_statistic": "median_of_per_case_ratios",
         "routed_latency_ratios_by_case": {
-          "concise_rewrite#1": 0.4451,
-          "three_bullet_summary#1": 0.4269,
-          "concise_rewrite#2": 0.4304,
-          "three_bullet_summary#2": 0.4374,
-          "concise_rewrite#3": 0.4313,
-          "three_bullet_summary#3": 0.3855
+          "concise_rewrite#1": 0.4436,
+          "three_bullet_summary#1": 0.442,
+          "concise_rewrite#2": 0.4189,
+          "three_bullet_summary#2": 0.4569,
+          "concise_rewrite#3": 0.4365,
+          "three_bullet_summary#3": 0.4177
         },
         "routed_case_count": 6,
         "non_general_route_rate": 0.25,
@@ -17080,14 +17080,14 @@
       "required": true,
       "sampling_status": "available",
       "sampling_complete": true,
-      "sample_count": 305,
-      "available_sample_count": 305,
+      "sample_count": 310,
+      "available_sample_count": 310,
       "sample_coverage": 1.0,
       "minimum_sample_coverage": 0.9,
       "counters_available": true,
-      "swap_growth_bytes": -453058232,
+      "swap_growth_bytes": 1863508296,
       "maximum_swap_growth_bytes": 4294967296,
-      "peak_ram_used_percent": 85.2273,
+      "peak_ram_used_percent": 87.6363,
       "maximum_peak_ram_used_percent": 95.0,
       "unavailable_semantics": "required RAM or swap counters make the release benchmark fail; offline CI may skip only a blocked or absent live artifact"
     },
