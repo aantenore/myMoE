@@ -46,6 +46,7 @@ class CiRunnerTests(unittest.TestCase):
                 "bound cell attestor contract benchmark",
                 "bound cell run contract benchmark",
                 "cooperative resource lease contract benchmark",
+                "speculative cell qualifier contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -163,6 +164,21 @@ class CiRunnerTests(unittest.TestCase):
                 "--check",
                 "--out",
                 "outputs/cooperative-resource-lease-contract.json",
+            ],
+        )
+        speculative_benchmark = next(
+            step
+            for step in steps
+            if step.name == "speculative cell qualifier contract benchmark"
+        )
+        self.assertEqual(
+            speculative_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_speculative_cell_qualifier.py",
+                "--check",
+                "--out",
+                "outputs/speculative-cell-qualifier-contract.json",
             ],
         )
 

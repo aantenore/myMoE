@@ -56,18 +56,22 @@ REQUIRED_SDIST_ARTIFACTS = (
     "configs/cell-binding-request.example.json",
     "configs/local-cascade.example.json",
     "configs/local-cascade-moe.example.json",
+    "configs/speculative-cell-plan.example.json",
     "docs/cell-runtime-binding.md",
     "docs/bound-cell-run.md",
     "docs/cooperative-resource-lease.md",
     "docs/local-cascade.md",
+    "docs/speculative-cell-qualifier.md",
     "experiments/benchmark_runtime_binding.py",
     "experiments/benchmark_bound_cell_run.py",
     "experiments/benchmark_cooperative_resource_lease.py",
     "experiments/benchmark_local_cascade.py",
+    "experiments/benchmark_speculative_cell_qualifier.py",
     "outputs/runtime-binding-contract.json",
     "outputs/bound-cell-run-contract.json",
     "outputs/cooperative-resource-lease-contract.json",
     "outputs/local-cascade-contract-benchmark.json",
+    "outputs/speculative-cell-qualifier-contract.json",
     "scripts/run_packaging_smoke.py",
     "plugins/mymoe-local-cascade/.codex-plugin/plugin.json",
     "plugins/mymoe-local-cascade/.mcp.json",
@@ -174,8 +178,11 @@ def main() -> None:
                 "from local_moe import ("
                 "_win32_fs, artifact_tree, bound_cell_run, bound_cell_run_contracts, "
                 "bound_cell_run_envelope, cooperative_resource_lease, "
-                "cooperative_resource_lease_contracts, runtime_binding_cli, "
-                "runtime_binding_contracts, runtime_binding_inspector); "
+                "cooperative_resource_lease_contracts, "
+                "llama_cpp_speculative_adapter, runtime_binding_cli, "
+                "runtime_binding_contracts, runtime_binding_inspector, "
+                "speculative_cell_cli, speculative_cell_contracts, "
+                "speculative_cell_qualifier); "
                 "print(Path(local_moe.__file__).resolve()); "
                 "print(Path(_win32_fs.__file__).resolve()); "
                 "print(Path(artifact_tree.__file__).resolve()); "
@@ -184,9 +191,13 @@ def main() -> None:
                 "print(Path(bound_cell_run_envelope.__file__).resolve()); "
                 "print(Path(cooperative_resource_lease.__file__).resolve()); "
                 "print(Path(cooperative_resource_lease_contracts.__file__).resolve()); "
+                "print(Path(llama_cpp_speculative_adapter.__file__).resolve()); "
                 "print(Path(runtime_binding_cli.__file__).resolve()); "
                 "print(Path(runtime_binding_contracts.__file__).resolve()); "
-                "print(Path(runtime_binding_inspector.__file__).resolve())",
+                "print(Path(runtime_binding_inspector.__file__).resolve()); "
+                "print(Path(speculative_cell_cli.__file__).resolve()); "
+                "print(Path(speculative_cell_contracts.__file__).resolve()); "
+                "print(Path(speculative_cell_qualifier.__file__).resolve())",
             ],
             cwd=runtime_dir,
             env=runtime_environment,
@@ -197,7 +208,7 @@ def main() -> None:
         package_locations = tuple(
             Path(line) for line in location_result.stdout.splitlines() if line
         )
-        if len(package_locations) != 11 or any(
+        if len(package_locations) != 15 or any(
             not location.is_relative_to(venv_dir.resolve())
             for location in package_locations
         ):
@@ -210,6 +221,7 @@ def main() -> None:
             scripts_dir, "mymoe-local-cascade-mcp"
         )
         mymoe_paired = _console_script(scripts_dir, "mymoe-paired")
+        mymoe_speculative = _console_script(scripts_dir, "mymoe-speculative")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
         _run_installed_local_cascade_mcp_smoke(
             python,
@@ -352,6 +364,53 @@ def main() -> None:
                 "mymoe-paired console script did not expose the expected help output."
             )
 
+        speculative_help_result = subprocess.run(
+            [str(mymoe_speculative), "--help"],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        if "exact llama.cpp speculative-decoding cell" not in (
+            speculative_help_result.stdout
+        ):
+            raise SystemExit(
+                "mymoe-speculative console script omitted its qualification boundary."
+            )
+        speculative_plan = runtime_dir / "speculative-plan.json"
+        subprocess.run(
+            [
+                str(mymoe_speculative),
+                "init",
+                "--out",
+                str(speculative_plan),
+                "--json",
+            ],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        speculative_inspect = subprocess.run(
+            [
+                str(mymoe_speculative),
+                "inspect",
+                "--plan",
+                str(speculative_plan),
+                "--json",
+            ],
+            cwd=runtime_dir,
+            env=runtime_environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        if json.loads(speculative_inspect.stdout).get("status") != "valid":
+            raise SystemExit("Installed mymoe-speculative template did not validate.")
+        speculative_plan.unlink()
+
         _run_installed_web_smoke(
             mymoe_web,
             runtime_dir,
@@ -387,6 +446,7 @@ def main() -> None:
                         str(mymoe),
                         str(mymoe_local_cascade_mcp),
                         str(mymoe_paired),
+                        str(mymoe_speculative),
                         str(mymoe_web),
                     ],
                 },

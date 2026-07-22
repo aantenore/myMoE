@@ -4,6 +4,47 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0-alpha.1] - 2026-07-22
+
+### Added
+
+- Speculative Cell Qualifier contracts with one shared llama.cpp execution
+  binding for runtime binary/manifest, target, hardware, non-speculative config,
+  request policy, regime protocol, harness, collector, adapter, and qualifier;
+  each arm can differ only by its bound speculative delta.
+- Frozen case digests, cold and warm regimes, global trial sequence indices,
+  deterministic AB/BA order, and complete-trial enforcement to make missing,
+  failed, reordered, or selectively retained observations abstain.
+- Independent cold and warm gates for exact output/token equality, median
+  generation speedup, p95 end-to-end latency, p95 time to first token, peak
+  memory, and draft-token acceptance. Receipts are internally coherent,
+  host-attested, unsigned, advisory, and invariantly non-authorizing.
+- A bounded text-only llama.cpp response adapter that cross-checks standard
+  usage against server timings, retains only a canonical output-envelope
+  SHA-256, rejects tool/reasoning surfaces, and never starts, stops, downloads,
+  or contacts a model.
+- The installable `mymoe-speculative` offline CLI with a self-contained,
+  no-clobber `init` template; deterministic contract benchmark, checked
+  artifact, package smoke coverage, threat model, and
+  qualified/rejected/abstained tests.
+
+### Known limitations
+
+- The checked artifact is a synthetic, model-free contract fixture. It proves
+  deterministic binding and gate arithmetic, not live acceleration, energy
+  savings, model quality, collector honesty, real cold state, or representative
+  workload coverage.
+- The first adapter parses already captured llama.cpp response and host metrics;
+  an operator-owned collector must still enforce numeric-loopback transport,
+  process identity, restart-based cold trials, monotonic timing, and process-tree
+  memory/swap measurement.
+- Cross-request stateful `ngram-cache` and `ngram-mod` modes are excluded until
+  a collector binds cache/reset telemetry. A future collector should wrap a
+  pinned upstream SPEED-Bench revision rather than duplicate its timing loop.
+- A `qualified` receipt cannot edit a profile or authorize runtime activation.
+  Stable payload-free hashes can still reveal repeated or low-entropy workload
+  shape and should remain private by default.
+
 ## [0.14.0-alpha.1] - 2026-07-22
 
 ### Added

@@ -67,17 +67,23 @@ The gate currently performs these steps:
    unified memory, and contract-qualified discrete pools. It has no wall-clock
    threshold and makes no OS reservation, runtime-management, or performance
    claim.
-14. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+14. Regenerate and byte-check the deterministic Speculative Cell Qualifier
+   artifact. Its synthetic AB/BA cold/warm fixture covers qualified, rejected,
+   and abstained decisions, llama.cpp timing/usage parsing, payload-free output
+   binding, and the non-authorizing receipt. It does not contact a model or
+   establish live acceleration.
+15. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-15. Refresh the hardware profile artifact.
-16. Run the packaging smoke test, which installs the project in a temporary
+16. Refresh the hardware profile artifact.
+17. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe`, `mymoe-paired`, and
-   `mymoe-web` console scripts, packaged browser, desktop, and Advisor templates,
+   `mymoe-speculative`, and `mymoe-web` console scripts, packaged browser,
+   desktop, and Advisor templates,
    and the installed workspace initializers. It also imports `artifact_tree`
    plus the Bound Cell binding, run, cooperative-lease, and V2-envelope modules
    from the isolated wheel after installing the locked base dependencies,

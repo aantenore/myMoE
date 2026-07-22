@@ -979,7 +979,7 @@ wheels = [
 
 [[package]]
 name = "local-moe-orchestrator"
-version = "0.14.0a1"
+version = "0.15.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "filelock" },

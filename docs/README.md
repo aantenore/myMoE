@@ -11,6 +11,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
 | Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |
 | Stop participating local agents from counting the same observed free memory twice | [Cooperative Resource Lease](cooperative-resource-lease.md) |
+| Check whether speculative decoding really speeds up one exact llama.cpp cell | [Speculative Cell Qualifier](speculative-cell-qualifier.md) |
 | Use that exact already-running numeric-loopback cell for one guarded inference attempt | [Bound Cell Run v1](bound-cell-run.md) |
 | Use Cline as a private local coding agent | [Local Coding Fabric](local-coding-fabric.md) |
 | Exercise a local web app with a local model | [Browser Capability Cell](browser-capability-cell.md) |
@@ -37,6 +38,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Adaptive Cell Advisor](adaptive-cell-advisor.md) — whole-cell passports, live resource admission, safe abstention, mini-app/API, deterministic contract benchmark, and market boundary.
 - [Adaptive Cell Execution Gate](cell-execution-gate.md) — receipt-bound fresh admission, exact drift checks, strict dry-run policy, and a non-authorizing result.
 - [Cooperative Resource Lease](cooperative-resource-lease.md) — atomic same-user/same-host accounting, conservative pool claims, delivery fencing, crash quarantine, strict receipts, and the boundary between cooperation and real RAM/VRAM reservation.
+- [Speculative Cell Qualifier](speculative-cell-qualifier.md) — preregistered AB/BA cold/warm comparison of one baseline and one speculative llama.cpp cell, with output, latency, memory, acceptance, and non-authority gates.
 - [Bound Cell Run v1](bound-cell-run.md) — implemented alpha with pre-inspection, snapshot-bound atomic cooperative admission, two `GET /models` probes, one delivery-fenced compute-only completion `POST`, and a post-inspection; no tools, lifecycle, retry, process/residency attestation, or arbitrary semantic-correctness claim.
 - [Local Coding Fabric](local-coding-fabric.md) — exact Cline connection, gateway contract, 24 GiB resource modes, network boundaries, and desktop sidecar roadmap.
 - [Browser Capability Cell](browser-capability-cell.md) — persistent local-only browser tools, deterministic canary, exact approvals, schema attestation, and desktop adapter roadmap.
@@ -56,6 +58,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Installation](installation.md) — Apple Silicon MLX, Windows/Linux Ollama, llama.cpp, model profiles, startup, and Doctor.
 - [Local Coding Fabric](local-coding-fabric.md#five-minute-cline-setup) — connect Cline to the running local gateway.
 - [Cooperative Resource Lease](cooperative-resource-lease.md#exact-state-machine) — understand acquisition, delivery fencing, release, sticky unknown outcomes, and operational limits.
+- [Speculative Cell Qualifier contract benchmark](speculative-cell-qualifier.md#deterministic-contract-benchmark) — exercise qualified, rejected, and abstained paths without starting or contacting a model.
 - [Bound Cell Run v1](bound-cell-run.md#command-workflow) — explicitly confirm one exact admitted inference attempt and keep its metadata-only evidence envelope separate from the answer; confirmation authorizes only that invocation.
 - [UI and CLI](ui.md) — chat behavior, streaming, session management, memory, local data, Advanced panels, API examples, and screenshots.
 - [Gemma 4 E4B Runtime](gemma-e4b-runtime.md) — pinned dependency compatibility and measured result for that optional profile.

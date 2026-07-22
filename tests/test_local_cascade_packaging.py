@@ -28,13 +28,13 @@ class LocalCascadePackagingContractTests(unittest.TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
 
-        self.assertIn('version = "0.14.0a1"', pyproject)
+        self.assertIn('version = "0.15.0a1"', pyproject)
         self.assertIn('local-cascade = [\n  "mcp>=1.27.2,<2"\n]', pyproject)
         self.assertIn(
             'mymoe-local-cascade-mcp = "local_moe.local_cascade_mcp:main"',
             pyproject,
         )
-        self.assertIn('name = "local-moe-orchestrator"\nversion = "0.14.0a1"', lock)
+        self.assertIn('name = "local-moe-orchestrator"\nversion = "0.15.0a1"', lock)
         self.assertIn(
             '{ name = "mcp", marker = "extra == \'local-cascade\'", '
             'specifier = ">=1.27.2,<2" }',

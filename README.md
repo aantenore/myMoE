@@ -8,6 +8,7 @@ without paying for every request. Today it connects local models to a coding
 agent, explains which fully evidenced local setup is eligible for a task, can
 recheck that exact recommendation against current resources, prevents
 participating local agents from counting the same observed free memory twice,
+can reject speculative decoding when it makes an exact local cell slower,
 and can use the bound cell for one guarded local attempt,
 tests whether one exact setup can complete a controlled coding task, lets its
 built-in agent exercise simple local web apps, and can read the semantic
@@ -59,6 +60,47 @@ it does not qualify any model or route. See the
 [matching local expert configuration](configs/local-cascade-moe.example.json),
 and the
 [checked contract report](outputs/local-cascade-contract-benchmark.json).
+
+## Will speculative decoding actually make this exact local setup faster?
+
+**The Speculative Cell Qualifier measures before recommending.** Speculative
+decoding can let a target model verify several predicted tokens at once, but a
+draft model or n-gram strategy also consumes memory and compute. The result can
+be faster, unchanged, or slower depending on the exact target, draft, llama.cpp
+revision, launch configuration, machine, and workload.
+
+myMoE now compares one frozen baseline with one speculative delta under a single
+shared execution binding: binary, runtime manifest, target, hardware, request
+policy, harness, collector, and every non-speculative launch setting are fixed.
+The global AB/BA schedule covers cold and warm trials, and **each regime must
+pass independently** on exact text output, generation speed, p95 end-to-end
+latency, p95 time to first token, peak memory, failures, and draft-token
+acceptance. The result is `qualified`, `rejected`, or `abstained`; even
+`qualified` is an unsigned, advisory receipt and never changes the runtime.
+
+Try the model-free contract benchmark:
+
+```bash
+uv run python experiments/benchmark_speculative_cell_qualifier.py --check
+```
+
+Use the installed offline evaluator with a frozen plan and payload-free JSONL
+observations:
+
+```bash
+mymoe-speculative init --out ./speculative-plan.json --json
+mymoe-speculative qualify \
+  --plan ./speculative-plan.json \
+  --trials ./speculative-trials.jsonl \
+  --out ./speculative-receipt.json \
+  --json
+```
+
+The current llama.cpp adapter accepts only completed text-only responses and
+turns the content surface plus finish reason into digest-only evidence; tool
+calls and hidden-reasoning surfaces fail closed. It does not start, stop,
+download, or contact a model. See the [Speculative Cell Qualifier guide](docs/speculative-cell-qualifier.md)
+and the [checked contract artifact](outputs/speculative-cell-qualifier-contract.json).
 
 ## Did the declared local cell change?
 
@@ -733,6 +775,7 @@ Start with the [documentation hub](docs/README.md).
 - [Architecture](docs/architecture.md) — design decisions, components, modes, and validation gates.
 - [Adaptive Cell Execution Gate](docs/cell-execution-gate.md) — fresh exact-cell admission preview, drift reasons, and non-authorizing receipt.
 - [Cooperative Resource Lease](docs/cooperative-resource-lease.md) — atomic same-host accounting, memory-pool claims, crash fencing, receipts, and explicit non-guarantees.
+- [Speculative Cell Qualifier](docs/speculative-cell-qualifier.md) — evidence-bound baseline-versus-speculative qualification for one exact llama.cpp cell, with AB/BA cold/warm gates and no automatic activation.
 - [Bound Cell Run v1](docs/bound-cell-run.md) — one guarded inference attempt on an explicit numeric-loopback cell, atomic cooperative admission, two model probes, pre/post sampled static evidence, a metadata-only V2 envelope, and explicit alpha limits.
 - [Execution Scope Guard](docs/execution-scopes.md) — scope/transport policy, fail-closed behavior, and Mesh trust boundary.
 - [Routing](docs/router.md) — scoring, multilingual coverage, distillation, and fallback behavior.

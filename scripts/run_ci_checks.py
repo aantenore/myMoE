@@ -171,6 +171,16 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "speculative cell qualifier contract benchmark",
+            [
+                python,
+                "experiments/benchmark_speculative_cell_qualifier.py",
+                "--check",
+                "--out",
+                "outputs/speculative-cell-qualifier-contract.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,

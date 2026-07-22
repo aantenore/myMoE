@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "replace-with-exact-cell-plan",
+  "execution": {
+    "schema_version": "1.0",
+    "runtime": "llama.cpp",
+    "runtime_revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runtime_binary_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "runtime_binding_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "hardware_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "target_model_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "shared_runtime_config_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "request_policy_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "regime_protocol_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "harness_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "collector_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "adapter_contract_sha256": "20700b5834d2d121549c07db263a12615fba3ee7482fdefcd82fa62bda66436d",
+    "qualifier_contract_sha256": "47cda8742bffb41d97c9092b420f59579500ec7b52a79105f0dd1a1aacb840c7",
+    "digest": ""
+  },
+  "baseline": {
+    "schema_version": "1.0",
+    "cell_id": "replace-baseline-cell",
+    "draft_model_sha256": null,
+    "speculation_config_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "speculation_mode": "none",
+    "digest": ""
+  },
+  "candidate": {
+    "schema_version": "1.0",
+    "cell_id": "replace-speculative-cell",
+    "draft_model_sha256": null,
+    "speculation_config_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "speculation_mode": "ngram-simple",
+    "digest": ""
+  },
+  "workload_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+  "case_sha256s": [
+    "8888888888888888888888888888888888888888888888888888888888888888",
+    "9999999999999999999999999999999999999999999999999999999999999999",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "order_seed_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "policy": {
+    "schema_version": "1.0",
+    "trials_per_case": 4,
+    "minimum_median_speedup_ratio": 1.1,
+    "maximum_p95_latency_ratio": 1.0,
+    "maximum_p95_ttft_ratio": 1.05,
+    "minimum_acceptance_rate": 0.05,
+    "maximum_candidate_peak_memory_bytes": 25769803776,
+    "digest": ""
+  },
+  "required_regimes": [
+    "cold",
+    "warm"
+  ],
+  "authority": "advisory_only",
+  "digest": ""
+}
