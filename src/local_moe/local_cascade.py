@@ -26,6 +26,8 @@ from .local_cascade_contracts import (
 
 
 Clock = Callable[[], float]
+MAX_JSON_NESTING_DEPTH = 64
+MAX_JSON_NODES = 16_384
 
 
 def _new_run_id() -> str:
@@ -301,7 +303,32 @@ def _strict_json_object(content: str) -> tuple[dict[str, object] | None, str | N
         return None, "invalid_json"
     if not isinstance(parsed, dict):
         return None, "json_not_object"
+    if not _json_within_structural_limits(parsed):
+        return None, "invalid_json"
     return parsed, None
+
+
+def _json_within_structural_limits(value: object) -> bool:
+    """Bound JSON value nodes and container depth without recursive traversal."""
+
+    stack: list[tuple[object, int]] = [(value, 0)]
+    observed_nodes = 0
+    while stack:
+        node, parent_container_depth = stack.pop()
+        observed_nodes += 1
+        if observed_nodes > MAX_JSON_NODES:
+            return False
+        if isinstance(node, dict):
+            children = node.values()
+        elif isinstance(node, list):
+            children = node
+        else:
+            continue
+        container_depth = parent_container_depth + 1
+        if container_depth > MAX_JSON_NESTING_DEPTH:
+            return False
+        stack.extend((child, container_depth) for child in children)
+    return True
 
 
 def _matches_json_kind(value: object, kind: str) -> bool:

@@ -4,6 +4,8 @@ import json
 import unittest
 
 from local_moe.local_cascade import (
+    MAX_JSON_NESTING_DEPTH,
+    MAX_JSON_NODES,
     LocalCascadeRun,
     run_local_cascade,
     verify_local_cascade_content,
@@ -461,6 +463,98 @@ class LocalCascadeVerifierTests(unittest.TestCase):
 
         self.assertFalse(result.passed)
         self.assertEqual(result.reason_codes, ("invalid_json",))
+
+    def test_json_object_depth_limit_is_explicit_and_deterministic(self) -> None:
+        verifier = LocalCascadeVerifierV1(
+            output_format="json_object",
+            min_characters=2,
+            max_characters=262_144,
+            json_fields=(
+                LocalCascadeJsonFieldV1(
+                    name="payload",
+                    value_kind="object",
+                    required=True,
+                ),
+            ),
+        )
+
+        at_limit = (
+            '{"payload":'
+            + ('{"nested":' * (MAX_JSON_NESTING_DEPTH - 1))
+            + "null"
+            + ("}" * (MAX_JSON_NESTING_DEPTH - 1))
+            + "}"
+        )
+        above_limit = (
+            '{"payload":'
+            + ('{"nested":' * MAX_JSON_NESTING_DEPTH)
+            + "null"
+            + ("}" * MAX_JSON_NESTING_DEPTH)
+            + "}"
+        )
+
+        self.assertTrue(verify_local_cascade_content(at_limit, verifier).passed)
+        self.assertEqual(
+            verify_local_cascade_content(above_limit, verifier).reason_codes,
+            ("invalid_json",),
+        )
+
+    def test_json_array_depth_limit_is_explicit_and_deterministic(self) -> None:
+        verifier = LocalCascadeVerifierV1(
+            output_format="json_object",
+            min_characters=2,
+            max_characters=262_144,
+            json_fields=(
+                LocalCascadeJsonFieldV1(
+                    name="payload",
+                    value_kind="array",
+                    required=True,
+                ),
+            ),
+        )
+
+        at_limit = (
+            '{"payload":'
+            + ("[" * (MAX_JSON_NESTING_DEPTH - 1))
+            + "0"
+            + ("]" * (MAX_JSON_NESTING_DEPTH - 1))
+            + "}"
+        )
+        above_limit = (
+            '{"payload":'
+            + ("[" * MAX_JSON_NESTING_DEPTH)
+            + "0"
+            + ("]" * MAX_JSON_NESTING_DEPTH)
+            + "}"
+        )
+
+        self.assertTrue(verify_local_cascade_content(at_limit, verifier).passed)
+        self.assertEqual(
+            verify_local_cascade_content(above_limit, verifier).reason_codes,
+            ("invalid_json",),
+        )
+
+    def test_json_node_limit_counts_values_without_recursive_walk(self) -> None:
+        verifier = LocalCascadeVerifierV1(
+            output_format="json_object",
+            min_characters=2,
+            max_characters=262_144,
+            json_fields=(
+                LocalCascadeJsonFieldV1(
+                    name="items",
+                    value_kind="array",
+                    required=True,
+                ),
+            ),
+        )
+        at_limit = json.dumps({"items": [0] * (MAX_JSON_NODES - 2)})
+        above_limit = json.dumps({"items": [0] * (MAX_JSON_NODES - 1)})
+
+        self.assertTrue(verify_local_cascade_content(at_limit, verifier).passed)
+        self.assertEqual(
+            verify_local_cascade_content(above_limit, verifier).reason_codes,
+            ("invalid_json",),
+        )
 
     def test_text_bounds_are_deterministic(self) -> None:
         verifier = LocalCascadeVerifierV1(
