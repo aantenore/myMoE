@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import time
 from typing import Callable, Protocol
+from uuid import uuid4
 
 from .local_cascade_contracts import (
     LocalCascadeAttemptReceiptV1,
@@ -13,8 +15,10 @@ from .local_cascade_contracts import (
     LocalCascadeContractError,
     LocalCascadeReceiptV1,
     LocalCascadeTaskV1,
+    LocalCascadeTierV1,
     LocalCascadeTokenCountV1,
     LocalCascadeVerifierV1,
+    build_local_cascade_evidence_sha256,
     build_token_totals,
     sha256_json,
     sha256_text,
@@ -22,6 +26,10 @@ from .local_cascade_contracts import (
 
 
 Clock = Callable[[], float]
+
+
+def _new_run_id() -> str:
+    return f"cascade-run-{uuid4().hex}"
 
 
 class LocalCascadeAttemptPort(Protocol):
@@ -41,7 +49,7 @@ class LocalCascadeVerification:
 
 @dataclass(frozen=True)
 class LocalCascadeRun:
-    """Keeps accepted content outside the metadata-only receipt."""
+    """Keep content outside metadata; deterministic digests remain correlatable."""
 
     content: str | None
     receipt: LocalCascadeReceiptV1
@@ -87,7 +95,10 @@ def verify_local_cascade_content(
         elif parsed is not None:
             expected = {field.name: field for field in verifier.json_fields}
             present = set(parsed)
-            if any(field.required and field.name not in present for field in expected.values()):
+            if any(
+                field.required and field.name not in present
+                for field in expected.values()
+            ):
                 reasons.append("missing_json_field")
             if not verifier.allow_extra_json_fields and present - set(expected):
                 reasons.append("unexpected_json_field")
@@ -151,6 +162,7 @@ def run_local_cascade(
             tier=tier,
             attempt_number=attempt_number,
             verifier_reason_codes=prior_reasons,
+            requested_execution_scope=config.requested_execution_scope,
         )
         attempt_started = clock()
         try:
@@ -175,9 +187,13 @@ def run_local_cascade(
                 attempt_status = candidate.status
                 input_tokens = candidate.input_tokens
                 output_tokens = candidate.output_tokens
+                token_limit_reasons = _token_limit_reason_codes(candidate, tier)
                 if candidate.status == "abstained":
                     verification_status = "escalate"
-                    reason_codes = ("attempt_abstained",)
+                    reason_codes = (
+                        "attempt_abstained",
+                        *token_limit_reasons,
+                    )
                     content_digest = None
                 else:
                     assert candidate.content is not None
@@ -186,11 +202,11 @@ def run_local_cascade(
                         candidate.content,
                         config.verifier,
                     )
-                    verification_status = (
-                        "passed" if decision.passed else "escalate"
+                    reason_codes = tuple(
+                        dict.fromkeys((*decision.reason_codes, *token_limit_reasons))
                     )
-                    reason_codes = decision.reason_codes
-                    if decision.passed:
+                    verification_status = "passed" if not reason_codes else "escalate"
+                    if not reason_codes:
                         selected_content = candidate.content
                         selected_tier_id = tier.tier_id
 
@@ -222,23 +238,34 @@ def run_local_cascade(
         status = "exhausted"
 
     total_duration_ms = max(0.0, (clock() - started) * 1_000.0)
-    unsigned_receipt = {
-        "task_sha256": sha256_json(task.payload()),
-        "config_sha256": sha256_json(config.payload()),
-        "status": status,
-        "selected_tier_id": selected_tier_id,
-        "attempts": [attempt.payload() for attempt in attempts],
-    }
+    task_sha256 = sha256_json(task.payload())
+    config_sha256 = sha256_json(config.payload())
+    token_totals = build_token_totals(attempts)
+    requested_execution_scope = config.requested_execution_scope
+    execution_scope_attestation = "adapter_declared_unverified"
+    evidence_sha256 = build_local_cascade_evidence_sha256(
+        task_sha256=task_sha256,
+        config_sha256=config_sha256,
+        status=status,
+        selected_tier_id=selected_tier_id,
+        attempts=attempts,
+        token_totals=token_totals,
+        requested_execution_scope=requested_execution_scope,
+        execution_scope_attestation=execution_scope_attestation,
+    )
     receipt = LocalCascadeReceiptV1(
-        run_id=f"cascade-run-{sha256_json(unsigned_receipt)}",
-        task_sha256=unsigned_receipt["task_sha256"],
-        config_sha256=unsigned_receipt["config_sha256"],
+        run_id=_new_run_id(),
+        task_sha256=task_sha256,
+        config_sha256=config_sha256,
         status=status,
         selected_tier_id=selected_tier_id,
         attempt_count=len(attempts),
         total_duration_ms=round(total_duration_ms, 3),
         attempts=attempts,
-        token_totals=build_token_totals(attempts),
+        token_totals=token_totals,
+        evidence_sha256=evidence_sha256,
+        requested_execution_scope=requested_execution_scope,
+        execution_scope_attestation=execution_scope_attestation,
     )
     return LocalCascadeRun(content=selected_content, receipt=receipt)
 
@@ -257,13 +284,20 @@ def _strict_json_object(content: str) -> tuple[dict[str, object] | None, str | N
             result[key] = value
         return result
 
+    def finite_float(value: str) -> float:
+        rendered = float(value)
+        if not math.isfinite(rendered):
+            raise ValueError("non-finite JSON number")
+        return rendered
+
     try:
         parsed = json.loads(
             content,
             parse_constant=reject_constant,
+            parse_float=finite_float,
             object_pairs_hook=reject_duplicate_keys,
         )
-    except (json.JSONDecodeError, ValueError, TypeError):
+    except (json.JSONDecodeError, OverflowError, RecursionError, ValueError, TypeError):
         return None, "invalid_json"
     if not isinstance(parsed, dict):
         return None, "json_not_object"
@@ -282,6 +316,7 @@ def _matches_json_kind(value: object, kind: str) -> bool:
             isinstance(value, (int, float))
             and not isinstance(value, bool)
             and not isinstance(value, complex)
+            and (not isinstance(value, float) or math.isfinite(value))
         )
     if kind == "string":
         return isinstance(value, str)
@@ -290,3 +325,22 @@ def _matches_json_kind(value: object, kind: str) -> bool:
     if kind == "object":
         return isinstance(value, dict)
     return False
+
+
+def _token_limit_reason_codes(
+    candidate: LocalCascadeAttemptResultV1,
+    tier: LocalCascadeTierV1,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    limits = (
+        (candidate.input_tokens, tier.max_input_tokens, "input"),
+        (candidate.output_tokens, tier.max_output_tokens, "output"),
+    )
+    for usage, limit, direction in limits:
+        if (
+            usage.source != "unknown"
+            and usage.count is not None
+            and usage.count > limit
+        ):
+            reasons.append(f"{direction}_token_limit_exceeded")
+    return tuple(reasons)

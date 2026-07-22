@@ -8,13 +8,36 @@ import re
 from typing import Any, Mapping
 
 
-LOCAL_CASCADE_SCHEMA_VERSION = "1.0"
+LOCAL_CASCADE_SCHEMA_VERSION = "1.1"
 TASK_KINDS = ("classification", "extraction", "summarization")
 OUTPUT_FORMATS = ("json_object", "text")
 TOKEN_SOURCES = ("actual", "estimated", "unknown")
 ATTEMPT_STATUSES = ("abstained", "completed", "error")
 VERIFICATION_STATUSES = ("escalate", "passed")
 RUN_STATUSES = ("all_abstained", "exhausted", "passed")
+REQUESTED_EXECUTION_SCOPES = ("offline_local",)
+EXECUTION_SCOPE_ATTESTATIONS = ("adapter_declared_unverified",)
+ATTEMPT_ERROR_REASON_CODES = (
+    "attempt_port_error",
+    "attempt_result_contract_error",
+)
+CONTENT_VERIFIER_REASON_CODES = (
+    "content_too_long",
+    "content_too_short",
+    "empty_content",
+    "forbidden_term_present",
+    "invalid_json",
+    "json_field_type_mismatch",
+    "json_not_object",
+    "json_string_value_not_allowed",
+    "missing_json_field",
+    "missing_required_term",
+    "unexpected_json_field",
+)
+TOKEN_LIMIT_REASON_CODES = (
+    "input_token_limit_exceeded",
+    "output_token_limit_exceeded",
+)
 JSON_VALUE_KINDS = (
     "array",
     "boolean",
@@ -34,6 +57,7 @@ MAX_JSON_FIELDS = 128
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,255}$")
 _JSON_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_RUN_ID = re.compile(r"^cascade-run-[0-9a-f]{32}$")
 
 
 class LocalCascadeContractError(ValueError):
@@ -66,9 +90,7 @@ def _mapping(value: object, label: str) -> Mapping[str, Any]:
     return value
 
 
-def _exact_fields(
-    raw: Mapping[str, Any], expected: set[str], label: str
-) -> None:
+def _exact_fields(raw: Mapping[str, Any], expected: set[str], label: str) -> None:
     present = set(raw)
     missing = sorted(expected - present)
     unknown = sorted(present - expected)
@@ -105,9 +127,7 @@ def _safe_id(value: object, label: str) -> str:
 def _field_name(value: object, label: str) -> str:
     rendered = _string(value, label, maximum=128)
     if _JSON_FIELD_NAME.fullmatch(rendered) is None:
-        raise LocalCascadeContractError(
-            f"{label} must be a top-level JSON field name."
-        )
+        raise LocalCascadeContractError(f"{label} must be a top-level JSON field name.")
     return rendered
 
 
@@ -137,9 +157,7 @@ def _finite_float(
         raise LocalCascadeContractError(f"{label} must be numeric.")
     rendered = float(value)
     if not math.isfinite(rendered) or rendered < minimum:
-        raise LocalCascadeContractError(
-            f"{label} must be finite and >= {minimum}."
-        )
+        raise LocalCascadeContractError(f"{label} must be finite and >= {minimum}.")
     return rendered
 
 
@@ -290,9 +308,7 @@ class LocalCascadeTierV1:
         object.__setattr__(
             self, "cost_rank", _integer(self.cost_rank, "cost_rank", maximum=1_000_000)
         )
-        object.__setattr__(
-            self, "model_ref", _safe_id(self.model_ref, "model_ref")
-        )
+        object.__setattr__(self, "model_ref", _safe_id(self.model_ref, "model_ref"))
         object.__setattr__(
             self,
             "max_input_tokens",
@@ -565,7 +581,7 @@ class LocalCascadeConfigV1:
     tiers: tuple[LocalCascadeTierV1, ...]
     verifier: LocalCascadeVerifierV1
     max_attempts: int
-    execution_scope: str = "offline_local"
+    requested_execution_scope: str = "offline_local"
     allow_network: bool = False
     allow_tools: bool = False
     allow_writes: bool = False
@@ -579,9 +595,7 @@ class LocalCascadeConfigV1:
             self.contract,
             expected_contract="LocalCascadeConfigV1",
         )
-        object.__setattr__(
-            self, "cascade_id", _safe_id(self.cascade_id, "cascade_id")
-        )
+        object.__setattr__(self, "cascade_id", _safe_id(self.cascade_id, "cascade_id"))
         if not isinstance(self.tiers, (list, tuple)):
             raise LocalCascadeContractError("tiers must be a list.")
         if not 1 <= len(self.tiers) <= MAX_TIERS:
@@ -617,9 +631,9 @@ class LocalCascadeConfigV1:
                 maximum=len(tiers),
             ),
         )
-        if self.execution_scope != "offline_local":
+        if self.requested_execution_scope not in REQUESTED_EXECUTION_SCOPES:
             raise LocalCascadeContractError(
-                "execution_scope must be offline_local."
+                "requested_execution_scope must be offline_local."
             )
         if _boolean(self.allow_network, "allow_network"):
             raise LocalCascadeContractError("LocalCascade cannot allow network access.")
@@ -627,12 +641,15 @@ class LocalCascadeConfigV1:
             raise LocalCascadeContractError("LocalCascade cannot allow tools.")
         if _boolean(self.allow_writes, "allow_writes"):
             raise LocalCascadeContractError("LocalCascade cannot allow writes.")
-        if _integer(
-            self.parallel_attempts,
-            "parallel_attempts",
-            minimum=1,
-            maximum=1,
-        ) != 1:
+        if (
+            _integer(
+                self.parallel_attempts,
+                "parallel_attempts",
+                minimum=1,
+                maximum=1,
+            )
+            != 1
+        ):
             raise LocalCascadeContractError(
                 "LocalCascade requires exactly one sequential attempt."
             )
@@ -651,7 +668,7 @@ class LocalCascadeConfigV1:
             "tiers": [tier.payload() for tier in self.tiers],
             "verifier": self.verifier.payload(),
             "max_attempts": self.max_attempts,
-            "execution_scope": self.execution_scope,
+            "requested_execution_scope": self.requested_execution_scope,
             "allow_network": self.allow_network,
             "allow_tools": self.allow_tools,
             "allow_writes": self.allow_writes,
@@ -670,7 +687,7 @@ class LocalCascadeConfigV1:
                 "tiers",
                 "verifier",
                 "max_attempts",
-                "execution_scope",
+                "requested_execution_scope",
                 "allow_network",
                 "allow_tools",
                 "allow_writes",
@@ -685,7 +702,7 @@ class LocalCascadeConfigV1:
             tiers=raw["tiers"],  # type: ignore[arg-type]
             verifier=raw["verifier"],  # type: ignore[arg-type]
             max_attempts=raw["max_attempts"],  # type: ignore[arg-type]
-            execution_scope=raw["execution_scope"],  # type: ignore[arg-type]
+            requested_execution_scope=raw["requested_execution_scope"],  # type: ignore[arg-type]
             allow_network=raw["allow_network"],  # type: ignore[arg-type]
             allow_tools=raw["allow_tools"],  # type: ignore[arg-type]
             allow_writes=raw["allow_writes"],  # type: ignore[arg-type]
@@ -756,7 +773,7 @@ class LocalCascadeAttemptRequestV1:
     tier: LocalCascadeTierV1
     attempt_number: int
     verifier_reason_codes: tuple[str, ...]
-    execution_scope: str = "offline_local"
+    requested_execution_scope: str = "offline_local"
     allow_network: bool = False
     allow_tools: bool = False
     allow_writes: bool = False
@@ -796,9 +813,9 @@ class LocalCascadeAttemptRequestV1:
             identifiers=True,
         )
         object.__setattr__(self, "verifier_reason_codes", codes)
-        if self.execution_scope != "offline_local":
+        if self.requested_execution_scope not in REQUESTED_EXECUTION_SCOPES:
             raise LocalCascadeContractError(
-                "attempt execution_scope must be offline_local."
+                "attempt requested_execution_scope must be offline_local."
             )
         if any(
             (
@@ -810,15 +827,16 @@ class LocalCascadeAttemptRequestV1:
             raise LocalCascadeContractError(
                 "attempt requests cannot enable network, tools, or writes."
             )
-        if _integer(
-            self.parallel_attempts,
-            "parallel_attempts",
-            minimum=1,
-            maximum=1,
-        ) != 1:
-            raise LocalCascadeContractError(
-                "attempt requests must be sequential."
+        if (
+            _integer(
+                self.parallel_attempts,
+                "parallel_attempts",
+                minimum=1,
+                maximum=1,
             )
+            != 1
+        ):
+            raise LocalCascadeContractError("attempt requests must be sequential.")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -828,7 +846,7 @@ class LocalCascadeAttemptRequestV1:
             "tier": self.tier.payload(),
             "attempt_number": self.attempt_number,
             "verifier_reason_codes": list(self.verifier_reason_codes),
-            "execution_scope": self.execution_scope,
+            "requested_execution_scope": self.requested_execution_scope,
             "allow_network": self.allow_network,
             "allow_tools": self.allow_tools,
             "allow_writes": self.allow_writes,
@@ -921,9 +939,10 @@ class LocalCascadeAttemptReceiptV1:
         object.__setattr__(
             self, "cost_rank", _integer(self.cost_rank, "cost_rank", maximum=1_000_000)
         )
-        if not isinstance(self.request_sha256, str) or _SHA256.fullmatch(
-            self.request_sha256
-        ) is None:
+        if (
+            not isinstance(self.request_sha256, str)
+            or _SHA256.fullmatch(self.request_sha256) is None
+        ):
             raise LocalCascadeContractError(
                 "request_sha256 must be a lowercase SHA-256 digest."
             )
@@ -951,6 +970,36 @@ class LocalCascadeAttemptReceiptV1:
             raise LocalCascadeContractError(
                 "an escalation requires verifier reason codes."
             )
+        if self.attempt_status == "completed":
+            if self.output_sha256 is None:
+                raise LocalCascadeContractError(
+                    "a completed attempt requires an output_sha256."
+                )
+            if self.verification_status == "escalate" and not set(codes).issubset(
+                set(CONTENT_VERIFIER_REASON_CODES) | set(TOKEN_LIMIT_REASON_CODES)
+            ):
+                raise LocalCascadeContractError(
+                    "a completed escalation contains unsupported verifier reasons."
+                )
+        else:
+            if self.output_sha256 is not None:
+                raise LocalCascadeContractError(
+                    "an abstained or errored attempt cannot contain output_sha256."
+                )
+            if self.verification_status != "escalate":
+                raise LocalCascadeContractError(
+                    "only a completed attempt can pass verification."
+                )
+            if self.attempt_status == "abstained":
+                allowed = {"attempt_abstained", *TOKEN_LIMIT_REASON_CODES}
+                if "attempt_abstained" not in codes or not set(codes).issubset(allowed):
+                    raise LocalCascadeContractError(
+                        "an abstained attempt requires consistent reason codes."
+                    )
+            elif len(codes) != 1 or codes[0] not in ATTEMPT_ERROR_REASON_CODES:
+                raise LocalCascadeContractError(
+                    "an errored attempt requires one supported error reason."
+                )
         object.__setattr__(self, "verifier_reason_codes", codes)
         object.__setattr__(
             self, "duration_ms", _finite_float(self.duration_ms, "duration_ms")
@@ -960,6 +1009,13 @@ class LocalCascadeAttemptReceiptV1:
                 raise LocalCascadeContractError(
                     f"{field} must be LocalCascadeTokenCountV1."
                 )
+        if self.attempt_status == "error" and any(
+            getattr(self, field).source != "unknown"
+            for field in ("input_tokens", "output_tokens")
+        ):
+            raise LocalCascadeContractError(
+                "errored attempts must keep token counts unknown."
+            )
 
     def payload(self) -> dict[str, object]:
         return {
@@ -1012,12 +1068,8 @@ class LocalCascadeAttemptReceiptV1:
             verification_status=raw["verification_status"],  # type: ignore[arg-type]
             verifier_reason_codes=raw["verifier_reason_codes"],  # type: ignore[arg-type]
             duration_ms=raw["duration_ms"],  # type: ignore[arg-type]
-            input_tokens=LocalCascadeTokenCountV1.from_payload(
-                raw["input_tokens"]
-            ),
-            output_tokens=LocalCascadeTokenCountV1.from_payload(
-                raw["output_tokens"]
-            ),
+            input_tokens=LocalCascadeTokenCountV1.from_payload(raw["input_tokens"]),
+            output_tokens=LocalCascadeTokenCountV1.from_payload(raw["output_tokens"]),
         )
 
 
@@ -1081,6 +1133,64 @@ class LocalCascadeTokenTotalsV1:
         return cls(**{field: raw[field] for field in fields})  # type: ignore[arg-type]
 
 
+def build_local_cascade_evidence_payload(
+    *,
+    task_sha256: str,
+    config_sha256: str,
+    status: str,
+    selected_tier_id: str | None,
+    attempts: tuple[LocalCascadeAttemptReceiptV1, ...],
+    token_totals: LocalCascadeTokenTotalsV1,
+    requested_execution_scope: str,
+    execution_scope_attestation: str,
+) -> dict[str, object]:
+    """Build stable evidence without run identity or volatile timings."""
+
+    stable_attempts: list[dict[str, object]] = []
+    for attempt in attempts:
+        payload = attempt.payload()
+        payload.pop("duration_ms")
+        stable_attempts.append(payload)
+    return {
+        "schema_version": LOCAL_CASCADE_SCHEMA_VERSION,
+        "contract": "LocalCascadeEvidenceV1",
+        "task_sha256": task_sha256,
+        "config_sha256": config_sha256,
+        "status": status,
+        "selected_tier_id": selected_tier_id,
+        "attempt_count": len(attempts),
+        "attempts": stable_attempts,
+        "token_totals": token_totals.payload(),
+        "requested_execution_scope": requested_execution_scope,
+        "execution_scope_attestation": execution_scope_attestation,
+    }
+
+
+def build_local_cascade_evidence_sha256(
+    *,
+    task_sha256: str,
+    config_sha256: str,
+    status: str,
+    selected_tier_id: str | None,
+    attempts: tuple[LocalCascadeAttemptReceiptV1, ...],
+    token_totals: LocalCascadeTokenTotalsV1,
+    requested_execution_scope: str = "offline_local",
+    execution_scope_attestation: str = "adapter_declared_unverified",
+) -> str:
+    return sha256_json(
+        build_local_cascade_evidence_payload(
+            task_sha256=task_sha256,
+            config_sha256=config_sha256,
+            status=status,
+            selected_tier_id=selected_tier_id,
+            attempts=attempts,
+            token_totals=token_totals,
+            requested_execution_scope=requested_execution_scope,
+            execution_scope_attestation=execution_scope_attestation,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class LocalCascadeReceiptV1:
     run_id: str
@@ -1092,7 +1202,9 @@ class LocalCascadeReceiptV1:
     total_duration_ms: float
     attempts: tuple[LocalCascadeAttemptReceiptV1, ...]
     token_totals: LocalCascadeTokenTotalsV1
-    execution_scope: str = "offline_local"
+    evidence_sha256: str
+    requested_execution_scope: str = "offline_local"
+    execution_scope_attestation: str = "adapter_declared_unverified"
     parallel_attempts: int = 1
     schema_version: str = LOCAL_CASCADE_SCHEMA_VERSION
     contract: str = "LocalCascadeReceiptV1"
@@ -1103,7 +1215,10 @@ class LocalCascadeReceiptV1:
             self.contract,
             expected_contract="LocalCascadeReceiptV1",
         )
-        object.__setattr__(self, "run_id", _safe_id(self.run_id, "run_id"))
+        if not isinstance(self.run_id, str) or _RUN_ID.fullmatch(self.run_id) is None:
+            raise LocalCascadeContractError(
+                "run_id must be cascade-run- followed by 32 lowercase hex characters."
+            )
         for field in ("task_sha256", "config_sha256"):
             value = getattr(self, field)
             if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
@@ -1152,6 +1267,18 @@ class LocalCascadeReceiptV1:
             raise LocalCascadeContractError(
                 "attempt receipt numbers must be contiguous and ordered."
             )
+        tier_ids = tuple(item.tier_id for item in attempts)
+        cost_ranks = tuple(item.cost_rank for item in attempts)
+        if len(set(tier_ids)) != len(tier_ids):
+            raise LocalCascadeContractError(
+                "attempt receipt tier_id values must be unique."
+            )
+        if len(set(cost_ranks)) != len(cost_ranks) or cost_ranks != tuple(
+            sorted(cost_ranks)
+        ):
+            raise LocalCascadeContractError(
+                "attempt receipt cost ranks must be unique and increasing."
+            )
         object.__setattr__(
             self,
             "total_duration_ms",
@@ -1161,19 +1288,90 @@ class LocalCascadeReceiptV1:
             raise LocalCascadeContractError(
                 "token_totals must be LocalCascadeTokenTotalsV1."
             )
-        if self.execution_scope != "offline_local":
+        expected_totals = build_token_totals(attempts)
+        if self.token_totals != expected_totals:
             raise LocalCascadeContractError(
-                "receipt execution_scope must be offline_local."
+                "token_totals must exactly match the attempt receipts."
             )
-        if _integer(
-            self.parallel_attempts,
-            "parallel_attempts",
-            minimum=1,
-            maximum=1,
-        ) != 1:
+        passed_attempts = tuple(
+            item for item in attempts if item.verification_status == "passed"
+        )
+        if self.status == "passed":
+            if (
+                len(passed_attempts) != 1
+                or passed_attempts[0] is not attempts[-1]
+                or self.selected_tier_id != passed_attempts[0].tier_id
+            ):
+                raise LocalCascadeContractError(
+                    "a passed run requires one final matching passed attempt."
+                )
+        elif passed_attempts:
             raise LocalCascadeContractError(
-                "receipt parallel_attempts must be one."
+                "a non-passed run cannot contain a passed attempt."
             )
+        if self.status == "all_abstained" and any(
+            item.attempt_status != "abstained" for item in attempts
+        ):
+            raise LocalCascadeContractError(
+                "all_abstained requires every attempt to abstain."
+            )
+        if self.status == "exhausted" and all(
+            item.attempt_status == "abstained" for item in attempts
+        ):
+            raise LocalCascadeContractError(
+                "an all-abstained run cannot use exhausted status."
+            )
+        if self.requested_execution_scope not in REQUESTED_EXECUTION_SCOPES:
+            raise LocalCascadeContractError(
+                "receipt requested_execution_scope must be offline_local."
+            )
+        if self.execution_scope_attestation not in EXECUTION_SCOPE_ATTESTATIONS:
+            raise LocalCascadeContractError(
+                "receipt execution_scope_attestation must remain explicitly unverified."
+            )
+        if (
+            _integer(
+                self.parallel_attempts,
+                "parallel_attempts",
+                minimum=1,
+                maximum=1,
+            )
+            != 1
+        ):
+            raise LocalCascadeContractError("receipt parallel_attempts must be one.")
+        if (
+            not isinstance(self.evidence_sha256, str)
+            or _SHA256.fullmatch(self.evidence_sha256) is None
+        ):
+            raise LocalCascadeContractError(
+                "evidence_sha256 must be a lowercase SHA-256 digest."
+            )
+        expected_evidence = build_local_cascade_evidence_sha256(
+            task_sha256=self.task_sha256,
+            config_sha256=self.config_sha256,
+            status=self.status,
+            selected_tier_id=self.selected_tier_id,
+            attempts=attempts,
+            token_totals=self.token_totals,
+            requested_execution_scope=self.requested_execution_scope,
+            execution_scope_attestation=self.execution_scope_attestation,
+        )
+        if self.evidence_sha256 != expected_evidence:
+            raise LocalCascadeContractError(
+                "evidence_sha256 does not match the semantic receipt evidence."
+            )
+
+    def evidence_payload(self) -> dict[str, object]:
+        return build_local_cascade_evidence_payload(
+            task_sha256=self.task_sha256,
+            config_sha256=self.config_sha256,
+            status=self.status,
+            selected_tier_id=self.selected_tier_id,
+            attempts=self.attempts,
+            token_totals=self.token_totals,
+            requested_execution_scope=self.requested_execution_scope,
+            execution_scope_attestation=self.execution_scope_attestation,
+        )
 
     def payload(self) -> dict[str, object]:
         return {
@@ -1188,7 +1386,9 @@ class LocalCascadeReceiptV1:
             "total_duration_ms": self.total_duration_ms,
             "attempts": [attempt.payload() for attempt in self.attempts],
             "token_totals": self.token_totals.payload(),
-            "execution_scope": self.execution_scope,
+            "evidence_sha256": self.evidence_sha256,
+            "requested_execution_scope": self.requested_execution_scope,
+            "execution_scope_attestation": self.execution_scope_attestation,
             "parallel_attempts": self.parallel_attempts,
         }
 
@@ -1209,7 +1409,9 @@ class LocalCascadeReceiptV1:
                 "total_duration_ms",
                 "attempts",
                 "token_totals",
-                "execution_scope",
+                "evidence_sha256",
+                "requested_execution_scope",
+                "execution_scope_attestation",
                 "parallel_attempts",
             },
             "LocalCascadeReceiptV1",
@@ -1225,10 +1427,10 @@ class LocalCascadeReceiptV1:
             attempt_count=raw["attempt_count"],  # type: ignore[arg-type]
             total_duration_ms=raw["total_duration_ms"],  # type: ignore[arg-type]
             attempts=raw["attempts"],  # type: ignore[arg-type]
-            token_totals=LocalCascadeTokenTotalsV1.from_payload(
-                raw["token_totals"]
-            ),
-            execution_scope=raw["execution_scope"],  # type: ignore[arg-type]
+            token_totals=LocalCascadeTokenTotalsV1.from_payload(raw["token_totals"]),
+            evidence_sha256=raw["evidence_sha256"],  # type: ignore[arg-type]
+            requested_execution_scope=raw["requested_execution_scope"],  # type: ignore[arg-type]
+            execution_scope_attestation=raw["execution_scope_attestation"],  # type: ignore[arg-type]
             parallel_attempts=raw["parallel_attempts"],  # type: ignore[arg-type]
         )
 

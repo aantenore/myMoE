@@ -36,11 +36,12 @@ class RecordingAttemptPort:
 
 
 class IncrementingClock:
-    def __init__(self) -> None:
+    def __init__(self, step: float = 0.01) -> None:
         self.value = 100.0
+        self.step = step
 
     def __call__(self) -> float:
-        self.value += 0.01
+        self.value += self.step
         return self.value
 
 
@@ -173,7 +174,7 @@ class LocalCascadeExecutionTests(unittest.TestCase):
                 "tier",
                 "attempt_number",
                 "verifier_reason_codes",
-                "execution_scope",
+                "requested_execution_scope",
                 "allow_network",
                 "allow_tools",
                 "allow_writes",
@@ -239,7 +240,7 @@ class LocalCascadeExecutionTests(unittest.TestCase):
         )
 
         for request in port.requests:
-            self.assertEqual(request.execution_scope, "offline_local")
+            self.assertEqual(request.requested_execution_scope, "offline_local")
             self.assertFalse(request.allow_network)
             self.assertFalse(request.allow_tools)
             self.assertFalse(request.allow_writes)
@@ -300,6 +301,89 @@ class LocalCascadeExecutionTests(unittest.TestCase):
         with self.assertRaises(LocalCascadeContractError):
             token("unknown", 0)
 
+    def test_reported_token_limits_force_escalation_but_unknown_stays_unknown(
+        self,
+    ) -> None:
+        port = RecordingAttemptPort(
+            [
+                completed(
+                    "A local summary accepted by deterministic checks.",
+                    input_count=5_000,
+                    output_source="estimated",
+                    output_count=999,
+                ),
+                completed(
+                    "A local summary accepted by deterministic checks.",
+                    input_source="unknown",
+                    input_count=None,
+                    output_source="unknown",
+                    output_count=None,
+                ),
+            ]
+        )
+
+        result = run_local_cascade(
+            task(),
+            text_config(tier("tiny", 0), tier("small", 1)),
+            port,
+            clock=IncrementingClock(),
+        )
+
+        self.assertEqual(result.receipt.status, "passed")
+        self.assertEqual(result.receipt.selected_tier_id, "small")
+        self.assertEqual(
+            result.receipt.attempts[0].verifier_reason_codes,
+            (
+                "input_token_limit_exceeded",
+                "output_token_limit_exceeded",
+            ),
+        )
+        self.assertEqual(result.receipt.attempts[1].input_tokens.source, "unknown")
+        self.assertEqual(result.receipt.attempts[1].output_tokens.source, "unknown")
+
+    def test_nested_json_parser_failure_escalates_instead_of_aborting(self) -> None:
+        verifier = LocalCascadeVerifierV1(
+            output_format="json_object",
+            min_characters=2,
+            max_characters=262_144,
+            json_fields=(
+                LocalCascadeJsonFieldV1(
+                    name="label",
+                    value_kind="string",
+                    required=True,
+                    allowed_string_values=("bug", "feature"),
+                ),
+            ),
+        )
+        config = LocalCascadeConfigV1(
+            cascade_id="classification-default",
+            tiers=(tier("tiny", 0), tier("small", 1)),
+            verifier=verifier,
+            max_attempts=2,
+        )
+        json_task = LocalCascadeTaskV1(
+            task_id="classification-1",
+            kind="classification",
+            instruction="Classify the local issue.",
+            output_format="json_object",
+        )
+        nested = '{"label":' + ('{"nested":' * 1_200) + "null" + ("}" * 1_200) + "}"
+        port = RecordingAttemptPort([completed(nested), completed('{"label":"bug"}')])
+
+        result = run_local_cascade(
+            json_task,
+            config,
+            port,
+            clock=IncrementingClock(),
+        )
+
+        self.assertEqual(result.receipt.status, "passed")
+        self.assertEqual(result.receipt.selected_tier_id, "small")
+        self.assertEqual(
+            result.receipt.attempts[0].verifier_reason_codes,
+            ("invalid_json",),
+        )
+
 
 class LocalCascadeVerifierTests(unittest.TestCase):
     def test_json_classification_uses_allowed_values(self) -> None:
@@ -358,6 +442,25 @@ class LocalCascadeVerifierTests(unittest.TestCase):
         self.assertTrue(accepted.passed)
         self.assertIn("json_field_type_mismatch", wrong_type.reason_codes)
         self.assertEqual(duplicate.reason_codes, ("invalid_json",))
+
+    def test_json_number_overflow_is_rejected_as_invalid_json(self) -> None:
+        verifier = LocalCascadeVerifierV1(
+            output_format="json_object",
+            min_characters=2,
+            max_characters=100,
+            json_fields=(
+                LocalCascadeJsonFieldV1(
+                    name="score",
+                    value_kind="number",
+                    required=True,
+                ),
+            ),
+        )
+
+        result = verify_local_cascade_content('{"score":1e400}', verifier)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.reason_codes, ("invalid_json",))
 
     def test_text_bounds_are_deterministic(self) -> None:
         verifier = LocalCascadeVerifierV1(
@@ -420,6 +523,144 @@ class LocalCascadeStrictContractTests(unittest.TestCase):
         with self.assertRaises(LocalCascadeContractError):
             LocalCascadeConfigV1.from_payload(config_payload)
 
+    def test_scope_is_explicitly_requested_and_unverified(self) -> None:
+        config = text_config(tier("tiny", 0))
+        config_payload = config.payload()
+        self.assertEqual(config.requested_execution_scope, "offline_local")
+        self.assertIn("requested_execution_scope", config_payload)
+        self.assertNotIn("execution_scope", config_payload)
+
+        legacy_payload = config.payload()
+        legacy_payload["execution_scope"] = legacy_payload.pop(
+            "requested_execution_scope"
+        )
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeConfigV1.from_payload(legacy_payload)
+
+        port = RecordingAttemptPort(
+            [completed("A local summary accepted by deterministic checks.")]
+        )
+        result = run_local_cascade(
+            task(),
+            config,
+            port,
+            clock=IncrementingClock(),
+        )
+        self.assertEqual(
+            port.requests[0].requested_execution_scope,
+            "offline_local",
+        )
+        request_payload = port.requests[0].payload()
+        self.assertIn("requested_execution_scope", request_payload)
+        self.assertNotIn("execution_scope", request_payload)
+        self.assertEqual(
+            result.receipt.requested_execution_scope,
+            "offline_local",
+        )
+        self.assertEqual(
+            result.receipt.execution_scope_attestation,
+            "adapter_declared_unverified",
+        )
+        receipt_payload = result.receipt.payload()
+        self.assertNotIn("execution_scope", receipt_payload)
+        self.assertEqual(
+            receipt_payload["execution_scope_attestation"],
+            "adapter_declared_unverified",
+        )
+
+    def test_receipt_parser_rejects_cross_field_contradictions(self) -> None:
+        result = run_local_cascade(
+            task(),
+            text_config(tier("tiny", 0), tier("small", 1)),
+            RecordingAttemptPort(
+                [
+                    completed("too short"),
+                    completed("A local summary accepted by deterministic checks."),
+                ]
+            ),
+            clock=IncrementingClock(),
+        )
+
+        bad_status = result.receipt.payload()
+        bad_status["status"] = "exhausted"
+        bad_status["selected_tier_id"] = None
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_status)
+
+        bad_selected_tier = result.receipt.payload()
+        bad_selected_tier["selected_tier_id"] = "tiny"
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_selected_tier)
+
+        bad_count = result.receipt.payload()
+        bad_count["attempt_count"] = 1
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_count)
+
+        bad_totals = result.receipt.payload()
+        totals = bad_totals["token_totals"]
+        assert isinstance(totals, dict)
+        totals["actual_input_tokens"] += 1
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_totals)
+
+        missing_output_digest = result.receipt.payload()
+        attempts = missing_output_digest["attempts"]
+        assert isinstance(attempts, list)
+        attempts[0]["output_sha256"] = None
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(missing_output_digest)
+
+        bad_sequence = result.receipt.payload()
+        attempts = bad_sequence["attempts"]
+        assert isinstance(attempts, list)
+        attempts[1]["attempt_number"] = 3
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_sequence)
+
+        bad_reason = result.receipt.payload()
+        attempts = bad_reason["attempts"]
+        assert isinstance(attempts, list)
+        attempts[0]["verifier_reason_codes"] = ["attempt_port_error"]
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_reason)
+
+        bad_evidence = result.receipt.payload()
+        bad_evidence["evidence_sha256"] = "0" * 64
+        with self.assertRaises(LocalCascadeContractError):
+            LocalCascadeReceiptV1.from_payload(bad_evidence)
+
+    def test_run_ids_are_unique_but_evidence_digests_are_correlatable(self) -> None:
+        raw_content = "A local summary accepted by deterministic checks."
+
+        def run(step: float) -> LocalCascadeRun:
+            return run_local_cascade(
+                task(),
+                text_config(tier("tiny", 0)),
+                RecordingAttemptPort([completed(raw_content)]),
+                clock=IncrementingClock(step),
+            )
+
+        first = run(0.01)
+        second = run(0.02)
+
+        self.assertNotEqual(first.receipt.run_id, second.receipt.run_id)
+        self.assertRegex(first.receipt.run_id, r"^cascade-run-[0-9a-f]{32}$")
+        self.assertNotEqual(
+            first.receipt.total_duration_ms,
+            second.receipt.total_duration_ms,
+        )
+        self.assertEqual(
+            first.receipt.evidence_sha256,
+            second.receipt.evidence_sha256,
+        )
+        self.assertEqual(first.receipt.task_sha256, second.receipt.task_sha256)
+        self.assertEqual(
+            first.receipt.attempts[0].output_sha256,
+            second.receipt.attempts[0].output_sha256,
+        )
+        self.assertNotIn(raw_content, canonical_json(first.receipt.payload()))
+
     def test_receipt_round_trip_has_no_unversioned_nested_values(self) -> None:
         result = run_local_cascade(
             task(),
@@ -436,7 +677,12 @@ class LocalCascadeStrictContractTests(unittest.TestCase):
         self.assertEqual(parsed, result.receipt)
         self.assertEqual(
             rendered["attempts"][0]["input_tokens"]["schema_version"],
-            "1.0",
+            "1.1",
+        )
+        self.assertEqual(rendered["schema_version"], "1.1")
+        self.assertEqual(
+            parsed.evidence_sha256,
+            result.receipt.evidence_sha256,
         )
 
 
