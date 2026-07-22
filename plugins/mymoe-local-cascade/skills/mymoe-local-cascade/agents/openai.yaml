@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Cascade"
+  short_description: "Run bounded local AI tasks with receipts"
+  default_prompt: "Use $mymoe-local-cascade to inspect this machine and plan a bounded local task."

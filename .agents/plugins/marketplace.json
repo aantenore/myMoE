@@ -1,0 +1,20 @@
+{
+  "name": "mymoe-local",
+  "interface": {
+    "displayName": "myMoE Local"
+  },
+  "plugins": [
+    {
+      "name": "mymoe-local-cascade",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mymoe-local-cascade"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mymoe-local-cascade": {
+      "command": "python3",
+      "args": ["./scripts/launch_mcp.py"],
+      "cwd": "."
+    }
+  }
+}

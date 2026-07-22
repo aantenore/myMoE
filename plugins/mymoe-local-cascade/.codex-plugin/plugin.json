@@ -1,0 +1,27 @@
+{
+  "name": "mymoe-local-cascade",
+  "version": "0.1.0-alpha.1",
+  "description": "Delegate bounded Codex work to strictly configured local models.",
+  "author": {
+    "name": "Antonio Antenore",
+    "url": "https://github.com/aantenore"
+  },
+  "homepage": "https://github.com/aantenore/myMoE",
+  "repository": "https://github.com/aantenore/myMoE",
+  "license": "Apache-2.0",
+  "keywords": ["local-ai", "model-routing", "codex", "mcp", "on-device"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "myMoE Local Cascade",
+    "shortDescription": "Route bounded work to local AI models.",
+    "longDescription": "Inspect local capabilities, plan configuration-bound delegation, run verified task types on local models, and inspect metadata-only receipts.",
+    "developerName": "Antonio Antenore",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read"],
+    "defaultPrompt": [
+      "Inspect this machine and plan a bounded local task.",
+      "Delegate this simple task to a configured local model."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
