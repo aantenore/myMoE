@@ -31,6 +31,26 @@ EXPECTED_LOCAL_CASCADE_TOOLS = (
     "machine_inspect",
     "receipt_inspect",
 )
+LOCAL_CASCADE_MCP_CLIENT_SMOKE = """\
+import anyio
+import json
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def smoke() -> None:
+    server = StdioServerParameters(command=sys.argv[1], args=[])
+    async with stdio_client(server) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            result = await session.list_tools()
+            print(json.dumps(sorted(tool.name for tool in result.tools)))
+
+
+anyio.run(smoke)
+"""
 REQUIRED_SDIST_ARTIFACTS = (
     ".agents/plugins/marketplace.json",
     "configs/cell-binding-request.example.json",
@@ -513,40 +533,15 @@ def _run_installed_local_cascade_mcp_smoke(
             f"expected {MINIMUM_SUPPORTED_MCP_VERSION}, got {installed_version}."
         )
 
-    protocol_requests = "\n".join(
-        json.dumps(item, separators=(",", ":"))
-        for item in (
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "mymoe-packaging-smoke",
-                        "version": "1.0",
-                    },
-                },
-            },
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-                "params": {},
-            },
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-                "params": {},
-            },
-        )
-    )
     completed = subprocess.run(
-        [str(executable)],
+        [
+            str(python),
+            "-c",
+            LOCAL_CASCADE_MCP_CLIENT_SMOKE,
+            str(executable),
+        ],
         cwd=runtime_dir,
         env=environment,
-        input=protocol_requests + "\n",
         text=True,
         capture_output=True,
         timeout=30,
@@ -557,52 +552,13 @@ def _run_installed_local_cascade_mcp_smoke(
             f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
 
-    responses: list[dict[str, object]] = []
-    for line in completed.stdout.splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise SystemExit(
-                "Installed mymoe-local-cascade-mcp emitted non-JSON stdout."
-            ) from exc
-        if not isinstance(payload, dict):
-            raise SystemExit(
-                "Installed mymoe-local-cascade-mcp emitted a non-object response."
-            )
-        responses.append(payload)
-
-    by_id = {response.get("id"): response for response in responses}
-    initialized = by_id.get(1)
-    listed = by_id.get(2)
-    if (
-        not isinstance(initialized, dict)
-        or initialized.get("jsonrpc") != "2.0"
-        or "result" not in initialized
-        or not isinstance(listed, dict)
-        or listed.get("jsonrpc") != "2.0"
-        or "error" in listed
-    ):
+    try:
+        tool_names = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
         raise SystemExit(
-            "Installed mymoe-local-cascade-mcp did not complete initialize/tools-list."
-        )
-    listed_result = listed.get("result")
-    if not isinstance(listed_result, dict):
-        raise SystemExit(
-            "Installed mymoe-local-cascade-mcp returned an invalid tools-list result."
-        )
-    tools = listed_result.get("tools")
-    if not isinstance(tools, list) or not all(isinstance(tool, dict) for tool in tools):
-        raise SystemExit(
-            "Installed mymoe-local-cascade-mcp returned an invalid tool catalog."
-        )
-    tool_names = [tool.get("name") for tool in tools]
-    if (
-        not all(isinstance(name, str) for name in tool_names)
-        or len(tool_names) != len(EXPECTED_LOCAL_CASCADE_TOOLS)
-        or sorted(tool_names) != list(EXPECTED_LOCAL_CASCADE_TOOLS)
-    ):
+            "Installed mymoe-local-cascade-mcp client emitted non-JSON stdout."
+        ) from exc
+    if tool_names != list(EXPECTED_LOCAL_CASCADE_TOOLS):
         raise SystemExit(
             "Installed mymoe-local-cascade-mcp did not expose exactly the four "
             f"expected tools: {tool_names!r}."

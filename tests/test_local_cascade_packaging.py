@@ -87,6 +87,10 @@ class LocalCascadePackagingContractTests(unittest.TestCase):
                 "receipt_inspect",
             ),
         )
+        client_smoke = run_packaging_smoke.LOCAL_CASCADE_MCP_CLIENT_SMOKE
+        self.assertIn("async with stdio_client(server)", client_smoke)
+        self.assertIn("await session.initialize()", client_smoke)
+        self.assertIn("await session.list_tools()", client_smoke)
 
 
 if __name__ == "__main__":
