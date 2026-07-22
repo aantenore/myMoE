@@ -2,15 +2,46 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
-from experiments.benchmark_runtime_binding import run_benchmark
+from experiments.benchmark_runtime_binding import _Fixture, run_benchmark
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimeBindingBenchmarkTests(unittest.TestCase):
+    def test_fixture_json_is_platform_neutral_binary_utf8(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(
+                Path,
+                "write_text",
+                side_effect=AssertionError(
+                    "fixture JSON must bypass newline translation"
+                ),
+            ),
+        ):
+            fixture = _Fixture(Path(temporary))
+            self.assertEqual(
+                fixture.request_path.read_bytes(),
+                json.dumps(fixture.request, indent=2, sort_keys=True).encode("utf-8"),
+            )
+            self.assertEqual(
+                fixture.config_path.read_bytes(),
+                json.dumps(fixture.config, indent=2, sort_keys=True).encode("utf-8"),
+            )
+            for path in (
+                fixture.request_path,
+                fixture.config_path,
+                fixture.catalog_path,
+            ):
+                value = path.read_bytes()
+                self.assertNotIn(b"\r\n", value)
+                json.loads(value)
+
     def test_contract_report_is_deterministic_and_machine_readable(self) -> None:
         first = run_benchmark()
         second = run_benchmark()

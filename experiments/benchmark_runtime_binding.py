@@ -36,6 +36,12 @@ DRIVER_BYTES = b"runtime-driver-v1\n"
 HARNESS_BYTES = b"cell-harness-v1\n"
 
 
+def _write_json(path: Path, payload: object) -> None:
+    """Write fixture JSON as platform-neutral UTF-8 bytes."""
+
+    path.write_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))
+
+
 class _Fixture:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -95,10 +101,7 @@ class _Fixture:
             },
         }
         self.write_config()
-        self.request_path.write_text(
-            json.dumps(self.request, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        _write_json(self.request_path, self.request)
         self.write_catalog()
 
     @staticmethod
@@ -121,10 +124,7 @@ class _Fixture:
         }
 
     def write_config(self) -> None:
-        self.config_path.write_text(
-            json.dumps(self.config, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        _write_json(self.config_path, self.config)
 
     def write_catalog(
         self,
@@ -166,10 +166,7 @@ class _Fixture:
             cells=(build_cell_passport(declaration),),
             profiles={"balanced": profile},
         )
-        self.catalog_path.write_text(
-            json.dumps(catalog.payload(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        _write_json(self.catalog_path, catalog.payload())
 
     def add_second_expert(self) -> None:
         experts = self.config["experts"]

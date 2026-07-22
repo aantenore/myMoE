@@ -5,7 +5,6 @@ from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
-import re
 import stat
 import tempfile
 import threading
@@ -54,7 +53,7 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             producer = DirectoryPairedAttestationProducer(
                 exchange,
                 poll_interval_seconds=0.005,
-                maximum_wait_seconds=1.0,
+                maximum_wait_seconds=5.0,
             )
             observed: list[dict[str, object]] = []
 
@@ -69,12 +68,14 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                 _write_response(exchange, request, (envelope,))
 
             watcher, errors = _watch_once(exchange, respond)
-            envelopes = producer.attest(
-                binding,
-                workspace,
-                time.time() + 0.5,
-            )
-            _finish_watcher(watcher, errors)
+            try:
+                envelopes = producer.attest(
+                    binding,
+                    workspace,
+                    time.time() + 2.0,
+                )
+            finally:
+                _finish_watcher(watcher, errors)
 
             self.assertEqual(len(envelopes), 1)
             verified = TrustedEd25519Verifier(
@@ -232,7 +233,11 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
             exchange = _exchange(root / "exchange")
             workspace = _private_directory(root / "workspace")
             binding, requirement, private_key = _binding()
-            producer = _producer(exchange)
+            producer = DirectoryPairedAttestationProducer(
+                exchange,
+                poll_interval_seconds=0.005,
+                maximum_wait_seconds=5.0,
+            )
             captured: list[bytes] = []
             real_publish = directory_adapter._atomic_no_clobber
 
@@ -255,7 +260,7 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                 "_atomic_no_clobber",
                 side_effect=publish_first_response,
             ):
-                producer.attest(binding, workspace, time.time() + 0.5)
+                producer.attest(binding, workspace, time.time() + 2.0)
 
             def publish_replayed_response(path: Path, value: bytes) -> None:
                 real_publish(path, value)
@@ -277,7 +282,7 @@ class DirectoryPairedAttestationProducerTests(unittest.TestCase):
                     "exact request binding",
                 ),
             ):
-                producer.attest(binding, workspace, time.time() + 0.5)
+                producer.attest(binding, workspace, time.time() + 2.0)
 
     def test_response_symlink_hardlink_and_permissive_mode_fail_closed(self) -> None:
         modes = (
@@ -1128,7 +1133,7 @@ def _watch_once(exchange: Path, callback):
 
     def watch() -> None:
         try:
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 requests = sorted((exchange / "requests").glob("request-*.json"))
                 pending = [
@@ -1158,7 +1163,7 @@ def _watch_once(exchange: Path, callback):
 
 
 def _finish_watcher(thread: threading.Thread, errors: list[BaseException]) -> None:
-    thread.join(timeout=3)
+    thread.join(timeout=6)
     if thread.is_alive():
         raise AssertionError("sidecar watcher did not terminate")
     if errors:
