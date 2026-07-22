@@ -277,6 +277,7 @@ class TwoPhaseFoundationTests(unittest.TestCase):
             published = threading.Event()
             release_publisher = threading.Event()
             reader_observed = threading.Event()
+            publication_coordination = threading.Lock()
             reader_coordination = threading.Lock()
             transitions: list[tuple[int, int]] = []
             real_link = os.link
@@ -288,9 +289,12 @@ class TwoPhaseFoundationTests(unittest.TestCase):
                 *args: object,
                 **kwargs: object,
             ) -> None:
-                real_link(source, destination, *args, **kwargs)
-                if not published.is_set():
-                    published.set()
+                with publication_coordination:
+                    real_link(source, destination, *args, **kwargs)
+                    is_publisher = not published.is_set()
+                    if is_publisher:
+                        published.set()
+                if is_publisher:
                     if not release_publisher.wait(timeout=5):
                         raise AssertionError(
                             "Concurrent reader did not observe CAS publication."
@@ -298,7 +302,11 @@ class TwoPhaseFoundationTests(unittest.TestCase):
 
             def coordinated_read(descriptor: int, size: int) -> bytes:
                 data = real_read(descriptor, size)
-                if not data or not published.is_set():
+                if not data:
+                    return data
+                with publication_coordination:
+                    publication_visible = published.is_set()
+                if not publication_visible:
                     return data
                 with reader_coordination:
                     if reader_observed.is_set():
