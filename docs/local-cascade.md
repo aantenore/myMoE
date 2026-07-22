@@ -87,8 +87,13 @@ explicitly before launching it:
 
 ```bash
 export MYMOE_LOCAL_CASCADE_CONFIG="$PWD/configs/local-cascade.example.json"
-export MYMOE_LOCAL_CASCADE_MOE_CONFIG="$PWD/configs/your-local-moe.json"
+export MYMOE_LOCAL_CASCADE_MOE_CONFIG="$PWD/configs/local-cascade-moe.example.json"
 ```
+
+The bundled `.mcp.json` launcher is a POSIX/macOS alpha and requires a
+`python3` command. The installed `mymoe-local-cascade-mcp` console entrypoint is
+portable, but this release does not claim ready-to-install Windows Codex plugin
+launching; a Windows client must explicitly configure that installed entrypoint.
 
 The first file is this strict cascade contract. The second is the existing
 myMoE configuration whose expert ids include `local_cascade_utility`,
@@ -98,11 +103,29 @@ malformed configuration fail closed. The cascade contract requests offline
 execution but cannot enforce runtime isolation. Inspection and planning contain
 no install, download, start, stop, load, unload, or swap operation.
 
+The shipped myMoE example is structurally complete but deliberately uses model
+placeholders and three loopback ports. Replace each model value and endpoint
+with an already-running local runtime. Every referenced expert must declare a
+normalized `local_cascade_terminal_finish_reasons` list in `params`. The default
+example accepts only `stop`. Known incomplete outcomes such as `length`,
+`max_tokens`, `content_filter`, tool/function calls, cancellation, timeout, and
+errors cannot be allowlisted. Missing, malformed, or unlisted reasons become an
+abstention and advance the cascade. This policy is part of the hashed myMoE
+configuration bound into the plan.
+
 The plugin connects to an explicitly configured loopback endpoint. Loopback
 establishes only that first network hop as local; it does not attest whether the
 receiver proxies elsewhere, which downstream runtime runs, which model answers,
 or whether later network activity occurs. LocalCascade therefore makes no
 evidence-qualified model, route, or isolation claim.
+
+Plans and metadata receipts live only in the MCP process memory. A plan retains
+its exact task text until it is evicted; the oldest entries are removed after
+128 plans. Receipts never contain that text. Restarting the server clears both
+stores. The adapter refuses overlapping `delegate_run` invocations instead of
+allowing two local cascades to compete for the same device resources. A plan
+can be invoked again after a run completes, so callers that retry must treat a
+timeout as potentially duplicated local compute.
 
 The checked example is deliberately restrictive:
 
@@ -113,8 +136,17 @@ The checked example is deliberately restrictive:
   forbidden marker;
 - input and output ceilings are explicit per role.
 
-These are contract ceilings, not hardware recommendations or model quality
-claims.
+The adapter passes each tier's output-token ceiling to the OpenAI-compatible
+local endpoint as a non-overridable `max_tokens` upper bound and also verifies
+reported usage afterward. Input ceilings and any missing usage remain
+post-response evidence checks because this alpha does not bind a tokenizer for
+preflight estimation. These are therefore contract/accounting limits, not RAM,
+latency, energy, model-quality, or complete compute ceilings.
+
+The core counters named `network_calls` refer to external or non-loopback
+authority used by an attempt. The plugin's expected loopback HTTP transport is
+separately declared as `numeric_loopback_first_hop`; a zero external-network
+counter must not be read as "no networking APIs were used."
 
 ## Reduction happens in layers
 
@@ -222,7 +254,13 @@ models, quantization, harness, task set, and date.
 - `requested_execution_scope` and loopback first-hop transport do not prove
   downstream isolation; the receipt says the adapter declaration is unverified.
 - Sequential execution avoids overlapping model attempts; an external lifecycle
-  owner must still manage residency and resources.
+  owner must still manage residency and resources. The MCP adapter also refuses
+  overlapping runs within one server process, but it cannot coordinate separate
+  processes or unrelated local runtimes.
+- Provider responses are read with a fixed byte bound. Reported output tokens
+  are verified after the response, while the configured per-tier output cap is
+  also sent to the endpoint. Input-token ceilings remain post-response checks,
+  and a dishonest runtime can still misreport usage.
 - Local acceptance does not erase prompt or completion tokens already consumed
   by a surrounding host assistant.
 - The core has no premium-provider dependency. Any premium escalation remains a

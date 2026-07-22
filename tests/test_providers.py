@@ -9,6 +9,7 @@ import unittest
 from local_moe.config import ExpertConfig
 from local_moe.providers import (
     GenerationRequest,
+    MAX_PROVIDER_RESPONSE_BYTES,
     OpenAICompatibleProvider,
     ProviderError,
     build_provider,
@@ -98,7 +99,9 @@ def _expert(base_url: str) -> ExpertConfig:
 class ProviderTests(unittest.TestCase):
     def test_builds_known_provider_types(self) -> None:
         self.assertIsNotNone(build_provider("synthetic"))
-        self.assertIsInstance(build_provider("openai_compatible"), OpenAICompatibleProvider)
+        self.assertIsInstance(
+            build_provider("openai_compatible"), OpenAICompatibleProvider
+        )
 
     def test_rejects_unknown_provider_type(self) -> None:
         with self.assertRaisesRegex(ProviderError, "Unsupported provider"):
@@ -134,6 +137,122 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(_FakeOpenAIHandler.last_payload["temperature"], 0.2)
         system = _FakeOpenAIHandler.last_payload["messages"][0]["content"]
         self.assertIn("Respond in the user's language", system)
+
+    def test_openai_provider_keeps_malformed_usage_unknown(self) -> None:
+        response = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 4096.9, "completion_tokens": "7"},
+        }
+
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            result = OpenAICompatibleProvider().generate(
+                _expert(f"http://{host}:{port}/v1"),
+                GenerationRequest(prompt="hello", correlation_id="case-usage"),
+            )
+
+        self.assertIsNone(result.prompt_tokens)
+        self.assertIsNone(result.completion_tokens)
+
+    def test_openai_provider_keeps_malformed_finish_reason_unknown(self) -> None:
+        response = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": 7}],
+        }
+
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            result = OpenAICompatibleProvider().generate(
+                _expert(f"http://{host}:{port}/v1"),
+                GenerationRequest(prompt="hello", correlation_id="case-finish"),
+            )
+
+        self.assertIsNone(result.finish_reason)
+
+    def test_openai_provider_rejects_oversized_response(self) -> None:
+        response = {
+            "choices": [
+                {
+                    "message": {"content": "x" * (MAX_PROVIDER_RESPONSE_BYTES + 1)},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+        with _fake_openai_server(response) as server:
+            host, port = server.server_address
+            with self.assertRaisesRegex(ProviderError, "byte limit"):
+                OpenAICompatibleProvider().generate(
+                    _expert(f"http://{host}:{port}/v1"),
+                    GenerationRequest(
+                        prompt="hello", correlation_id="case-response-limit"
+                    ),
+                )
+
+    def test_openai_provider_rejects_oversized_stream(self) -> None:
+        oversized = "x" * (MAX_PROVIDER_RESPONSE_BYTES + 1)
+        chunks = (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {"delta": {"content": oversized}, "finish_reason": "stop"}
+                    ]
+                }
+            )
+            + "\n\n",
+        )
+
+        with _fake_openai_stream(chunks) as server:
+            host, port = server.server_address
+            with self.assertRaisesRegex(ProviderError, "byte limit"):
+                list(
+                    OpenAICompatibleProvider().stream_generate(
+                        _expert(f"http://{host}:{port}/v1"),
+                        GenerationRequest(
+                            prompt="hello", correlation_id="case-stream-limit"
+                        ),
+                    )
+                )
+
+    def test_openai_provider_rejects_non_text_message_content(self) -> None:
+        for content in (None, 7, {"text": "not a string"}):
+            with self.subTest(content=content):
+                response = {
+                    "choices": [
+                        {"message": {"content": content}, "finish_reason": "stop"}
+                    ]
+                }
+                with _fake_openai_server(response) as server:
+                    host, port = server.server_address
+                    with self.assertRaisesRegex(ProviderError, "non-text content"):
+                        OpenAICompatibleProvider().generate(
+                            _expert(f"http://{host}:{port}/v1"),
+                            GenerationRequest(
+                                prompt="hello", correlation_id="case-content"
+                            ),
+                        )
+
+    def test_openai_provider_rejects_transport_owned_params(self) -> None:
+        _FakeOpenAIHandler.last_path = None
+        _FakeOpenAIHandler.last_payload = None
+        provider = OpenAICompatibleProvider()
+        expert = ExpertConfig(
+            id="reserved",
+            provider="openai_compatible",
+            model="local-model",
+            role="general",
+            base_url="http://127.0.0.1:1/v1",
+            timeout_seconds=1,
+            params={"model": "different-model", "tools": []},
+        )
+
+        with self.assertRaisesRegex(ProviderError, "model, tools"):
+            provider.generate(
+                expert,
+                GenerationRequest(prompt="hello", correlation_id="case-reserved"),
+            )
+        self.assertIsNone(_FakeOpenAIHandler.last_path)
+        self.assertIsNone(_FakeOpenAIHandler.last_payload)
 
     def test_openai_provider_streams_sse_content_and_final_result(self) -> None:
         chunks = (
@@ -175,7 +294,9 @@ class ProviderTests(unittest.TestCase):
 
     def test_streaming_strip_hides_open_thinking_block(self) -> None:
         self.assertEqual(strip_reasoning_content("<think>private partial"), "")
-        self.assertEqual(strip_reasoning_content("<think>private</think>Public"), "Public")
+        self.assertEqual(
+            strip_reasoning_content("<think>private</think>Public"), "Public"
+        )
 
     def test_openai_provider_does_not_send_local_runtime_params(self) -> None:
         response = {"choices": [{"message": {"content": "ok"}}]}
@@ -190,6 +311,7 @@ class ProviderTests(unittest.TestCase):
                 base_url=f"http://{host}:{port}/v1",
                 timeout_seconds=1,
                 params={
+                    "local_cascade_terminal_finish_reasons": ["stop"],
                     "runtime_backend": "mlx_lm",
                     "supports_thinking": True,
                     "thinking_policy": "off",
@@ -198,12 +320,18 @@ class ProviderTests(unittest.TestCase):
                     "chat_template_kwargs": {"enable_thinking": False},
                 },
             )
-            provider.generate(expert, GenerationRequest(prompt="hello", correlation_id="case-local"))
+            provider.generate(
+                expert, GenerationRequest(prompt="hello", correlation_id="case-local")
+            )
 
         self.assertNotIn("runtime_backend", _FakeOpenAIHandler.last_payload)
         self.assertNotIn("supports_thinking", _FakeOpenAIHandler.last_payload)
         self.assertNotIn("thinking_policy", _FakeOpenAIHandler.last_payload)
         self.assertNotIn("system_prompt", _FakeOpenAIHandler.last_payload)
+        self.assertNotIn(
+            "local_cascade_terminal_finish_reasons",
+            _FakeOpenAIHandler.last_payload,
+        )
         self.assertEqual(
             _FakeOpenAIHandler.last_payload["messages"][0],
             {
@@ -355,7 +483,9 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.content, "Public **answer**.")
 
     def test_strip_reasoning_content_handles_plain_answers(self) -> None:
-        self.assertEqual(strip_reasoning_content("Just the answer."), "Just the answer.")
+        self.assertEqual(
+            strip_reasoning_content("Just the answer."), "Just the answer."
+        )
 
     def test_strip_reasoning_content_handles_gemma_channel_tokens(self) -> None:
         raw = "<|channel>thought\nprivate steps\n<channel|>\n<|channel>final\nVisible answer."

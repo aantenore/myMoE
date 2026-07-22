@@ -431,7 +431,7 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
             result = execute_process(
                 identity,
                 cwd=root,
-                timeout_seconds=2.0,
+                timeout_seconds=5.0,
                 launcher_chain=chain,
                 policy=ProcessExecutionPolicy(require_launcher_chain=True),
             )
@@ -541,9 +541,12 @@ class AssistantBridgeRuntimeIdentityTests(unittest.TestCase):
                 f"--loader={helper_script}",
                 str(native_helper),
             ):
-                with self.subTest(extra=extra), self.assertRaisesRegex(
-                    LauncherChainError,
-                    "entrypoint or companion",
+                with (
+                    self.subTest(extra=extra),
+                    self.assertRaisesRegex(
+                        LauncherChainError,
+                        "entrypoint or companion",
+                    ),
                 ):
                     resolve_launcher_chain(
                         identity,

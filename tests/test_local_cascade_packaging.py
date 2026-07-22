@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SDIST_ASSETS = (
     ".agents/plugins/marketplace.json",
     "configs/local-cascade.example.json",
+    "configs/local-cascade-moe.example.json",
     "docs/local-cascade.md",
     "experiments/benchmark_local_cascade.py",
     "outputs/local-cascade-contract-benchmark.json",

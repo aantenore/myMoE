@@ -8,12 +8,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from threading import Event, Thread
 import unittest
 from unittest.mock import patch
 
 from local_moe.local_cascade_mcp import (
     CASCADE_CONFIG_ENV,
     MOE_CONFIG_ENV,
+    TERMINAL_FINISH_REASONS_PARAM,
     CascadeAdapterUnavailable,
     DelegatePlanRequest,
     DelegateRunRequest,
@@ -24,10 +26,13 @@ from local_moe.local_cascade_mcp import (
 )
 from local_moe.local_cascade_contracts import (
     LocalCascadeConfigV1,
+    LocalCascadeReceiptV1,
     LocalCascadeTierV1,
     LocalCascadeVerifierV1,
+    sha256_json,
 )
 from local_moe.hardware import HardwareProfile
+from local_moe.providers import ExpertResult
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,14 +123,24 @@ class _Response:
     def __exit__(self, exc_type, exc, traceback) -> None:
         return None
 
-    def read(self) -> bytes:
-        return self._payload
+    def read(self, size: int = -1) -> bytes:
+        return self._payload if size < 0 else self._payload[:size]
 
 
 class _RecordingOpener:
-    def __init__(self, *, completion_tokens: int = 8) -> None:
+    def __init__(
+        self,
+        *,
+        prompt_tokens: object = 7,
+        completion_tokens: object = 8,
+        finish_reason: object = "stop",
+        content: str = "A concise local result from one expert.",
+    ) -> None:
         self.calls: list[tuple[object, float]] = []
+        self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
+        self.finish_reason = finish_reason
+        self.content = content
 
     def __call__(self, target, *, timeout: float):
         self.calls.append((target, timeout))
@@ -133,14 +148,39 @@ class _RecordingOpener:
             {
                 "choices": [
                     {
-                        "message": {
-                            "content": "A concise local result from one expert."
-                        },
-                        "finish_reason": "stop",
+                        "message": {"content": self.content},
+                        "finish_reason": self.finish_reason,
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": 7,
+                    "prompt_tokens": self.prompt_tokens,
+                    "completion_tokens": self.completion_tokens,
+                },
+            }
+        )
+
+
+class _BlockingOpener(_RecordingOpener):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.release = Event()
+
+    def __call__(self, target, *, timeout: float):
+        self.calls.append((target, timeout))
+        self.entered.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("test release was not signalled")
+        return _Response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": self.content},
+                        "finish_reason": self.finish_reason,
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": self.prompt_tokens,
                     "completion_tokens": self.completion_tokens,
                 },
             }
@@ -152,6 +192,8 @@ def _write_default_adapter_configs(
     *,
     host: str = "127.0.0.1",
     missing_model_ref: bool = False,
+    verifier_max_characters: int = 2_000,
+    terminal_finish_reasons: tuple[str, ...] = ("stop",),
 ) -> dict[str, str]:
     tiers = (
         LocalCascadeTierV1(
@@ -175,7 +217,7 @@ def _write_default_adapter_configs(
         verifier=LocalCascadeVerifierV1(
             output_format="text",
             min_characters=1,
-            max_characters=2_000,
+            max_characters=verifier_max_characters,
         ),
         max_attempts=2,
     )
@@ -198,6 +240,9 @@ def _write_default_adapter_configs(
                         "model": "small-model",
                         "role": "general",
                         "base_url": f"http://{host}:8101/v1",
+                        "params": {
+                            TERMINAL_FINISH_REASONS_PARAM: list(terminal_finish_reasons)
+                        },
                         "execution": {
                             "scope": "device_only",
                             "transport": "direct_local",
@@ -209,6 +254,9 @@ def _write_default_adapter_configs(
                         "model": "strong-model",
                         "role": "general",
                         "base_url": f"http://{host}:8102/v1",
+                        "params": {
+                            TERMINAL_FINISH_REASONS_PARAM: list(terminal_finish_reasons)
+                        },
                         "execution": {
                             "scope": "device_only",
                             "transport": "direct_local",
@@ -301,6 +349,23 @@ class LocalCascadeMcpTests(unittest.TestCase):
         rendered_receipt = json.dumps(payload["receipt"])
         self.assertNotIn(task, rendered_receipt)
         self.assertNotIn("do-not-return", rendered_receipt)
+
+    def test_run_never_slices_content_after_adapter_verification(self) -> None:
+        class _LongAdapter(_FakeAdapter):
+            def run(self, request: DelegateRunRequest) -> object:
+                payload = super().run(request)
+                payload["content"] = "x" * 300
+                return payload
+
+        payload = LocalCascadeToolSurface(_LongAdapter()).delegate_run(
+            "Classify this message.",
+            plan_id="plan-1",
+            plan_sha256="a" * 64,
+            max_output_chars=256,
+        )
+
+        self.assertEqual(payload["error"]["code"], "output_limit_exceeded")
+        self.assertNotIn("content", payload)
 
     def test_receipt_inspection_never_returns_raw_task_or_result(self) -> None:
         payload = self.surface.receipt_inspect("receipt-1")
@@ -442,6 +507,18 @@ class LocalCascadeMcpTests(unittest.TestCase):
             self.assertEqual(balanced["route"]["tier_ids"], ["small", "strong"])
             self.assertEqual(quality["route"]["tier_ids"], ["strong"])
             self.assertEqual(
+                quality["route"]["policy"],
+                "highest_configured_cost_rank_single_attempt",
+            )
+            self.assertEqual(
+                quality["limits"],
+                {
+                    "required_max_output_chars": 2_000,
+                    "mcp_max_output_chars": 16_000,
+                    "finish_reason_policy_bound": True,
+                },
+            )
+            self.assertEqual(
                 quality["route"]["execution_scope_attestation"],
                 "adapter_declared_unverified",
             )
@@ -452,25 +529,51 @@ class LocalCascadeMcpTests(unittest.TestCase):
             )
             self.assertEqual(len(opener.calls), 1)
             self.assertIn(":8102/", opener.calls[0][0].full_url)
+            request_payload = json.loads(opener.calls[0][0].data.decode("utf-8"))
+            self.assertEqual(request_payload["max_tokens"], 1_024)
             self.assertEqual(
-                outcome["receipt"]["token_totals"]["actual_output_tokens"],
+                outcome["receipt"]["core_receipt"]["token_totals"][
+                    "actual_output_tokens"
+                ],
                 8,
             )
-            self.assertEqual(outcome["receipt"]["schema_version"], "1.1")
             self.assertEqual(
-                outcome["receipt"]["requested_execution_scope"],
+                outcome["receipt"]["contract"],
+                "LocalCascadeMcpRunReceiptV1",
+            )
+            self.assertEqual(outcome["receipt"]["schema_version"], "1.0")
+            self.assertEqual(outcome["receipt"]["plan_id"], quality["plan_id"])
+            self.assertEqual(outcome["receipt"]["plan_sha256"], quality["plan_sha256"])
+            self.assertEqual(
+                outcome["receipt"]["request_task_sha256"],
+                sha256(b"Summarize the local note.").hexdigest(),
+            )
+            core_receipt = outcome["receipt"]["core_receipt"]
+            self.assertEqual(
+                LocalCascadeReceiptV1.from_payload(core_receipt).payload(),
+                core_receipt,
+            )
+            wrapper_evidence = outcome["receipt"]["evidence_sha256"]
+            wrapper_binding = {
+                key: value
+                for key, value in outcome["receipt"].items()
+                if key != "evidence_sha256"
+            }
+            self.assertEqual(wrapper_evidence, sha256_json(wrapper_binding))
+            self.assertEqual(
+                core_receipt["requested_execution_scope"],
                 "offline_local",
             )
             self.assertEqual(
-                outcome["receipt"]["execution_scope_attestation"],
+                core_receipt["execution_scope_attestation"],
                 "adapter_declared_unverified",
             )
             self.assertRegex(
-                outcome["receipt"]["run_id"],
+                core_receipt["run_id"],
                 r"^cascade-run-[0-9a-f]{32}$",
             )
             self.assertRegex(
-                outcome["receipt"]["evidence_sha256"],
+                core_receipt["evidence_sha256"],
                 r"^[0-9a-f]{64}$",
             )
 
@@ -479,6 +582,52 @@ class LocalCascadeMcpTests(unittest.TestCase):
             self.assertEqual(receipt["privacy"], "metadata_only")
             self.assertNotIn("Summarize the local note.", rendered)
             self.assertNotIn("A concise local result", rendered)
+
+    def test_default_adapter_rejects_output_limit_before_provider_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            opener = _RecordingOpener(content="x" * 300)
+            adapter = LocalCascadeCoreAdapter.from_environment(
+                _write_default_adapter_configs(Path(tmp)),
+                opener=opener,
+                hardware_probe=_hardware_probe,
+                resource_probe=_resource_probe,
+            )
+            surface = LocalCascadeToolSurface(adapter)
+            plan = surface.delegate_plan(
+                "Summarize the local note.", task_kind="summarization"
+            )
+
+            outcome = surface.delegate_run(
+                "Summarize the local note.",
+                plan_id=plan["plan_id"],
+                plan_sha256=plan["plan_sha256"],
+                max_output_chars=256,
+            )
+
+            self.assertEqual(
+                outcome["error"]["code"],
+                "output_limit_below_verifier_maximum",
+            )
+            self.assertEqual(opener.calls, [])
+
+    def test_default_adapter_rejects_mcp_incompatible_verifier_at_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = LocalCascadeCoreAdapter.from_environment(
+                _write_default_adapter_configs(
+                    Path(tmp), verifier_max_characters=16_001
+                ),
+                opener=_RecordingOpener(),
+                hardware_probe=_hardware_probe,
+                resource_probe=_resource_probe,
+            )
+            outcome = LocalCascadeToolSurface(adapter).delegate_plan(
+                "Summarize the local note.", task_kind="summarization"
+            )
+
+            self.assertEqual(
+                outcome["error"]["code"],
+                "verifier_output_exceeds_mcp_limit",
+            )
 
     def test_default_adapter_rejects_task_changes_before_provider_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -531,6 +680,233 @@ class LocalCascadeMcpTests(unittest.TestCase):
             self.assertEqual(outcome["reason_codes"], ["output_token_limit_exceeded"])
             self.assertEqual(len(opener.calls), 1)
 
+    def test_default_adapter_abstains_on_nonterminal_or_missing_finish_reason(
+        self,
+    ) -> None:
+        for finish_reason in ("length", None, 7):
+            with (
+                self.subTest(finish_reason=finish_reason),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                opener = _RecordingOpener(finish_reason=finish_reason)
+                adapter = LocalCascadeCoreAdapter.from_environment(
+                    _write_default_adapter_configs(Path(tmp)),
+                    opener=opener,
+                    hardware_probe=_hardware_probe,
+                    resource_probe=_resource_probe,
+                )
+                surface = LocalCascadeToolSurface(adapter)
+                plan = surface.delegate_plan(
+                    "Summarize the local note.",
+                    task_kind="summarization",
+                    efficiency_profile="balanced",
+                )
+
+                outcome = surface.delegate_run(
+                    "Summarize the local note.",
+                    plan_id=plan["plan_id"],
+                    plan_sha256=plan["plan_sha256"],
+                )
+
+                self.assertEqual(outcome["status"], "all_abstained")
+                self.assertEqual(outcome["content"], "")
+                self.assertEqual(len(opener.calls), 2)
+                attempts = outcome["receipt"]["core_receipt"]["attempts"]
+                self.assertEqual(
+                    [item["attempt_status"] for item in attempts],
+                    ["abstained", "abstained"],
+                )
+                self.assertEqual(
+                    outcome["receipt"]["route"],
+                    [
+                        {"tier_id": "small", "model_ref": "small"},
+                        {"tier_id": "strong", "model_ref": "strong"},
+                    ],
+                )
+
+    def test_default_adapter_accepts_only_configured_terminal_finish_reason(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            opener = _RecordingOpener(finish_reason="end_turn")
+            adapter = LocalCascadeCoreAdapter.from_environment(
+                _write_default_adapter_configs(
+                    Path(tmp), terminal_finish_reasons=("end_turn",)
+                ),
+                opener=opener,
+                hardware_probe=_hardware_probe,
+                resource_probe=_resource_probe,
+            )
+            surface = LocalCascadeToolSurface(adapter)
+            plan = surface.delegate_plan(
+                "Summarize the local note.", task_kind="summarization"
+            )
+
+            outcome = surface.delegate_run(
+                "Summarize the local note.",
+                plan_id=plan["plan_id"],
+                plan_sha256=plan["plan_sha256"],
+            )
+
+            self.assertEqual(outcome["status"], "passed")
+            self.assertEqual(len(opener.calls), 1)
+
+    def test_default_adapter_rejects_nonterminal_finish_policy_at_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(CascadeAdapterUnavailable) as invalid:
+                LocalCascadeCoreAdapter.from_environment(
+                    _write_default_adapter_configs(
+                        Path(tmp), terminal_finish_reasons=("length",)
+                    )
+                )
+
+        self.assertEqual(invalid.exception.code, "invalid_configuration")
+
+    def test_finish_policy_is_bound_into_plan_digest(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as first_tmp,
+            tempfile.TemporaryDirectory() as second_tmp,
+        ):
+            first = LocalCascadeToolSurface(
+                LocalCascadeCoreAdapter.from_environment(
+                    _write_default_adapter_configs(
+                        Path(first_tmp), terminal_finish_reasons=("stop",)
+                    ),
+                    opener=_RecordingOpener(),
+                    hardware_probe=_hardware_probe,
+                    resource_probe=_resource_probe,
+                )
+            ).delegate_plan("Summarize this.", task_kind="summarization")
+            second = LocalCascadeToolSurface(
+                LocalCascadeCoreAdapter.from_environment(
+                    _write_default_adapter_configs(
+                        Path(second_tmp), terminal_finish_reasons=("end_turn",)
+                    ),
+                    opener=_RecordingOpener(finish_reason="end_turn"),
+                    hardware_probe=_hardware_probe,
+                    resource_probe=_resource_probe,
+                )
+            ).delegate_plan("Summarize this.", task_kind="summarization")
+
+        self.assertNotEqual(first["plan_sha256"], second["plan_sha256"])
+
+    def test_default_adapter_refuses_overlapping_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            opener = _BlockingOpener()
+            adapter = LocalCascadeCoreAdapter.from_environment(
+                _write_default_adapter_configs(Path(tmp)),
+                opener=opener,
+                hardware_probe=_hardware_probe,
+                resource_probe=_resource_probe,
+            )
+            surface = LocalCascadeToolSurface(adapter)
+            first_plan = surface.delegate_plan(
+                "Summarize first.", task_kind="summarization"
+            )
+            second_plan = surface.delegate_plan(
+                "Summarize second.", task_kind="summarization"
+            )
+            first_result: list[dict[str, object]] = []
+            worker = Thread(
+                target=lambda: first_result.append(
+                    surface.delegate_run(
+                        "Summarize first.",
+                        plan_id=first_plan["plan_id"],
+                        plan_sha256=first_plan["plan_sha256"],
+                    )
+                )
+            )
+            worker.start()
+            self.assertTrue(opener.entered.wait(timeout=2))
+            try:
+                second = surface.delegate_run(
+                    "Summarize second.",
+                    plan_id=second_plan["plan_id"],
+                    plan_sha256=second_plan["plan_sha256"],
+                )
+            finally:
+                opener.release.set()
+                worker.join(timeout=5)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(second["error"]["code"], "cascade_busy")
+            self.assertEqual(len(opener.calls), 1)
+            self.assertEqual(first_result[0]["status"], "passed")
+
+    def test_default_adapter_validates_provider_model_and_correlation_binding(
+        self,
+    ) -> None:
+        class _WrongBindingProvider:
+            def generate(self, expert, request):
+                return ExpertResult(
+                    expert_id=expert.id,
+                    model="different-model",
+                    content="A concise local result from one expert.",
+                    correlation_id="different-correlation",
+                    prompt_tokens=7,
+                    completion_tokens=8,
+                    finish_reason="stop",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = LocalCascadeCoreAdapter.from_environment(
+                _write_default_adapter_configs(Path(tmp)),
+                provider_factory=lambda expert: _WrongBindingProvider(),
+                hardware_probe=_hardware_probe,
+                resource_probe=_resource_probe,
+            )
+            surface = LocalCascadeToolSurface(adapter)
+            plan = surface.delegate_plan("Summarize this.", task_kind="summarization")
+
+            outcome = surface.delegate_run(
+                "Summarize this.",
+                plan_id=plan["plan_id"],
+                plan_sha256=plan["plan_sha256"],
+            )
+
+        self.assertEqual(outcome["status"], "exhausted")
+        self.assertEqual(outcome["reason_codes"], ["attempt_port_error"])
+
+    def test_default_adapter_rejects_ambiguous_or_reserved_configuration(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_default_adapter_configs(Path(tmp))
+            cascade_path = Path(paths[CASCADE_CONFIG_ENV])
+            raw = cascade_path.read_text(encoding="utf-8")
+            cascade_path.write_text(
+                raw.replace(
+                    '"allow_network": false',
+                    '"allow_network": false, "allow_network": true',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(CascadeAdapterUnavailable) as duplicate:
+                LocalCascadeCoreAdapter.from_environment(paths)
+            self.assertEqual(duplicate.exception.code, "invalid_configuration")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_default_adapter_configs(Path(tmp))
+            moe_path = Path(paths[MOE_CONFIG_ENV])
+            payload = json.loads(moe_path.read_text(encoding="utf-8"))
+            payload["experts"][0]["params"]["model"] = "override"
+            moe_path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(CascadeAdapterUnavailable) as reserved:
+                LocalCascadeCoreAdapter.from_environment(paths)
+            self.assertEqual(reserved.exception.code, "invalid_configuration")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_default_adapter_configs(Path(tmp))
+            moe_path = Path(paths[MOE_CONFIG_ENV])
+            raw = moe_path.read_text(encoding="utf-8")
+            moe_path.write_text(
+                raw.replace('"top_k": 1', '"top_k": NaN'), encoding="utf-8"
+            )
+            with self.assertRaises(CascadeAdapterUnavailable) as nonfinite:
+                LocalCascadeCoreAdapter.from_environment(paths)
+            self.assertEqual(nonfinite.exception.code, "invalid_configuration")
+
     def test_default_adapter_requires_numeric_loopback_and_exact_model_refs(
         self,
     ) -> None:
@@ -577,6 +953,10 @@ class LocalCascadeMcpTests(unittest.TestCase):
         self.assertEqual(server["cwd"], ".")
         self.assertNotIn("env", server)
         self.assertNotIn("download", json.dumps(mcp).lower())
+        self.assertIn(
+            "POSIX/macOS alpha",
+            (ROOT / "docs" / "local-cascade.md").read_text(encoding="utf-8"),
+        )
 
     def test_standalone_plugin_launcher_uses_explicit_project_root_offline(
         self,
@@ -606,6 +986,66 @@ class LocalCascadeMcpTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload, {"status": "ready", "mode": "project_root_offline"})
         self.assertNotIn(str(ROOT), completed.stdout)
+
+    def test_standalone_plugin_launcher_serves_four_tools_over_stdio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = Path(tmp) / "cached-plugin"
+            shutil.copytree(PLUGIN_ROOT, copied)
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "MYMOE_PROJECT_ROOT": str(ROOT),
+            }
+            requests = "\n".join(
+                json.dumps(item, separators=(",", ":"))
+                for item in (
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "mymoe-package-test",
+                                "version": "1.0",
+                            },
+                        },
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/list",
+                        "params": {},
+                    },
+                )
+            )
+            completed = subprocess.run(
+                [sys.executable, str(copied / "scripts" / "launch_mcp.py")],
+                cwd=copied,
+                env=env,
+                input=requests + "\n",
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        responses = [
+            json.loads(line)
+            for line in completed.stdout.splitlines()
+            if line.strip().startswith("{")
+        ]
+        listed = next(item for item in responses if item.get("id") == 2)
+        self.assertEqual(
+            {tool["name"] for tool in listed["result"]["tools"]},
+            {"machine_inspect", "delegate_plan", "delegate_run", "receipt_inspect"},
+        )
 
 
 if __name__ == "__main__":

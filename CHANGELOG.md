@@ -4,6 +4,8 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0-alpha.1] - 2026-07-22
+
 ### Added
 
 - LocalCascade v1.1 contracts and an adapter-neutral cascade that tries
@@ -24,6 +26,20 @@ All notable changes to myMoE are documented in this file.
   filter command output, compact internal handoffs, delegate bounded work
   through configured roles, then advance from explicit checks. It also defines
   the extension contract for a later paired end-to-end runner.
+- An optional Codex plugin and four-tool MCP surface for read-only machine
+  inspection, bound planning, one-at-a-time local execution, and metadata-only
+  receipt inspection, plus complete replaceable configuration examples.
+
+### Changed
+
+- OpenAI-compatible responses now use bounded reads, strict text/token/finish
+  parsing, transport-owned request fields, exact provider bindings, and a
+  per-tier non-overridable output cap. Terminal finish reasons are explicit
+  per-expert configuration and known incomplete reasons always abstain.
+- MCP run receipts wrap the untouched v1.1 core receipt with plan, route,
+  request, model-reference, profile, and policy lineage. Verified content is
+  never truncated after acceptance; incompatible output bounds fail before
+  inference, and overlapping runs are refused.
 
 ### Known limitations
 

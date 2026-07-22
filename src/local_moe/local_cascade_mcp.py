@@ -27,6 +27,21 @@ SHA256_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 CASCADE_CONFIG_ENV = "MYMOE_LOCAL_CASCADE_CONFIG"
 MOE_CONFIG_ENV = "MYMOE_LOCAL_CASCADE_MOE_CONFIG"
+FINISH_REASON_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,63}\Z")
+TERMINAL_FINISH_REASONS_PARAM = "local_cascade_terminal_finish_reasons"
+NON_TERMINAL_FINISH_REASONS = frozenset(
+    {
+        "cancelled",
+        "canceled",
+        "content_filter",
+        "error",
+        "function_call",
+        "length",
+        "max_tokens",
+        "timeout",
+        "tool_calls",
+    }
+)
 _PUBLIC_ERROR_MESSAGES = {
     "absolute_configuration_path_required": (
         "Local Cascade configuration variables must use absolute file paths."
@@ -37,7 +52,7 @@ _PUBLIC_ERROR_MESSAGES = {
         "before starting the MCP server."
     ),
     "device_only_required": (
-        "Cascade experts must be attested as direct device-only execution."
+        "Cascade experts must be configured for direct device-only execution."
     ),
     "invalid_configuration": "The local cascade configuration is invalid.",
     "invalid_efficiency_profile": "The efficiency profile is unsupported.",
@@ -46,6 +61,18 @@ _PUBLIC_ERROR_MESSAGES = {
         "Every cascade tier model_ref must match one configured expert id."
     ),
     "model_ref_unavailable": "The planned local expert is no longer configured.",
+    "cascade_busy": (
+        "Another local cascade invocation is already running; try again later."
+    ),
+    "output_limit_below_verifier_maximum": (
+        "max_output_chars must cover the configured verifier maximum."
+    ),
+    "output_limit_exceeded": (
+        "The accepted local result exceeded the requested output limit."
+    ),
+    "verifier_output_exceeds_mcp_limit": (
+        "The configured verifier maximum exceeds the MCP output limit."
+    ),
     "numeric_loopback_required": ("Cascade experts must use a numeric loopback host."),
     "plan_binding_mismatch": (
         "The supplied plan digest does not match the stored plan."
@@ -133,6 +160,7 @@ _RUN_FIELDS = (
     "status",
     "model",
     "tier",
+    "route",
     "usage",
     "latency_ms",
     "reason_codes",
@@ -152,9 +180,13 @@ _RECEIPT_FIELDS = (
     "plan_id",
     "plan_sha256",
     "task_sha256",
+    "request_task_sha256",
     "config_sha256",
+    "efficiency_profile",
+    "finish_reason_policy_bound",
     "model",
     "tier",
+    "route",
     "selected_tier_id",
     "attempt_count",
     "total_duration_ms",
@@ -167,6 +199,7 @@ _RECEIPT_FIELDS = (
     "latency_ms",
     "reason_codes",
     "privacy",
+    "core_receipt",
     "evidence_sha256",
     "warnings",
 )
@@ -312,13 +345,13 @@ class _ConfiguredAttemptPort:
             )
         _require_numeric_device_only_expert(expert, self._scope_guard)
         provider = self._provider_factory(expert)
+        correlation_id = f"{request.task.task_id}-attempt-{request.attempt_number}"
         result = provider.generate(
             expert,
             GenerationRequest(
                 prompt=_attempt_prompt(request, self._verifier),
-                correlation_id=(
-                    f"{request.task.task_id}-attempt-{request.attempt_number}"
-                ),
+                correlation_id=correlation_id,
+                max_output_tokens=request.tier.max_output_tokens,
             ),
         )
         if not isinstance(result, ExpertResult):
@@ -331,17 +364,36 @@ class _ConfiguredAttemptPort:
                 "provider_binding_error",
                 "The configured local provider returned a different expert binding.",
             )
+        if result.model != expert.model or result.correlation_id != correlation_id:
+            raise CascadeAdapterRejected(
+                "provider_binding_error",
+                "The configured local provider returned a different expert binding.",
+            )
+        input_tokens = _actual_or_unknown_tokens(
+            result.prompt_tokens,
+            LocalCascadeTokenCountV1,
+        )
+        output_tokens = _actual_or_unknown_tokens(
+            result.completion_tokens,
+            LocalCascadeTokenCountV1,
+        )
+        finish_reason = (
+            result.finish_reason.strip().casefold()
+            if isinstance(result.finish_reason, str)
+            else None
+        )
+        if finish_reason not in _terminal_finish_reasons(expert):
+            return LocalCascadeAttemptResultV1(
+                status="abstained",
+                content=None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
         return LocalCascadeAttemptResultV1(
             status="completed",
             content=strip_reasoning_content(result.content),
-            input_tokens=_actual_or_unknown_tokens(
-                result.prompt_tokens,
-                LocalCascadeTokenCountV1,
-            ),
-            output_tokens=_actual_or_unknown_tokens(
-                result.completion_tokens,
-                LocalCascadeTokenCountV1,
-            ),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
 
@@ -370,6 +422,7 @@ class LocalCascadeCoreAdapter:
         self._plans: OrderedDict[str, _PlanRecord] = OrderedDict()
         self._receipts: OrderedDict[str, bytes] = OrderedDict()
         self._state_lock = Lock()
+        self._invocation_lock = Lock()
 
     @classmethod
     def from_environment(
@@ -415,6 +468,7 @@ class LocalCascadeCoreAdapter:
                 "model_ref": tier.model_ref,
                 "provider": self._bundle.experts_by_id[tier.model_ref].provider,
                 "runtime_status": "configured_not_probed",
+                "finish_reason_policy_bound": True,
             }
             for tier in self._bundle.cascade_config.ordered_tiers
         ]
@@ -480,6 +534,11 @@ class LocalCascadeCoreAdapter:
                 "invalid_max_steps",
                 "The local cascade step limit is invalid.",
             )
+        if self._bundle.cascade_config.verifier.max_characters > MAX_OUTPUT_CHARS:
+            raise CascadeAdapterRejected(
+                "verifier_output_exceeds_mcp_limit",
+                "The configured verifier maximum exceeds the MCP output limit.",
+            )
 
         base = self._bundle.cascade_config
         eligible = tuple(base.ordered_tiers)
@@ -491,7 +550,7 @@ class LocalCascadeCoreAdapter:
             policy = "configured_cost_rank_ascending_bounded_escalation"
         else:
             selected = (max(eligible, key=lambda tier: tier.cost_rank),)
-            policy = "strongest_single_attempt"
+            policy = "highest_configured_cost_rank_single_attempt"
 
         filtered_config = LocalCascadeConfigV1(
             cascade_id=base.cascade_id,
@@ -542,6 +601,10 @@ class LocalCascadeCoreAdapter:
             "plan_sha256": plan_sha256,
             "task_sha256": request.task_sha256,
             "config_sha256": filtered_config_sha256,
+            "route": [
+                {"tier_id": tier.tier_id, "model_ref": tier.model_ref}
+                for tier in selected
+            ],
             "reason_codes": list(reason_codes),
             "privacy": "metadata_only",
         }
@@ -562,6 +625,11 @@ class LocalCascadeCoreAdapter:
                 "requested_execution_scope": "offline_local",
                 "execution_scope_attestation": "adapter_declared_unverified",
                 "transport_boundary": "numeric_loopback_first_hop",
+            },
+            "limits": {
+                "required_max_output_chars": base.verifier.max_characters,
+                "mcp_max_output_chars": MAX_OUTPUT_CHARS,
+                "finish_reason_policy_bound": True,
             },
             "reason_codes": list(reason_codes),
             "installation": {
@@ -596,52 +664,88 @@ class LocalCascadeCoreAdapter:
                 "task_binding_mismatch",
                 "The task text does not match the stored plan.",
             )
-
-        attempt_port = _ConfiguredAttemptPort(
-            experts_by_id=self._bundle.experts_by_id,
-            verifier=record.filtered_config.verifier,
-            scope_guard=self._scope_guard,
-            provider_factory=self._provider_factory,
-        )
-        outcome = run_local_cascade(
-            record.task,
-            record.filtered_config,
-            attempt_port,
-        )
-        receipt = outcome.receipt.payload()
-        stored_receipt = {
-            **receipt,
-            "receipt_id": outcome.receipt.run_id,
-            "kind": "run",
-            "privacy": "metadata_only",
-        }
-        self._store_receipt(outcome.receipt.run_id, stored_receipt)
-        selected_model = None
-        if outcome.receipt.selected_tier_id is not None:
-            selected_model = next(
-                (
-                    tier.model_ref
-                    for tier in record.filtered_config.tiers
-                    if tier.tier_id == outcome.receipt.selected_tier_id
-                ),
-                None,
+        if request.max_output_chars < record.filtered_config.verifier.max_characters:
+            raise CascadeAdapterRejected(
+                "output_limit_below_verifier_maximum",
+                "max_output_chars must cover the configured verifier maximum.",
             )
-        reason_codes = (
-            []
-            if outcome.receipt.status == "passed"
-            else list(outcome.receipt.attempts[-1].verifier_reason_codes)
-        )
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "status": outcome.receipt.status,
-            "content": outcome.content or "",
-            "model": selected_model,
-            "tier": outcome.receipt.selected_tier_id,
-            "usage": outcome.receipt.token_totals.payload(),
-            "latency_ms": outcome.receipt.total_duration_ms,
-            "reason_codes": reason_codes,
-            "receipt": receipt,
-        }
+        if not self._invocation_lock.acquire(blocking=False):
+            raise CascadeAdapterRejected(
+                "cascade_busy",
+                "Another local cascade invocation is already running; try again later.",
+            )
+
+        try:
+            attempt_port = _ConfiguredAttemptPort(
+                experts_by_id=self._bundle.experts_by_id,
+                verifier=record.filtered_config.verifier,
+                scope_guard=self._scope_guard,
+                provider_factory=self._provider_factory,
+            )
+            outcome = run_local_cascade(
+                record.task,
+                record.filtered_config,
+                attempt_port,
+            )
+            content = outcome.content or ""
+            if len(content) > request.max_output_chars:
+                raise CascadeAdapterRejected(
+                    "output_limit_exceeded",
+                    "The accepted local result exceeded the requested output limit.",
+                )
+            receipt = outcome.receipt.payload()
+            selected_model = None
+            if outcome.receipt.selected_tier_id is not None:
+                selected_model = next(
+                    (
+                        tier.model_ref
+                        for tier in record.filtered_config.tiers
+                        if tier.tier_id == outcome.receipt.selected_tier_id
+                    ),
+                    None,
+                )
+            wrapper_base = {
+                "schema_version": SCHEMA_VERSION,
+                "contract": "LocalCascadeMcpRunReceiptV1",
+                "receipt_id": outcome.receipt.run_id,
+                "run_id": outcome.receipt.run_id,
+                "kind": "run",
+                "status": outcome.receipt.status,
+                "plan_id": record.plan_id,
+                "plan_sha256": record.plan_sha256,
+                "request_task_sha256": record.raw_task_sha256,
+                "config_sha256": receipt.get("config_sha256"),
+                "efficiency_profile": record.profile,
+                "finish_reason_policy_bound": True,
+                "model": selected_model,
+                "tier": outcome.receipt.selected_tier_id,
+                "route": [
+                    {"tier_id": tier.tier_id, "model_ref": tier.model_ref}
+                    for tier in record.filtered_config.tiers
+                ],
+                "privacy": "metadata_only",
+                "core_receipt": receipt,
+            }
+            stored_receipt = _metadata_receipt_with_evidence(wrapper_base)
+            self._store_receipt(outcome.receipt.run_id, stored_receipt)
+            reason_codes = (
+                []
+                if outcome.receipt.status == "passed"
+                else list(outcome.receipt.attempts[-1].verifier_reason_codes)
+            )
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "status": outcome.receipt.status,
+                "content": content,
+                "model": selected_model,
+                "tier": outcome.receipt.selected_tier_id,
+                "usage": outcome.receipt.token_totals.payload(),
+                "latency_ms": outcome.receipt.total_duration_ms,
+                "reason_codes": reason_codes,
+                "receipt": stored_receipt,
+            }
+        finally:
+            self._invocation_lock.release()
 
     def inspect_receipt(self, receipt_id: str) -> object:
         with self._state_lock:
@@ -844,10 +948,14 @@ class LocalCascadeToolSurface:
                 "The alpha plugin does not install or download model assets.",
             )
 
-        rendered = content[:max_output_chars]
+        if len(content) > max_output_chars:
+            return _error(
+                "output_limit_exceeded",
+                "The accepted local result exceeded the requested output limit.",
+            )
         payload.setdefault("schema_version", SCHEMA_VERSION)
-        payload["content"] = rendered
-        payload["content_truncated"] = len(content) > len(rendered)
+        payload["content"] = content
+        payload["content_truncated"] = False
         payload["task_sha256"] = task_digest
         return payload
 
@@ -915,6 +1023,7 @@ def _load_configuration_bundle(
     from .config import parse_config, runtime_config_sha256
     from .execution_scope import ExecutionScopeGuard
     from .local_cascade_contracts import LocalCascadeConfigV1, sha256_json
+    from .providers import validate_provider_request_params
     from .secure_files import read_bounded_regular_file
 
     cascade_path = _required_absolute_config_path(environ, CASCADE_CONFIG_ENV)
@@ -926,7 +1035,14 @@ def _load_configuration_bundle(
             maximum_bytes=2 * 1024 * 1024,
             label=label,
         )
-        parsed = json.loads(raw.decode("utf-8"))
+        try:
+            parsed = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"{label} must be strict JSON.") from exc
         if not isinstance(parsed, Mapping) or any(
             not isinstance(key, str) for key in parsed
         ):
@@ -948,6 +1064,8 @@ def _load_configuration_bundle(
                 code="model_ref_not_configured",
             )
         _require_numeric_device_only_expert(expert, guard)
+        _terminal_finish_reasons(expert)
+        validate_provider_request_params(expert)
     return _ConfigurationBundle(
         cascade_config=cascade_config,
         moe_config=moe_config,
@@ -955,6 +1073,47 @@ def _load_configuration_bundle(
         cascade_config_sha256=sha256_json(cascade_config.payload()),
         moe_config_sha256=runtime_config_sha256(moe_config),
     )
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _terminal_finish_reasons(expert: Any) -> tuple[str, ...]:
+    params = getattr(expert, "params", None)
+    raw = (
+        params.get(TERMINAL_FINISH_REASONS_PARAM)
+        if isinstance(params, Mapping)
+        else None
+    )
+    if not isinstance(raw, (list, tuple)):
+        raise CascadeAdapterRejected(
+            "invalid_configuration",
+            "The local cascade configuration is invalid.",
+        )
+    values = tuple(item for item in raw if isinstance(item, str))
+    if (
+        len(values) != len(raw)
+        or not 1 <= len(values) <= 16
+        or len(set(values)) != len(values)
+        or any(item != item.strip().casefold() for item in values)
+        or any(FINISH_REASON_RE.fullmatch(item) is None for item in values)
+        or any(item in NON_TERMINAL_FINISH_REASONS for item in values)
+    ):
+        raise CascadeAdapterRejected(
+            "invalid_configuration",
+            "The local cascade configuration is invalid.",
+        )
+    return values
 
 
 def _required_absolute_config_path(
@@ -1006,7 +1165,7 @@ def _require_numeric_device_only_expert(expert: Any, scope_guard: Any) -> None:
     ):
         raise CascadeAdapterRejected(
             "device_only_required",
-            "Cascade experts must be attested as direct device-only execution.",
+            "Cascade experts must be configured for direct device-only execution.",
         )
 
 
@@ -1048,6 +1207,18 @@ def _metadata_bytes(receipt: Mapping[str, object]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
+
+
+def _metadata_receipt_with_evidence(
+    receipt: Mapping[str, object],
+) -> dict[str, object]:
+    from .local_cascade_contracts import sha256_json
+
+    cleaned = _scrub(receipt)
+    if not isinstance(cleaned, Mapping):
+        raise TypeError("Receipt metadata must be a mapping.")
+    stable = {str(key): value for key, value in cleaned.items()}
+    return {**stable, "evidence_sha256": sha256_json(stable)}
 
 
 def _adapter_error(

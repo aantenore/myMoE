@@ -1,0 +1,61 @@
+{
+  "execution": {
+    "max_scope": "device_only",
+    "allowed_scopes": ["device_only"],
+    "allow_scope_widening": false
+  },
+  "routing": {
+    "top_k": 1
+  },
+  "experts": [
+    {
+      "id": "local_cascade_utility",
+      "provider": "openai_compatible",
+      "model": "replace-with-local-utility-model",
+      "role": "utility",
+      "base_url": "http://127.0.0.1:8101/v1",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 512,
+        "local_cascade_terminal_finish_reasons": ["stop"]
+      },
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      }
+    },
+    {
+      "id": "local_cascade_resident",
+      "provider": "openai_compatible",
+      "model": "replace-with-local-resident-model",
+      "role": "resident-generalist",
+      "base_url": "http://127.0.0.1:8102/v1",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 2048,
+        "local_cascade_terminal_finish_reasons": ["stop"]
+      },
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      }
+    },
+    {
+      "id": "local_cascade_specialist",
+      "provider": "openai_compatible",
+      "model": "replace-with-local-specialist-model",
+      "role": "cold-specialist",
+      "base_url": "http://127.0.0.1:8103/v1",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 4096,
+        "local_cascade_terminal_finish_reasons": ["stop"]
+      },
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      }
+    }
+  ],
+  "rules": []
+}

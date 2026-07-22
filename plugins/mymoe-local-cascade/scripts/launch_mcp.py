@@ -34,6 +34,8 @@ def resolve_launch() -> tuple[str, list[str]]:
                 "run",
                 "--offline",
                 "--locked",
+                "--extra",
+                "local-cascade",
                 "--project",
                 str(root),
                 ENTRYPOINT,
@@ -44,7 +46,11 @@ def resolve_launch() -> tuple[str, list[str]]:
     if console:
         return "installed_console", [console]
 
-    if importlib.util.find_spec("local_moe.local_cascade_mcp") is not None:
+    try:
+        module_spec = importlib.util.find_spec("local_moe.local_cascade_mcp")
+    except (ImportError, ModuleNotFoundError):
+        module_spec = None
+    if module_spec is not None:
         return "installed_module", [sys.executable, "-m", "local_moe.local_cascade_mcp"]
 
     raise RuntimeError(

@@ -1,5 +1,6 @@
 include configs/cell-binding-request.example.json
 include configs/local-cascade.example.json
+include configs/local-cascade-moe.example.json
 include docs/cell-runtime-binding.md
 include docs/bound-cell-run.md
 include docs/cooperative-resource-lease.md

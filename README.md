@@ -41,6 +41,11 @@ and every tier `model_ref` must exactly match an expert `id` in the latter file.
 Its loopback endpoint proves only that the first connection is local; it does
 not attest any downstream runtime, proxy, model, or network path.
 
+The bundled Codex plugin launcher is currently a POSIX/macOS alpha and expects
+`python3` on `PATH`. The installed `mymoe-local-cascade-mcp` console entrypoint
+is platform-neutral, but Windows Codex launcher integration is not claimed in
+this release.
+
 ```bash
 uv run python experiments/benchmark_local_cascade.py --check
 ```
@@ -50,7 +55,9 @@ source-labelled accounting without invoking a model. It is not evidence of live
 model quality, cost, latency, runtime isolation, or frontier-token savings, and
 it does not qualify any model or route. See the
 [LocalCascade guide](docs/local-cascade.md), the
-[replaceable role configuration](configs/local-cascade.example.json), and the
+[replaceable role configuration](configs/local-cascade.example.json), the
+[matching local expert configuration](configs/local-cascade-moe.example.json),
+and the
 [checked contract report](outputs/local-cascade-contract-benchmark.json).
 
 ## Did the declared local cell change?

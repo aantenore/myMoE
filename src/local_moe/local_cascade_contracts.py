@@ -636,7 +636,9 @@ class LocalCascadeConfigV1:
                 "requested_execution_scope must be offline_local."
             )
         if _boolean(self.allow_network, "allow_network"):
-            raise LocalCascadeContractError("LocalCascade cannot allow network access.")
+            raise LocalCascadeContractError(
+                "LocalCascade cannot allow external-network authority."
+            )
         if _boolean(self.allow_tools, "allow_tools"):
             raise LocalCascadeContractError("LocalCascade cannot allow tools.")
         if _boolean(self.allow_writes, "allow_writes"):
@@ -825,7 +827,7 @@ class LocalCascadeAttemptRequestV1:
             )
         ):
             raise LocalCascadeContractError(
-                "attempt requests cannot enable network, tools, or writes."
+                "attempt requests cannot enable external-network authority, tools, or writes."
             )
         if (
             _integer(
@@ -899,7 +901,7 @@ class LocalCascadeAttemptResultV1:
             count = _integer(getattr(self, field), field, maximum=1_000_000)
             if count != 0:
                 raise LocalCascadeContractError(
-                    "LocalCascade rejects network, tool, and write activity."
+                    "LocalCascade rejects reported external-network, tool, and write activity."
                 )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 from typing import Any, Callable, Iterator, Protocol
 from urllib import error, request
@@ -16,9 +17,27 @@ LOCAL_PROVIDER_PARAMS = {
     "prompt_cache_size",
     "prompt_concurrency",
     "runtime_backend",
+    "local_cascade_terminal_finish_reasons",
     "supports_thinking",
     "thinking_policy",
     "system_prompt",
+}
+
+PROVIDER_OWNED_PARAMS = {
+    "api_key",
+    "authorization",
+    "base_url",
+    "endpoint",
+    "function_call",
+    "functions",
+    "headers",
+    "messages",
+    "method",
+    "model",
+    "stream",
+    "tool_choice",
+    "tools",
+    "url",
 }
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -27,6 +46,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "unless they explicitly ask for another language. Preserve "
     "correlation context."
 )
+MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class ProviderError(RuntimeError):
@@ -37,6 +57,7 @@ class ProviderError(RuntimeError):
 class GenerationRequest:
     prompt: str
     correlation_id: str
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +79,9 @@ class ProviderStreamEvent:
 
 
 class Provider(Protocol):
-    def generate(self, expert: ExpertConfig, req: GenerationRequest) -> ExpertResult:
-        ...
+    def generate(
+        self, expert: ExpertConfig, req: GenerationRequest
+    ) -> ExpertResult: ...
 
 
 class SyntheticProvider:
@@ -100,19 +122,23 @@ class OpenAICompatibleProvider:
 
         try:
             with self._opener(http_req, timeout=expert.timeout_seconds) as response:
-                raw = response.read().decode("utf-8")
-        except error.URLError as exc:
+                raw = _read_bounded_response(response).decode("utf-8")
+        except (error.URLError, UnicodeDecodeError) as exc:
             raise ProviderError(f"Expert {expert.id} request failed: {exc}") from exc
 
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            parsed = _strict_json_loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ProviderError(f"Expert {expert.id} returned invalid JSON.") from exc
 
         try:
             content = parsed["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError(f"Expert {expert.id} returned invalid payload.") from exc
+            raise ProviderError(
+                f"Expert {expert.id} returned invalid payload."
+            ) from exc
+        if not isinstance(content, str):
+            raise ProviderError(f"Expert {expert.id} returned non-text content.")
 
         usage = parsed.get("usage") if isinstance(parsed, dict) else None
         timings = parsed.get("timings") if isinstance(parsed, dict) else None
@@ -120,7 +146,7 @@ class OpenAICompatibleProvider:
         return ExpertResult(
             expert_id=expert.id,
             model=expert.model,
-            content=strip_reasoning_content(str(content)),
+            content=strip_reasoning_content(content),
             correlation_id=req.correlation_id,
             prompt_tokens=_maybe_int(usage, "prompt_tokens"),
             completion_tokens=_maybe_int(usage, "completion_tokens"),
@@ -147,7 +173,17 @@ class OpenAICompatibleProvider:
 
         try:
             with self._opener(http_req, timeout=expert.timeout_seconds) as response:
-                for raw_line in response:
+                received_bytes = 0
+                while True:
+                    remaining = MAX_PROVIDER_RESPONSE_BYTES - received_bytes
+                    raw_line = response.readline(remaining + 1)
+                    if not raw_line:
+                        break
+                    received_bytes += len(raw_line)
+                    if received_bytes > MAX_PROVIDER_RESPONSE_BYTES:
+                        raise ProviderError(
+                            f"Expert {expert.id} response exceeded the byte limit."
+                        )
                     line = raw_line.decode("utf-8").strip()
                     if not line:
                         continue
@@ -159,26 +195,37 @@ class OpenAICompatibleProvider:
                     if data == "[DONE]":
                         break
                     try:
-                        parsed = json.loads(data)
-                    except json.JSONDecodeError as exc:
-                        raise ProviderError(f"Expert {expert.id} returned invalid stream JSON.") from exc
+                        parsed = _strict_json_loads(data)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        raise ProviderError(
+                            f"Expert {expert.id} returned invalid stream JSON."
+                        ) from exc
 
                     delta = _stream_delta(parsed)
                     if delta:
                         raw_content += delta
-                        yield ProviderStreamEvent(content=strip_reasoning_content(raw_content))
+                        yield ProviderStreamEvent(
+                            content=strip_reasoning_content(raw_content)
+                        )
 
                     usage = parsed.get("usage") if isinstance(parsed, dict) else None
-                    timings = parsed.get("timings") if isinstance(parsed, dict) else None
-                    prompt_tokens = _maybe_int(usage, "prompt_tokens") or prompt_tokens
-                    completion_tokens = _maybe_int(usage, "completion_tokens") or completion_tokens
-                    predicted_tokens_per_second = (
-                        _maybe_float(timings, "predicted_per_second")
-                        or predicted_tokens_per_second
+                    timings = (
+                        parsed.get("timings") if isinstance(parsed, dict) else None
                     )
+                    observed_prompt_tokens = _maybe_int(usage, "prompt_tokens")
+                    if observed_prompt_tokens is not None:
+                        prompt_tokens = observed_prompt_tokens
+                    observed_completion_tokens = _maybe_int(usage, "completion_tokens")
+                    if observed_completion_tokens is not None:
+                        completion_tokens = observed_completion_tokens
+                    observed_rate = _maybe_float(timings, "predicted_per_second")
+                    if observed_rate is not None:
+                        predicted_tokens_per_second = observed_rate
                     finish_reason = _finish_reason(parsed) or finish_reason
-        except error.URLError as exc:
-            raise ProviderError(f"Expert {expert.id} stream request failed: {exc}") from exc
+        except (error.URLError, UnicodeDecodeError) as exc:
+            raise ProviderError(
+                f"Expert {expert.id} stream request failed: {exc}"
+            ) from exc
 
         if not saw_sse and non_sse_lines:
             result = _parse_non_streaming_result(expert, req, "\n".join(non_sse_lines))
@@ -213,6 +260,7 @@ def _chat_request(
     *,
     stream: bool = False,
 ) -> request.Request:
+    validate_provider_request_params(expert)
     url = str(expert.base_url).rstrip("/") + "/chat/completions"
     payload = {
         "model": expert.model,
@@ -224,7 +272,30 @@ def _chat_request(
             {"role": "user", "content": req.prompt},
         ],
     }
-    payload.update(provider_request_params(expert, req.prompt))
+    request_params = provider_request_params(expert, req.prompt)
+    if req.max_output_tokens is not None:
+        if (
+            not isinstance(req.max_output_tokens, int)
+            or isinstance(req.max_output_tokens, bool)
+            or req.max_output_tokens < 1
+        ):
+            raise ProviderError(
+                "Generation max_output_tokens must be a positive integer."
+            )
+        configured_max = request_params.get("max_tokens")
+        if configured_max is not None and (
+            not isinstance(configured_max, int)
+            or isinstance(configured_max, bool)
+            or configured_max < 1
+        ):
+            raise ProviderError("Expert max_tokens must be a positive integer.")
+        request_params["max_tokens"] = min(
+            req.max_output_tokens,
+            configured_max
+            if isinstance(configured_max, int)
+            else req.max_output_tokens,
+        )
+    payload.update(request_params)
     if stream:
         payload["stream"] = True
 
@@ -242,21 +313,23 @@ def _parse_non_streaming_result(
     raw: str,
 ) -> ExpertResult:
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        parsed = _strict_json_loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ProviderError(f"Expert {expert.id} returned invalid JSON.") from exc
 
     try:
         content = parsed["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Expert {expert.id} returned invalid payload.") from exc
+    if not isinstance(content, str):
+        raise ProviderError(f"Expert {expert.id} returned non-text content.")
 
     usage = parsed.get("usage") if isinstance(parsed, dict) else None
     timings = parsed.get("timings") if isinstance(parsed, dict) else None
     return ExpertResult(
         expert_id=expert.id,
         model=expert.model,
-        content=strip_reasoning_content(str(content)),
+        content=strip_reasoning_content(content),
         correlation_id=req.correlation_id,
         prompt_tokens=_maybe_int(usage, "prompt_tokens"),
         completion_tokens=_maybe_int(usage, "completion_tokens"),
@@ -276,47 +349,89 @@ def _stream_delta(parsed: object) -> str:
         return ""
     delta = first.get("delta")
     if isinstance(delta, dict) and delta.get("content") is not None:
-        return str(delta["content"])
+        content = delta["content"]
+        if not isinstance(content, str):
+            raise ProviderError("Provider stream returned non-text content.")
+        return content
     message = first.get("message")
     if isinstance(message, dict) and message.get("content") is not None:
-        return str(message["content"])
+        content = message["content"]
+        if not isinstance(content, str):
+            raise ProviderError("Provider stream returned non-text content.")
+        return content
     text = first.get("text")
-    return str(text) if text is not None else ""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        raise ProviderError("Provider stream returned non-text content.")
+    return text
+
+
+def _read_bounded_response(response: object) -> bytes:
+    read = getattr(response, "read", None)
+    if not callable(read):
+        raise ProviderError("Provider response does not support bounded reads.")
+    raw = read(MAX_PROVIDER_RESPONSE_BYTES + 1)
+    if not isinstance(raw, bytes):
+        raise ProviderError("Provider response must return bytes.")
+    if len(raw) > MAX_PROVIDER_RESPONSE_BYTES:
+        raise ProviderError("Provider response exceeded the byte limit.")
+    return raw
 
 
 def _finish_reason(parsed: object) -> str | None:
     if not isinstance(parsed, dict):
         return None
     choices = parsed.get("choices")
-    if (
-        not isinstance(choices, list)
-        or not choices
-        or not isinstance(choices[0], dict)
-    ):
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None
     raw = choices[0].get("finish_reason")
-    if raw is None:
+    if not isinstance(raw, str):
         return None
-    value = str(raw).strip().lower()
+    value = raw.strip().lower()
     return value or None
 
 
 def _maybe_int(raw: object, key: str) -> int | None:
-    if not isinstance(raw, dict) or raw.get(key) is None:
+    if not isinstance(raw, dict):
         return None
-    try:
-        return int(raw[key])
-    except (TypeError, ValueError):
+    value = raw.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         return None
+    return value
 
 
 def _maybe_float(raw: object, key: str) -> float | None:
-    if not isinstance(raw, dict) or raw.get(key) is None:
+    if not isinstance(raw, dict):
         return None
-    try:
-        return float(raw[key])
-    except (TypeError, ValueError):
+    value = raw.get(key)
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value < 0
+    ):
         return None
+    return float(value)
+
+
+def _strict_json_loads(raw: str) -> object:
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"non-finite JSON constant: {value}")
+
+    return json.loads(
+        raw,
+        object_pairs_hook=unique_object,
+        parse_constant=reject_constant,
+    )
 
 
 def provider_request_params(expert: ExpertConfig, prompt: str) -> dict[str, object]:
@@ -342,6 +457,18 @@ def provider_request_params(expert: ExpertConfig, prompt: str) -> dict[str, obje
     chat_template_kwargs["enable_thinking"] = enable_thinking
     params["chat_template_kwargs"] = chat_template_kwargs
     return params
+
+
+def validate_provider_request_params(expert: ExpertConfig) -> None:
+    """Reject fields owned by the transport before any request is attempted."""
+
+    reserved = sorted(set(expert.params) & PROVIDER_OWNED_PARAMS)
+    if reserved:
+        raise ProviderError(
+            "Expert params cannot override provider-owned request fields: "
+            + ", ".join(reserved)
+            + "."
+        )
 
 
 def _system_prompt(expert: ExpertConfig) -> str:
