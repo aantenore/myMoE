@@ -145,6 +145,43 @@ artifact root. A future authenticated producer could wrap this contract, but
 the receipt itself must never become execution authority. See the
 [Bound Cell Attestor guide](cell-runtime-binding.md).
 
+The Process-bound Runtime Supervisor is the separate dynamic lifecycle
+boundary for one direct llama.cpp cell. It consumes an exact static binding,
+refuses an already-occupied endpoint, and launches one `llama-server` for one
+local GGUF. Readiness binds the root PID, creation time, executable digest,
+root-only process shape, numeric-loopback listener PID, and bounded
+`GET /health`, `GET /props`, and `GET /v1/models` evidence. Process and listener
+identity are sampled again after the HTTP probes.
+
+```mermaid
+flowchart LR
+  B["Bound binary + GGUF + launch plan"] --> L["Owner-bound metadata lease"]
+  L --> V["Vacant numeric-loopback port"]
+  V --> S["One direct llama-server spawn"]
+  S --> E1["Root process + listener evidence"]
+  E1 --> G["Bounded GET identity probes"]
+  G --> E2["Root process + listener recheck"]
+  E2 --> R["Ready metadata receipt"]
+  R --> C["Owned teardown + vacancy check"]
+```
+
+The v1 adapter is POSIX-only, foreground-owned, and root-only: any observed
+descendant fails closed. It has no attach, adoption, automatic restart, router,
+download, agent, editor, UI, or MCP surface. Its supervisor control plane emits
+only bounded `GET` probes; the owned server retains its native inference API.
+If shutdown cannot prove
+both owned-process exit and endpoint vacancy, the lease becomes sticky
+`unknown_blocking`; an ordinary lifecycle transition cannot clear it. The
+ledger stores metadata and digests but never the raw lease capability, and it
+does not mutate processes or authorize inference.
+
+This is not cryptographic process attestation or same-user isolation. The
+kernel process/socket view, owner process, observer dependencies, filesystem,
+static binding producer, runtime, and metadata store remain in the trusted
+computing base. The application probes can support the binding but cannot prove
+that a compromised runtime is truthful. See the
+[Process-bound Runtime Supervisor guide](process-bound-runtime-supervisor.md).
+
 Bound Cell Run v1 is the deliberately narrow execution bridge between those
 two non-authorizing checks and an already-resident local runtime. It does not
 join the normal router, persistent chat, Cline, or agent-tool paths:
@@ -200,6 +237,11 @@ not silently erase the delivery state.
   local cell. It fingerprints the declared runtime/model/harness bindings and
   emits a short-lived non-authorizing receipt, or abstains when separately
   anchored component identities are missing or differ.
+- `Process-bound Runtime Supervisor`: POSIX v1 owner for one direct
+  `llama-server`. It links separately anchored binary/model identities to a
+  root-only process, numeric-loopback listener, and bounded application probes;
+  it never attaches, routes, downloads, restarts automatically, exposes agent
+  tools, or turns its metadata receipt into inference authority.
 - `Adaptive Cell Advisor`: offline whole-cell admission and Pareto selection
   over exact model/runtime/harness/tool passports, current resources, and
   applicable evaluation evidence. Its receipt is advisory only.

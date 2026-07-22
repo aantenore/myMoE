@@ -83,7 +83,7 @@ def _package_version() -> str:
     try:
         return version("local-moe-orchestrator")
     except PackageNotFoundError:
-        return "0.15.0a1"
+        return "0.16.0a1"
 
 
 PRODUCER_VERSION = _package_version()
@@ -296,6 +296,37 @@ class CellBindingInspectionBundle:
         return {**self.content_payload(), "digest": self.digest}
 
 
+@dataclass(frozen=True)
+class ResolvedCellRuntimeLaunch:
+    """Private-path launch material derived from one verified binding request.
+
+    This value is intentionally not serializable.  It carries the exact paths
+    and argv needed by a separately-authorized launcher while the public
+    inspection bundle remains metadata-only and non-authorizing.
+    """
+
+    request_path: Path = field(repr=False, compare=False)
+    working_directory: Path = field(repr=False, compare=False)
+    runtime_executable_path: Path = field(repr=False, compare=False)
+    model_artifact_path: Path = field(repr=False, compare=False)
+    argv: tuple[str, ...] = field(repr=False)
+    backend: str
+    runtime_security_profile: str | None
+    expert_id: str
+    endpoint_base_url: str = field(repr=False)
+    endpoint_host: str
+    endpoint_port: int
+    expected_model_id: str = field(repr=False)
+    request_sha256: str
+    binding_manifest_sha256: str
+    inspection_receipt_sha256: str
+    launch_plan_sha256: str
+    endpoint_authority_sha256: str
+    runtime_executable_sha256: str
+    model_identity_sha256: str
+    bundle: CellBindingInspectionBundle = field(repr=False, compare=False)
+
+
 def load_cell_binding_inspect_request(
     path: str | Path,
 ) -> CellBindingInspectRequest:
@@ -431,6 +462,16 @@ def inspect_cell_binding(
     backend, runtime_executable = _validate_scope_and_runtime(
         config, expert, raw_expert, declaration, request
     )
+    raw_params = raw_expert.get("params")
+    security_profile = (
+        raw_params.get("runtime_security_profile")
+        if isinstance(raw_params, Mapping)
+        else None
+    )
+    if security_profile is not None and not isinstance(security_profile, str):
+        raise RuntimeBindingInspectionError(
+            "runtime_plan_invalid", "Runtime security profile is invalid."
+        )
     endpoint = _validate_endpoint(expert)
     model_path, model_relative = _validate_model_path(
         root=root,
@@ -560,6 +601,154 @@ def inspect_cell_binding(
         raise RuntimeBindingInspectionError(
             "inspection_contract_invalid", "Inspection evidence is invalid."
         ) from exc
+
+
+def resolve_verified_cell_runtime_launch(
+    request_path: str | Path,
+    *,
+    now: datetime | None = None,
+) -> ResolvedCellRuntimeLaunch:
+    """Resolve exact launcher inputs only after a fresh verified inspection.
+
+    The returned object does not authorize execution.  Callers must apply a
+    separate lifecycle policy and explicit confirmation.  Resolution performs
+    no network access and starts no process.
+    """
+
+    request_file = _request_path(request_path)
+    bundle = inspect_cell_binding(request_file, now=now)
+    if bundle.receipt.status != "verified" or bundle.receipt.reason_codes:
+        raise RuntimeBindingInspectionError(
+            "binding_not_verified",
+            "Runtime launch resolution requires a verified binding inspection.",
+        )
+
+    request = load_cell_binding_inspect_request(request_file)
+    root = request_file.parent
+    catalog_file = _within_request_root(root, request.catalog_path, "catalog")
+    config_file = _within_request_root(
+        root, request.runtime_config_path, "runtime config"
+    )
+    runtime_root = _within_request_root(root, request.runtime_root, "runtime root")
+    model_root = _within_request_root(
+        root, request.model_artifact_root, "model artifact root"
+    )
+    config_raw, _config_source_sha = _load_runtime_config(config_file, root=root)
+    try:
+        config = parse_config(config_raw)
+    except (
+        AttributeError,
+        ConfigError,
+        KeyError,
+        OverflowError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeBindingInspectionError(
+            "runtime_config_invalid", "Runtime configuration is invalid."
+        ) from exc
+    try:
+        catalog = load_cell_catalog(catalog_file, confinement_root=root)
+    except (CellContractError, OverflowError, TypeError, ValueError) as exc:
+        raise RuntimeBindingInspectionError(
+            "catalog_invalid", "Adaptive cell catalog is invalid."
+        ) from exc
+
+    passports = [item for item in catalog.cells if item.cell_id == request.cell_id]
+    experts = [item for item in config.experts if item.id == request.expert_id]
+    if len(passports) != 1:
+        raise RuntimeBindingInspectionError(
+            "cell_not_found", "Inspection cell is not uniquely declared."
+        )
+    if len(experts) != 1:
+        raise RuntimeBindingInspectionError(
+            "expert_not_found", "Inspection expert is not uniquely configured."
+        )
+
+    declaration = passports[0].declaration
+    expert = experts[0]
+    raw_expert = _selected_raw_expert(config_raw, request.expert_id)
+    backend, runtime_executable = _validate_scope_and_runtime(
+        config, expert, raw_expert, declaration, request
+    )
+    raw_params = raw_expert.get("params")
+    security_profile = (
+        raw_params.get("runtime_security_profile")
+        if isinstance(raw_params, Mapping)
+        else None
+    )
+    if security_profile is not None and not isinstance(security_profile, str):
+        raise RuntimeBindingInspectionError(
+            "runtime_plan_invalid", "Runtime security profile is invalid."
+        )
+    endpoint = _validate_endpoint(expert)
+    model_path, _model_relative = _validate_model_path(
+        root=root,
+        model_root=model_root,
+        expert=expert,
+        backend=backend,
+    )
+    command, _platform_key = _selected_runtime_command(
+        config=config,
+        expert=expert,
+        backend=backend,
+        endpoint=endpoint,
+        model_reference=expert.model,
+        runtime_executable=runtime_executable,
+    )
+    launch_plan_sha = _launch_plan_sha256(command)
+    endpoint_authority_sha = _endpoint_authority_sha256(endpoint)
+    if (
+        launch_plan_sha != bundle.manifest.launch_plan_sha256
+        or endpoint_authority_sha != bundle.manifest.endpoint_authority_sha256
+    ):
+        raise RuntimeBindingInspectionError(
+            "binding_changed", "Resolved runtime launch no longer matches inspection."
+        )
+
+    executable_components = [
+        item for item in bundle.manifest.components if item.role == "runtime_executable"
+    ]
+    if len(executable_components) != 1:
+        raise RuntimeBindingInspectionError(
+            "inspection_contract_invalid",
+            "Runtime executable evidence is not unique.",
+        )
+    runtime_executable_path = _within_request_root(
+        root, runtime_executable, "runtime executable"
+    )
+    try:
+        runtime_executable_path.relative_to(runtime_root)
+    except ValueError as exc:
+        raise RuntimeBindingInspectionError(
+            "runtime_executable_mismatch",
+            "Runtime executable leaves its inspected root.",
+        ) from exc
+
+    return ResolvedCellRuntimeLaunch(
+        request_path=request_file,
+        working_directory=root,
+        runtime_executable_path=runtime_executable_path,
+        model_artifact_path=model_path,
+        argv=command.argv,
+        backend=backend,
+        runtime_security_profile=security_profile,
+        expert_id=expert.id,
+        endpoint_base_url=str(expert.base_url),
+        endpoint_host=str(endpoint.hostname),
+        endpoint_port=int(endpoint.port),
+        expected_model_id=(
+            expert.id if security_profile == "process_bound_v1" else expert.model
+        ),
+        request_sha256=bundle.request_sha256,
+        binding_manifest_sha256=bundle.manifest.digest,
+        inspection_receipt_sha256=bundle.receipt.digest,
+        launch_plan_sha256=launch_plan_sha,
+        endpoint_authority_sha256=endpoint_authority_sha,
+        runtime_executable_sha256=executable_components[0].sha256,
+        model_identity_sha256=bundle.manifest.model_identity_sha256,
+        bundle=bundle,
+    )
 
 
 def runtime_identity_sha256(
@@ -1139,7 +1328,6 @@ def _endpoint_authority_sha256(endpoint: object) -> str:
             "scheme": str(getattr(endpoint, "scheme")).lower(),
             "hostname": str(getattr(endpoint, "hostname")).rstrip(".").lower(),
             "port": int(getattr(endpoint, "port")),
-            "base_path": str(getattr(endpoint, "path")) or "/",
         }
     )
 
@@ -1436,6 +1624,7 @@ __all__ = [
     "MAX_OBSERVATION_TTL_SECONDS",
     "PRODUCER_TRUST_BOUNDARY",
     "REQUEST_CONTRACT",
+    "ResolvedCellRuntimeLaunch",
     "RUNTIME_COMPONENT_ROLES",
     "RuntimeBindingInspectionError",
     "RuntimeComponentRequest",
@@ -1443,5 +1632,6 @@ __all__ = [
     "harness_identity_sha256",
     "inspect_cell_binding",
     "load_cell_binding_inspect_request",
+    "resolve_verified_cell_runtime_launch",
     "runtime_identity_sha256",
 ]

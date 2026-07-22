@@ -305,6 +305,11 @@ def main() -> None:
 
         raise SystemExit(run_assistant_provider_probe(sys.argv[2:]))
 
+    if sys.argv[1:2] == ["runtime-supervisor"]:
+        from .runtime_supervisor_cli import main as run_runtime_supervisor
+
+        raise SystemExit(run_runtime_supervisor(sys.argv[2:]))
+
     parser = _MymoeArgumentParser(
         description="Local MoE orchestrator",
         allow_abbrev=False,
@@ -319,7 +324,8 @@ def main() -> None:
             "  cell-bind        Inspect exact local-cell files without starting a model.\n"
             "  cell-exec        Preview admission or run one evidence-bound local cell once.\n"
             "  desktop-init     Bind packaged desktop-cell config to one app window.\n"
-            "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test."
+            "  coding-canary    Qualify one local Cline coding cell with an isolated edit and test.\n"
+            "  runtime-supervisor  Own one exact llama.cpp runtime in the foreground."
         ),
     )
     parser.add_argument(

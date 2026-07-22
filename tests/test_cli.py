@@ -58,6 +58,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("commands:", completed.stdout)
         self.assertIn("assistant-probe", completed.stdout)
         self.assertIn("coding-canary", completed.stdout)
+        self.assertIn("runtime-supervisor", completed.stdout)
         self.assertIn("--assistant-task", completed.stdout)
 
     def test_eval_mode_prints_router_metrics(self) -> None:

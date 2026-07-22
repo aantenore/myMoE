@@ -1,0 +1,361 @@
+{
+  "adversarial_scenario_count": 5,
+  "benchmark": "process_bound_runtime_zero_false_ready",
+  "checks": {
+    "binding_drift_blocked": true,
+    "cleanup_ambiguity_is_sticky": true,
+    "cleanup_verified": true,
+    "happy_path_ready": true,
+    "pid_reuse_blocked": true,
+    "port_occupied_never_spawned": true,
+    "port_substitution_blocked": true,
+    "unexpected_descendant_blocked": true,
+    "zero_false_ready": true
+  },
+  "contract_checks_passed": true,
+  "driver": "FailClosedSupervisorOracle",
+  "false_ready_count": 0,
+  "false_ready_scenarios": [],
+  "guarded_side_effects": [
+    "network_socket",
+    "process_spawn",
+    "subprocess_run",
+    "url_fetch"
+  ],
+  "integration_seam": [
+    "resolve",
+    "spawn",
+    "observe_tree",
+    "observe_listener",
+    "probe",
+    "terminate",
+    "binding_digest"
+  ],
+  "production_evidence": false,
+  "residual_limits": [
+    "Observed process trees are not a kernel containment boundary.",
+    "Loopback ownership does not prove that the runtime cannot proxy outward.",
+    "Process and listener identity do not attest semantic model behavior."
+  ],
+  "scenario_count": 8,
+  "scenarios": {
+    "binding_drift": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "binding_drift",
+      "outcomes": [
+        {
+          "cleanup_complete": true,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "binding_drift"
+          ],
+          "status": "revoked",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    },
+    "cleanup": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "cleanup",
+      "outcomes": [
+        {
+          "cleanup_complete": null,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": true,
+          "reason_codes": [],
+          "status": "ready",
+          "sticky_ambiguity": false
+        },
+        {
+          "cleanup_complete": true,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [],
+          "status": "stopped",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    },
+    "happy_path": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest"
+      ],
+      "false_ready": false,
+      "name": "happy_path",
+      "outcomes": [
+        {
+          "cleanup_complete": null,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": true,
+          "reason_codes": [],
+          "status": "ready",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    },
+    "port_occupied": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener"
+      ],
+      "false_ready": false,
+      "name": "port_occupied",
+      "outcomes": [
+        {
+          "cleanup_complete": null,
+          "process_identity": null,
+          "process_started": false,
+          "ready": false,
+          "reason_codes": [
+            "port_occupied"
+          ],
+          "status": "revoked",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 0
+    },
+    "port_substitution": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "port_substitution",
+      "outcomes": [
+        {
+          "cleanup_complete": true,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "listener_owner_mismatch",
+            "listener_substituted",
+            "probe_listener_mismatch"
+          ],
+          "status": "revoked",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    },
+    "restart_pid_reuse": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "restart_pid_reuse",
+      "outcomes": [
+        {
+          "cleanup_complete": true,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "listener_owner_mismatch",
+            "process_identity_changed",
+            "process_tree_changed"
+          ],
+          "status": "revoked",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    },
+    "sticky_ambiguity": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "sticky_ambiguity",
+      "outcomes": [
+        {
+          "cleanup_complete": null,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": true,
+          "reason_codes": [],
+          "status": "ready",
+          "sticky_ambiguity": false
+        },
+        {
+          "cleanup_complete": false,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "cleanup_unverified"
+          ],
+          "status": "unknown_blocking",
+          "sticky_ambiguity": true
+        },
+        {
+          "cleanup_complete": false,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "sticky_ambiguity"
+          ],
+          "status": "unknown_blocking",
+          "sticky_ambiguity": true
+        }
+      ],
+      "spawn_count": 1
+    },
+    "unexpected_descendant": {
+      "call_log": [
+        "resolve",
+        "binding_digest",
+        "observe_listener",
+        "spawn",
+        "observe_tree",
+        "observe_listener",
+        "probe",
+        "binding_digest",
+        "observe_tree",
+        "observe_listener",
+        "binding_digest",
+        "terminate"
+      ],
+      "false_ready": false,
+      "name": "unexpected_descendant",
+      "outcomes": [
+        {
+          "cleanup_complete": true,
+          "process_identity": {
+            "executable_sha256": "e0c7115ba67eb3f21e459bad9a1483dc1cbc07636498587a445f9a747194ef37",
+            "pid": 4100,
+            "start_token": "birth-1"
+          },
+          "process_started": true,
+          "ready": false,
+          "reason_codes": [
+            "process_tree_changed",
+            "unexpected_descendant"
+          ],
+          "status": "revoked",
+          "sticky_ambiguity": false
+        }
+      ],
+      "spawn_count": 1
+    }
+  },
+  "schema_version": "process-bound-runtime-benchmark/v1",
+  "side_effects_performed": false
+}

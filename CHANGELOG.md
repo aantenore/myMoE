@@ -4,6 +4,33 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0-alpha.1] - 2026-07-22
+
+### Added
+
+- A POSIX process-bound runtime supervisor that directly owns one foreground
+  `llama-server`, binds its anchored executable and GGUF evidence to the root
+  process, numeric-loopback listener, and advertised model, and fails closed on
+  identity drift or unverified teardown.
+- A deterministic, model-free contract benchmark covering readiness and
+  teardown failure cases, plus one sanitized production-adapter macOS arm64
+  canary that reached verified readiness, repeated inspection, and verified
+  cleanup without invoking inference.
+
+### Known limitations
+
+- This is a POSIX-only alpha with no attach or process adoption, automatic
+  restart, or multi-model router. A `ready` receipt grants no inference
+  authority.
+- Process, listener, binding, and application evidence is sampled and is not
+  cryptographic attestation or isolation from mutually hostile same-user
+  processes.
+- The offline launch profile and loopback-only supervisor probes do not attest
+  the runtime's complete network behavior; runtime egress remains unobserved.
+- The benchmark uses deterministic fakes and is not production evidence. The
+  live canary is specific to one macOS arm64 environment, is not cross-platform
+  certification, and makes no model-quality or performance claim.
+
 ## [0.15.0-alpha.1] - 2026-07-22
 
 ### Added

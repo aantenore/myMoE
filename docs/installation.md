@@ -291,6 +291,76 @@ For Hugging Face GGUF specs such as `owner/repo:Q4_K_M`, bootstrap downloads onl
 
 The older `configs/moe.live.gemma-12b-coder-gguf.example.json` profile is retained for the v1 model that was evaluated during research. Prefer the v2 agentic profile for new coding/tool-use experiments.
 
+## Process-bound llama.cpp supervisor (POSIX alpha)
+
+The process-bound v1 boundary is for a stricter question than normal model
+startup: did one exact, directly launched `llama-server` keep ownership of its
+numeric-loopback endpoint for one already-anchored GGUF?
+
+Before running this installable alpha, provide all of the following:
+
+- an exact local `llama-server` executable whose SHA-256 identity is already in
+  a reviewed Bound Cell binding;
+- an exact local `.gguf` whose identity is separately anchored by that binding;
+- an absolute working directory and explicit numeric loopback host and port;
+- a foreground POSIX owner process that can retain the lease and perform
+  teardown;
+- the core dependency set, including `psutil`, for process and listener
+  observations.
+
+Install the optional observer dependency and inspect the replaceable starter
+configuration before producing its separately anchored Bound Cell catalog:
+
+```bash
+uv sync --extra runtime-supervisor
+cp configs/moe.process-bound-runtime.example.json ./moe.process-bound-runtime.json
+```
+
+The copied file contains no machine-specific binary or model digest. Replace
+its paths and endpoint, create the corresponding Bound Cell request/catalog,
+and verify those static identities first. Once the request resolves as
+`verified`, an explicitly confirmed one-shot lifecycle is:
+
+```bash
+mymoe-runtime check \
+  --binding-request ./cell-binding-request.json \
+  --confirm --json
+```
+
+The equivalent integrated entry point is `mymoe runtime-supervisor check ...`.
+The installed CLI always uses its canonical private state directory so a sticky
+endpoint lease cannot be bypassed accidentally by selecting another directory.
+Use `supervise` instead of `check` only when a foreground owner should keep the
+runtime available and continuously re-inspect it until `SIGINT` or `SIGTERM`.
+Both commands attempt verified cleanup; neither daemonizes.
+
+The supervisor does not download either file, discover a server, attach to an
+existing port owner, run a router, or expose agent, editor, MCP, or UI authority.
+Its own control plane issues only bounded `GET` probes; the directly owned
+`llama-server` retains its native local inference API. It has no automatic
+restart. One model means one directly owned server, binding, port, and lease.
+Windows lifecycle support is not claimed in v1.
+
+[`runtime-supervisor-policy.example.json`](../configs/runtime-supervisor-policy.example.json)
+is the complete strict metadata-ledger policy payload, including its canonical
+digest. It is not a launch profile: model, binary, endpoint, and launch-plan
+identities remain separately bound inputs. The fixed policy values prohibit
+adoption, automatic restart, raw-token persistence, and process mutation by the
+ledger.
+
+Validate the deterministic contract without starting a process or model:
+
+```bash
+uv run python experiments/benchmark_process_bound_runtime.py --check
+```
+
+The benchmark blocks real socket, process, subprocess, and URL side effects. A
+pass confirms only the fake scenario matrix; it is not evidence for production
+process containment, llama.cpp compatibility, security, model behavior,
+latency, memory, or throughput. Read the
+[Process-bound Runtime Supervisor guide](process-bound-runtime-supervisor.md)
+before building a local canary.
+
 ## Start UI
 
 ```bash

@@ -161,6 +161,16 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "process-bound runtime contract benchmark",
+            [
+                python,
+                "experiments/benchmark_process_bound_runtime.py",
+                "--check",
+                "--out",
+                "outputs/process-bound-runtime-contract.json",
+            ],
+        ),
+        CheckStep(
             "cooperative resource lease contract benchmark",
             [
                 python,

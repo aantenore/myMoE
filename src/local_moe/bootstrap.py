@@ -364,6 +364,51 @@ def _llama_server_command(expert: object, port: int) -> tuple[str, ...]:
         raise ValueError(
             "Expert runtime parameter runtime_model_source must be local or huggingface."
         )
+    security_profile = params.get("runtime_security_profile")
+    if security_profile == "process_bound_v1":
+        if model_source != "local":
+            raise ValueError(
+                "The process_bound_v1 runtime profile requires a local model."
+            )
+        context_size = _positive_runtime_int(
+            params.get("context_size", 4096), "context_size"
+        )
+        parallel = _positive_runtime_int(params.get("parallel", 1), "parallel")
+        command = [
+            runtime_executable,
+            "-m",
+            str(expert.model),
+            "--alias",
+            str(expert.id),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--offline",
+            "--no-ui",
+            "--no-ui-mcp-proxy",
+            "--no-agent",
+            "--no-slots",
+            "--fit",
+            "off",
+            "--ctx-size",
+            str(context_size),
+            "--parallel",
+            str(parallel),
+        ]
+        gpu_layers = params.get("gpu_layers")
+        if gpu_layers is not None:
+            command.extend(
+                [
+                    "--n-gpu-layers",
+                    str(_positive_runtime_int(gpu_layers, "gpu_layers")),
+                ]
+            )
+        return tuple(command)
+    if security_profile is not None:
+        raise ValueError(
+            "Expert runtime parameter runtime_security_profile is unsupported."
+        )
     command = [
         runtime_executable,
         model_argument,

@@ -133,6 +133,50 @@ class RuntimePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "runtime_model_source"):
             build_runtime_plan(parse_config(raw))
 
+    def test_process_bound_profile_emits_only_the_hardened_direct_flags(self) -> None:
+        raw = _mixed_runtime_config_payload()
+        raw["experts"] = [raw["experts"][0]]
+        raw["routing"]["fallback_order"] = ["cpp-expert"]
+        raw["experts"][0]["model"] = "models/coder.gguf"
+        raw["experts"][0]["params"].update(
+            {
+                "runtime_model_source": "local",
+                "runtime_executable": "runtime/llama-server",
+                "runtime_security_profile": "process_bound_v1",
+            }
+        )
+
+        command = build_runtime_plan(parse_config(raw)).expert_commands[0].argv
+
+        self.assertEqual(
+            command[3:],
+            (
+                "--alias",
+                "cpp-expert",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8201",
+                "--offline",
+                "--no-ui",
+                "--no-ui-mcp-proxy",
+                "--no-agent",
+                "--no-slots",
+                "--fit",
+                "off",
+                "--ctx-size",
+                "4096",
+                "--parallel",
+                "1",
+            ),
+        )
+        self.assertNotIn("-hf", command)
+        self.assertNotIn("--model-url", command)
+
+        raw["experts"][0]["params"]["runtime_security_profile"] = "future"
+        with self.assertRaisesRegex(ValueError, "runtime_security_profile"):
+            build_runtime_plan(parse_config(raw))
+
 
 def _mixed_runtime_config():
     return parse_config(_mixed_runtime_config_payload())

@@ -8,6 +8,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 | --- | --- |
 | Try configured model roles by increasing `cost_rank`, check each result, and advance only when needed | [LocalCascade](local-cascade.md) |
 | Fingerprint the bindings declared for a local cell without starting it | [Bound Cell Attestor](cell-runtime-binding.md) |
+| Bind one exact, directly owned local llama.cpp process to its numeric-loopback port | [Process-bound Runtime Supervisor](process-bound-runtime-supervisor.md) |
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
 | Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |
 | Stop participating local agents from counting the same observed free memory twice | [Cooperative Resource Lease](cooperative-resource-lease.md) |
@@ -35,6 +36,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [LocalCascade](local-cascade.md) — replaceable local roles, deterministic verifier-driven escalation, separate evidence accounting, and a paired-run measurement contract.
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
 - [Bound Cell Attestor](cell-runtime-binding.md) — bounded fingerprints of declared local runtime/model/harness bindings, short-lived receipts, and explicit non-authority.
+- [Process-bound Runtime Supervisor](process-bound-runtime-supervisor.md) — one direct POSIX llama.cpp process, root-process and listener evidence, bounded identity probes, owner-bound metadata state, and fail-closed cleanup without attach, restart, routing, or agent authority.
 - [Adaptive Cell Advisor](adaptive-cell-advisor.md) — whole-cell passports, live resource admission, safe abstention, mini-app/API, deterministic contract benchmark, and market boundary.
 - [Adaptive Cell Execution Gate](cell-execution-gate.md) — receipt-bound fresh admission, exact drift checks, strict dry-run policy, and a non-authorizing result.
 - [Cooperative Resource Lease](cooperative-resource-lease.md) — atomic same-user/same-host accounting, conservative pool claims, delivery fencing, crash quarantine, strict receipts, and the boundary between cooperation and real RAM/VRAM reservation.
@@ -60,6 +62,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 - [Cooperative Resource Lease](cooperative-resource-lease.md#exact-state-machine) — understand acquisition, delivery fencing, release, sticky unknown outcomes, and operational limits.
 - [Speculative Cell Qualifier contract benchmark](speculative-cell-qualifier.md#deterministic-contract-benchmark) — exercise qualified, rejected, and abstained paths without starting or contacting a model.
 - [Bound Cell Run v1](bound-cell-run.md#command-workflow) — explicitly confirm one exact admitted inference attempt and keep its metadata-only evidence envelope separate from the answer; confirmation authorizes only that invocation.
+- [Process-bound Runtime Supervisor contract benchmark](process-bound-runtime-supervisor.md#deterministic-contract-benchmark) — exercise readiness, substitution, drift, and cleanup scenarios with deterministic fakes and no model, socket, or process side effect.
 - [UI and CLI](ui.md) — chat behavior, streaming, session management, memory, local data, Advanced panels, API examples, and screenshots.
 - [Gemma 4 E4B Runtime](gemma-e4b-runtime.md) — pinned dependency compatibility and measured result for that optional profile.
 - [CI](ci.md) — local and GitHub Actions verification.

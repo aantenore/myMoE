@@ -45,6 +45,7 @@ class CiRunnerTests(unittest.TestCase):
                 "adaptive cell execution gate contract benchmark",
                 "bound cell attestor contract benchmark",
                 "bound cell run contract benchmark",
+                "process-bound runtime contract benchmark",
                 "cooperative resource lease contract benchmark",
                 "speculative cell qualifier contract benchmark",
                 "quality gate",

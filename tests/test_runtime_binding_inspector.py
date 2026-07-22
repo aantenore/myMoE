@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import urlsplit
 import urllib.request
 
 from local_moe import runtime_binding_inspector
@@ -25,6 +26,7 @@ from local_moe.runtime_binding_inspector import (
     PRODUCER_TRUST_BOUNDARY,
     RuntimeBindingInspectionError,
     inspect_cell_binding,
+    resolve_verified_cell_runtime_launch,
 )
 
 
@@ -195,6 +197,69 @@ class _InspectionFixture:
 
 
 class RuntimeBindingInspectorTests(unittest.TestCase):
+    def test_endpoint_authority_is_listener_scoped_not_base_path_scoped(self) -> None:
+        root = runtime_binding_inspector._endpoint_authority_sha256(  # noqa: SLF001
+            urlsplit("http://127.0.0.1:8123/")
+        )
+        v1 = runtime_binding_inspector._endpoint_authority_sha256(  # noqa: SLF001
+            urlsplit("http://127.0.0.1:8123/v1")
+        )
+        another_port = runtime_binding_inspector._endpoint_authority_sha256(  # noqa: SLF001
+            urlsplit("http://127.0.0.1:8124/v1")
+        )
+
+        self.assertEqual(root, v1)
+        self.assertNotEqual(root, another_port)
+
+    def test_resolves_exact_launch_only_from_verified_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = _InspectionFixture(Path(temp), "llama_cpp")
+            fixture.config["experts"][0]["params"][  # type: ignore[index]
+                "runtime_security_profile"
+            ] = "process_bound_v1"
+            fixture.write_config()
+            fixture.make_verified()
+
+            resolved = resolve_verified_cell_runtime_launch(
+                fixture.request_path,
+                now=NOW,
+            )
+
+            self.assertEqual(resolved.backend, "llama_cpp")
+            self.assertEqual(resolved.runtime_security_profile, "process_bound_v1")
+            self.assertEqual(resolved.expert_id, "coder")
+            self.assertEqual(resolved.expected_model_id, "coder")
+            self.assertIn("--offline", resolved.argv)
+            self.assertEqual(resolved.endpoint_host, "127.0.0.1")
+            self.assertEqual(resolved.endpoint_port, 8123)
+            self.assertEqual(resolved.working_directory, fixture.root)
+            self.assertEqual(
+                resolved.runtime_executable_path,
+                fixture.runtime_root / "bin" / "runtime",
+            )
+            self.assertEqual(
+                resolved.model_artifact_path,
+                fixture.root / fixture.model_reference,
+            )
+            self.assertEqual(
+                resolved.launch_plan_sha256,
+                resolved.bundle.manifest.launch_plan_sha256,
+            )
+            self.assertEqual(
+                resolved.endpoint_authority_sha256,
+                resolved.bundle.manifest.endpoint_authority_sha256,
+            )
+            self.assertFalse(resolved.bundle.receipt.authorizes_execution)
+
+    def test_launch_resolution_rejects_unanchored_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = _InspectionFixture(Path(temp), "llama_cpp")
+
+            with self.assertRaises(RuntimeBindingInspectionError) as raised:
+                resolve_verified_cell_runtime_launch(fixture.request_path, now=NOW)
+
+            self.assertEqual(raised.exception.code, "binding_not_verified")
+
     def _assert_verified_without_disclosure(self, backend: str) -> None:
         with tempfile.TemporaryDirectory() as temp:
             fixture = _InspectionFixture(Path(temp), backend)

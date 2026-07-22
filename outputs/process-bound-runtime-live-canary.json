@@ -1,0 +1,40 @@
+{
+  "adapter": "production",
+  "captured_at": "2026-07-22T15:06:39Z",
+  "checks": {
+    "attach_allowed": false,
+    "binding_status": "verified",
+    "cleanup_verified": true,
+    "daemonized": false,
+    "foreground": true,
+    "inspection_state": "ready",
+    "model_invocations": 0,
+    "offline_launch_profile": true,
+    "start_state": "ready",
+    "stop_state": "stopped"
+  },
+  "command": "check",
+  "contract": "mymoe-process-bound-runtime-live-canary/v1",
+  "digests": {
+    "inspection": "6fdf692365b9a0bdbcf34b599234bc8fb4b2a747e7b7c929009e8b1f90319522",
+    "runtime_evidence": "c44f139e5d31f5f88a5ecb85f6f4071facc7293d932fbb31431a68e2fda9a02c",
+    "start": "2f804ad26ecb1639f3008b216f196c89fe2c4cd6867963c4a368a65d87d2adbb",
+    "stop": "e6b2514e0ec78614df5ba6d9b0ec4138369fa1f2890d02cfa4e04a788ea863ad"
+  },
+  "limitations": [
+    "This is one macOS arm64 compatibility canary, not a cross-platform certification.",
+    "The canary performs no inference and makes no claim about model quality or performance.",
+    "Sampled process and listener evidence is not cryptographic attestation or hostile same-user containment."
+  ],
+  "platform": "darwin_arm64",
+  "privacy": {
+    "argv_recorded": false,
+    "model_content_recorded": false,
+    "paths_recorded": false,
+    "pids_recorded": false,
+    "response_bodies_recorded": false
+  },
+  "runtime": "llama.cpp",
+  "schema_version": "1.0",
+  "status": "completed"
+}

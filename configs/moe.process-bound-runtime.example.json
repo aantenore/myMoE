@@ -1,0 +1,36 @@
+{
+  "execution": {
+    "max_scope": "device_only",
+    "allowed_scopes": ["device_only"],
+    "allow_scope_widening": false
+  },
+  "routing": {
+    "top_k": 1,
+    "fallback_order": ["local_coder"],
+    "aggregation": "best"
+  },
+  "experts": [
+    {
+      "id": "local_coder",
+      "provider": "openai_compatible",
+      "base_url": "http://127.0.0.1:8188/v1",
+      "execution": {
+        "scope": "device_only",
+        "transport": "direct_local"
+      },
+      "model": "models/local-coder.gguf",
+      "role": "coding",
+      "weight": 1.0,
+      "timeout_seconds": 120,
+      "params": {
+        "runtime_backend": "llama_cpp",
+        "runtime_model_source": "local",
+        "runtime_executable": "runtime/bin/llama-server",
+        "runtime_security_profile": "process_bound_v1",
+        "context_size": 4096,
+        "parallel": 1
+      }
+    }
+  ],
+  "rules": []
+}

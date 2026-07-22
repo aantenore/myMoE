@@ -5,7 +5,8 @@ the built-in agent inspect one selected desktop window without screenshots.**
 
 In plain terms: myMoE helps you do AI-assisted coding on your own computer
 without paying for every request. Today it connects local models to a coding
-agent, explains which fully evidenced local setup is eligible for a task, can
+agent, can start one exact local model server and verify which process owns its
+port, explains which fully evidenced local setup is eligible for a task, can
 recheck that exact recommendation against current resources, prevents
 participating local agents from counting the same observed free memory twice,
 can reject speculative decoding when it makes an exact local cell slower,
@@ -144,6 +145,43 @@ Start from the
 [`cell-binding-request.example.json`](configs/cell-binding-request.example.json)
 template; it is intentionally not executable until its local paths and catalog
 identities are replaced with files you already have.
+
+## Is the local model server still the exact process myMoE started?
+
+**The process-bound runtime supervisor closes the gap between a configured
+loopback URL and the process that actually owns it.** It starts one direct
+`llama-server` for one already-present GGUF, rejects an occupied port instead of
+attaching, and reports readiness only when the root process, executable digest,
+numeric-loopback listener, and advertised model agree before and after bounded
+identity probes.
+
+This POSIX-only v1 alpha adds no router, download, agent, editor, MCP, or UI
+surface. Its control/probe plane issues only bounded `GET` requests; the owned
+`llama-server` still exposes its native local inference API. It does not
+automatically restart or adopt a server. If teardown
+cannot prove both process exit and port vacancy, it retains a sticky blocking
+state instead of guessing that cleanup succeeded. Teardown also requires the
+owned POSIX process group to be empty. The exact binary and GGUF
+come from the separately anchored Bound Cell binding; the dynamic checks are OS
+observations, not cryptographic attestation or hostile same-user containment.
+
+Run the model-free contract matrix:
+
+```bash
+uv run python experiments/benchmark_process_bound_runtime.py --check
+```
+
+It uses deterministic fakes and performs no process, socket, URL, or model
+operation. A pass is not production evidence for security, model correctness,
+latency, memory, or performance. The production adapter has also completed one
+sanitized macOS arm64 compatibility
+[canary](outputs/process-bound-runtime-live-canary.json) against a real local
+`llama-server` and GGUF, with zero inference calls and verified teardown. That
+single run is not a cross-platform certification; re-run `mymoe-runtime check`
+for the exact binary, model, and machine you intend to use. See the
+[Process-bound Runtime Supervisor guide](docs/process-bound-runtime-supervisor.md)
+and the
+[metadata-only policy example](configs/runtime-supervisor-policy.example.json).
 
 ## Which local setup should handle this task?
 

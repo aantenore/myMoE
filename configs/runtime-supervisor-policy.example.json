@@ -1,0 +1,12 @@
+{
+  "adoption_allowed": false,
+  "automatic_restart": false,
+  "busy_timeout_ms": 5000,
+  "contract": "RuntimeSupervisorLeasePolicy",
+  "digest": "876bb454bd0168690a124116f5c1c2a3b3dfcfe78348d181cd9501c1dfeb4626",
+  "max_active_leases": 64,
+  "metadata_only": true,
+  "process_mutations": false,
+  "raw_tokens_persisted": false,
+  "schema_version": "1.0"
+}

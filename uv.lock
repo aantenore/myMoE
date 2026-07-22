@@ -979,7 +979,7 @@ wheels = [
 
 [[package]]
 name = "local-moe-orchestrator"
-version = "0.15.0a1"
+version = "0.16.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "filelock" },
@@ -1025,6 +1025,9 @@ mlx-vlm = [
     { name = "mlx-vlm" },
     { name = "psutil" },
 ]
+runtime-supervisor = [
+    { name = "psutil" },
+]
 ui-test = [
     { name = "playwright" },
 ]
@@ -1053,11 +1056,12 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'mlx'" },
     { name = "psutil", marker = "extra == 'mlx-current'" },
     { name = "psutil", marker = "extra == 'mlx-vlm'" },
+    { name = "psutil", marker = "extra == 'runtime-supervisor'", specifier = ">=7.2.2,<8" },
     { name = "rfc8785", marker = "extra == 'assistant-bridge'", specifier = ">=0.1.4,<0.2" },
     { name = "rfc8785", marker = "extra == 'coding-canary'", specifier = ">=0.1.4,<0.2" },
     { name = "transformers", marker = "extra == 'mlx'", specifier = "==5.12.1" },
 ]
-provides-extras = ["coding-canary", "desktop", "assistant-bridge", "gguf", "mlx", "mlx-current", "mlx-vlm", "local-cascade", "ui-test"]
+provides-extras = ["coding-canary", "desktop", "assistant-bridge", "gguf", "mlx", "mlx-current", "mlx-vlm", "local-cascade", "runtime-supervisor", "ui-test"]
 
 [[package]]
 name = "markdown-it-py"

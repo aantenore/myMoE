@@ -25,6 +25,7 @@ RUNTIME_REQUIREMENTS = (
 )
 MINIMUM_SUPPORTED_MCP_VERSION = "1.27.2"
 LOCAL_CASCADE_RUNTIME_REQUIREMENTS = (f"mcp=={MINIMUM_SUPPORTED_MCP_VERSION}",)
+RUNTIME_SUPERVISOR_RUNTIME_REQUIREMENTS = ("psutil==7.2.2",)
 EXPECTED_LOCAL_CASCADE_TOOLS = (
     "delegate_plan",
     "delegate_run",
@@ -52,18 +53,24 @@ async def smoke() -> None:
 anyio.run(smoke)
 """
 REQUIRED_SDIST_ARTIFACTS = (
+    "CHANGELOG.md",
     ".agents/plugins/marketplace.json",
     "configs/cell-binding-request.example.json",
     "configs/local-cascade.example.json",
     "configs/local-cascade-moe.example.json",
+    "configs/moe.process-bound-runtime.example.json",
+    "configs/runtime-supervisor-policy.example.json",
     "configs/speculative-cell-plan.example.json",
     "docs/cell-runtime-binding.md",
     "docs/bound-cell-run.md",
     "docs/cooperative-resource-lease.md",
     "docs/local-cascade.md",
+    "docs/process-bound-runtime-supervisor.md",
     "docs/speculative-cell-qualifier.md",
     "experiments/benchmark_runtime_binding.py",
     "experiments/benchmark_bound_cell_run.py",
+    "experiments/benchmark_process_bound_runtime.py",
+    "experiments/runtime_supervisor_fakes.py",
     "experiments/benchmark_cooperative_resource_lease.py",
     "experiments/benchmark_local_cascade.py",
     "experiments/benchmark_speculative_cell_qualifier.py",
@@ -71,8 +78,12 @@ REQUIRED_SDIST_ARTIFACTS = (
     "outputs/bound-cell-run-contract.json",
     "outputs/cooperative-resource-lease-contract.json",
     "outputs/local-cascade-contract-benchmark.json",
+    "outputs/process-bound-runtime-contract.json",
+    "outputs/process-bound-runtime-live-canary.json",
     "outputs/speculative-cell-qualifier-contract.json",
     "scripts/run_packaging_smoke.py",
+    "src/local_moe/runtime_supervisor.py",
+    "src/local_moe/runtime_supervisor_cli.py",
     "plugins/mymoe-local-cascade/.codex-plugin/plugin.json",
     "plugins/mymoe-local-cascade/.mcp.json",
     "plugins/mymoe-local-cascade/scripts/launch_mcp.py",
@@ -110,6 +121,11 @@ def main() -> None:
             python,
             root=root,
             dist_dir=dist_dir,
+        )
+        _run_sdist_process_bound_benchmark_smoke(
+            python,
+            sdist,
+            extraction_dir=temporary / "sdist-benchmark",
         )
         subprocess.run(
             [
@@ -150,6 +166,18 @@ def main() -> None:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                *RUNTIME_SUPERVISOR_RUNTIME_REQUIREMENTS,
+            ],
+            cwd=runtime_dir,
+            check=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
                 *LOCAL_CASCADE_RUNTIME_REQUIREMENTS,
             ],
             cwd=runtime_dir,
@@ -179,8 +207,12 @@ def main() -> None:
                 "_win32_fs, artifact_tree, bound_cell_run, bound_cell_run_contracts, "
                 "bound_cell_run_envelope, cooperative_resource_lease, "
                 "cooperative_resource_lease_contracts, "
-                "llama_cpp_speculative_adapter, runtime_binding_cli, "
-                "runtime_binding_contracts, runtime_binding_inspector, "
+                "llama_cpp_runtime_supervisor, llama_cpp_speculative_adapter, "
+                "runtime_binding_cli, runtime_binding_contracts, "
+                "runtime_binding_inspector, runtime_process_observer, "
+                "runtime_supervisor, runtime_supervisor_cli, "
+                "runtime_supervisor_contracts, "
+                "runtime_supervisor_store, "
                 "speculative_cell_cli, speculative_cell_contracts, "
                 "speculative_cell_qualifier); "
                 "print(Path(local_moe.__file__).resolve()); "
@@ -191,10 +223,16 @@ def main() -> None:
                 "print(Path(bound_cell_run_envelope.__file__).resolve()); "
                 "print(Path(cooperative_resource_lease.__file__).resolve()); "
                 "print(Path(cooperative_resource_lease_contracts.__file__).resolve()); "
+                "print(Path(llama_cpp_runtime_supervisor.__file__).resolve()); "
                 "print(Path(llama_cpp_speculative_adapter.__file__).resolve()); "
                 "print(Path(runtime_binding_cli.__file__).resolve()); "
                 "print(Path(runtime_binding_contracts.__file__).resolve()); "
                 "print(Path(runtime_binding_inspector.__file__).resolve()); "
+                "print(Path(runtime_process_observer.__file__).resolve()); "
+                "print(Path(runtime_supervisor.__file__).resolve()); "
+                "print(Path(runtime_supervisor_cli.__file__).resolve()); "
+                "print(Path(runtime_supervisor_contracts.__file__).resolve()); "
+                "print(Path(runtime_supervisor_store.__file__).resolve()); "
                 "print(Path(speculative_cell_cli.__file__).resolve()); "
                 "print(Path(speculative_cell_contracts.__file__).resolve()); "
                 "print(Path(speculative_cell_qualifier.__file__).resolve())",
@@ -208,7 +246,7 @@ def main() -> None:
         package_locations = tuple(
             Path(line) for line in location_result.stdout.splitlines() if line
         )
-        if len(package_locations) != 15 or any(
+        if len(package_locations) != 21 or any(
             not location.is_relative_to(venv_dir.resolve())
             for location in package_locations
         ):
@@ -221,6 +259,7 @@ def main() -> None:
             scripts_dir, "mymoe-local-cascade-mcp"
         )
         mymoe_paired = _console_script(scripts_dir, "mymoe-paired")
+        mymoe_runtime = _console_script(scripts_dir, "mymoe-runtime")
         mymoe_speculative = _console_script(scripts_dir, "mymoe-speculative")
         mymoe_web = _console_script(scripts_dir, "mymoe-web")
         _run_installed_local_cascade_mcp_smoke(
@@ -228,6 +267,18 @@ def main() -> None:
             mymoe_local_cascade_mcp,
             runtime_dir,
             environment=runtime_environment,
+        )
+        _run_installed_runtime_supervisor_help_smoke(
+            mymoe_runtime,
+            runtime_dir,
+            environment=runtime_environment,
+        )
+        _run_installed_runtime_supervisor_help_smoke(
+            mymoe,
+            runtime_dir,
+            environment=runtime_environment,
+            dispatch_arguments=("runtime-supervisor",),
+            invocation_name="mymoe runtime-supervisor",
         )
         help_result = subprocess.run(
             [str(mymoe), "--help"],
@@ -247,6 +298,10 @@ def main() -> None:
             raise SystemExit("mymoe console script did not expose cell-exec.")
         if "cell-bind" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose cell-bind.")
+        if "runtime-supervisor" not in help_result.stdout:
+            raise SystemExit(
+                "mymoe console script did not expose runtime-supervisor."
+            )
         _run_installed_cell_binding_help_smoke(
             mymoe,
             runtime_dir,
@@ -437,6 +492,9 @@ def main() -> None:
                     "local_cascade_runtime_requirements": list(
                         LOCAL_CASCADE_RUNTIME_REQUIREMENTS
                     ),
+                    "runtime_supervisor_runtime_requirements": list(
+                        RUNTIME_SUPERVISOR_RUNTIME_REQUIREMENTS
+                    ),
                     "local_cascade_tools": list(EXPECTED_LOCAL_CASCADE_TOOLS),
                     "packaging_python": str(packaging_python),
                     "python": str(python),
@@ -446,6 +504,7 @@ def main() -> None:
                         str(mymoe),
                         str(mymoe_local_cascade_mcp),
                         str(mymoe_paired),
+                        str(mymoe_runtime),
                         str(mymoe_speculative),
                         str(mymoe_web),
                     ],
@@ -538,6 +597,68 @@ def _verify_sdist(sdist: Path, *, root: Path) -> None:
                 )
 
 
+def _run_sdist_process_bound_benchmark_smoke(
+    python: Path,
+    sdist: Path,
+    *,
+    extraction_dir: Path,
+) -> None:
+    """Run the model-free benchmark from extracted sdist shipping files only."""
+
+    suffix = ".tar.gz"
+    if not sdist.name.endswith(suffix):
+        raise SystemExit("Packaging smoke produced an unexpected sdist format.")
+    archive_root = sdist.name[: -len(suffix)]
+    extraction_dir.mkdir(parents=True)
+    with tarfile.open(sdist, mode="r:gz") as archive:
+        for member in archive.getmembers():
+            relative = PurePosixPath(member.name)
+            if (
+                relative.is_absolute()
+                or any(part in {"", ".", ".."} for part in relative.parts)
+                or not relative.parts
+                or relative.parts[0] != archive_root
+                or not (member.isfile() or member.isdir())
+            ):
+                raise SystemExit(
+                    "Packaging smoke rejected unsafe sdist benchmark input."
+                )
+            target = extraction_dir.joinpath(*relative.parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                raise SystemExit(
+                    "Packaging smoke could not read an sdist benchmark input."
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read())
+
+    extracted_root = extraction_dir / archive_root
+    benchmark = extracted_root / "experiments" / "benchmark_process_bound_runtime.py"
+    benchmark_source = benchmark.read_text(encoding="utf-8")
+    if "from tests." in benchmark_source or "import tests." in benchmark_source:
+        raise SystemExit(
+            "Process-bound runtime benchmark must not import from the test suite."
+        )
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    completed = subprocess.run(
+        [str(python), str(benchmark), "--check"],
+        cwd=extracted_root,
+        env=environment,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            "Extracted sdist process-bound runtime benchmark failed.\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+
+
 def _run_installed_cell_binding_help_smoke(
     mymoe: Path,
     runtime_dir: Path,
@@ -565,6 +686,90 @@ def _run_installed_cell_binding_help_smoke(
         raise SystemExit(
             "Installed mymoe console script omitted the read-only cell-bind "
             "inspection contract."
+        )
+
+
+def _run_installed_runtime_supervisor_help_smoke(
+    executable: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+    dispatch_arguments: tuple[str, ...] = (),
+    invocation_name: str = "mymoe-runtime",
+) -> None:
+    command_prefix = [str(executable), *dispatch_arguments]
+    top_level = subprocess.run(
+        [*command_prefix, "--help"],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    normalized = " ".join(top_level.stdout.split())
+    if any(
+        marker not in normalized
+        for marker in (
+            "{check,supervise}",
+            "explicit confirmation",
+            "never daemonizes",
+            "teardown targets the process group it launched",
+        )
+    ):
+        raise SystemExit(
+            f"Installed {invocation_name} omitted its foreground ownership boundary."
+        )
+
+    for command in ("check", "supervise"):
+        completed = subprocess.run(
+            [*command_prefix, command, "--help"],
+            cwd=runtime_dir,
+            env=environment,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        command_help = " ".join(completed.stdout.split())
+        for marker in (
+            "--binding-request PATH",
+            "--confirm",
+        ):
+            if marker not in command_help:
+                raise SystemExit(
+                    f"Installed {invocation_name} {command} help omitted {marker}."
+                )
+
+    private_path = runtime_dir / "PRIVATE-BINDING-REQUEST.json"
+    rejected = subprocess.run(
+        [
+            *command_prefix,
+            "--json",
+            "check",
+            "--binding-request",
+            str(private_path),
+        ],
+        cwd=runtime_dir,
+        env=environment,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    try:
+        error_payload = json.loads(rejected.stderr)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Installed {invocation_name} emitted a non-JSON confirmation error."
+        ) from exc
+    if (
+        rejected.returncode != 2
+        or rejected.stdout
+        or error_payload.get("error", {}).get("code") != "invocation_invalid"
+        or error_payload.get("process_target_policy")
+        != "owned_process_group_only"
+        or str(private_path) in rejected.stderr
+    ):
+        raise SystemExit(
+            f"Installed {invocation_name} did not reject an unconfirmed start safely."
         )
 
 
