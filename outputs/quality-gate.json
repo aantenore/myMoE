@@ -133,14 +133,14 @@
       },
       "git_evidence": {
         "git_dirty_is_false": true,
-        "git_commit": "bf1fc4b60c9f70c6e13044802f6bda6b0ec290a5",
+        "git_commit": "92a21bd75ac3613d2bee83de914694a1b2fceffb",
         "git_commit_format_valid": true,
         "runtime_dependency_paths_valid": true,
         "runtime_dependency_count": 14,
         "passed": true,
         "status": "passed",
-        "repository_root": "/private/tmp/mymoe-bound-cell-release",
-        "current_head": "519264391574f313ee34303063fb2d1e21525671",
+        "repository_root": "/Users/antonioantenore/Documents/github/myMoE",
+        "current_head": "07ac1a736fe8d4778a82c4d32f098d7393c2b161",
         "repository_shallow": false,
         "commit_available": true,
         "ancestor_of_head": true,
@@ -152,14 +152,14 @@
             "matches": true
           },
           "pyproject.toml": {
-            "current_head_sha256": "a4e21756907efe4b3d3320b711180b28fb6798afa56e9b9ba88269246d4ea9a4",
-            "benchmark_commit_sha256": "a4e21756907efe4b3d3320b711180b28fb6798afa56e9b9ba88269246d4ea9a4",
+            "current_head_sha256": "81c2c24e4a982800da20da18a6d5c38e4e35109c8abc87f20cfefc19141c151e",
+            "benchmark_commit_sha256": "81c2c24e4a982800da20da18a6d5c38e4e35109c8abc87f20cfefc19141c151e",
             "working_tree_clean": true,
             "matches": true
           },
           "uv.lock": {
-            "current_head_sha256": "df600c7c10d73967cb73b41ebec98293b6dd29a713a05243dc733488f6475aa9",
-            "benchmark_commit_sha256": "df600c7c10d73967cb73b41ebec98293b6dd29a713a05243dc733488f6475aa9",
+            "current_head_sha256": "9d8de219018001001d387b73d34f0ac7607cc86081ac6cc1608f75e54d660c1d",
+            "benchmark_commit_sha256": "9d8de219018001001d387b73d34f0ac7607cc86081ac6cc1608f75e54d660c1d",
             "working_tree_clean": true,
             "matches": true
           },
