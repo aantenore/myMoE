@@ -944,13 +944,15 @@ wheels = [
 name = "local-moe-orchestrator"
 version = "0.12.0a1"
 source = { editable = "." }
+dependencies = [
+    { name = "filelock" },
+    { name = "platformdirs" },
+]
 
 [package.optional-dependencies]
 assistant-bridge = [
     { name = "cryptography" },
     { name = "detect-secrets" },
-    { name = "filelock" },
-    { name = "platformdirs" },
     { name = "psutil" },
     { name = "rfc8785" },
 ]
@@ -992,7 +994,7 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'assistant-bridge'", specifier = ">=48.0.1,<49" },
     { name = "cua-driver", marker = "extra == 'desktop'", specifier = "==0.10.0" },
     { name = "detect-secrets", marker = "extra == 'assistant-bridge'", specifier = ">=1.5,<1.6" },
-    { name = "filelock", marker = "extra == 'assistant-bridge'", specifier = ">=3.29.7,<4" },
+    { name = "filelock", specifier = ">=3.29.7,<4" },
     { name = "huggingface-hub", marker = "extra == 'gguf'" },
     { name = "huggingface-hub", marker = "extra == 'mlx'" },
     { name = "huggingface-hub", marker = "extra == 'mlx-current'" },
@@ -1002,7 +1004,7 @@ requires-dist = [
     { name = "mlx-lm", marker = "extra == 'mlx-current'" },
     { name = "mlx-metal", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = "==0.31.2" },
     { name = "mlx-vlm", marker = "extra == 'mlx-vlm'" },
-    { name = "platformdirs", marker = "extra == 'assistant-bridge'", specifier = ">=4.3,<5" },
+    { name = "platformdirs", specifier = ">=4.3,<5" },
     { name = "playwright", marker = "extra == 'ui-test'" },
     { name = "psutil", marker = "extra == 'assistant-bridge'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'desktop'", specifier = ">=7.2.2,<8" },

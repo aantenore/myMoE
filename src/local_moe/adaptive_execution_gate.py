@@ -9,13 +9,21 @@ from typing import Mapping, TypeVar
 
 from .adaptive_advisor_service import (
     MAX_TASK_CHARS,
+    AdaptiveAdvisorEvaluation,
     AdaptiveAdvisorReceipt,
     AdvisorServiceError,
     evaluate_advisor,
+    evaluate_advisor_with_snapshot,
 )
 from .adaptive_selector import AdaptiveAdvice, AdaptiveRequest, CandidateAssessment
-from .cell_contracts import MAX_CELLS, CellContractError, WorkloadDemand
+from .cell_contracts import (
+    MAX_CELLS,
+    AdaptiveCellCatalog,
+    CellContractError,
+    WorkloadDemand,
+)
 from .secure_files import read_bounded_regular_file
+from .resource_snapshot import ResourceSnapshot
 from .verified_routing_contracts import (
     CONTRACT_VERSION,
     VerifiedRoutingError,
@@ -281,6 +289,41 @@ class AdaptiveCellExecutionPreviewReceipt:
         return {**self.content_payload(), "digest": self.digest}
 
 
+@dataclass(frozen=True)
+class AdaptiveCellExecutionPreviewEvaluation:
+    """Preview plus the exact fresh Advisor and resource evidence behind it."""
+
+    receipt: AdaptiveCellExecutionPreviewReceipt
+    fresh_advisor_receipt: AdaptiveAdvisorReceipt
+    resource_snapshot: ResourceSnapshot
+    catalog: AdaptiveCellCatalog
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.receipt, AdaptiveCellExecutionPreviewReceipt)
+            or not isinstance(self.fresh_advisor_receipt, AdaptiveAdvisorReceipt)
+            or not isinstance(self.resource_snapshot, ResourceSnapshot)
+            or not isinstance(self.catalog, AdaptiveCellCatalog)
+        ):
+            raise AdaptiveExecutionGateError(
+                "fresh_admission_invalid", "Fresh preview evidence is invalid."
+            )
+        if (
+            self.receipt.fresh_advisor_receipt_sha256
+            != self.fresh_advisor_receipt.digest
+            or self.receipt.fresh_resource_snapshot_sha256
+            != self.resource_snapshot.digest
+            or self.fresh_advisor_receipt.advice.resource_snapshot_sha256
+            != self.resource_snapshot.digest
+            or self.fresh_advisor_receipt.advice.catalog_sha256
+            != self.catalog.digest
+        ):
+            raise AdaptiveExecutionGateError(
+                "fresh_admission_invalid",
+                "Fresh preview evidence is not content-addressed consistently.",
+            )
+
+
 def adaptive_advisor_receipt_from_payload(
     raw: object,
 ) -> AdaptiveAdvisorReceipt:
@@ -441,24 +484,97 @@ def preview_cell_execution(
 
     source = load_adaptive_advisor_receipt(source_receipt_path)
     policy = load_adaptive_execution_policy(policy_path)
-    try:
-        fresh = evaluate_advisor(
-            catalog_path=catalog_path,
-            evaluation_contract_path=evaluation_contract_path,
-            task_text=task_text,
-            workload_id=source.request.demand.workload_id,
-            required_capabilities=source.request.demand.capabilities,
-            required_tool_surfaces=source.request.demand.tool_surfaces,
-            risk_class=source.request.demand.risk_class,
-            context_tokens=source.request.demand.context_tokens,
-            profile=source.request.profile,
-            intent_family_sha256=source.request.intent_family_sha256,
+    fresh, _, _ = _evaluate_fresh_advisor(
+        source=source,
+        task_text=task_text,
+        catalog_path=catalog_path,
+        evaluation_contract_path=evaluation_contract_path,
+        resource_snapshot=None,
+    )
+    return _build_preview_receipt(source, policy, fresh)
+
+
+def preview_cell_execution_with_snapshot(
+    source_receipt_path: str | Path,
+    task_text: str,
+    catalog_path: str | Path,
+    evaluation_contract_path: str | Path,
+    policy_path: str | Path,
+    *,
+    resource_snapshot: ResourceSnapshot,
+) -> AdaptiveCellExecutionPreviewEvaluation:
+    """Re-admit against one exact snapshot and retain composable evidence.
+
+    This function remains read-only and non-authorizing. Bound Cell Run uses it
+    inside the cooperative store transaction so selection and lease accounting
+    cannot observe different resource snapshots.
+    """
+
+    source = load_adaptive_advisor_receipt(source_receipt_path)
+    policy = load_adaptive_execution_policy(policy_path)
+    fresh, evaluated_snapshot, evaluated_catalog = _evaluate_fresh_advisor(
+        source=source,
+        task_text=task_text,
+        catalog_path=catalog_path,
+        evaluation_contract_path=evaluation_contract_path,
+        resource_snapshot=resource_snapshot,
+    )
+    if (
+        evaluated_snapshot is None or evaluated_catalog is None
+    ):  # pragma: no cover - type narrowing
+        raise AdaptiveExecutionGateError(
+            "fresh_admission_invalid", "Fresh resource evidence is missing."
         )
-        if not isinstance(fresh, AdaptiveAdvisorReceipt):
-            raise AdaptiveExecutionGateError(
-                "fresh_admission_invalid",
-                "Fresh adaptive admission returned an invalid receipt.",
+    return AdaptiveCellExecutionPreviewEvaluation(
+        receipt=_build_preview_receipt(source, policy, fresh),
+        fresh_advisor_receipt=fresh,
+        resource_snapshot=evaluated_snapshot,
+        catalog=evaluated_catalog,
+    )
+
+
+def _evaluate_fresh_advisor(
+    *,
+    source: AdaptiveAdvisorReceipt,
+    task_text: str,
+    catalog_path: str | Path,
+    evaluation_contract_path: str | Path,
+    resource_snapshot: ResourceSnapshot | None,
+) -> tuple[
+    AdaptiveAdvisorReceipt,
+    ResourceSnapshot | None,
+    AdaptiveCellCatalog | None,
+]:
+    try:
+        common = {
+            "catalog_path": catalog_path,
+            "evaluation_contract_path": evaluation_contract_path,
+            "task_text": task_text,
+            "workload_id": source.request.demand.workload_id,
+            "required_capabilities": source.request.demand.capabilities,
+            "required_tool_surfaces": source.request.demand.tool_surfaces,
+            "risk_class": source.request.demand.risk_class,
+            "context_tokens": source.request.demand.context_tokens,
+            "profile": source.request.profile,
+            "intent_family_sha256": source.request.intent_family_sha256,
+        }
+        if resource_snapshot is None:
+            fresh = evaluate_advisor(**common)
+            evaluated_snapshot = None
+            evaluated_catalog = None
+        else:
+            evaluation = evaluate_advisor_with_snapshot(
+                **common,
+                resource_snapshot=resource_snapshot,
             )
+            if not isinstance(evaluation, AdaptiveAdvisorEvaluation):
+                raise TypeError
+            fresh = evaluation.receipt
+            evaluated_snapshot = evaluation.resource_snapshot
+            evaluated_catalog = evaluation.catalog
+        if not isinstance(fresh, AdaptiveAdvisorReceipt):
+            raise TypeError
+        return fresh, evaluated_snapshot, evaluated_catalog
     except AdaptiveExecutionGateError:
         raise
     except AdvisorServiceError as exc:
@@ -470,6 +586,13 @@ def preview_cell_execution(
             "fresh_admission_invalid",
             "Fresh adaptive admission could not be verified.",
         ) from exc
+
+
+def _build_preview_receipt(
+    source: AdaptiveAdvisorReceipt,
+    policy: AdaptiveCellExecutionPolicy,
+    fresh: AdaptiveAdvisorReceipt,
+) -> AdaptiveCellExecutionPreviewReceipt:
 
     reasons: set[str] = set()
     if source.advice.status != "recommended":
@@ -896,6 +1019,7 @@ __all__ = [
     "PREVIEW_REASON_CODES",
     "PREVIEW_STATUSES",
     "AdaptiveCellExecutionPolicy",
+    "AdaptiveCellExecutionPreviewEvaluation",
     "AdaptiveCellExecutionPreviewReceipt",
     "AdaptiveExecutionGateError",
     "adaptive_advisor_receipt_from_payload",
@@ -904,4 +1028,5 @@ __all__ = [
     "load_adaptive_advisor_receipt",
     "load_adaptive_execution_policy",
     "preview_cell_execution",
+    "preview_cell_execution_with_snapshot",
 ]

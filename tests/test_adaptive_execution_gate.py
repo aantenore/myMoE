@@ -7,9 +7,12 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from local_moe.adaptive_advisor_service import AdaptiveAdvisorReceipt
+from local_moe.adaptive_advisor_service import (
+    AdaptiveAdvisorEvaluation,
+    AdaptiveAdvisorReceipt,
+)
 from local_moe.adaptive_execution_gate import (
     MAX_ADVISOR_RECEIPT_BYTES,
     AdaptiveCellExecutionPolicy,
@@ -19,12 +22,15 @@ from local_moe.adaptive_execution_gate import (
     adaptive_execution_policy_from_payload,
     load_adaptive_advisor_receipt,
     preview_cell_execution,
+    preview_cell_execution_with_snapshot,
 )
 from local_moe.adaptive_selector import (
     AdaptiveAdvice,
     CandidateAssessment,
     build_adaptive_request,
 )
+from local_moe.cell_contracts import AdaptiveCellCatalog
+from local_moe.resource_snapshot import build_resource_snapshot
 
 
 SHA_A, SHA_B, SHA_C, SHA_D = (character * 64 for character in "abcd")
@@ -235,6 +241,62 @@ class AdaptiveExecutionContractTests(unittest.TestCase):
         )
         self.assertEqual(evaluate.call_args.kwargs["required_tool_surfaces"], ())
         self.assertEqual(evaluate.call_args.kwargs["risk_class"], "compute_only")
+
+    def test_snapshot_bound_preview_retains_the_exact_fresh_evidence(self) -> None:
+        secret = "SECRET task that must not be persisted"
+        snapshot = build_resource_snapshot(
+            system="Linux",
+            os_release="test",
+            machine="x86_64",
+            cpu_count=8,
+            cpu_identity_sha256=SHA_A,
+            memory_topology="system",
+            total_memory_bytes=16 * 1024**3,
+            available_memory_bytes=12 * 1024**3,
+            effective_memory_limit_bytes=16 * 1024**3,
+            swap_used_bytes=0,
+            accelerator_kind="none",
+            accelerator_identity_sha256=None,
+            runtime_environment_sha256=SHA_B,
+            captured_at=FRESH_TIME,
+            source={"fixture": "execution-gate"},
+        )
+        source = _receipt(secret)
+        fresh = _receipt(
+            secret,
+            evaluated_at=FRESH_TIME,
+            snapshot_sha256=snapshot.digest,
+        )
+        catalog = MagicMock(spec=AdaptiveCellCatalog)
+        catalog.digest = fresh.advice.catalog_sha256
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_path, policy_path = root / "receipt.json", root / "policy.json"
+            _write_json(source_path, source.payload())
+            _write_json(policy_path, _policy().payload())
+            with patch(
+                "local_moe.adaptive_execution_gate.evaluate_advisor_with_snapshot",
+                return_value=AdaptiveAdvisorEvaluation(fresh, snapshot, catalog),
+            ) as evaluate:
+                evaluation = preview_cell_execution_with_snapshot(
+                    source_path,
+                    secret,
+                    root / "catalog.json",
+                    root / "evaluation.json",
+                    policy_path,
+                    resource_snapshot=snapshot,
+                )
+
+        self.assertEqual(evaluation.receipt.status, "admission_passed")
+        self.assertIs(evaluation.resource_snapshot, snapshot)
+        self.assertEqual(evaluation.fresh_advisor_receipt, fresh)
+        self.assertIs(evaluation.catalog, catalog)
+        self.assertEqual(
+            evaluation.receipt.fresh_resource_snapshot_sha256,
+            snapshot.digest,
+        )
+        self.assertIs(evaluate.call_args.kwargs["resource_snapshot"], snapshot)
+        self.assertNotIn(secret, json.dumps(evaluation.receipt.payload()))
 
     def test_preview_blocks_all_task_policy_and_lineage_drift_without_fallback(
         self,

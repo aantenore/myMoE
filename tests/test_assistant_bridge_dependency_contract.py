@@ -82,6 +82,47 @@ class AssistantBridgeDependencyContractTests(unittest.TestCase):
             )
         )
 
+    def test_metadata_separates_runtime_base_from_assistant_extra(self) -> None:
+        supported = [
+            'cryptography<49,>=48.0.1; extra == "assistant-bridge"',
+            'detect-secrets<1.6,>=1.5; extra == "assistant-bridge"',
+            'psutil<8,>=7.2.2; extra == "assistant-bridge"',
+            'rfc8785<0.2,>=0.1.4; extra == "assistant-bridge"',
+            "filelock<4,>=3.29.7",
+            "platformdirs<5,>=4.3",
+        ]
+        with patch.object(
+            self.contract.metadata,
+            "requires",
+            return_value=supported,
+        ):
+            self.contract.validate_installed_project_metadata()
+
+        missing_base = [
+            requirement
+            for requirement in supported
+            if not requirement.startswith("filelock")
+        ] + ['filelock<4,>=3.29.7; extra == "assistant-bridge"']
+        with (
+            patch.object(
+                self.contract.metadata,
+                "requires",
+                return_value=missing_base,
+            ),
+            self.assertRaisesRegex(SystemExit, "filelock base requirement"),
+        ):
+            self.contract.validate_installed_project_metadata()
+
+        with (
+            patch.object(
+                self.contract.metadata,
+                "requires",
+                return_value=[*supported, "unexpected>=1"],
+            ),
+            self.assertRaisesRegex(SystemExit, "unexpected dependency"),
+        ):
+            self.contract.validate_installed_project_metadata()
+
     def test_release_parser_rejects_prerelease_lookalike(self) -> None:
         self.assertEqual(
             self.contract._release_triplet("48.0.1.post1+vendor"),

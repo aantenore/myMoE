@@ -100,15 +100,13 @@ def validate_optional_dependencies() -> dict[str, str]:
 
 def validate_installed_project_metadata() -> None:
     requirements = metadata.requires("local-moe-orchestrator") or []
-    expected = (
+    optional_expected = (
         "cryptography",
         "detect-secrets",
-        "filelock",
-        "platformdirs",
         "psutil",
         "rfc8785",
     )
-    for dependency in expected:
+    for dependency in optional_expected:
         matches = [
             requirement
             for requirement in requirements
@@ -123,11 +121,35 @@ def validate_installed_project_metadata() -> None:
                 "assistant-bridge requirement."
             )
 
-    base_requirements = [
-        requirement for requirement in requirements if "extra ==" not in requirement
+    base_expected = ("filelock", "platformdirs")
+    base_requirements = {
+        dependency: [
+            requirement
+            for requirement in requirements
+            if requirement.lower().startswith(dependency)
+            and "extra ==" not in requirement
+        ]
+        for dependency in base_expected
+    }
+    for dependency, matches in base_requirements.items():
+        if len(matches) != 1 or not _metadata_range_is_supported(
+            dependency, matches[0]
+        ):
+            raise SystemExit(
+                f"Installed metadata does not expose the expected {dependency} "
+                "base requirement."
+            )
+    unexpected_base = [
+        requirement
+        for requirement in requirements
+        if "extra ==" not in requirement
+        and not any(
+            requirement.lower().startswith(dependency)
+            for dependency in base_expected
+        )
     ]
-    if base_requirements:
-        raise SystemExit("The base distribution must remain dependency-free.")
+    if unexpected_base:
+        raise SystemExit("The base distribution exposes an unexpected dependency.")
 
 
 def _metadata_range_is_supported(dependency: str, requirement: str) -> bool:

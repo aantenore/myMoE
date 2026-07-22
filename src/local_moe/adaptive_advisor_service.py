@@ -11,7 +11,7 @@ from .adaptive_selector import (
     advise_cell,
     build_adaptive_request,
 )
-from .cell_contracts import CellContractError
+from .cell_contracts import AdaptiveCellCatalog, CellContractError
 from .cell_passport import load_cell_catalog
 from .resource_snapshot import ResourceSnapshot, collect_resource_snapshot
 from .secure_files import read_bounded_regular_file
@@ -140,6 +140,44 @@ class AdaptiveAdvisorReceipt:
         return {**self.content_payload(), "digest": self.digest}
 
 
+@dataclass(frozen=True)
+class AdaptiveAdvisorEvaluation:
+    """One Advisor receipt plus the exact resource snapshot that produced it."""
+
+    receipt: AdaptiveAdvisorReceipt
+    resource_snapshot: ResourceSnapshot
+    catalog: AdaptiveCellCatalog
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.receipt, AdaptiveAdvisorReceipt)
+            or not isinstance(self.resource_snapshot, ResourceSnapshot)
+            or not isinstance(self.catalog, AdaptiveCellCatalog)
+        ):
+            raise AdvisorServiceError(
+                "advisor_evaluation_invalid", "Advisor evaluation evidence is invalid."
+            )
+        if (
+            self.receipt.advice.resource_snapshot_sha256
+            != self.resource_snapshot.digest
+            or self.receipt.advice.catalog_sha256 != self.catalog.digest
+        ):
+            raise AdvisorServiceError(
+                "receipt_binding_invalid",
+                "Advice is not bound to its resource snapshot.",
+            )
+
+
+@dataclass(frozen=True)
+class _PreparedAdvisorInputs:
+    exact_request_fingerprint: str
+    task_chars: int
+    capabilities: tuple[str, ...]
+    tool_surfaces: tuple[str, ...]
+    evaluation_contract_sha256: str
+    catalog: AdaptiveCellCatalog
+
+
 def evaluate_advisor(
     *,
     catalog_path: str | Path,
@@ -154,6 +192,78 @@ def evaluate_advisor(
     intent_family_sha256: str | None = None,
 ) -> AdaptiveAdvisorReceipt:
     """Evaluate one local cell request without invoking or changing a runtime."""
+
+    prepared = _prepare_advisor_inputs(
+        catalog_path=catalog_path,
+        evaluation_contract_path=evaluation_contract_path,
+        task_text=task_text,
+        required_capabilities=required_capabilities,
+        required_tool_surfaces=required_tool_surfaces,
+    )
+    resource_snapshot = _collect_verified_resource_snapshot()
+    return _evaluate_prepared_advisor(
+        prepared,
+        resource_snapshot=resource_snapshot,
+        workload_id=workload_id,
+        risk_class=risk_class,
+        context_tokens=context_tokens,
+        profile=profile,
+        intent_family_sha256=intent_family_sha256,
+    ).receipt
+
+
+def evaluate_advisor_with_snapshot(
+    *,
+    catalog_path: str | Path,
+    evaluation_contract_path: str | Path,
+    task_text: str,
+    workload_id: str,
+    required_capabilities: Iterable[str],
+    required_tool_surfaces: Iterable[str],
+    risk_class: str,
+    context_tokens: int,
+    profile: str,
+    resource_snapshot: ResourceSnapshot,
+    intent_family_sha256: str | None = None,
+) -> AdaptiveAdvisorEvaluation:
+    """Evaluate against one caller-captured snapshot and retain exact evidence.
+
+    This is an internal composition boundary for atomic cooperative admission.
+    Supplying a snapshot does not authorize execution; the receipt remains fully
+    content-addressed to that snapshot.
+    """
+
+    prepared = _prepare_advisor_inputs(
+        catalog_path=catalog_path,
+        evaluation_contract_path=evaluation_contract_path,
+        task_text=task_text,
+        required_capabilities=required_capabilities,
+        required_tool_surfaces=required_tool_surfaces,
+    )
+    if not isinstance(resource_snapshot, ResourceSnapshot):
+        raise AdvisorServiceError(
+            "resource_snapshot_invalid",
+            "Local resource snapshot could not be verified.",
+        )
+    return _evaluate_prepared_advisor(
+        prepared,
+        resource_snapshot=resource_snapshot,
+        workload_id=workload_id,
+        risk_class=risk_class,
+        context_tokens=context_tokens,
+        profile=profile,
+        intent_family_sha256=intent_family_sha256,
+    )
+
+
+def _prepare_advisor_inputs(
+    *,
+    catalog_path: str | Path,
+    evaluation_contract_path: str | Path,
+    task_text: str,
+    required_capabilities: Iterable[str],
+    required_tool_surfaces: Iterable[str],
+) -> _PreparedAdvisorInputs:
 
     task_bytes, task_chars = _validated_task(task_text)
     exact_request_fingerprint = hashlib.sha256(task_bytes).hexdigest()
@@ -190,15 +300,39 @@ def evaluate_advisor(
             "catalog_invalid", "Adaptive cell catalog could not be verified."
         ) from exc
 
+    return _PreparedAdvisorInputs(
+        exact_request_fingerprint=exact_request_fingerprint,
+        task_chars=task_chars,
+        capabilities=capabilities,
+        tool_surfaces=tool_surfaces,
+        evaluation_contract_sha256=evaluation_contract_sha256,
+        catalog=catalog,
+    )
+
+
+def _collect_verified_resource_snapshot() -> ResourceSnapshot:
     try:
         resource_snapshot = collect_resource_snapshot()
         if not isinstance(resource_snapshot, ResourceSnapshot):
             raise CellContractError("snapshot must be a ResourceSnapshot.")
+        return resource_snapshot
     except Exception as exc:
         raise AdvisorServiceError(
             "resource_snapshot_invalid",
             "Local resource snapshot could not be verified.",
         ) from exc
+
+
+def _evaluate_prepared_advisor(
+    prepared: _PreparedAdvisorInputs,
+    *,
+    resource_snapshot: ResourceSnapshot,
+    workload_id: str,
+    risk_class: str,
+    context_tokens: int,
+    profile: str,
+    intent_family_sha256: str | None,
+) -> AdaptiveAdvisorEvaluation:
 
     # This timestamp is captured after the hardware probe, so the receipt
     # truthfully describes when the selection was evaluated. Deterministic
@@ -212,22 +346,22 @@ def evaluate_advisor(
         ) from exc
     try:
         request = build_adaptive_request(
-            exact_request_fingerprint=exact_request_fingerprint,
+            exact_request_fingerprint=prepared.exact_request_fingerprint,
             intent_family_sha256=intent_family_sha256,
             workload_id=workload_id,
-            required_capabilities=capabilities,
-            required_tool_surfaces=tool_surfaces,
+            required_capabilities=prepared.capabilities,
+            required_tool_surfaces=prepared.tool_surfaces,
             risk_class=risk_class,
             required_context_tokens=context_tokens,
-            evaluation_contract_sha256=evaluation_contract_sha256,
+            evaluation_contract_sha256=prepared.evaluation_contract_sha256,
             profile=profile,
             evaluated_at=evaluation_time,
         )
-        advice = advise_cell(catalog, resource_snapshot, request)
+        advice = advise_cell(prepared.catalog, resource_snapshot, request)
         receipt = AdaptiveAdvisorReceipt(
             request=request,
             advice=advice,
-            task_chars=task_chars,
+            task_chars=prepared.task_chars,
             display_state=_classify_display_state(advice),
         )
     except AdvisorServiceError:
@@ -238,7 +372,7 @@ def evaluate_advisor(
             "Adaptive advisor evaluation could not be completed.",
         ) from exc
 
-    if advice.catalog_sha256 != catalog.digest:
+    if advice.catalog_sha256 != prepared.catalog.digest:
         raise AdvisorServiceError(
             "receipt_binding_invalid", "Advice is not bound to its catalog."
         )
@@ -246,7 +380,11 @@ def evaluate_advisor(
         raise AdvisorServiceError(
             "receipt_binding_invalid", "Advice is not bound to its resource snapshot."
         )
-    return receipt
+    return AdaptiveAdvisorEvaluation(
+        receipt=receipt,
+        resource_snapshot=resource_snapshot,
+        catalog=prepared.catalog,
+    )
 
 
 def advisor_presentation_payload(
@@ -359,8 +497,10 @@ __all__ = [
     "MAX_EVALUATION_CONTRACT_BYTES",
     "MAX_TASK_BYTES",
     "MAX_TASK_CHARS",
+    "AdaptiveAdvisorEvaluation",
     "AdaptiveAdvisorReceipt",
     "AdvisorServiceError",
     "advisor_presentation_payload",
     "evaluate_advisor",
+    "evaluate_advisor_with_snapshot",
 ]

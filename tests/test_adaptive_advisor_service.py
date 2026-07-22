@@ -6,7 +6,7 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from local_moe.adaptive_advisor_service import (
     ADVISOR_RECEIPT_CONTRACT,
@@ -16,12 +16,14 @@ from local_moe.adaptive_advisor_service import (
     AdvisorServiceError,
     advisor_presentation_payload,
     evaluate_advisor,
+    evaluate_advisor_with_snapshot,
 )
 from local_moe.adaptive_selector import (
     AdaptiveAdvice,
     CandidateAssessment,
     build_adaptive_request,
 )
+from local_moe.cell_contracts import AdaptiveCellCatalog
 from local_moe.resource_snapshot import build_resource_snapshot
 from local_moe.verified_routing_contracts import sha256_json
 
@@ -144,7 +146,8 @@ class AdaptiveAdvisorServiceTests(unittest.TestCase):
     def test_evaluate_builds_a_complete_content_addressed_receipt(self) -> None:
         secret = "private task"
         snapshot = _snapshot()
-        catalog = SimpleNamespace(digest=SHA_C)
+        catalog = MagicMock(spec=AdaptiveCellCatalog)
+        catalog.digest = SHA_C
 
         def advise(catalog_value, snapshot_value, request_value):
             self.assertIs(catalog_value, catalog)
@@ -202,6 +205,57 @@ class AdaptiveAdvisorServiceTests(unittest.TestCase):
         self.assertEqual(digest, sha256_json(content))
         with self.assertRaises(FrozenInstanceError):
             receipt.task_chars = 99  # type: ignore[misc]
+
+    def test_explicit_snapshot_evaluation_returns_the_exact_bound_evidence(
+        self,
+    ) -> None:
+        snapshot = _snapshot()
+        catalog = MagicMock(spec=AdaptiveCellCatalog)
+        catalog.digest = SHA_C
+
+        with (
+            patch(
+                "local_moe.adaptive_advisor_service.read_bounded_regular_file",
+                return_value=b'{"suite":"local"}',
+            ),
+            patch(
+                "local_moe.adaptive_advisor_service.load_cell_catalog",
+                return_value=catalog,
+            ),
+            patch(
+                "local_moe.adaptive_advisor_service.collect_resource_snapshot",
+                side_effect=AssertionError("must use the supplied snapshot"),
+            ),
+            patch(
+                "local_moe.adaptive_advisor_service.now_utc",
+                return_value=EVALUATED_AT,
+            ),
+            patch(
+                "local_moe.adaptive_advisor_service.advise_cell",
+                side_effect=lambda catalog_value, snapshot_value, request_value: (
+                    _advice(request_value, snapshot_value)
+                ),
+            ),
+        ):
+            evaluation = evaluate_advisor_with_snapshot(
+                catalog_path=Path("catalog.json"),
+                evaluation_contract_path=Path("evaluation.json"),
+                task_text="private task",
+                workload_id="coding.edit",
+                required_capabilities=("code",),
+                required_tool_surfaces=("workspace",),
+                risk_class="compute_only",
+                context_tokens=4096,
+                profile="balanced",
+                resource_snapshot=snapshot,
+            )
+
+        self.assertIs(evaluation.resource_snapshot, snapshot)
+        self.assertIs(evaluation.catalog, catalog)
+        self.assertEqual(
+            evaluation.receipt.advice.resource_snapshot_sha256,
+            snapshot.digest,
+        )
 
     def test_receipt_rejects_nested_tamper_even_with_recomputed_envelope(self) -> None:
         receipt = _receipt()
