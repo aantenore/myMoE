@@ -56,6 +56,10 @@ All notable changes to myMoE are documented in this file.
 - Task, request, output, configuration, and evidence hashes are deterministic
   and unsalted. They omit raw content but can correlate repeated values and may
   permit guessing of low-entropy content.
+- The last live quality artifact is retained as dated v0.13 evidence. It is not
+  carried forward as current after the v0.14 provider changes, so this alpha
+  makes no live quality, cost, or token-reduction claim and is not marked
+  release-ready by the live quality profile.
 
 ## [0.13.0-alpha.1] - 2026-07-22
 

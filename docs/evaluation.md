@@ -63,7 +63,7 @@ unseen set before making a fresh generalization claim.
 - Leakage-free live routing holdout: `52/52` (`100%`), 95% Wilson interval
   `93.1%-100%`, with zero id or prompt-hash overlap. Evidence lives in
   `outputs/live-general-routing-holdout.json`.
-- Current live answer-quality benchmark: 72 completed executions with zero
+- Last live answer-quality benchmark (v0.13 lineage): 72 completed executions with zero
   response failures or truncation. Single-general and routed top-1 both
   achieved `1.0` task success, `1.0` quality pass rate, and `0.975` quality
   score. Mean latency was `3.4607 s` vs `3.3357 s`; the six fast-routed pairs
@@ -74,9 +74,12 @@ unseen set before making a fresh generalization claim.
   latency. It is not the value route and its result is not masked by top-1.
 - Current host evidence passed with `100%` sample coverage, `87.815%` peak RAM
   use, and `342,485,894` bytes swap growth.
-- The release quality gate now passes with `release_ready = true`. The previous
+- That v0.13 release quality gate passed with `release_ready = true`. The
   72-record evidence remains preserved as
-  `outputs/quality-benchmark-2026-07-10.json` for historical comparison.
+  `outputs/quality-benchmark-2026-07-10.json` and in the v0.13 release assets.
+  LocalCascade v0.14 changes provider code, so it deliberately removes the
+  now-stale current artifact and makes no live quality or savings claim. Its
+  offline CI can pass deterministic checks but cannot declare release readiness.
 - The Assistant Bridge local-provider compatibility probe is a separate
   diagnostic. On 2026-07-20, `qwen3:4b` through Ollama did not complete within
   the 30-second bound, so the result is indeterminate rather than incompatible.
