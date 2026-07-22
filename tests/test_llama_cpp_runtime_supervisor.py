@@ -5,6 +5,7 @@ import hashlib
 from io import BytesIO
 import json
 import os
+from pathlib import Path
 import unittest
 from unittest import mock
 from urllib import error
@@ -29,7 +30,10 @@ ROOT_PID = 4207
 EXECUTABLE_SHA256 = "a" * 64
 HOST = "127.0.0.1"
 PORT = 8188
-MODEL_PATH = "/models/qwen-coder.gguf"
+_FIXTURE_ROOT = Path(__file__).resolve().parent / "runtime-supervisor-fixture"
+EXECUTABLE_PATH = str(_FIXTURE_ROOT / "llama-server")
+MODEL_PATH = str(_FIXTURE_ROOT / "qwen-coder.gguf")
+WORKING_DIRECTORY = str(_FIXTURE_ROOT / "work")
 MODEL_ID = "qwen-coder-local"
 
 
@@ -77,11 +81,11 @@ def _endpoint(
 
 def _spec(**overrides) -> LlamaCppRuntimeSpec:
     values = {
-        "executable_path": "/opt/llama.cpp/llama-server",
+        "executable_path": EXECUTABLE_PATH,
         "executable_sha256": EXECUTABLE_SHA256,
         "model_path": MODEL_PATH,
         "model_id": MODEL_ID,
-        "working_directory": "/work/runtime",
+        "working_directory": WORKING_DIRECTORY,
         "host": HOST,
         "port": PORT,
         "sleep_idle_seconds": 45,
@@ -215,6 +219,16 @@ def _ready_responses() -> dict[str, JsonHttpResponse]:
 
 
 class LlamaCppRuntimeSupervisorTests(unittest.TestCase):
+    def test_injected_spec_fixture_paths_are_host_native_and_absolute(self) -> None:
+        spec = _spec()
+
+        self.assertTrue(Path(spec.executable_path).is_absolute())
+        self.assertTrue(Path(spec.model_path).is_absolute())
+        self.assertTrue(Path(spec.working_directory).is_absolute())
+        self.assertEqual(spec.executable_path, EXECUTABLE_PATH)
+        self.assertEqual(spec.model_path, MODEL_PATH)
+        self.assertEqual(spec.working_directory, WORKING_DIRECTORY)
+
     def test_start_requires_owned_listener_and_three_bounded_get_probes(self) -> None:
         process = _FakeProcess()
         launcher = _FakeLauncher(process)
@@ -262,7 +276,7 @@ class LlamaCppRuntimeSupervisorTests(unittest.TestCase):
             ["/health", "/props", "/v1/models"],
         )
         argv, environment, working_directory = launcher.calls[0]
-        self.assertEqual(argv[0], "/opt/llama.cpp/llama-server")
+        self.assertEqual(argv[0], EXECUTABLE_PATH)
         self.assertIn("-m", argv)
         self.assertIn(MODEL_PATH, argv)
         self.assertIn("--offline", argv)
@@ -287,7 +301,7 @@ class LlamaCppRuntimeSupervisorTests(unittest.TestCase):
         self.assertNotIn("HTTP_PROXY", environment)
         self.assertNotIn("LLAMA_ARG_MODELS_AUTOLOAD", environment)
         self.assertNotIn("LD_PRELOAD", environment)
-        self.assertEqual(working_directory, "/work/runtime")
+        self.assertEqual(working_directory, WORKING_DIRECTORY)
 
     def test_refuses_preexisting_listener_instead_of_attaching(self) -> None:
         launcher = _FakeLauncher()
@@ -588,6 +602,19 @@ class LlamaCppRuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(popen.call_args.kwargs["cwd"], "/absolute/work")
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         self.assertFalse(popen.call_args.kwargs["shell"])
+
+    @unittest.skipIf(os.name == "posix", "non-POSIX regression")
+    def test_production_launcher_fails_closed_before_spawn_on_non_posix(self) -> None:
+        with mock.patch.object(supervisor_module.subprocess, "Popen") as popen:
+            with self.assertRaises(LlamaCppRuntimeSupervisorError) as raised:
+                SubprocessLauncher().launch(
+                    (EXECUTABLE_PATH, "--offline"),
+                    environment={},
+                    working_directory=WORKING_DIRECTORY,
+                )
+
+        self.assertEqual(raised.exception.code, "platform_unsupported")
+        popen.assert_not_called()
 
     @unittest.skipUnless(os.name == "posix", "process-bound v1 is POSIX-only")
     def test_posix_group_cleanup_escalates_from_term_to_kill(self) -> None:

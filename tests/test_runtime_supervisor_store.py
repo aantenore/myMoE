@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 import json
 import os
@@ -167,6 +168,9 @@ class RuntimeSupervisorStoreTests(unittest.TestCase):
 
         self.assertEqual(revoked.state, "revoked")
         self.assertEqual(unknown.state, "unknown_blocking")
+        self.assertTrue(acquisition.handle._released)
+        self.assertFalse(acquisition.handle._sentinel_path.exists())
+        self.assertEqual(store.list_active()[0].state, "unknown_blocking")
         with self.assertRaises(RuntimeSupervisorLeaseStoreError):
             store.transition(acquisition.handle, "stopped")
 
@@ -175,7 +179,7 @@ class RuntimeSupervisorStoreTests(unittest.TestCase):
         acquisition = store.acquire(_binding())
         # Simulate an owner that vanished without an authenticated stopped
         # transition.  Presence of the regular sentinel is not ownership.
-        acquisition.handle._owner_lock.release(force=True)
+        acquisition.handle.release_owner()
 
         changed = store.mark_abandoned_owners()
         self.assertEqual(len(changed), 1)
@@ -188,7 +192,7 @@ class RuntimeSupervisorStoreTests(unittest.TestCase):
     def test_unknown_endpoint_does_not_exhaust_the_live_lease_cap(self) -> None:
         store = self.store(policy=RuntimeSupervisorLeasePolicy(max_active_leases=1))
         abandoned = store.acquire(_binding())
-        abandoned.handle._owner_lock.release(force=True)
+        abandoned.handle.release_owner()
         self.assertEqual(
             store.mark_abandoned_owners()[0].state, "unknown_blocking"
         )
@@ -205,30 +209,36 @@ class RuntimeSupervisorStoreTests(unittest.TestCase):
     def test_tampered_persisted_row_fails_closed(self) -> None:
         store = self.store()
         acquisition = store.acquire(_binding())
-        with sqlite3.connect(self.database) as connection:
-            connection.execute(
-                "UPDATE active_leases SET owner_pid = owner_pid + 1 "
-                "WHERE lease_id = ?",
-                (acquisition.handle.lease_id,),
-            )
-            connection.commit()
+        try:
+            with closing(sqlite3.connect(self.database)) as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE active_leases SET owner_pid = owner_pid + 1 "
+                        "WHERE lease_id = ?",
+                        (acquisition.handle.lease_id,),
+                    )
 
-        with self.assertRaises(RuntimeSupervisorLeaseStoreError) as caught:
-            store.get(acquisition.handle.lease_id)
-        self.assertEqual(caught.exception.code, "runtime_lease_store_invalid")
+            with self.assertRaises(RuntimeSupervisorLeaseStoreError) as caught:
+                store.get(acquisition.handle.lease_id)
+            self.assertEqual(caught.exception.code, "runtime_lease_store_invalid")
+        finally:
+            # The corrupt row must remain fail-closed; only relinquish the
+            # native handle so Windows can remove the temporary directory.
+            acquisition.handle.release_owner()
 
     def test_foreign_schema_and_policy_identity_are_rejected(self) -> None:
         self.database.parent.mkdir(parents=True)
-        with sqlite3.connect(self.database) as connection:
-            connection.execute("CREATE TABLE foreign_table(value TEXT)")
+        with closing(sqlite3.connect(self.database)) as connection:
+            with connection:
+                connection.execute("CREATE TABLE foreign_table(value TEXT)")
         with self.assertRaises(RuntimeSupervisorLeaseStoreError) as caught:
             self.store()
         self.assertEqual(caught.exception.code, "runtime_lease_store_schema_invalid")
 
     def test_store_schema_is_independent_from_resource_lease_accounting(self) -> None:
         store = self.store()
-        store.acquire(_binding())
-        with sqlite3.connect(self.database) as connection:
+        acquisition = store.acquire(_binding())
+        with closing(sqlite3.connect(self.database)) as connection:
             meta = dict(connection.execute("SELECT key, value FROM store_meta"))
             columns = {
                 str(row[1])
@@ -241,6 +251,7 @@ class RuntimeSupervisorStoreTests(unittest.TestCase):
         self.assertNotIn("system_claim_bytes", columns)
         self.assertNotIn("delivery_armed", columns)
 
+        store.transition(acquisition.handle, "stopped")
         self.database.unlink()
         store = self.store()
         policy = replace(store.policy, max_active_leases=2, digest="")

@@ -463,6 +463,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertIn("cleanup_unverified", first.reason_codes)
         self.assertTrue(session.cleanup_unknown)
         self.assertEqual(store.list_active()[0].state, "unknown_blocking")
+        self.assertTrue(session._handle._released)
 
     def test_ledger_failure_never_skips_owned_process_teardown(self) -> None:
         resolved = self.resolved()
@@ -489,6 +490,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertFalse(adapter.owns_process)
         self.assertEqual(final.state, "unknown_blocking")
         self.assertTrue(session.cleanup_unknown)
+        self.assertTrue(session._handle._released)
 
     def test_spawn_before_first_observation_is_receipted_as_two_mutations(self) -> None:
         class _LaunchThenFailAdapter(_FakeAdapter):

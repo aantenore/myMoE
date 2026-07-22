@@ -126,6 +126,21 @@ class RuntimeSupervisorLeaseHandle:
     _sentinel_path: Path = field(repr=False, compare=False)
     _released: bool = field(default=False, repr=False, compare=False)
 
+    def release_owner(self) -> None:
+        """Relinquish only the native owner sentinel, never the durable row.
+
+        Releasing an unfinished handle is deliberately fail-closed: the
+        authenticated SQLite row remains active and the next store inspection
+        promotes it to the sticky ``unknown_blocking`` state.  This explicit
+        lifecycle hook is also important on Windows, where an open lock handle
+        prevents temporary state directories from being removed.
+        """
+
+        if self._released:
+            return
+        _release_file_lock(self._owner_lock, self._sentinel_path)
+        self._released = True
+
 
 @dataclass(frozen=True)
 class RuntimeSupervisorLeaseAcquisition:
@@ -381,9 +396,12 @@ class SQLiteRuntimeSupervisorLeaseStore:
                 release_owner = True
             else:
                 self._update_receipt(connection, current, receipt)
+                # Unknown ownership is already represented by a durable,
+                # sticky row.  Keeping the native lock open cannot strengthen
+                # that state and leaks a Windows file handle until GC.
+                release_owner = state == "unknown_blocking"
         if release_owner:
-            _release_file_lock(handle._owner_lock, handle._sentinel_path)
-            handle._released = True
+            handle.release_owner()
         return receipt
 
     def get(self, lease_id: str) -> RuntimeSupervisorLeaseReceipt | None:

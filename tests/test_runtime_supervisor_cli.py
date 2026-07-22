@@ -4,6 +4,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 import hashlib
 from io import StringIO
+import os
 from pathlib import Path
 import signal
 import unittest
@@ -166,7 +167,11 @@ class RuntimeSupervisorCliTests(unittest.TestCase):
         self.assertEqual(status, cli.EXIT_OK)
         self.assertEqual(stderr, "")
         self.assertEqual(session.calls, ["start", "inspect", "stop"])
-        self.assertEqual(factory.calls[0], Path(PRIVATE_PATH))
+        expected_request_path = Path(
+            os.path.abspath(os.path.expanduser(PRIVATE_PATH))
+        )
+        self.assertTrue(factory.calls[0].is_absolute())
+        self.assertEqual(factory.calls[0], expected_request_path)
         self.assertIn('"cleanup_verified": true', stdout)
         self.assertIn('"state": "ready"', stdout)
         self.assertIn('"state": "stopped"', stdout)
