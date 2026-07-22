@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "contract": "LocalCascadeConfigV1",
+  "cascade_id": "local-cascade-starter",
+  "tiers": [
+    {
+      "schema_version": "1.0",
+      "contract": "LocalCascadeTierV1",
+      "tier_id": "utility",
+      "cost_rank": 10,
+      "model_ref": "local_cascade_utility",
+      "max_input_tokens": 2048,
+      "max_output_tokens": 512
+    },
+    {
+      "schema_version": "1.0",
+      "contract": "LocalCascadeTierV1",
+      "tier_id": "resident-generalist",
+      "cost_rank": 20,
+      "model_ref": "local_cascade_resident",
+      "max_input_tokens": 8192,
+      "max_output_tokens": 2048
+    },
+    {
+      "schema_version": "1.0",
+      "contract": "LocalCascadeTierV1",
+      "tier_id": "cold-specialist",
+      "cost_rank": 30,
+      "model_ref": "local_cascade_specialist",
+      "max_input_tokens": 16384,
+      "max_output_tokens": 4096
+    }
+  ],
+  "verifier": {
+    "schema_version": "1.0",
+    "contract": "LocalCascadeVerifierV1",
+    "output_format": "text",
+    "min_characters": 20,
+    "max_characters": 4000,
+    "required_terms": [
+      "decision=",
+      "evidence="
+    ],
+    "forbidden_terms": [
+      "unverified"
+    ],
+    "case_sensitive_terms": false,
+    "json_fields": [],
+    "allow_extra_json_fields": false
+  },
+  "max_attempts": 3,
+  "execution_scope": "offline_local",
+  "allow_network": false,
+  "allow_tools": false,
+  "allow_writes": false,
+  "parallel_attempts": 1
+}

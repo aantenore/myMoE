@@ -4,6 +4,29 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- LocalCascade v1 contracts and an adapter-neutral offline cascade that tries
+  configured model roles sequentially by cost rank, accepts only a
+  deterministic verifier pass, and records metadata-only attempt lineage while
+  returning accepted content separately.
+- A provider-agnostic three-role starter, deterministic contract benchmark,
+  checked evidence artifact, and focused tests. The report keeps actual,
+  estimated, and unknown local token observations distinct and labels all
+  premium-call comparisons as simulated counterfactuals.
+- Documentation for a layered reduction strategy: select and reuse context,
+  filter command output, compact internal handoffs, delegate bounded work
+  locally, then escalate from verifier evidence. It also defines the extension
+  contract for a later paired end-to-end runner.
+
+### Known limitations
+
+- The checked benchmark injects frozen attempts. It does not download or invoke
+  a model and makes no live quality, cost, latency, or frontier-token savings
+  claim. Reduction percentages from different surfaces are non-additive; an
+  overall claim requires paired runs with identical tasks, verifiers, tool
+  authority, context, and pass criteria.
+
 ## [0.13.0-alpha.1] - 2026-07-22
 
 ### Added

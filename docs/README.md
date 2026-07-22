@@ -6,6 +6,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 | If you want to... | Read... |
 | --- | --- |
+| Let the cheapest suitable offline model role try a bounded task, verify it, and escalate only when needed | [LocalCascade](local-cascade.md) |
 | Fingerprint the bindings declared for a local cell without starting it | [Bound Cell Attestor](cell-runtime-binding.md) |
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
 | Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |
@@ -30,6 +31,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 ## System Design
 
+- [LocalCascade](local-cascade.md) — replaceable local roles, deterministic verifier-driven escalation, separate evidence accounting, and a paired-run measurement contract.
 - [How myMoE works](how-it-works/README.md) — end-to-end request, startup, routing, agent, and data-lifecycle diagrams.
 - [Bound Cell Attestor](cell-runtime-binding.md) — bounded fingerprints of declared local runtime/model/harness bindings, short-lived receipts, and explicit non-authority.
 - [Adaptive Cell Advisor](adaptive-cell-advisor.md) — whole-cell passports, live resource admission, safe abstention, mini-app/API, deterministic contract benchmark, and market boundary.
@@ -50,6 +52,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 ## Run and Operate
 
+- [LocalCascade contract benchmark](local-cascade.md#deterministic-contract-benchmark) — exercise the offline cascade with frozen injected attempts and no model download or invocation.
 - [Installation](installation.md) — Apple Silicon MLX, Windows/Linux Ollama, llama.cpp, model profiles, startup, and Doctor.
 - [Local Coding Fabric](local-coding-fabric.md#five-minute-cline-setup) — connect Cline to the running local gateway.
 - [Cooperative Resource Lease](cooperative-resource-lease.md#exact-state-machine) — understand acquisition, delivery fencing, release, sticky unknown outcomes, and operational limits.

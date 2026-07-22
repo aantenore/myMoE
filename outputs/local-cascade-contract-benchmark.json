@@ -1,0 +1,345 @@
+{
+  "benchmark_kind": "deterministic_offline_contract_fixture",
+  "check_count": 7,
+  "configuration": {
+    "cascade_id": "local-cascade-starter",
+    "downloads_performed": 0,
+    "model_invocations_performed": 0,
+    "network_calls_performed": 0,
+    "role_refs": [
+      "local_cascade_utility",
+      "local_cascade_resident",
+      "local_cascade_specialist"
+    ],
+    "tool_calls_performed": 0,
+    "write_operations_performed": 0
+  },
+  "context_and_tool_output_reduction": {
+    "aggregation_policy": "not_aggregated_across_surfaces",
+    "command_aware_tool_output_filter": {
+      "measurement_unit": "utf8_bytes",
+      "raw_bytes": 169,
+      "reduction_bytes": 103,
+      "retained_bytes": 66,
+      "retained_ratio": 0.390533
+    },
+    "context_selection": {
+      "measurement_unit": "utf8_bytes",
+      "raw_bytes": 333,
+      "reduction_bytes": 241,
+      "retained_bytes": 92,
+      "retained_ratio": 0.276276
+    }
+  },
+  "contract": "local_cascade_contract_benchmark",
+  "contract_checks_passed": true,
+  "criteria": {
+    "context_and_tool_output_reductions_are_byte_scoped": true,
+    "failed_content_is_not_forwarded_to_the_next_tier": true,
+    "local_token_sources_remain_separate": true,
+    "only_deterministically_verified_content_is_accepted": true,
+    "premium_numbers_are_explicitly_simulated": true,
+    "report_is_metadata_only": true,
+    "tiers_are_tried_cheapest_first_and_stop_after_acceptance": true
+  },
+  "limits": [
+    "not_a_live_model_quality_claim",
+    "not_a_live_cost_claim",
+    "not_a_frontier_token_savings_claim",
+    "percentages_from_different_reduction_layers_are_non_additive",
+    "overall_savings_require_a_paired_end_to_end_benchmark",
+    "paired_runs_must_use_identical_tasks_verifiers_and_pass_criteria",
+    "fixture_token_counts_are_source_labeled_observations",
+    "context_and_tool_output_reduction_uses_bytes_not_tokens"
+  ],
+  "local_attempt_observations": {
+    "by_tier": {
+      "cold-specialist": 1,
+      "resident-generalist": 3,
+      "utility": 4
+    },
+    "execution": "sequential_cheapest_first",
+    "total": 8
+  },
+  "local_token_observations": {
+    "actual_input_tokens": 173,
+    "actual_output_tokens": 37,
+    "comparison_policy": "actual, estimated, and unknown observations are separate; input and output directions are not added into one headline",
+    "estimated_input_tokens": 210,
+    "estimated_output_tokens": 40,
+    "unknown_input_attempts": 2,
+    "unknown_output_attempts": 2
+  },
+  "paired_runner_extension": {
+    "adapter_boundary": "inject a real local attempt port and a separately metered premium runner without changing tasks, verifiers, or pass criteria",
+    "measure_separately": [
+      "actual_local_input_tokens",
+      "actual_local_output_tokens",
+      "actual_premium_input_tokens",
+      "actual_premium_output_tokens",
+      "unknown_token_observations",
+      "accepted_outcomes",
+      "end_to_end_latency"
+    ],
+    "required_same_inputs": [
+      "frozen_task_set",
+      "verifier_contract",
+      "pass_criteria",
+      "tool_authority",
+      "context_source"
+    ],
+    "status": "contract_only_not_executed"
+  },
+  "pass_count": 7,
+  "premium_counterfactual": {
+    "actual_premium_calls": 0,
+    "mode": "simulated_counterfactual_no_premium_service_called",
+    "simulated_premium_calls_after_local": 1,
+    "simulated_premium_calls_avoided": 3,
+    "simulated_premium_only_baseline_calls": 4
+  },
+  "scenarios": {
+    "classify-small-change": {
+      "accepted_content_in_report": false,
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 48,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 12,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "tier_id": "utility",
+          "verification_status": "passed",
+          "verifier_reason_codes": []
+        }
+      ],
+      "selected_tier_id": "utility",
+      "status": "passed",
+      "token_observations": {
+        "actual_input_tokens": 48,
+        "actual_output_tokens": 12,
+        "contract": "LocalCascadeTokenTotalsV1",
+        "estimated_input_tokens": 0,
+        "estimated_output_tokens": 0,
+        "schema_version": "1.0",
+        "unknown_input_attempts": 0,
+        "unknown_output_attempts": 0
+      }
+    },
+    "extract-local-decision": {
+      "accepted_content_in_report": false,
+      "attempt_count": 2,
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "attempt_status": "abstained",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": null,
+            "schema_version": "1.0",
+            "source": "unknown"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": null,
+            "schema_version": "1.0",
+            "source": "unknown"
+          },
+          "tier_id": "utility",
+          "verification_status": "escalate",
+          "verifier_reason_codes": [
+            "attempt_abstained"
+          ]
+        },
+        {
+          "attempt_number": 2,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 80,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 24,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "tier_id": "resident-generalist",
+          "verification_status": "passed",
+          "verifier_reason_codes": []
+        }
+      ],
+      "selected_tier_id": "resident-generalist",
+      "status": "passed",
+      "token_observations": {
+        "actual_input_tokens": 0,
+        "actual_output_tokens": 0,
+        "contract": "LocalCascadeTokenTotalsV1",
+        "estimated_input_tokens": 80,
+        "estimated_output_tokens": 24,
+        "schema_version": "1.0",
+        "unknown_input_attempts": 1,
+        "unknown_output_attempts": 1
+      }
+    },
+    "reject-unverified-result": {
+      "accepted_content_in_report": false,
+      "attempt_count": 3,
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 50,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 5,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "tier_id": "utility",
+          "verification_status": "escalate",
+          "verifier_reason_codes": [
+            "missing_required_term"
+          ]
+        },
+        {
+          "attempt_number": 2,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 70,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 8,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "tier_id": "resident-generalist",
+          "verification_status": "escalate",
+          "verifier_reason_codes": [
+            "forbidden_term_present"
+          ]
+        },
+        {
+          "attempt_number": 3,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": null,
+            "schema_version": "1.0",
+            "source": "unknown"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": null,
+            "schema_version": "1.0",
+            "source": "unknown"
+          },
+          "tier_id": "cold-specialist",
+          "verification_status": "escalate",
+          "verifier_reason_codes": [
+            "missing_required_term"
+          ]
+        }
+      ],
+      "selected_tier_id": null,
+      "status": "exhausted",
+      "token_observations": {
+        "actual_input_tokens": 50,
+        "actual_output_tokens": 5,
+        "contract": "LocalCascadeTokenTotalsV1",
+        "estimated_input_tokens": 70,
+        "estimated_output_tokens": 8,
+        "schema_version": "1.0",
+        "unknown_input_attempts": 1,
+        "unknown_output_attempts": 1
+      }
+    },
+    "summarize-local-result": {
+      "accepted_content_in_report": false,
+      "attempt_count": 2,
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 60,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 8,
+            "schema_version": "1.0",
+            "source": "estimated"
+          },
+          "tier_id": "utility",
+          "verification_status": "escalate",
+          "verifier_reason_codes": [
+            "missing_required_term"
+          ]
+        },
+        {
+          "attempt_number": 2,
+          "attempt_status": "completed",
+          "input_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 75,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "output_tokens": {
+            "contract": "LocalCascadeTokenCountV1",
+            "count": 20,
+            "schema_version": "1.0",
+            "source": "actual"
+          },
+          "tier_id": "resident-generalist",
+          "verification_status": "passed",
+          "verifier_reason_codes": []
+        }
+      ],
+      "selected_tier_id": "resident-generalist",
+      "status": "passed",
+      "token_observations": {
+        "actual_input_tokens": 75,
+        "actual_output_tokens": 20,
+        "contract": "LocalCascadeTokenTotalsV1",
+        "estimated_input_tokens": 60,
+        "estimated_output_tokens": 8,
+        "schema_version": "1.0",
+        "unknown_input_attempts": 0,
+        "unknown_output_attempts": 0
+      }
+    }
+  },
+  "schema_version": "1.0",
+  "verifier_observations": {
+    "exhausted_runs": 1,
+    "failed_completed_attempts": 4,
+    "non_content_escalations": 1,
+    "passed_attempts": 3,
+    "passed_runs": 3
+  }
+}
