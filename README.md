@@ -17,24 +17,29 @@ coding agent. Its current runtime is implemented on POSIX and has been
 live-qualified on macOS; Windows currently receives provider-contract checks
 only and the desktop runtime fails closed there.
 
-## Can a small offline model try the bounded work first?
+## Can the lowest-ranked configured model role try the bounded work first?
 
-**LocalCascade makes replaceable local model roles work as a verified team.**
-It tries the cheapest configured role first, checks the result with a
-deterministic contract, and escalates sequentially only when that check fails
-or the role abstains. A person gets the accepted result separately from a
-metadata-only receipt that explains which tiers ran and why escalation stopped.
+**LocalCascade makes replaceable model roles work through explicit checks.** It
+tries the role with the lowest configured `cost_rank` first, checks the result
+with a deterministic contract, and advances sequentially only when that check
+fails or the role abstains. `cost_rank` is operator-assigned ordering, not a
+measurement of price, speed, energy, or intelligence. A person gets the
+accepted result separately from a metadata-only receipt that explains which
+tiers ran and why escalation stopped.
 
 The core does not require a provider or model name. The starter maps `utility`,
 `resident-generalist`, and `cold-specialist` to configurable role references;
 an adapter can bind those references to models that are already present on the
-machine. Running LocalCascade itself never downloads a model, opens the network,
-uses a tool, writes to the workspace, or runs tiers in parallel.
+machine. The core rejects configuration that permits external network, tool, or
+workspace-write activity and requests `offline_local` execution, but an
+in-process contract cannot enforce adapter or runtime isolation.
 
 The optional plugin reads the core contract only from
 `MYMOE_LOCAL_CASCADE_CONFIG` and the existing myMoE expert configuration only
 from `MYMOE_LOCAL_CASCADE_MOE_CONFIG`. It fails closed until both are supplied,
 and every tier `model_ref` must exactly match an expert `id` in the latter file.
+Its loopback endpoint proves only that the first connection is local; it does
+not attest any downstream runtime, proxy, model, or network path.
 
 ```bash
 uv run python experiments/benchmark_local_cascade.py --check
@@ -42,7 +47,8 @@ uv run python experiments/benchmark_local_cascade.py --check
 
 That command validates frozen attempts, verifier-driven escalation, and
 source-labelled accounting without invoking a model. It is not evidence of live
-model quality, cost, latency, or frontier-token savings. See the
+model quality, cost, latency, runtime isolation, or frontier-token savings, and
+it does not qualify any model or route. See the
 [LocalCascade guide](docs/local-cascade.md), the
 [replaceable role configuration](configs/local-cascade.example.json), and the
 [checked contract report](outputs/local-cascade-contract-benchmark.json).

@@ -1,10 +1,10 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "contract": "LocalCascadeConfigV1",
   "cascade_id": "local-cascade-starter",
   "tiers": [
     {
-      "schema_version": "1.0",
+      "schema_version": "1.1",
       "contract": "LocalCascadeTierV1",
       "tier_id": "utility",
       "cost_rank": 10,
@@ -13,7 +13,7 @@
       "max_output_tokens": 512
     },
     {
-      "schema_version": "1.0",
+      "schema_version": "1.1",
       "contract": "LocalCascadeTierV1",
       "tier_id": "resident-generalist",
       "cost_rank": 20,
@@ -22,7 +22,7 @@
       "max_output_tokens": 2048
     },
     {
-      "schema_version": "1.0",
+      "schema_version": "1.1",
       "contract": "LocalCascadeTierV1",
       "tier_id": "cold-specialist",
       "cost_rank": 30,
@@ -32,7 +32,7 @@
     }
   ],
   "verifier": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "contract": "LocalCascadeVerifierV1",
     "output_format": "text",
     "min_characters": 20,
@@ -49,7 +49,7 @@
     "allow_extra_json_fields": false
   },
   "max_attempts": 3,
-  "execution_scope": "offline_local",
+  "requested_execution_scope": "offline_local",
   "allow_network": false,
   "allow_tools": false,
   "allow_writes": false,

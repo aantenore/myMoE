@@ -6,7 +6,7 @@ This is the documentation map for myMoE. Start with the path that matches what y
 
 | If you want to... | Read... |
 | --- | --- |
-| Let the cheapest suitable offline model role try a bounded task, verify it, and escalate only when needed | [LocalCascade](local-cascade.md) |
+| Try configured model roles by increasing `cost_rank`, check each result, and advance only when needed | [LocalCascade](local-cascade.md) |
 | Fingerprint the bindings declared for a local cell without starting it | [Bound Cell Attestor](cell-runtime-binding.md) |
 | Find which fully evidenced local model/runtime/harness cell is eligible now | [Adaptive Cell Advisor](adaptive-cell-advisor.md) |
 | Recheck that exact cell and current resources without running it | [Adaptive Cell Execution Gate](cell-execution-gate.md) |

@@ -6,13 +6,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from local_moe.local_cascade import run_local_cascade
+from local_moe.local_cascade import (
+    run_local_cascade,
+    verify_local_cascade_content,
+)
 from local_moe.local_cascade_contracts import (
     LocalCascadeAttemptRequestV1,
     LocalCascadeAttemptResultV1,
     LocalCascadeConfigV1,
+    LocalCascadeJsonFieldV1,
     LocalCascadeTaskV1,
     LocalCascadeTokenCountV1,
+    LocalCascadeVerifierV1,
 )
 
 
@@ -118,8 +123,8 @@ FIXTURE_RESULTS = {
         output_tokens=("actual", 12),
     ),
     ("summarize-local-result", "utility"): _completed(
-        "The result is probably fine.",
-        input_tokens=("estimated", 60),
+        "decision=accept; evidence=the summary matches the frozen result.",
+        input_tokens=("estimated", 2050),
         output_tokens=("estimated", 8),
     ),
     ("summarize-local-result", "resident-generalist"): _completed(
@@ -141,7 +146,7 @@ FIXTURE_RESULTS = {
     ("reject-unverified-result", "resident-generalist"): _completed(
         "decision=accept; evidence=unverified assertion.",
         input_tokens=("estimated", 70),
-        output_tokens=("estimated", 8),
+        output_tokens=("estimated", 2049),
     ),
     ("reject-unverified-result", "cold-specialist"): _completed(
         "No acceptable evidence was available.",
@@ -208,6 +213,33 @@ def _byte_reduction(raw: str, reduced: str) -> dict[str, object]:
     }
 
 
+def _json_hardening_observations() -> dict[str, bool]:
+    verifier = LocalCascadeVerifierV1(
+        output_format="json_object",
+        min_characters=1,
+        max_characters=10_000,
+        json_fields=(
+            LocalCascadeJsonFieldV1(
+                name="value",
+                value_kind="number",
+                required=True,
+            ),
+        ),
+    )
+
+    def invalid_json(content: str) -> bool:
+        decision = verify_local_cascade_content(content, verifier)
+        return not decision.passed and "invalid_json" in decision.reason_codes
+
+    deeply_nested = '{"value":' + ("[" * 1_100) + "0" + ("]" * 1_100) + "}"
+    return {
+        "duplicate_keys_rejected": invalid_json('{"value":1,"value":2}'),
+        "non_finite_constant_rejected": invalid_json('{"value":NaN}'),
+        "numeric_overflow_rejected": invalid_json('{"value":1e9999}'),
+        "excessive_nesting_rejected": invalid_json(deeply_nested),
+    }
+
+
 def _scenario_payload(run: Any) -> dict[str, object]:
     return {
         "status": run.receipt.status,
@@ -226,6 +258,10 @@ def _scenario_payload(run: Any) -> dict[str, object]:
             for attempt in run.receipt.attempts
         ],
         "token_observations": run.receipt.token_totals.payload(),
+        "evidence_sha256": run.receipt.evidence_sha256,
+        "requested_execution_scope": run.receipt.requested_execution_scope,
+        "execution_scope_attestation": run.receipt.execution_scope_attestation,
+        "run_id_in_checked_artifact": False,
         "accepted_content_in_report": False,
     }
 
@@ -246,6 +282,12 @@ def run_benchmark(
         )
         for task in FROZEN_TASKS
     ]
+    equivalent_run = run_local_cascade(
+        FROZEN_TASKS[0],
+        config,
+        _FixtureAttemptPort(),
+        clock=_StepClock(),
+    )
     scenarios = {
         task.task_id: _scenario_payload(run)
         for task, run in zip(FROZEN_TASKS, runs, strict=True)
@@ -266,13 +308,42 @@ def run_benchmark(
 
     attempts = [attempt for run in runs for attempt in run.receipt.attempts]
     tier_attempts = Counter(attempt.tier_id for attempt in attempts)
-    passed_verifications = sum(
+    accepted_attempts = sum(
         attempt.verification_status == "passed" for attempt in attempts
     )
-    failed_content_verifications = sum(
+    content_reason_codes = {
+        "empty_content",
+        "content_too_short",
+        "content_too_long",
+        "missing_required_term",
+        "forbidden_term_present",
+        "invalid_json",
+        "json_not_object",
+        "missing_json_field",
+        "unexpected_json_field",
+        "json_field_type_mismatch",
+        "json_string_value_not_allowed",
+    }
+    content_contract_failures = sum(
+        attempt.attempt_status == "completed"
+        and bool(content_reason_codes.intersection(attempt.verifier_reason_codes))
+        for attempt in attempts
+    )
+    content_contract_passes = sum(
+        attempt.attempt_status == "completed"
+        and not content_reason_codes.intersection(attempt.verifier_reason_codes)
+        for attempt in attempts
+    )
+    completed_escalations = sum(
         attempt.attempt_status == "completed"
         and attempt.verification_status == "escalate"
         for attempt in attempts
+    )
+    token_limit_reasons = Counter(
+        reason
+        for attempt in attempts
+        for reason in attempt.verifier_reason_codes
+        if reason in {"input_token_limit_exceeded", "output_token_limit_exceeded"}
     )
     non_content_escalations = sum(
         attempt.attempt_status != "completed"
@@ -315,9 +386,24 @@ def run_benchmark(
         ),
         "aggregation_policy": "not_aggregated_across_surfaces",
     }
+    json_hardening = _json_hardening_observations()
+    run_identity_observations = {
+        "equivalent_runs_have_unique_run_ids": (
+            runs[0].receipt.run_id != equivalent_run.receipt.run_id
+        ),
+        "equivalent_runs_share_evidence_sha256": (
+            runs[0].receipt.evidence_sha256
+            == equivalent_run.receipt.evidence_sha256
+        ),
+        "stable_evidence_sha256": runs[0].receipt.evidence_sha256,
+        "random_run_ids_in_checked_artifact": False,
+    }
     verifier_observations = {
-        "passed_attempts": passed_verifications,
-        "failed_completed_attempts": failed_content_verifications,
+        "content_contract_passed_attempts": content_contract_passes,
+        "content_contract_failed_attempts": content_contract_failures,
+        "accepted_after_all_checks": accepted_attempts,
+        "completed_escalations": completed_escalations,
+        "reported_token_limit_rejections": dict(sorted(token_limit_reasons.items())),
         "non_content_escalations": non_content_escalations,
         "passed_runs": passed_runs,
         "exhausted_runs": sum(run.receipt.status == "exhausted" for run in runs),
@@ -325,7 +411,7 @@ def run_benchmark(
     local_attempt_observations = {
         "total": len(attempts),
         "by_tier": dict(sorted(tier_attempts.items())),
-        "execution": "sequential_cheapest_first",
+        "execution": "sequential_increasing_configured_cost_rank",
     }
     premium_counterfactual = {
         "mode": "simulated_counterfactual_no_premium_service_called",
@@ -338,18 +424,27 @@ def run_benchmark(
     }
 
     criteria = {
-        "tiers_are_tried_cheapest_first_and_stop_after_acceptance": (
+        "tiers_follow_increasing_configured_cost_rank_and_stop_after_acceptance": (
             tier_sequences == expected_sequences
         ),
-        "only_deterministically_verified_content_is_accepted": (
-            passed_verifications == 3
-            and failed_content_verifications == 4
+        "only_content_passing_all_contract_checks_is_accepted": (
+            accepted_attempts == 3
+            and content_contract_passes == 4
+            and content_contract_failures == 3
+            and completed_escalations == 4
             and non_content_escalations == 1
             and passed_runs == 3
         ),
+        "reported_input_and_output_token_ceilings_are_enforced": (
+            token_limit_reasons
+            == {
+                "input_token_limit_exceeded": 1,
+                "output_token_limit_exceeded": 1,
+            }
+        ),
         "failed_content_is_not_forwarded_to_the_next_tier": (
             "content" not in serialized_requests
-            and "probably fine" not in serialized_requests
+            and "omitted its contract fields" not in serialized_requests
             and "unverified assertion" not in serialized_requests
         ),
         "report_is_metadata_only": (
@@ -361,11 +456,25 @@ def run_benchmark(
             == {
                 "actual_input_tokens": 173,
                 "actual_output_tokens": 37,
-                "estimated_input_tokens": 210,
-                "estimated_output_tokens": 40,
+                "estimated_input_tokens": 2200,
+                "estimated_output_tokens": 2081,
                 "unknown_input_attempts": 2,
                 "unknown_output_attempts": 2,
             }
+        ),
+        "run_identity_is_unique_while_semantic_evidence_is_stable": (
+            run_identity_observations["equivalent_runs_have_unique_run_ids"]
+            and run_identity_observations["equivalent_runs_share_evidence_sha256"]
+            and not run_identity_observations["random_run_ids_in_checked_artifact"]
+        ),
+        "json_parser_fails_closed_on_ambiguous_or_unsafe_values": all(
+            json_hardening.values()
+        ),
+        "execution_scope_is_requested_but_explicitly_unverified": all(
+            run.receipt.requested_execution_scope == "offline_local"
+            and run.receipt.execution_scope_attestation
+            == "adapter_declared_unverified"
+            for run in runs
         ),
         "context_and_tool_output_reductions_are_byte_scoped": (
             reduction_observations["context_selection"]["measurement_unit"]
@@ -389,12 +498,15 @@ def run_benchmark(
     pass_count = sum(criteria.values())
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "contract": "local_cascade_contract_benchmark",
-        "benchmark_kind": "deterministic_offline_contract_fixture",
+        "benchmark_kind": "deterministic_contract_fixture_no_live_runtime",
         "configuration": {
             "cascade_id": config.cascade_id,
             "role_refs": [tier.model_ref for tier in config.ordered_tiers],
+            "requested_execution_scope": config.requested_execution_scope,
+            "execution_scope_attestation": "adapter_declared_unverified",
+            "runtime_isolation_attested": False,
             "downloads_performed": 0,
             "model_invocations_performed": 0,
             "network_calls_performed": 0,
@@ -404,6 +516,8 @@ def run_benchmark(
         "scenarios": scenarios,
         "local_attempt_observations": local_attempt_observations,
         "verifier_observations": verifier_observations,
+        "run_identity_observations": run_identity_observations,
+        "json_hardening_observations": json_hardening,
         "local_token_observations": {
             **token_observations,
             "comparison_policy": (
@@ -449,6 +563,13 @@ def run_benchmark(
             "paired_runs_must_use_identical_tasks_verifiers_and_pass_criteria",
             "fixture_token_counts_are_source_labeled_observations",
             "context_and_tool_output_reduction_uses_bytes_not_tokens",
+            "configured_cost_rank_is_not_measured_cost_or_quality",
+            "requested_execution_scope_is_not_runtime_isolation_attestation",
+            "core_rejects_external_network_permission_but_cannot_enforce_isolation",
+            "plugin_loopback_is_only_the_local_first_hop",
+            "downstream_runtime_and_model_paths_are_not_attested",
+            "no_evidence_qualified_routing_claim",
+            "deterministic_unsalted_digests_enable_correlation_and_guessing",
         ],
     }
 
@@ -468,7 +589,7 @@ def render_report(report: dict[str, object]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the deterministic offline LocalCascade contract benchmark."
+        description="Run the deterministic no-live-runtime LocalCascade benchmark."
     )
     parser.add_argument(
         "--config",

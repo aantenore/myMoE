@@ -6,18 +6,24 @@ All notable changes to myMoE are documented in this file.
 
 ### Added
 
-- LocalCascade v1 contracts and an adapter-neutral offline cascade that tries
-  configured model roles sequentially by cost rank, accepts only a
+- LocalCascade v1.1 contracts and an adapter-neutral cascade that tries
+  configured model roles sequentially by increasing `cost_rank`, accepts only a
   deterministic verifier pass, and records metadata-only attempt lineage while
   returning accepted content separately.
 - A provider-agnostic three-role starter, deterministic contract benchmark,
   checked evidence artifact, and focused tests. The report keeps actual,
   estimated, and unknown local token observations distinct and labels all
   premium-call comparisons as simulated counterfactuals.
+- Per-run random identifiers separated from deterministic semantic
+  `evidence_sha256`, enforced reported input/output token ceilings,
+  `requested_execution_scope`, explicit
+  `execution_scope_attestation=adapter_declared_unverified`, and strict JSON
+  rejection for duplicate keys, non-finite values, numeric overflow, and
+  excessive nesting.
 - Documentation for a layered reduction strategy: select and reuse context,
   filter command output, compact internal handoffs, delegate bounded work
-  locally, then escalate from verifier evidence. It also defines the extension
-  contract for a later paired end-to-end runner.
+  through configured roles, then advance from explicit checks. It also defines
+  the extension contract for a later paired end-to-end runner.
 
 ### Known limitations
 
@@ -26,6 +32,14 @@ All notable changes to myMoE are documented in this file.
   claim. Reduction percentages from different surfaces are non-additive; an
   overall claim requires paired runs with identical tasks, verifiers, tool
   authority, context, and pass criteria.
+- `cost_rank` is configured ordering, not measured price or efficiency. The
+  core rejects a configuration that permits external-network activity but
+  cannot enforce adapter/runtime isolation. Plugin loopback is only the local
+  first hop; downstream paths are not attested, so no model or route is
+  evidence-qualified by this feature.
+- Task, request, output, configuration, and evidence hashes are deterministic
+  and unsalted. They omit raw content but can correlate repeated values and may
+  permit guessing of low-entropy content.
 
 ## [0.13.0-alpha.1] - 2026-07-22
 

@@ -1,16 +1,19 @@
 {
-  "benchmark_kind": "deterministic_offline_contract_fixture",
-  "check_count": 7,
+  "benchmark_kind": "deterministic_contract_fixture_no_live_runtime",
+  "check_count": 11,
   "configuration": {
     "cascade_id": "local-cascade-starter",
     "downloads_performed": 0,
+    "execution_scope_attestation": "adapter_declared_unverified",
     "model_invocations_performed": 0,
     "network_calls_performed": 0,
+    "requested_execution_scope": "offline_local",
     "role_refs": [
       "local_cascade_utility",
       "local_cascade_resident",
       "local_cascade_specialist"
     ],
+    "runtime_isolation_attested": false,
     "tool_calls_performed": 0,
     "write_operations_performed": 0
   },
@@ -35,12 +38,22 @@
   "contract_checks_passed": true,
   "criteria": {
     "context_and_tool_output_reductions_are_byte_scoped": true,
+    "execution_scope_is_requested_but_explicitly_unverified": true,
     "failed_content_is_not_forwarded_to_the_next_tier": true,
+    "json_parser_fails_closed_on_ambiguous_or_unsafe_values": true,
     "local_token_sources_remain_separate": true,
-    "only_deterministically_verified_content_is_accepted": true,
+    "only_content_passing_all_contract_checks_is_accepted": true,
     "premium_numbers_are_explicitly_simulated": true,
     "report_is_metadata_only": true,
-    "tiers_are_tried_cheapest_first_and_stop_after_acceptance": true
+    "reported_input_and_output_token_ceilings_are_enforced": true,
+    "run_identity_is_unique_while_semantic_evidence_is_stable": true,
+    "tiers_follow_increasing_configured_cost_rank_and_stop_after_acceptance": true
+  },
+  "json_hardening_observations": {
+    "duplicate_keys_rejected": true,
+    "excessive_nesting_rejected": true,
+    "non_finite_constant_rejected": true,
+    "numeric_overflow_rejected": true
   },
   "limits": [
     "not_a_live_model_quality_claim",
@@ -50,7 +63,14 @@
     "overall_savings_require_a_paired_end_to_end_benchmark",
     "paired_runs_must_use_identical_tasks_verifiers_and_pass_criteria",
     "fixture_token_counts_are_source_labeled_observations",
-    "context_and_tool_output_reduction_uses_bytes_not_tokens"
+    "context_and_tool_output_reduction_uses_bytes_not_tokens",
+    "configured_cost_rank_is_not_measured_cost_or_quality",
+    "requested_execution_scope_is_not_runtime_isolation_attestation",
+    "core_rejects_external_network_permission_but_cannot_enforce_isolation",
+    "plugin_loopback_is_only_the_local_first_hop",
+    "downstream_runtime_and_model_paths_are_not_attested",
+    "no_evidence_qualified_routing_claim",
+    "deterministic_unsalted_digests_enable_correlation_and_guessing"
   ],
   "local_attempt_observations": {
     "by_tier": {
@@ -58,15 +78,15 @@
       "resident-generalist": 3,
       "utility": 4
     },
-    "execution": "sequential_cheapest_first",
+    "execution": "sequential_increasing_configured_cost_rank",
     "total": 8
   },
   "local_token_observations": {
     "actual_input_tokens": 173,
     "actual_output_tokens": 37,
     "comparison_policy": "actual, estimated, and unknown observations are separate; input and output directions are not added into one headline",
-    "estimated_input_tokens": 210,
-    "estimated_output_tokens": 40,
+    "estimated_input_tokens": 2200,
+    "estimated_output_tokens": 2081,
     "unknown_input_attempts": 2,
     "unknown_output_attempts": 2
   },
@@ -90,13 +110,19 @@
     ],
     "status": "contract_only_not_executed"
   },
-  "pass_count": 7,
+  "pass_count": 11,
   "premium_counterfactual": {
     "actual_premium_calls": 0,
     "mode": "simulated_counterfactual_no_premium_service_called",
     "simulated_premium_calls_after_local": 1,
     "simulated_premium_calls_avoided": 3,
     "simulated_premium_only_baseline_calls": 4
+  },
+  "run_identity_observations": {
+    "equivalent_runs_have_unique_run_ids": true,
+    "equivalent_runs_share_evidence_sha256": true,
+    "random_run_ids_in_checked_artifact": false,
+    "stable_evidence_sha256": "cdabe286484c32af9a1140f8210a7edf3ff8b53ea30f50b291517a028b7d63ce"
   },
   "scenarios": {
     "classify-small-change": {
@@ -109,13 +135,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 48,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 12,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "tier_id": "utility",
@@ -123,6 +149,10 @@
           "verifier_reason_codes": []
         }
       ],
+      "evidence_sha256": "cdabe286484c32af9a1140f8210a7edf3ff8b53ea30f50b291517a028b7d63ce",
+      "execution_scope_attestation": "adapter_declared_unverified",
+      "requested_execution_scope": "offline_local",
+      "run_id_in_checked_artifact": false,
       "selected_tier_id": "utility",
       "status": "passed",
       "token_observations": {
@@ -131,7 +161,7 @@
         "contract": "LocalCascadeTokenTotalsV1",
         "estimated_input_tokens": 0,
         "estimated_output_tokens": 0,
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "unknown_input_attempts": 0,
         "unknown_output_attempts": 0
       }
@@ -146,13 +176,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": null,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "unknown"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": null,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "unknown"
           },
           "tier_id": "utility",
@@ -167,13 +197,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 80,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 24,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "tier_id": "resident-generalist",
@@ -181,6 +211,10 @@
           "verifier_reason_codes": []
         }
       ],
+      "evidence_sha256": "b363107419a90fb5a37018c11d77517ee4449aa734ba37f1b9d088cd03542e19",
+      "execution_scope_attestation": "adapter_declared_unverified",
+      "requested_execution_scope": "offline_local",
+      "run_id_in_checked_artifact": false,
       "selected_tier_id": "resident-generalist",
       "status": "passed",
       "token_observations": {
@@ -189,7 +223,7 @@
         "contract": "LocalCascadeTokenTotalsV1",
         "estimated_input_tokens": 80,
         "estimated_output_tokens": 24,
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "unknown_input_attempts": 1,
         "unknown_output_attempts": 1
       }
@@ -204,13 +238,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 50,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 5,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "tier_id": "utility",
@@ -225,19 +259,20 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 70,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
-            "count": 8,
-            "schema_version": "1.0",
+            "count": 2049,
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "tier_id": "resident-generalist",
           "verification_status": "escalate",
           "verifier_reason_codes": [
-            "forbidden_term_present"
+            "forbidden_term_present",
+            "output_token_limit_exceeded"
           ]
         },
         {
@@ -246,13 +281,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": null,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "unknown"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": null,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "unknown"
           },
           "tier_id": "cold-specialist",
@@ -262,6 +297,10 @@
           ]
         }
       ],
+      "evidence_sha256": "98229a0ab6deb3a09174a96b726d85d79fdd5515aa535fc40b1f19d63f1b3e01",
+      "execution_scope_attestation": "adapter_declared_unverified",
+      "requested_execution_scope": "offline_local",
+      "run_id_in_checked_artifact": false,
       "selected_tier_id": null,
       "status": "exhausted",
       "token_observations": {
@@ -269,8 +308,8 @@
         "actual_output_tokens": 5,
         "contract": "LocalCascadeTokenTotalsV1",
         "estimated_input_tokens": 70,
-        "estimated_output_tokens": 8,
-        "schema_version": "1.0",
+        "estimated_output_tokens": 2049,
+        "schema_version": "1.1",
         "unknown_input_attempts": 1,
         "unknown_output_attempts": 1
       }
@@ -284,20 +323,20 @@
           "attempt_status": "completed",
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
-            "count": 60,
-            "schema_version": "1.0",
+            "count": 2050,
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 8,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "estimated"
           },
           "tier_id": "utility",
           "verification_status": "escalate",
           "verifier_reason_codes": [
-            "missing_required_term"
+            "input_token_limit_exceeded"
           ]
         },
         {
@@ -306,13 +345,13 @@
           "input_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 75,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "output_tokens": {
             "contract": "LocalCascadeTokenCountV1",
             "count": 20,
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source": "actual"
           },
           "tier_id": "resident-generalist",
@@ -320,26 +359,36 @@
           "verifier_reason_codes": []
         }
       ],
+      "evidence_sha256": "c222142897020158a166a6d029d35098a64f70a56365cc7a7ec28b0f81dafb76",
+      "execution_scope_attestation": "adapter_declared_unverified",
+      "requested_execution_scope": "offline_local",
+      "run_id_in_checked_artifact": false,
       "selected_tier_id": "resident-generalist",
       "status": "passed",
       "token_observations": {
         "actual_input_tokens": 75,
         "actual_output_tokens": 20,
         "contract": "LocalCascadeTokenTotalsV1",
-        "estimated_input_tokens": 60,
+        "estimated_input_tokens": 2050,
         "estimated_output_tokens": 8,
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "unknown_input_attempts": 0,
         "unknown_output_attempts": 0
       }
     }
   },
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "verifier_observations": {
+    "accepted_after_all_checks": 3,
+    "completed_escalations": 4,
+    "content_contract_failed_attempts": 3,
+    "content_contract_passed_attempts": 4,
     "exhausted_runs": 1,
-    "failed_completed_attempts": 4,
     "non_content_escalations": 1,
-    "passed_attempts": 3,
-    "passed_runs": 3
+    "passed_runs": 3,
+    "reported_token_limit_rejections": {
+      "input_token_limit_exceeded": 1,
+      "output_token_limit_exceeded": 1
+    }
   }
 }
