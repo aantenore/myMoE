@@ -140,7 +140,7 @@
         "passed": true,
         "status": "passed",
         "repository_root": "/private/tmp/mymoe-bound-cell-release",
-        "current_head": "1fd4b7c99b38d7bf74308820709d3a54770aa3a3",
+        "current_head": "d7081fec92451465709178a18cea9fffeccb0642",
         "repository_shallow": false,
         "commit_available": true,
         "ancestor_of_head": true,
