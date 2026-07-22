@@ -4,6 +4,49 @@ All notable changes to myMoE are documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0-alpha.1] - 2026-07-22
+
+### Added
+
+- Evidence-Bound Cooperative Resource Lease for same-user, same-host myMoE
+  participants. One SQLite `BEGIN IMMEDIATE` boundary captures a fresh resource
+  snapshot, repeats exact-cell admission, derives a content-addressed
+  `conservative_peak` claim, accounts active claims and the applicable maximum
+  safety reserve, and returns explicit acquired, denied, or unknown evidence.
+- Durable `reserved`, `delivery_armed`, and `unknown_blocking` states with
+  authenticated in-memory ownership handles, pre-arm crash reaping, sticky
+  post-arm ambiguity, domain quarantine, strict schema/path validation, and
+  CPU, Apple unified-memory, and discrete-pool contracts.
+- `BoundCellRunEnvelopeV2`, which preserves the complete v1 run receipt without
+  changing its schema and adds the exact claim plus admission, transition, and
+  release lineage. CLI publication and the owner-only recovery journal now
+  persist this metadata-only envelope while returning the answer separately.
+- A deterministic cooperative-lease contract benchmark and checked artifact,
+  plus multiprocess proof that capacity for one authorizes exactly one delivery.
+
+### Security
+
+- Bound Cell Run now commits cooperative admission immediately before its first
+  model probe, durably arms delivery immediately before its only inference
+  `POST`, releases a known response before post-run checks, and keeps timeout,
+  interruption, or crash ambiguity fail-closed. Admission denial and store
+  failure produce zero endpoint traffic.
+- Lease storage excludes task text, answer text, prompts, weights, and raw
+  ownership tokens. Contract, packaging, isolated-wheel, privacy, corruption,
+  crash-window, state/outcome, and multiprocess tests cover the new boundary.
+
+### Known limitations
+
+- The lease is cooperative accounting, not an operating-system RAM, unified
+  memory, or VRAM reservation. It cannot govern processes outside the same
+  database/sentinel domain, and unrelated memory pressure may change after
+  admission.
+- Claims use the full conservative peak and can overblock already-resident
+  models. Discrete GPU support is contract-ready, but the built-in collector
+  does not yet qualify a reliable singleton discrete GPU. Sticky unknown state
+  has no automatic TTL or unsafe clear command; explicit evidence-backed
+  reconciliation remains future work.
+
 ## [0.12.0-alpha.1] - 2026-07-22
 
 ### Added

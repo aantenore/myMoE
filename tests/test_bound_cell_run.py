@@ -13,6 +13,12 @@ from local_moe.bound_cell_run import (
     OpenAICompatibleLoopbackTransport,
     run_bound_cell,
 )
+from tests.bound_cell_run_lease_fakes import (
+    FakeLeaseStore,
+    claim_for,
+    preview_evaluation,
+    resource_snapshot,
+)
 
 
 SHA_A = "a" * 64
@@ -254,9 +260,15 @@ class BoundCellRunServiceTests(unittest.TestCase):
             events.append("inspect")
             return next(bundles)
 
-        def previewer(*_args):
+        snapshot = resource_snapshot()
+        preview = self._preview()
+        claim = claim_for(preview, snapshot, passport_sha256=target.passport.digest)
+        lease_store = FakeLeaseStore(events=events)
+
+        def previewer(*_args, resource_snapshot):
+            self.assertIs(resource_snapshot, snapshot)
             events.append("preview")
-            return self._preview()
+            return preview_evaluation(preview, snapshot)
 
         class Transport:
             probes = 0
@@ -284,6 +296,10 @@ class BoundCellRunServiceTests(unittest.TestCase):
             patch("local_moe.bound_cell_run._record_binding", side_effect=record),
             patch("local_moe.bound_cell_run._validate_binding"),
             patch("local_moe.bound_cell_run._validate_preview_binding"),
+            patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ),
         ):
             result = run_bound_cell(
                 "advisor.json",
@@ -296,14 +312,26 @@ class BoundCellRunServiceTests(unittest.TestCase):
                 resolver=resolver,
                 inspector=inspector,
                 previewer=previewer,
+                snapshot_collector=lambda: snapshot,
+                lease_store=lease_store,
                 transport=Transport(),
                 clock=clock,
             )
 
         self.assertLess(events.index("inspect"), events.index("preview"))
         self.assertEqual(events[events.index("preview") + 1], "probe")
+        self.assertLess(events.index("lease_arm"), events.index("invoke"))
+        self.assertLess(
+            events.index("invoke"),
+            events.index("lease_release:response_received"),
+        )
+        self.assertLess(
+            events.index("lease_release:response_received"),
+            len(events) - 1 - events[::-1].index("probe"),
+        )
         self.assertEqual(result.receipt.status, "invalidated")
         self.assertEqual(result.receipt.delivery_status, "response_received")
+        self.assertEqual(result.envelope.lease_release_receipt.status, "released")
         self.assertEqual(result.response_text, "response-secret")
         serialized = json.dumps(result.receipt.payload())
         self.assertNotIn('task"', serialized)
@@ -344,9 +372,15 @@ class BoundCellRunServiceTests(unittest.TestCase):
             events.append("inspect")
             return bundle
 
-        def previewer(*_args):
+        snapshot = resource_snapshot()
+        preview = self._preview()
+        claim = claim_for(preview, snapshot, passport_sha256=target.passport.digest)
+        lease_store = FakeLeaseStore(events=events)
+
+        def previewer(*_args, resource_snapshot):
+            self.assertIs(resource_snapshot, snapshot)
             events.append("preview")
-            return self._preview()
+            return preview_evaluation(preview, snapshot)
 
         class Transport:
             def probe_models(self, **_kwargs):
@@ -370,6 +404,10 @@ class BoundCellRunServiceTests(unittest.TestCase):
             patch("local_moe.bound_cell_run._record_binding", side_effect=record),
             patch("local_moe.bound_cell_run._validate_binding"),
             patch("local_moe.bound_cell_run._validate_preview_binding"),
+            patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ),
         ):
             result = run_bound_cell(
                 "advisor.json",
@@ -382,6 +420,8 @@ class BoundCellRunServiceTests(unittest.TestCase):
                 resolver=resolver,
                 inspector=inspector,
                 previewer=previewer,
+                snapshot_collector=lambda: snapshot,
+                lease_store=lease_store,
                 transport=Transport(),
                 clock=clock,
             )
@@ -389,10 +429,191 @@ class BoundCellRunServiceTests(unittest.TestCase):
         self.assertEqual(result.receipt.status, "failed")
         self.assertEqual(result.receipt.reason_codes, ("execution_interrupted",))
         self.assertEqual(result.receipt.delivery_status, "attempted_unknown")
+        self.assertEqual(
+            result.envelope.lease_release_receipt.status, "unknown_blocking"
+        )
         self.assertIsInstance(result.interruption, KeyboardInterrupt)
         self.assertEqual(events.count("invoke"), 1)
         self.assertEqual(events.count("probe"), 2)
         self.assertEqual(events.count("inspect"), 2)
+        self.assertLess(events.index("lease_arm"), events.index("invoke"))
+        self.assertLess(
+            events.index("invoke"),
+            events.index("lease_release:attempted_unknown"),
+        )
+        self.assertLess(
+            events.index("lease_release:attempted_unknown"),
+            len(events) - 1 - events[::-1].index("probe"),
+        )
+
+    def test_denied_lease_causes_zero_endpoint_traffic(self) -> None:
+        events: list[str] = []
+        target = SimpleNamespace(
+            request=SimpleNamespace(
+                digest=SHA_B,
+                catalog_path="catalog.json",
+                runtime_config_path="runtime.json",
+            ),
+            passport=SimpleNamespace(
+                digest=SHA_B,
+                declaration=SimpleNamespace(digest=SHA_D),
+            ),
+            expert=SimpleNamespace(
+                id="expert-a",
+                model="model-a",
+                base_url="http://127.0.0.1:8000/v1",
+            ),
+            config_source_sha256=SHA_C,
+            runtime_config_sha256=SHA_C,
+        )
+        bundle = SimpleNamespace(
+            manifest=SimpleNamespace(digest=SHA_A),
+            request_sha256=SHA_B,
+            publication_protected_roots=(),
+        )
+        preview = self._preview()
+        snapshot = resource_snapshot()
+        claim = claim_for(preview, snapshot, passport_sha256=target.passport.digest)
+        lease_store = FakeLeaseStore(admission_status="denied", events=events)
+
+        class NoTrafficTransport:
+            def probe_models(self, **_kwargs):
+                self.fail("lease denial must precede GET")
+
+            def invoke(self, **_kwargs):
+                self.fail("lease denial must precede POST")
+
+        transport = NoTrafficTransport()
+        transport.fail = self.fail
+
+        def record(state, _bundle, *, prefix):
+            state[f"{prefix}_binding_bundle_sha256"] = SHA_A
+            state[f"{prefix}_binding_request_sha256"] = SHA_B
+            state[f"{prefix}_binding_manifest_sha256"] = SHA_A
+            state[f"{prefix}_inspection_receipt_sha256"] = SHA_A
+
+        with (
+            patch("local_moe.bound_cell_run._record_binding", side_effect=record),
+            patch("local_moe.bound_cell_run._validate_binding"),
+            patch("local_moe.bound_cell_run._validate_preview_binding"),
+            patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ),
+        ):
+            result = run_bound_cell(
+                "advisor.json",
+                "task",
+                "catalog.json",
+                "evaluation.json",
+                "policy.json",
+                "binding.json",
+                confirmed=True,
+                resolver=lambda _path: target,
+                inspector=lambda *_args, **_kwargs: bundle,
+                previewer=lambda *_args, **_kwargs: preview_evaluation(
+                    preview, snapshot
+                ),
+                snapshot_collector=lambda: snapshot,
+                lease_store=lease_store,
+                transport=transport,
+                clock=lambda: datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result.receipt.status, "blocked")
+        self.assertEqual(result.receipt.endpoint_probe_requests, 0)
+        self.assertEqual(result.receipt.invocation_attempts, 0)
+        self.assertEqual(result.envelope.lease_admission_receipt.status, "denied")
+        self.assertIsNone(result.envelope.lease_transition_receipt)
+        self.assertIsNone(result.envelope.lease_release_receipt)
+
+    def test_failed_delivery_transition_releases_without_post(self) -> None:
+        events: list[str] = []
+        target = SimpleNamespace(
+            request=SimpleNamespace(
+                digest=SHA_B,
+                catalog_path="catalog.json",
+                runtime_config_path="runtime.json",
+            ),
+            passport=SimpleNamespace(
+                digest=SHA_B,
+                declaration=SimpleNamespace(digest=SHA_D),
+            ),
+            expert=SimpleNamespace(
+                id="expert-a",
+                model="model-a",
+                base_url="http://127.0.0.1:8000/v1",
+            ),
+            config_source_sha256=SHA_C,
+            runtime_config_sha256=SHA_C,
+        )
+        bundle = SimpleNamespace(
+            manifest=SimpleNamespace(digest=SHA_A),
+            request_sha256=SHA_B,
+            publication_protected_roots=(),
+        )
+        preview = self._preview()
+        snapshot = resource_snapshot()
+        claim = claim_for(preview, snapshot, passport_sha256=target.passport.digest)
+        lease_store = FakeLeaseStore(transition_applied=False, events=events)
+
+        class ProbeOnlyTransport:
+            def probe_models(self, **_kwargs):
+                events.append("probe")
+                return ModelIdentityProbe.from_ids(["model-a"], maximum=4)
+
+            def invoke(self, **_kwargs):
+                self.fail("a failed transition must fence the POST")
+
+        transport = ProbeOnlyTransport()
+        transport.fail = self.fail
+
+        def record(state, _bundle, *, prefix):
+            state[f"{prefix}_binding_bundle_sha256"] = SHA_A
+            state[f"{prefix}_binding_request_sha256"] = SHA_B
+            state[f"{prefix}_binding_manifest_sha256"] = SHA_A
+            state[f"{prefix}_inspection_receipt_sha256"] = SHA_A
+
+        with (
+            patch("local_moe.bound_cell_run._record_binding", side_effect=record),
+            patch("local_moe.bound_cell_run._validate_binding"),
+            patch("local_moe.bound_cell_run._validate_preview_binding"),
+            patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ),
+        ):
+            result = run_bound_cell(
+                "advisor.json",
+                "task",
+                "catalog.json",
+                "evaluation.json",
+                "policy.json",
+                "binding.json",
+                confirmed=True,
+                resolver=lambda _path: target,
+                inspector=lambda *_args, **_kwargs: bundle,
+                previewer=lambda *_args, **_kwargs: preview_evaluation(
+                    preview, snapshot
+                ),
+                snapshot_collector=lambda: snapshot,
+                lease_store=lease_store,
+                transport=transport,
+                clock=lambda: datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result.receipt.status, "blocked")
+        self.assertEqual(result.receipt.invocation_attempts, 0)
+        self.assertEqual(result.receipt.endpoint_probe_requests, 1)
+        self.assertEqual(result.envelope.lease_error_code, "lease_transition_failed")
+        self.assertFalse(result.envelope.lease_transition_receipt.transition_applied)
+        self.assertEqual(
+            result.envelope.lease_release_receipt.delivery_status, "not_attempted"
+        )
+        self.assertEqual(
+            events,
+            ["lease_evaluate", "probe", "lease_arm", "lease_release:not_attempted"],
+        )
 
 
 if __name__ == "__main__":

@@ -19,14 +19,21 @@ BUILD_REQUIREMENTS = (
     "setuptools==80.9.0",
     "wheel==0.45.1",
 )
+RUNTIME_REQUIREMENTS = (
+    "filelock==3.29.7",
+    "platformdirs==4.10.1",
+)
 REQUIRED_SDIST_ARTIFACTS = (
     "configs/cell-binding-request.example.json",
     "docs/cell-runtime-binding.md",
     "docs/bound-cell-run.md",
+    "docs/cooperative-resource-lease.md",
     "experiments/benchmark_runtime_binding.py",
     "experiments/benchmark_bound_cell_run.py",
+    "experiments/benchmark_cooperative_resource_lease.py",
     "outputs/runtime-binding-contract.json",
     "outputs/bound-cell-run-contract.json",
+    "outputs/cooperative-resource-lease-contract.json",
 )
 
 
@@ -37,7 +44,7 @@ def main() -> None:
         temporary = Path(tmp)
         venv_dir = temporary / "venv"
         dist_dir = temporary / "dist"
-        runtime_dir = temporary / "runtime"
+        runtime_dir = temporary / "Runtime Ω Space"
         dist_dir.mkdir()
         runtime_dir.mkdir()
         subprocess.run([str(packaging_python), "-m", "venv", str(venv_dir)], check=True)
@@ -87,6 +94,18 @@ def main() -> None:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                *RUNTIME_REQUIREMENTS,
+            ],
+            cwd=runtime_dir,
+            check=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
                 "--no-deps",
                 str(wheel),
             ],
@@ -102,13 +121,17 @@ def main() -> None:
                 "from pathlib import Path; import local_moe; "
                 "from local_moe import ("
                 "_win32_fs, artifact_tree, bound_cell_run, bound_cell_run_contracts, "
-                "runtime_binding_cli, "
+                "bound_cell_run_envelope, cooperative_resource_lease, "
+                "cooperative_resource_lease_contracts, runtime_binding_cli, "
                 "runtime_binding_contracts, runtime_binding_inspector); "
                 "print(Path(local_moe.__file__).resolve()); "
                 "print(Path(_win32_fs.__file__).resolve()); "
                 "print(Path(artifact_tree.__file__).resolve()); "
                 "print(Path(bound_cell_run.__file__).resolve()); "
                 "print(Path(bound_cell_run_contracts.__file__).resolve()); "
+                "print(Path(bound_cell_run_envelope.__file__).resolve()); "
+                "print(Path(cooperative_resource_lease.__file__).resolve()); "
+                "print(Path(cooperative_resource_lease_contracts.__file__).resolve()); "
                 "print(Path(runtime_binding_cli.__file__).resolve()); "
                 "print(Path(runtime_binding_contracts.__file__).resolve()); "
                 "print(Path(runtime_binding_inspector.__file__).resolve())",
@@ -122,7 +145,7 @@ def main() -> None:
         package_locations = tuple(
             Path(line) for line in location_result.stdout.splitlines() if line
         )
-        if len(package_locations) != 8 or any(
+        if len(package_locations) != 11 or any(
             not location.is_relative_to(venv_dir.resolve())
             for location in package_locations
         ):
@@ -152,6 +175,11 @@ def main() -> None:
         if "cell-bind" not in help_result.stdout:
             raise SystemExit("mymoe console script did not expose cell-bind.")
         _run_installed_cell_binding_help_smoke(
+            mymoe,
+            runtime_dir,
+            environment=runtime_environment,
+        )
+        _run_installed_cell_execution_help_smoke(
             mymoe,
             runtime_dir,
             environment=runtime_environment,
@@ -285,6 +313,7 @@ def main() -> None:
                 {
                     "status": "passed",
                     "build_requirements": list(BUILD_REQUIREMENTS),
+                    "runtime_requirements": list(RUNTIME_REQUIREMENTS),
                     "packaging_python": str(packaging_python),
                     "python": str(python),
                     "sdist": sdist.name,
@@ -406,6 +435,33 @@ def _run_installed_cell_binding_help_smoke(
         raise SystemExit(
             "Installed mymoe console script omitted the read-only cell-bind "
             "inspection contract."
+        )
+
+
+def _run_installed_cell_execution_help_smoke(
+    mymoe: Path,
+    runtime_dir: Path,
+    *,
+    environment: dict[str, str],
+) -> None:
+    completed = subprocess.run(
+        [str(mymoe), "cell-exec", "--help"],
+        cwd=runtime_dir,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    usage = completed.stdout.partition("\n")[0]
+    choices_start = usage.find("{")
+    choices_end = usage.find("}", choices_start + 1)
+    if choices_start < 0 or choices_end < 0:
+        raise SystemExit("Installed cell-exec help omitted its command choices.")
+    choices = set(usage[choices_start + 1 : choices_end].split(","))
+    forbidden_lifecycle_commands = {"start", "stop", "load", "unload"}
+    if choices != {"preview", "run"} or choices & forbidden_lifecycle_commands:
+        raise SystemExit(
+            "Installed cell-exec unexpectedly exposed model lifecycle commands."
         )
 
 

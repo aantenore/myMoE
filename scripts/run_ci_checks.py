@@ -161,6 +161,16 @@ def build_check_plan(python: str) -> list[CheckStep]:
             ],
         ),
         CheckStep(
+            "cooperative resource lease contract benchmark",
+            [
+                python,
+                "experiments/benchmark_cooperative_resource_lease.py",
+                "--check",
+                "--out",
+                "outputs/cooperative-resource-lease-contract.json",
+            ],
+        ),
+        CheckStep(
             "quality gate",
             [
                 python,

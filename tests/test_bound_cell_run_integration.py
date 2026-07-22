@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from local_moe.adaptive_execution_gate import AdaptiveCellExecutionPreviewReceipt
 from local_moe.bound_cell_run import (
@@ -15,6 +16,12 @@ from local_moe.bound_cell_run import (
 from local_moe.bound_cell_run_contracts import (
     BoundCellRunContractError,
     bound_cell_run_receipt_from_payload,
+)
+from tests.bound_cell_run_lease_fakes import (
+    FakeLeaseStore,
+    claim_for,
+    preview_evaluation,
+    resource_snapshot,
 )
 from tests.test_runtime_binding_inspector import (
     GENERIC_BACKEND,
@@ -80,23 +87,38 @@ class BoundCellRunIntegrationTests(unittest.TestCase):
             target = resolve_bound_cell_target(fixture.request_path)
             transport = _StableTransport(target.expert.model)
             output_path = fixture.root / "run-receipt.json"
-
-            def previewer(*_args: object) -> AdaptiveCellExecutionPreviewReceipt:
-                return self._preview(target, task)
-
-            result = run_bound_cell(
-                fixture.root / "advisor.json",
-                task,
-                fixture.catalog_path,
-                fixture.root / "evaluation.json",
-                fixture.root / "policy.json",
-                fixture.request_path,
-                confirmed=True,
-                transport=transport,
-                previewer=previewer,
-                clock=lambda: NOW,
-                publication_path=output_path,
+            snapshot = resource_snapshot()
+            preview = self._preview(target, task)
+            claim = claim_for(
+                preview, snapshot, passport_sha256=target.passport.digest
             )
+            lease_store = FakeLeaseStore()
+
+            def previewer(
+                *_args: object, resource_snapshot: object
+            ) -> object:
+                self.assertIs(resource_snapshot, snapshot)
+                return preview_evaluation(preview, snapshot)
+
+            with patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ):
+                result = run_bound_cell(
+                    fixture.root / "advisor.json",
+                    task,
+                    fixture.catalog_path,
+                    fixture.root / "evaluation.json",
+                    fixture.root / "policy.json",
+                    fixture.request_path,
+                    confirmed=True,
+                    transport=transport,
+                    previewer=previewer,
+                    snapshot_collector=lambda: snapshot,
+                    lease_store=lease_store,
+                    clock=lambda: NOW,
+                    publication_path=output_path,
+                )
 
             rendered = json.dumps(result.receipt.payload(), sort_keys=True)
             self.assertEqual(result.receipt.status, "completed")
@@ -159,20 +181,33 @@ class BoundCellRunIntegrationTests(unittest.TestCase):
             fixture.make_verified()
             target = resolve_bound_cell_target(fixture.request_path)
             transport = _InvalidResponseWithDriftTransport(target.expert.model)
-
-            result = run_bound_cell(
-                fixture.root / "advisor.json",
-                task,
-                fixture.catalog_path,
-                fixture.root / "evaluation.json",
-                fixture.root / "policy.json",
-                fixture.request_path,
-                confirmed=True,
-                transport=transport,
-                previewer=lambda *_args: self._preview(target, task),
-                clock=lambda: NOW,
-                publication_path=fixture.root / "run-receipt.json",
+            snapshot = resource_snapshot()
+            preview = self._preview(target, task)
+            claim = claim_for(
+                preview, snapshot, passport_sha256=target.passport.digest
             )
+
+            with patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ):
+                result = run_bound_cell(
+                    fixture.root / "advisor.json",
+                    task,
+                    fixture.catalog_path,
+                    fixture.root / "evaluation.json",
+                    fixture.root / "policy.json",
+                    fixture.request_path,
+                    confirmed=True,
+                    transport=transport,
+                    previewer=lambda *_args, **_kwargs: preview_evaluation(
+                        preview, snapshot
+                    ),
+                    snapshot_collector=lambda: snapshot,
+                    lease_store=FakeLeaseStore(),
+                    clock=lambda: NOW,
+                    publication_path=fixture.root / "run-receipt.json",
+                )
 
             self.assertEqual(result.receipt.status, "invalidated")
             self.assertIn("response_invalid", result.receipt.reason_codes)
@@ -191,21 +226,34 @@ class BoundCellRunIntegrationTests(unittest.TestCase):
             transport = _StableTransport(target.expert.model)
             wall_times = iter((NOW, NOW, NOW, NOW - timedelta(seconds=1)))
             monotonic_times = iter((10.0, 11.0))
-
-            result = run_bound_cell(
-                fixture.root / "advisor.json",
-                task,
-                fixture.catalog_path,
-                fixture.root / "evaluation.json",
-                fixture.root / "policy.json",
-                fixture.request_path,
-                confirmed=True,
-                transport=transport,
-                previewer=lambda *_args: self._preview(target, task),
-                clock=lambda: next(wall_times),
-                monotonic_clock=lambda: next(monotonic_times),
-                publication_path=fixture.root / "run-receipt.json",
+            snapshot = resource_snapshot()
+            preview = self._preview(target, task)
+            claim = claim_for(
+                preview, snapshot, passport_sha256=target.passport.digest
             )
+
+            with patch(
+                "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+                return_value=claim,
+            ):
+                result = run_bound_cell(
+                    fixture.root / "advisor.json",
+                    task,
+                    fixture.catalog_path,
+                    fixture.root / "evaluation.json",
+                    fixture.root / "policy.json",
+                    fixture.request_path,
+                    confirmed=True,
+                    transport=transport,
+                    previewer=lambda *_args, **_kwargs: preview_evaluation(
+                        preview, snapshot
+                    ),
+                    snapshot_collector=lambda: snapshot,
+                    lease_store=FakeLeaseStore(),
+                    clock=lambda: next(wall_times),
+                    monotonic_clock=lambda: next(monotonic_times),
+                    publication_path=fixture.root / "run-receipt.json",
+                )
 
             self.assertEqual(result.receipt.status, "invalidated")
             self.assertIn("clock_invalid", result.receipt.reason_codes)

@@ -152,37 +152,45 @@ join the normal router, persistent chat, Cline, or agent-tool paths:
 ```mermaid
 flowchart LR
   C["Explicit one-shot confirmation"] --> B["Verified pre-run binding sample"]
-  B --> P["Final fresh Advisor preview"]
-  P --> G1["GET /models pre-probe"]
-  G1 --> I["One POST /chat/completions inference attempt"]
-  I --> G2["GET /models post-probe"]
+  B --> L["Atomic lease: one snapshot + fresh preview + exact claim"]
+  L --> G1["GET /models pre-probe"]
+  G1 --> F["Durable delivery_armed fence"]
+  F --> I["One POST /chat/completions inference attempt"]
+  I --> R["Release known response or retain sticky unknown"]
+  R --> G2["GET /models post-probe"]
   G2 --> S["Post-run binding sample"]
-  S --> O["Metadata-only run receipt"]
+  S --> O["Metadata-only V2 evidence envelope"]
   I --> A["Answer returned separately"]
 ```
 
 `mymoe cell-exec run` requires explicit one-shot confirmation, the same exact
 task and selected cell, verified pre-run static bindings, and then a final fresh
-passing preview as the last admission step before endpoint traffic. The full
-attempted path performs two bounded `GET /models` probes around exactly one
-`POST /chat/completions` inference attempt, then records any post-call drift. A
-failed precondition makes zero inference calls; an attempted inference is never
-retried or sent to a fallback. The configured endpoint must use an explicit
-numeric loopback IP and port; `localhost` is not accepted.
+passing preview inside the Cooperative Resource Lease transaction. That
+transaction captures one snapshot, derives the exact `conservative_peak`
+claim, and serializes it with active claims in the same-user/same-host
+domain. No endpoint traffic occurs on denial or unknown ownership. After
+commit, the full attempted path performs two bounded `GET /models` probes
+around exactly one delivery-fenced `POST /chat/completions`, then records any
+post-call drift. A failed precondition makes zero inference calls; an attempted
+inference is never retried or sent to a fallback. The configured endpoint must
+use an explicit numeric loopback IP and port; `localhost` is not accepted.
 
 The two inspections sample declared files and configuration before and after
-the call; they are not continuous monitoring. The receipt stores task/response
-hashes, sizes, status, counters, timestamps, and evidence digests rather than
-task or answer bodies. The runner neither starts, loads, unloads, swaps, nor
-stops a model and exposes no tool surface. It cannot prove which operating-
+the call; they are not continuous monitoring. `BoundCellRunEnvelopeV2` keeps
+the unchanged v1 run receipt and the exact claim/admission/transition/release
+evidence, using hashes, sizes, status, counters, timestamps, and digests rather
+than task or answer bodies or the raw lease token. The runner neither starts,
+loads, unloads, swaps, nor stops a model and exposes no tool surface. The lease
+does not reserve RAM/VRAM through the operating system or control processes
+that ignore it. The runner cannot prove which operating-
 system process owns the loopback port, attest that the inspected runtime is the
 resident server, identify which executable generated the answer, or establish
 that the answer is semantically correct. See
 [Bound Cell Run v1](bound-cell-run.md).
 
-Receipt durability is a separate CLI boundary: an owner-only sibling journal is
+Evidence durability is a separate CLI boundary: an owner-only sibling journal is
 created before endpoint traffic and finalized before the canonical no-clobber
-receipt. It is removed after successful publication and otherwise retained as
+V2 envelope. It is removed after successful publication and otherwise retained as
 a metadata-only recovery artifact, so a post-invocation publication race does
 not silently erase the delivery state.
 
@@ -199,11 +207,18 @@ not silently erase the delivery state.
   re-admission boundary. It binds a recent Advisor receipt to the same task,
   current evidence, selected passport, and fresh resource snapshot, then emits
   a non-authorizing passed or blocked preview receipt.
+- `Cooperative Resource Lease`: SQLite-backed same-user/same-host admission
+  accounting over conservative system, unified, or discrete-pool claims. It
+  binds one fresh preview and snapshot, serializes competing participants,
+  fences delivery, reaps only provably pre-arm crashes, and preserves ambiguous
+  armed outcomes as sticky unknown. It is not an OS memory reservation or
+  runtime lifecycle manager.
 - `Bound Cell Run`: alpha one-shot executor that performs a pre-run Bound Cell
-  inspection, a final fresh preview, two model-list probes, one completion
-  inference attempt, and a post-run inspection against an explicit numeric
-  loopback endpoint. Its metadata-only receipt records lineage and sampled
-  drift but grants no future authority and makes no process/residency-
+  inspection, snapshot-bound atomic cooperative admission, two model-list
+  probes, one delivery-fenced completion inference attempt, lease settlement,
+  and a post-run inspection against an explicit numeric loopback endpoint. Its
+  metadata-only V2 envelope records lease lineage and sampled drift but grants
+  no future authority and makes no process/residency-
   attestation or semantic-correctness claim.
 - `MoEConfig`: immutable parsed configuration, including the execution policy.
 - `ExpertConfig`: provider id, endpoint, model id, generation params, weight,

@@ -83,7 +83,7 @@ def _package_version() -> str:
     try:
         return version("local-moe-orchestrator")
     except PackageNotFoundError:
-        return "0.12.0a1"
+        return "0.13.0a1"
 
 
 PRODUCER_VERSION = _package_version()

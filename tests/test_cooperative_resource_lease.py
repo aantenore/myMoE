@@ -122,6 +122,24 @@ def _worker_contend(database: str, barrier, results, release_event) -> None:
         store.release(acquisition.handle, delivery_status="not_attempted")
 
 
+def _worker_contend_to_delivery(database: str, barrier, results, release_event) -> None:
+    store = SQLiteCooperativeResourceLeaseStore(database)
+    snapshot = _snapshot(available=700)
+    claim = _claim(snapshot, system_bytes=600, reserve=100)
+    barrier.wait(timeout=10)
+    acquisition = store.acquire(claim, snapshot)
+    results.put(("admission", acquisition.receipt.status))
+    if acquisition.handle is None:
+        return
+    transition = store.arm_delivery(acquisition.handle)
+    results.put(("post_authorized", transition.transition_applied))
+    if not transition.transition_applied:
+        store.release(acquisition.handle, delivery_status="not_attempted")
+        return
+    release_event.wait(timeout=10)
+    store.release(acquisition.handle, delivery_status="response_received")
+
+
 def _worker_crash(database: str, ready, arm_delivery: bool) -> None:
     store = SQLiteCooperativeResourceLeaseStore(database)
     snapshot = _snapshot(available=1_000)
@@ -632,6 +650,30 @@ class CooperativeResourceLeaseMultiprocessTests(unittest.TestCase):
             worker.start()
         statuses = sorted(results.get(timeout=15) for _ in workers)
         self.assertEqual(statuses, ["acquired", "denied"])
+        release_event.set()
+        for worker in workers:
+            worker.join(timeout=15)
+            self.assertEqual(worker.exitcode, 0)
+
+    def test_capacity_for_one_authorizes_exactly_one_delivery(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        results = context.Queue()
+        release_event = context.Event()
+        workers = [
+            context.Process(
+                target=_worker_contend_to_delivery,
+                args=(self.database, barrier, results, release_event),
+            )
+            for _ in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        observed = [results.get(timeout=15) for _ in range(3)]
+        admissions = sorted(value for kind, value in observed if kind == "admission")
+        deliveries = [value for kind, value in observed if kind == "post_authorized"]
+        self.assertEqual(admissions, ["acquired", "denied"])
+        self.assertEqual(deliveries, [True])
         release_event.set()
         for worker in workers:
             worker.join(timeout=15)

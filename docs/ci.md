@@ -60,19 +60,28 @@ The gate currently performs these steps:
    drift invalidation. Real network, process, tool, and model-lifecycle surfaces
    are guarded; task and response bodies are excluded from the artifact. The
    fixture does not attest the process behind loopback or prove model residency.
-13. Run the offline CI profile from `configs/quality-gate-ci.json`, including
+13. Run the deterministic Cooperative Resource Lease contract benchmark and
+   write `outputs/cooperative-resource-lease-contract.json`. Its temporary
+   SQLite fixtures cover shared-pool capacity, maximum reserve accounting,
+   release and re-admission, zero-invocation denial, sticky ambiguous delivery,
+   unified memory, and contract-qualified discrete pools. It has no wall-clock
+   threshold and makes no OS reservation, runtime-management, or performance
+   claim.
+14. Run the offline CI profile from `configs/quality-gate-ci.json`, including
    train/holdout separation and provenance freshness. The live answer-quality
    benchmark is reported as non-release-eligible when local model endpoints are
    unavailable; only `configs/quality-gate.json` can declare release readiness.
    The live result path is deliberately not a generic `required_files` entry:
    the profile-aware benchmark check requires it for release and permits it to
    be absent only in offline CI.
-14. Refresh the hardware profile artifact.
-15. Run the packaging smoke test, which installs the project in a temporary
+15. Refresh the hardware profile artifact.
+16. Run the packaging smoke test, which installs the project in a temporary
    virtual environment and verifies the `mymoe`, `mymoe-paired`, and
    `mymoe-web` console scripts, packaged browser, desktop, and Advisor templates,
    and the installed workspace initializers. It also imports `artifact_tree`
-   plus the Bound Cell binding and run modules from the isolated wheel, invokes
+   plus the Bound Cell binding, run, cooperative-lease, and V2-envelope modules
+   from the isolated wheel after installing the locked base dependencies,
+   invokes
    `mymoe cell-bind inspect --help`, and verifies the installed
    `mymoe cell-exec run --help` surface from an unrelated empty directory. The
    Advisor smoke runs from an unrelated working directory and verifies its
@@ -111,15 +120,17 @@ identities supplied by the operator.
 
 ## Bound Cell Run verification
 
-The run-specific suite adds four deterministic boundaries: strict loopback HTTP
-parsing and bounded responses; state-transition tests for zero-call blocks,
-single attempts, interruptions, and invalidation; a real inspector integration
-test with fake in-memory transport; and a checked-in benchmark covering request
-counts, pre/post lineage, absent task/answer bodies, and zero retry, tool,
-lifecycle, or remote-egress claims. CLI tests additionally verify exact answer
-bytes on stdout, owner-only no-clobber receipt publication, and retention of a
-finalized metadata-only recovery journal when canonical publication cannot be
-completed.
+The run-specific suite adds five deterministic boundaries: strict loopback HTTP
+parsing and bounded responses; lease ordering and state-transition tests for
+zero-call denials, delivery fencing, single attempts, interruptions, sticky
+ambiguity, and invalidation; multiprocess proof that capacity for one enables
+one delivery; a real inspector integration test with fake in-memory transport;
+and checked-in benchmarks covering lease accounting, request counts, pre/post
+lineage, absent task/answer/token bodies, and zero retry, tool, lifecycle, or
+remote-egress claims. CLI tests additionally verify exact answer bytes on
+stdout, owner-only no-clobber V2 envelope publication with an unchanged nested
+v1 receipt, and retention of a finalized metadata-only recovery journal when
+canonical publication cannot be completed.
 
 ## GitHub Actions
 

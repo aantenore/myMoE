@@ -41,6 +41,14 @@ class BoundCellRunBenchmarkTests(unittest.TestCase):
         scenarios = run_benchmark()["scenarios"]
 
         self.assertEqual(scenarios["completed"]["receipt"]["status"], "completed")
+        self.assertEqual(
+            scenarios["completed"]["envelope"]["contract"],
+            "BoundCellRunEnvelopeV2",
+        )
+        self.assertEqual(
+            scenarios["completed"]["envelope"]["run_receipt"],
+            scenarios["completed"]["receipt"],
+        )
         blocked = scenarios["precondition_blocked"]
         self.assertEqual(blocked["receipt"]["status"], "blocked")
         self.assertEqual(blocked["transport_counters"]["probe_requests"], 0)
@@ -64,8 +72,14 @@ class BoundCellRunBenchmarkTests(unittest.TestCase):
 
         for marker in (TASK_BODY, RESPONSE_BODY, FAILED_RESPONSE_BODY):
             self.assertNotIn(marker, rendered)
+        self.assertNotIn("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", rendered)
         for scenario in report["scenarios"].values():
             receipt = scenario["receipt"]
+            envelope = scenario["envelope"]
+            self.assertTrue(envelope["cooperative_only"])
+            self.assertFalse(envelope["os_memory_reserved"])
+            self.assertFalse(envelope["runtime_managed"])
+            self.assertEqual(envelope["run_receipt_sha256"], receipt["digest"])
             self.assertFalse(receipt["process_mutations"])
             self.assertEqual(receipt["lifecycle_operations"], 0)
             self.assertFalse(receipt["endpoint_process_identity_verified"])

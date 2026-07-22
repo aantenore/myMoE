@@ -1,0 +1,116 @@
+{
+  "benchmark": "cooperative_resource_lease_contract",
+  "check_count": 8,
+  "claim_basis": "conservative_peak",
+  "contract": "cooperative_resource_lease",
+  "contract_checks_passed": true,
+  "criteria": {
+    "artifact_omits_private_content_and_lease_capabilities": true,
+    "attempted_unknown_remains_sticky_and_blocks_new_work": true,
+    "cpu_and_integrated_claims_share_unified_system_capacity": true,
+    "denial_performs_zero_simulated_invocations": true,
+    "discrete_fixture_accounts_for_host_and_accelerator_pools": true,
+    "largest_reserve_is_applied_once_to_the_system_pool": true,
+    "release_allows_a_new_acquisition": true,
+    "two_system_claims_fit_before_the_third_is_denied": true
+  },
+  "limits": [
+    "cooperative_participants_only",
+    "does_not_reserve_ram_or_vram_at_operating_system_level",
+    "does_not_start_load_unload_stop_or_evict_models",
+    "does_not_coordinate_processes_that_ignore_the_ledger",
+    "does_not_open_network_connections_or_invoke_models",
+    "does_not_measure_latency_throughput_or_model_quality",
+    "synthetic_capacity_contract_fixtures_only",
+    "discrete_accelerator_path_is_contract_fixture_only"
+  ],
+  "pass_count": 8,
+  "scenarios": {
+    "armed_attempted_unknown": {
+      "ambiguous_reason_codes": [
+        "delivery_outcome_unknown"
+      ],
+      "ambiguous_release_status": "unknown_blocking",
+      "delivery_armed": true,
+      "delivery_counters": {
+        "simulated_invocations": 1
+      },
+      "initial_admission_status": "acquired",
+      "subsequent_admission_status": "unknown_blocking",
+      "subsequent_handle_issued": false,
+      "subsequent_reason_codes": [
+        "lease_owner_unknown"
+      ]
+    },
+    "discrete_pool_contract_fixture": {
+      "accelerator_accounting": {
+        "active_accelerator_claim_bytes": 1200,
+        "applied_accelerator_reserve_bytes": 100,
+        "available_accelerator_bytes": 1300,
+        "requested_accelerator_claim_bytes": 600
+      },
+      "admission_statuses": [
+        "acquired",
+        "acquired",
+        "denied"
+      ],
+      "cleanup_statuses": [
+        "released",
+        "released"
+      ],
+      "fixture_scope": "contract_only",
+      "third_reason_codes": [
+        "accelerator_capacity_insufficient"
+      ],
+      "topology": "dedicated"
+    },
+    "shared_system_capacity": {
+      "admission_statuses": [
+        "acquired",
+        "acquired",
+        "denied"
+      ],
+      "cleanup_statuses": [
+        "released",
+        "released"
+      ],
+      "denied_path": {
+        "simulated_invocations": 0
+      },
+      "release_status": "released",
+      "replacement_status": "acquired",
+      "reserve_accounting": {
+        "active_system_claim_bytes": 1000,
+        "applied_pool_reserve_bytes": 300,
+        "available_system_bytes": 1500,
+        "incoming_reserve_bytes": 100,
+        "requested_system_claim_bytes": 500,
+        "required_system_bytes": 1800
+      },
+      "third_reason_codes": [
+        "system_capacity_insufficient"
+      ]
+    },
+    "unified_pool": {
+      "admission_statuses": [
+        "acquired",
+        "acquired"
+      ],
+      "armed": [
+        true,
+        true
+      ],
+      "claim_pools": [
+        "system",
+        "unified"
+      ],
+      "release_statuses": [
+        "released",
+        "released"
+      ],
+      "second_active_system_claim_bytes": 600,
+      "topology": "unified"
+    }
+  },
+  "schema_version": "1.0"
+}

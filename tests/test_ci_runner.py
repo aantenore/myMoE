@@ -45,6 +45,7 @@ class CiRunnerTests(unittest.TestCase):
                 "adaptive cell execution gate contract benchmark",
                 "bound cell attestor contract benchmark",
                 "bound cell run contract benchmark",
+                "cooperative resource lease contract benchmark",
                 "quality gate",
                 "hardware report",
                 "packaging smoke",
@@ -147,6 +148,21 @@ class CiRunnerTests(unittest.TestCase):
                 "experiments/benchmark_bound_cell_run.py",
                 "--out",
                 "outputs/bound-cell-run-contract.json",
+            ],
+        )
+        resource_lease_benchmark = next(
+            step
+            for step in steps
+            if step.name == "cooperative resource lease contract benchmark"
+        )
+        self.assertEqual(
+            resource_lease_benchmark.command,
+            [
+                "python",
+                "experiments/benchmark_cooperative_resource_lease.py",
+                "--check",
+                "--out",
+                "outputs/cooperative-resource-lease-contract.json",
             ],
         )
 

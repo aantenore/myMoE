@@ -26,8 +26,8 @@ from .bound_cell_run import BoundCellRunResult, run_bound_cell
 from .bound_cell_run_contracts import (
     BoundCellRunContractError,
     BoundCellRunPolicy,
-    BoundCellRunReceipt,
 )
+from .bound_cell_run_envelope import BoundCellRunEnvelopeV2
 from .cell_contracts import CellContractError
 from .runtime_binding_inspector import (
     RuntimeBindingInspectionError,
@@ -57,14 +57,14 @@ class _RunRecoveryJournal:
     identity: tuple[int, int]
     size: int
 
-    def finalize(self, receipt: BoundCellRunReceipt) -> None:
+    def finalize(self, envelope: BoundCellRunEnvelopeV2) -> None:
         encoded = (
             json.dumps(
                 {
                     "contract": "BoundCellRunRecoveryJournal",
-                    "schema_version": "1.0",
+                    "schema_version": "2.0",
                     "state": "finalized",
-                    "receipt": receipt.payload(),
+                    "envelope": envelope.payload(),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -222,8 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--receipt-out",
         required=True,
         help=(
-            "Publish the metadata-only run receipt to one new private file; "
-            "existing files are never replaced."
+            "Publish the metadata-only BoundCellRunEnvelopeV2 evidence to one "
+            "new private file; existing files are never replaced."
         ),
     )
     run.add_argument(
@@ -333,7 +333,7 @@ def _run_once(args: argparse.Namespace, task_text: str) -> int:
         policy=policy,
         publication_path=output_path,
     )
-    journal.finalize(result.receipt)
+    journal.finalize(result.envelope)
     refreshed_output, refreshed_inputs, refreshed_roots = _run_publication_boundary(
         args
     )
@@ -352,9 +352,9 @@ def _run_once(args: argparse.Namespace, task_text: str) -> int:
         _merge_root_identities(tuple(protected_roots), tuple(refreshed_roots)),
         tuple(getattr(result, "publication_protected_roots", ())),
     )
-    _publish_run_receipt(
+    _publish_run_envelope(
         output_path,
-        result.receipt,
+        result.envelope,
         protected_inputs=actual_inputs,
         protected_roots=actual_roots,
     )
@@ -497,7 +497,7 @@ def _reserve_run_journal(
         json.dumps(
             {
                 "contract": "BoundCellRunRecoveryJournal",
-                "schema_version": "1.0",
+                "schema_version": "2.0",
                 "state": "reserved",
                 "invocation_status": "not_started_at_reservation",
                 "recovery_note": (
@@ -593,16 +593,16 @@ def _write_response_stdout(response: str) -> None:
     stream.flush()
 
 
-def _publish_run_receipt(
+def _publish_run_envelope(
     path: Path,
-    receipt: BoundCellRunReceipt,
+    envelope: BoundCellRunEnvelopeV2,
     *,
     protected_inputs: Sequence[Path],
     protected_roots: Sequence[ProtectedRootIdentity],
 ) -> None:
     encoded = (
         json.dumps(
-            receipt.payload(),
+            envelope.payload(),
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
@@ -619,6 +619,7 @@ def _publish_run_receipt(
 
 def _render_run_status(result: BoundCellRunResult, output_path: Path) -> None:
     receipt = result.receipt
+    envelope = result.envelope
     if receipt.status == "completed":
         summary = "Bound cell run completed with stable sampled bindings."
     elif receipt.status == "blocked":
@@ -637,11 +638,17 @@ def _render_run_status(result: BoundCellRunResult, output_path: Path) -> None:
                     summary,
                     "Reasons: " + (", ".join(receipt.reason_codes) or "none"),
                     f"Delivery: {receipt.delivery_status}",
-                    f"Receipt: {output_path}",
-                    f"Receipt SHA-256: {receipt.digest}",
+                    f"Cooperative lease: {_render_lease_status(envelope)}",
+                    f"Evidence envelope: {output_path}",
+                    f"Envelope SHA-256: {envelope.digest}",
+                    f"Nested v1 receipt SHA-256: {receipt.digest}",
                     (
                         "Boundary: the resident loopback process identity and semantic "
                         "correctness of the response are not verified."
+                    ),
+                    (
+                        "Resource boundary: the lease is cooperative accounting only; "
+                        "it is not a RAM/VRAM reservation or runtime lifecycle control."
                     ),
                 )
             ),
@@ -649,6 +656,21 @@ def _render_run_status(result: BoundCellRunResult, output_path: Path) -> None:
         )
     except (BrokenPipeError, OSError, ValueError):
         return
+
+
+def _render_lease_status(envelope: BoundCellRunEnvelopeV2) -> str:
+    release = envelope.lease_release_receipt
+    if release is not None:
+        return release.status
+    transition = envelope.lease_transition_receipt
+    if transition is not None and transition.transition_applied:
+        return transition.state
+    admission = envelope.lease_admission_receipt
+    if admission is not None:
+        return admission.status
+    if envelope.lease_error_code is not None:
+        return envelope.lease_error_code
+    return "not_acquired"
 
 
 def _absolute_path(value: object) -> Path:

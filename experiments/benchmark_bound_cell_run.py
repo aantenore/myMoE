@@ -30,6 +30,7 @@ else:
     )
 
 from local_moe.adaptive_execution_gate import (
+    AdaptiveCellExecutionPreviewEvaluation,
     AdaptiveCellExecutionPreviewReceipt,
 )
 from local_moe.bound_cell_run import (
@@ -40,6 +41,17 @@ from local_moe.bound_cell_run import (
     run_bound_cell,
 )
 from local_moe.bound_cell_run_contracts import BoundCellRunPolicy
+from local_moe.cooperative_resource_lease import (
+    CooperativeResourceLeaseAcquisition,
+    CooperativeResourceLeaseHandle,
+)
+from local_moe.cooperative_resource_lease_contracts import (
+    CooperativeResourceClaim,
+    CooperativeResourceLeaseAdmissionReceipt,
+    CooperativeResourceLeaseReleaseReceipt,
+    CooperativeResourceLeaseTransitionReceipt,
+)
+from local_moe.resource_snapshot import ResourceSnapshot
 from local_moe.runtime_binding_inspector import CellBindingInspectionBundle
 
 
@@ -76,11 +88,147 @@ def _preview(
         fresh_selected_cell_id=cell_id,
         source_passport_sha256=passport_sha256,
         fresh_passport_sha256=passport_sha256,
-        fresh_resource_snapshot_sha256=_sha("fresh-resource-snapshot"),
+        fresh_resource_snapshot_sha256=_resource_snapshot().digest,
         status="admission_passed" if admitted else "admission_blocked",
         reason_codes=() if admitted else ("fresh_admission_blocked",),
         task_chars=len(TASK_BODY),
     )
+
+
+def _resource_snapshot() -> ResourceSnapshot:
+    return ResourceSnapshot(
+        system="Linux",
+        os_release="benchmark",
+        machine="x86_64",
+        cpu_count=8,
+        cpu_identity_sha256=_sha("cpu"),
+        memory_topology="system",
+        total_memory_bytes=16_000_000_000,
+        available_memory_bytes=8_000_000_000,
+        effective_memory_limit_bytes=16_000_000_000,
+        swap_used_bytes=0,
+        accelerator_kind="none",
+        accelerator_identity_sha256=None,
+        accelerator_memory_total_bytes=None,
+        accelerator_memory_available_bytes=None,
+        runtime_environment_sha256=_sha("runtime-environment"),
+        captured_at=RUN_AT.isoformat(),
+        source_sha256=_sha("resource-source"),
+    )
+
+
+def _preview_evaluation(
+    preview: AdaptiveCellExecutionPreviewReceipt,
+    snapshot: ResourceSnapshot,
+) -> AdaptiveCellExecutionPreviewEvaluation:
+    evaluation = object.__new__(AdaptiveCellExecutionPreviewEvaluation)
+    object.__setattr__(evaluation, "receipt", preview)
+    object.__setattr__(evaluation, "fresh_advisor_receipt", object())
+    object.__setattr__(evaluation, "resource_snapshot", snapshot)
+    object.__setattr__(evaluation, "catalog", object())
+    return evaluation
+
+
+class _LeaseStore:
+    """Deterministic in-memory lease adapter for the Bound Cell Run benchmark.
+
+    The separate Cooperative Resource Lease benchmark exercises the real SQLite
+    store. This adapter keeps this report path-independent while enforcing the
+    exact acquire, arm, and release sequence expected by the runner.
+    """
+
+    def __init__(self) -> None:
+        self.claim: CooperativeResourceClaim | None = None
+        self.admission: CooperativeResourceLeaseAdmissionReceipt | None = None
+        self.handle: CooperativeResourceLeaseHandle | None = None
+        self.admissions = 0
+        self.arms = 0
+        self.releases = 0
+
+    def evaluate_and_acquire(self, evaluator):
+        evaluation = evaluator()
+        self.admissions += 1
+        self.claim = evaluation.claim
+        snapshot = evaluation.snapshot
+        self.admission = CooperativeResourceLeaseAdmissionReceipt(
+            policy_sha256=_sha("lease-policy"),
+            claim_sha256=self.claim.digest,
+            resource_snapshot_sha256=snapshot.digest,
+            coordination_domain_sha256=_sha("benchmark-domain"),
+            status="acquired",
+            reason_codes=(),
+            evaluated_at=RUN_AT.isoformat(),
+            lease_id="benchmark-lease",
+            lease_token_sha256=_sha("lease-token"),
+            active_leases_before=0,
+            active_leases_after=1,
+            reaped_leases=0,
+            system_available_bytes=snapshot.available_memory_bytes,
+            accelerator_available_bytes=None,
+            active_system_claim_bytes=0,
+            active_accelerator_claim_bytes=0,
+            requested_system_claim_bytes=self.claim.system_claim_bytes,
+            requested_accelerator_claim_bytes=0,
+            safety_reserve_bytes=self.claim.safety_reserve_bytes,
+            applied_system_reserve_bytes=self.claim.safety_reserve_bytes,
+            applied_accelerator_reserve_bytes=0,
+        )
+        self.handle = CooperativeResourceLeaseHandle(
+            lease_id="benchmark-lease",
+            admission_receipt_sha256=self.admission.digest,
+            claim_sha256=self.claim.digest,
+            token=b"x" * 32,
+            _owner_lock=object(),  # type: ignore[arg-type]
+            _sentinel_path=Path("unused-benchmark-sentinel"),
+        )
+        return CooperativeResourceLeaseAcquisition(
+            receipt=self.admission,
+            handle=self.handle,
+            context=evaluation.context,
+        )
+
+    def arm_delivery(
+        self, handle: CooperativeResourceLeaseHandle
+    ) -> CooperativeResourceLeaseTransitionReceipt:
+        assert handle is self.handle
+        assert self.admission is not None
+        assert self.claim is not None
+        self.arms += 1
+        return CooperativeResourceLeaseTransitionReceipt(
+            policy_sha256=_sha("lease-policy"),
+            admission_receipt_sha256=self.admission.digest,
+            claim_sha256=self.claim.digest,
+            coordination_domain_sha256=_sha("benchmark-domain"),
+            lease_id="benchmark-lease",
+            state="delivery_armed",
+            transition_applied=True,
+            reason_codes=(),
+            transitioned_at=RUN_AT.isoformat(),
+        )
+
+    def release(
+        self,
+        handle: CooperativeResourceLeaseHandle,
+        *,
+        delivery_status: str,
+    ) -> CooperativeResourceLeaseReleaseReceipt:
+        assert handle is self.handle
+        assert self.admission is not None
+        assert self.claim is not None
+        self.releases += 1
+        unknown = delivery_status == "attempted_unknown"
+        return CooperativeResourceLeaseReleaseReceipt(
+            policy_sha256=_sha("lease-policy"),
+            admission_receipt_sha256=self.admission.digest,
+            claim_sha256=self.claim.digest,
+            coordination_domain_sha256=_sha("benchmark-domain"),
+            lease_id="benchmark-lease",
+            status="unknown_blocking" if unknown else "released",
+            reason_codes=("delivery_outcome_unknown",) if unknown else (),
+            delivery_status=delivery_status,
+            released_at=RUN_AT.isoformat(),
+            active_leases_after=1 if unknown else 0,
+        )
 
 
 def _binding_drift(
@@ -193,17 +341,41 @@ def _run_scenario(
         response=response,
         failure=failure,
     )
+    snapshot = _resource_snapshot()
+    evaluation = _preview_evaluation(preview, snapshot)
+    claim = CooperativeResourceClaim(
+        preview_sha256=preview.digest,
+        candidate_sha256=_sha("selected-candidate"),
+        passport_sha256=preview.fresh_passport_sha256,
+        resource_snapshot_sha256=snapshot.digest,
+        resource_class_sha256=snapshot.resource_class_sha256,
+        catalog_sha256=_sha("catalog"),
+        profile_sha256=_sha("profile"),
+        pool="system",
+        system_claim_bytes=1_000_000_000,
+        accelerator_claim_bytes=0,
+        accelerator_identity_sha256=None,
+        safety_reserve_bytes=100_000_000,
+    )
+    lease_store = _LeaseStore()
 
     def resolver(_path: str | Path):
         return target
 
-    def previewer(*_args: object):
-        return preview
+    def previewer(*_args: object, resource_snapshot: ResourceSnapshot):
+        assert resource_snapshot is snapshot
+        return evaluation
 
     def clock() -> datetime:
         return RUN_AT
 
-    with _side_effect_guard():
+    with (
+        _side_effect_guard(),
+        mock.patch(
+            "local_moe.bound_cell_run.cooperative_resource_claim_from_preview",
+            return_value=claim,
+        ),
+    ):
         result = run_bound_cell(
             "synthetic-advisor-receipt.json",
             TASK_BODY,
@@ -215,6 +387,8 @@ def _run_scenario(
             policy=BoundCellRunPolicy(),
             transport=transport,
             previewer=previewer,
+            snapshot_collector=lambda: snapshot,
+            lease_store=lease_store,
             inspector=inspector,
             resolver=resolver,
             clock=clock,
@@ -225,6 +399,9 @@ def _run_scenario(
         "probe_requests": transport.probe_requests,
         "post_requests": transport.post_requests,
         "retries": max(0, transport.post_requests - 1),
+        "lease_admissions": lease_store.admissions,
+        "delivery_arms": lease_store.arms,
+        "lease_releases": lease_store.releases,
     }
 
 
@@ -234,6 +411,7 @@ def _scenario(
 ) -> dict[str, Any]:
     return {
         "receipt": result.receipt.payload(),
+        "envelope": result.envelope.payload(),
         "transport_counters": counters,
         "response_returned": result.response_text is not None,
     }
@@ -352,6 +530,9 @@ def run_benchmark() -> dict[str, Any]:
                 "probe_requests": 2,
                 "post_requests": 1,
                 "retries": 0,
+                "lease_admissions": 1,
+                "delivery_arms": 1,
+                "lease_releases": 1,
             }
         ),
         "blocked_precondition_performs_no_probe_or_post": (
@@ -360,6 +541,8 @@ def run_benchmark() -> dict[str, Any]:
             and precondition_blocked.receipt.endpoint_probe_requests == 0
             and blocked_counts["probe_requests"] == 0
             and blocked_counts["post_requests"] == 0
+            and blocked_counts["delivery_arms"] == 0
+            and blocked_counts["lease_releases"] == 0
         ),
         "transport_failure_is_one_attempt_without_retry": (
             transport_failure.receipt.status == "failed"
@@ -368,6 +551,19 @@ def run_benchmark() -> dict[str, Any]:
             and transport_failure.receipt.delivery_status == "attempted_unknown"
             and failure_counts["post_requests"] == 1
             and failure_counts["retries"] == 0
+            and transport_failure.envelope.lease_release_receipt is not None
+            and transport_failure.envelope.lease_release_receipt.status
+            == "unknown_blocking"
+        ),
+        "completed_run_has_exact_cooperative_lineage": (
+            completed.envelope.lease_claim is not None
+            and completed.envelope.lease_admission_receipt is not None
+            and completed.envelope.lease_admission_receipt.status == "acquired"
+            and completed.envelope.lease_transition_receipt is not None
+            and completed.envelope.lease_transition_receipt.transition_applied
+            and completed.envelope.lease_release_receipt is not None
+            and completed.envelope.lease_release_receipt.status == "released"
+            and completed.envelope.run_receipt_sha256 == completed.receipt.digest
         ),
         "post_binding_drift_invalidates_the_response": (
             post_binding_drift.receipt.status == "invalidated"
@@ -428,6 +624,8 @@ def run_benchmark() -> dict[str, Any]:
             "does_not_measure_latency_throughput_or_memory",
             "does_not_open_network_connections_or_spawn_processes",
             "does_not_start_load_unload_or_stop_models",
+            "cooperative_accounting_only_not_os_memory_reservation",
+            "does_not_coordinate_nonparticipating_processes",
             "does_not_run_tools",
             "does_not_attest_endpoint_process_identity",
             "does_not_prove_model_residency",

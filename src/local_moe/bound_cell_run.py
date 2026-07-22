@@ -14,15 +14,32 @@ from urllib import error, request
 from urllib.parse import urlsplit
 
 from .adaptive_execution_gate import (
+    AdaptiveCellExecutionPreviewEvaluation,
     AdaptiveCellExecutionPreviewReceipt,
-    preview_cell_execution,
+    preview_cell_execution_with_snapshot,
 )
 from .adaptive_advisor_cli import ProtectedRootIdentity
 from .bound_cell_run_contracts import BoundCellRunPolicy, BoundCellRunReceipt
+from .bound_cell_run_envelope import BoundCellRunEnvelopeV2
 from .cell_contracts import CellPassport
 from .cell_passport import load_cell_catalog
 from .config import ExpertConfig, parse_config, runtime_config_sha256
+from .cooperative_resource_lease import (
+    CooperativeResourceLeaseAcquisition,
+    CooperativeResourceLeaseEvaluation,
+    CooperativeResourceLeaseHandle,
+    CooperativeResourceLeaseStoreError,
+    SQLiteCooperativeResourceLeaseStore,
+    cooperative_resource_claim_from_preview,
+)
+from .cooperative_resource_lease_contracts import (
+    CooperativeResourceClaim,
+    CooperativeResourceLeaseAdmissionReceipt,
+    CooperativeResourceLeaseReleaseReceipt,
+    CooperativeResourceLeaseTransitionReceipt,
+)
 from .execution_scope import ExecutionScope, ExecutionTransport
+from .resource_snapshot import ResourceSnapshot, collect_resource_snapshot
 from .runtime_binding_contracts import BOUND_CELL_ADAPTER_ID
 from .runtime_binding_inspector import (
     CellBindingInspectRequest,
@@ -369,6 +386,7 @@ class BoundCellResolvedTarget:
 @dataclass(frozen=True)
 class BoundCellRunResult:
     receipt: BoundCellRunReceipt
+    envelope: BoundCellRunEnvelopeV2
     response_text: str | None = None
     publication_inputs: tuple[Path, ...] = field(default=(), repr=False, compare=False)
     publication_protected_roots: tuple[ProtectedRootIdentity, ...] = field(
@@ -377,9 +395,16 @@ class BoundCellRunResult:
     interruption: BaseException | None = field(default=None, repr=False, compare=False)
 
 
-Previewer = Callable[..., AdaptiveCellExecutionPreviewReceipt]
+SnapshotPreviewer = Callable[..., AdaptiveCellExecutionPreviewEvaluation]
+SnapshotCollector = Callable[[], ResourceSnapshot]
 Inspector = Callable[..., CellBindingInspectionBundle]
 Resolver = Callable[[str | Path], BoundCellResolvedTarget]
+
+
+class _AdaptivePreviewBlocked(RuntimeError):
+    def __init__(self, evaluation: AdaptiveCellExecutionPreviewEvaluation) -> None:
+        self.evaluation = evaluation
+        super().__init__("Fresh adaptive preview blocked execution.")
 
 
 def resolve_bound_cell_target(
@@ -443,7 +468,9 @@ def run_bound_cell(
     confirmed: bool,
     policy: BoundCellRunPolicy | None = None,
     transport: BoundCellRunTransport | None = None,
-    previewer: Previewer = preview_cell_execution,
+    previewer: SnapshotPreviewer = preview_cell_execution_with_snapshot,
+    snapshot_collector: SnapshotCollector = collect_resource_snapshot,
+    lease_store: SQLiteCooperativeResourceLeaseStore | None = None,
     inspector: Inspector = inspect_cell_binding,
     resolver: Resolver = resolve_bound_cell_target,
     clock: Callable[[], datetime] | None = None,
@@ -478,6 +505,12 @@ def run_bound_cell(
     )
     publication_roots: tuple[ProtectedRootIdentity, ...] = ()
     pending_interruption: BaseException | None = None
+    lease_claim: CooperativeResourceClaim | None = None
+    lease_admission: CooperativeResourceLeaseAdmissionReceipt | None = None
+    lease_transition: CooperativeResourceLeaseTransitionReceipt | None = None
+    lease_release: CooperativeResourceLeaseReleaseReceipt | None = None
+    lease_error_code: str | None = None
+    lease_handle: CooperativeResourceLeaseHandle | None = None
     state: dict[str, object] = {
         "policy_sha256": active_policy.digest,
         "started_at": started,
@@ -542,8 +575,18 @@ def run_bound_cell(
             response_chars=(len(response) if response is not None else None),
             elapsed_ms=elapsed_ms,
         )
+        envelope = BoundCellRunEnvelopeV2(
+            run_receipt=receipt,
+            run_receipt_sha256=receipt.digest,
+            lease_claim=lease_claim,
+            lease_admission_receipt=lease_admission,
+            lease_transition_receipt=lease_transition,
+            lease_release_receipt=lease_release,
+            lease_error_code=lease_error_code,
+        )
         return BoundCellRunResult(
             receipt=receipt,
+            envelope=envelope,
             response_text=(
                 response if final_status in {"completed", "invalidated"} else None
             ),
@@ -587,6 +630,19 @@ def run_bound_cell(
         return finish("blocked", {"binding_inspection_failed"})
 
     try:
+        base_url = _base_url(target.expert)
+        active_lease_store = lease_store or SQLiteCooperativeResourceLeaseStore()
+    except (KeyboardInterrupt, SystemExit) as exc:
+        pending_interruption = exc
+        lease_error_code = "lease_store_failed"
+        return finish(
+            "blocked", {"adaptive_admission_blocked", "execution_interrupted"}
+        )
+    except Exception:
+        lease_error_code = "lease_store_failed"
+        return finish("blocked", {"adaptive_admission_blocked"})
+
+    try:
         current = resolver(binding_request_path)
         if (
             current.request.digest != target.request.digest
@@ -596,6 +652,9 @@ def run_bound_cell(
             or current.expert != target.expert
         ):
             return finish("blocked", {"config_changed"})
+    except (KeyboardInterrupt, SystemExit) as exc:
+        pending_interruption = exc
+        return finish("blocked", {"binding_inspection_failed", "execution_interrupted"})
     except BoundCellRunTransportError as exc:
         return finish(
             "blocked", {_stable_reason(exc.code, "binding_inspection_failed")}
@@ -603,98 +662,259 @@ def run_bound_cell(
     except Exception:
         return finish("blocked", {"binding_inspection_failed"})
 
-    # The adaptive preview is deliberately the last admission step before any
-    # endpoint traffic; its read-only contract is not itself authorization.
-    try:
-        preview = previewer(
+    preview_evaluation: AdaptiveCellExecutionPreviewEvaluation | None = None
+
+    def evaluate_for_lease() -> CooperativeResourceLeaseEvaluation[
+        AdaptiveCellExecutionPreviewEvaluation
+    ]:
+        nonlocal lease_claim, preview_evaluation
+        snapshot = snapshot_collector()
+        evaluation = previewer(
             source_advisor_receipt_path,
             task_text,
             catalog_path,
             evaluation_contract_path,
             adaptive_policy_path,
+            resource_snapshot=snapshot,
         )
-        if not isinstance(preview, AdaptiveCellExecutionPreviewReceipt):
-            raise TypeError
-        state["preview_sha256"] = preview.digest
-        state["selected_cell_id"] = preview.fresh_selected_cell_id
-        state["passport_sha256"] = preview.fresh_passport_sha256
-        if preview.status != "admission_passed":
-            return finish("blocked", {"adaptive_admission_blocked"})
-        if preview.task_chars != len(task_text):
-            return finish("blocked", {"adaptive_preview_invalid"})
-        _validate_preview_binding(preview, target, pre)
+        if not isinstance(evaluation, AdaptiveCellExecutionPreviewEvaluation):
+            raise TypeError("snapshot previewer returned an invalid evaluation")
+        preview_evaluation = evaluation
+        preview_receipt = evaluation.receipt
+        if preview_receipt.task_chars != len(task_text):
+            raise BoundCellRunTransportError(
+                "adaptive_preview_invalid", "Preview task size changed."
+            )
+        _validate_preview_binding(preview_receipt, target, pre)
+        if preview_receipt.status != "admission_passed":
+            raise _AdaptivePreviewBlocked(evaluation)
+        claim = cooperative_resource_claim_from_preview(
+            preview=preview_receipt,
+            fresh_advisor=evaluation.fresh_advisor_receipt,
+            passport=target.passport,
+            catalog=evaluation.catalog,
+            snapshot=evaluation.resource_snapshot,
+        )
+        lease_claim = claim
+        return CooperativeResourceLeaseEvaluation(
+            claim=claim,
+            snapshot=evaluation.resource_snapshot,
+            context=evaluation,
+        )
+
+    # This transaction is the final gate before the first endpoint request. It
+    # captures one snapshot, repeats Advisor admission, and records the exact
+    # conservative claim before another participating process can race it.
+    try:
+        acquisition = active_lease_store.evaluate_and_acquire(evaluate_for_lease)
+        if not isinstance(acquisition, CooperativeResourceLeaseAcquisition):
+            raise TypeError("lease store returned an invalid acquisition")
+        if not isinstance(
+            acquisition.context, AdaptiveCellExecutionPreviewEvaluation
+        ):
+            raise TypeError("lease acquisition omitted preview evidence")
+        if not isinstance(
+            acquisition.receipt, CooperativeResourceLeaseAdmissionReceipt
+        ):
+            raise TypeError("lease acquisition omitted its receipt")
+        if acquisition.receipt.status == "acquired" and not isinstance(
+            acquisition.handle, CooperativeResourceLeaseHandle
+        ):
+            raise TypeError("acquired lease omitted its ownership handle")
+        preview_evaluation = acquisition.context
+        lease_admission = acquisition.receipt
+        lease_handle = acquisition.handle
+    except _AdaptivePreviewBlocked as exc:
+        preview_evaluation = exc.evaluation
+        lease_error_code = "adaptive_preview_blocked"
+    except (KeyboardInterrupt, SystemExit) as exc:
+        pending_interruption = exc
+        lease_claim = None
+        lease_error_code = "lease_store_failed"
+        return finish(
+            "blocked", {"adaptive_admission_blocked", "execution_interrupted"}
+        )
     except BoundCellRunTransportError as exc:
+        lease_claim = None
+        lease_error_code = "adaptive_preview_invalid"
         return finish("blocked", {_stable_reason(exc.code, "adaptive_preview_invalid")})
+    except CooperativeResourceLeaseStoreError as exc:
+        lease_claim = None
+        if exc.code == "lease_claim_invalid":
+            lease_error_code = "adaptive_preview_invalid"
+            return finish("blocked", {"adaptive_preview_invalid"})
+        lease_error_code = "lease_store_failed"
+        return finish("blocked", {"adaptive_admission_blocked"})
     except Exception:
+        lease_claim = None
+        lease_error_code = (
+            "adaptive_preview_invalid"
+            if preview_evaluation is not None
+            else "lease_store_failed"
+        )
+        return finish(
+            "blocked",
+            {
+                "adaptive_preview_invalid"
+                if preview_evaluation is not None
+                else "adaptive_admission_blocked"
+            },
+        )
+
+    if preview_evaluation is None:
+        lease_error_code = "adaptive_preview_invalid"
         return finish("blocked", {"adaptive_preview_invalid"})
+    preview = preview_evaluation.receipt
+    state["preview_sha256"] = preview.digest
+    state["selected_cell_id"] = preview.fresh_selected_cell_id
+    state["passport_sha256"] = preview.fresh_passport_sha256
+    if lease_error_code == "adaptive_preview_blocked":
+        return finish("blocked", {"adaptive_admission_blocked"})
+    if lease_admission is None or lease_claim is None:
+        lease_error_code = "lease_store_failed"
+        return finish("blocked", {"adaptive_admission_blocked"})
+    if lease_admission.status != "acquired" or lease_handle is None:
+        return finish("blocked", {"adaptive_admission_blocked"})
+
+    def settle_lease(delivery_status: str) -> bool:
+        nonlocal lease_error_code, lease_release, pending_interruption
+        try:
+            release_receipt = active_lease_store.release(
+                lease_handle, delivery_status=delivery_status
+            )
+            if not isinstance(
+                release_receipt, CooperativeResourceLeaseReleaseReceipt
+            ):
+                raise TypeError("lease release returned an invalid receipt")
+            lease_release = release_receipt
+            expected_statuses = {
+                "not_attempted": {"released", "released_cleanup_deferred"},
+                "response_received": {"released", "released_cleanup_deferred"},
+                "attempted_unknown": {"unknown_blocking"},
+            }[delivery_status]
+            if release_receipt.status not in expected_statuses:
+                lease_error_code = "lease_release_failed"
+                return False
+            return True
+        except (KeyboardInterrupt, SystemExit) as exc:
+            if pending_interruption is None:
+                pending_interruption = exc
+            lease_error_code = "lease_release_failed"
+            return False
+        except Exception:
+            lease_error_code = "lease_release_failed"
+            return False
 
     try:
         state["endpoint_probe_requests"] = 1
         probe_pre = active_transport.probe_models(
-            base_url=_base_url(target.expert),
+            base_url=base_url,
             timeout_seconds=active_policy.timeout_seconds,
             maximum_bytes=active_policy.max_probe_bytes,
             maximum_models=active_policy.max_models,
         )
         state["pre_model_identity_set_sha256"] = probe_pre.identity_set_sha256
         if target.expert.model not in probe_pre.model_ids:
-            return finish("blocked", {"expected_model_missing"})
+            settlement_ok = settle_lease("not_attempted")
+            reasons = {"expected_model_missing"}
+            if not settlement_ok:
+                reasons.add("adaptive_admission_blocked")
+            return finish("blocked", reasons)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        pending_interruption = exc
+        settlement_ok = settle_lease("not_attempted")
+        reasons = {"execution_interrupted", "model_probe_failed"}
+        if not settlement_ok:
+            reasons.add("adaptive_admission_blocked")
+        return finish("blocked", reasons)
     except BoundCellRunTransportError as exc:
-        return finish("blocked", {_stable_reason(exc.code, "model_probe_failed")})
+        settlement_ok = settle_lease("not_attempted")
+        reasons = {_stable_reason(exc.code, "model_probe_failed")}
+        if not settlement_ok:
+            reasons.add("adaptive_admission_blocked")
+        return finish("blocked", reasons)
     except Exception:
-        return finish("blocked", {"model_probe_failed"})
+        settlement_ok = settle_lease("not_attempted")
+        reasons = {"model_probe_failed"}
+        if not settlement_ok:
+            reasons.add("adaptive_admission_blocked")
+        return finish("blocked", reasons)
+
+    try:
+        transition_receipt = active_lease_store.arm_delivery(lease_handle)
+        if not isinstance(
+            transition_receipt, CooperativeResourceLeaseTransitionReceipt
+        ):
+            raise TypeError("lease transition returned an invalid receipt")
+        lease_transition = transition_receipt
+    except (KeyboardInterrupt, SystemExit) as exc:
+        pending_interruption = exc
+        lease_error_code = "lease_transition_failed"
+        settle_lease("not_attempted")
+        return finish(
+            "blocked", {"adaptive_admission_blocked", "execution_interrupted"}
+        )
+    except Exception:
+        lease_error_code = "lease_transition_failed"
+        settle_lease("not_attempted")
+        return finish("blocked", {"adaptive_admission_blocked"})
+    if not lease_transition.transition_applied:
+        lease_error_code = "lease_transition_failed"
+        settle_lease("not_attempted")
+        return finish("blocked", {"adaptive_admission_blocked"})
 
     response: str | None = None
     transport_reason: str | None = None
+    response_received = False
     state["invocation_attempts"] = 1
     state["delivery_status"] = "attempted_unknown"
     try:
         response = active_transport.invoke(
-            base_url=_base_url(target.expert),
+            base_url=base_url,
             model=target.expert.model,
             task_text=task_text,
             timeout_seconds=active_policy.timeout_seconds,
             maximum_bytes=active_policy.max_response_bytes,
             max_output_tokens=active_policy.max_output_tokens,
         )
-        if not isinstance(response, str) or not response:
-            raise BoundCellRunTransportError(
-                "response_invalid",
-                "Transport returned no text.",
-                response_received=True,
-            )
-        try:
-            encoded_response = response.encode("utf-8")
-        except UnicodeEncodeError as exc:
-            raise BoundCellRunTransportError(
-                "response_invalid",
-                "Transport returned text that is not valid UTF-8.",
-                response_received=True,
-            ) from exc
-        if len(encoded_response) > active_policy.max_response_bytes:
-            raise BoundCellRunTransportError(
-                "response_too_large",
-                "Transport returned text beyond the response byte bound.",
-                response_received=True,
-            )
-        state["delivery_status"] = "response_received"
+        response_received = True
     except BoundCellRunTransportError as exc:
-        response = None
         transport_reason = _stable_reason(exc.code, "transport_failed")
-        if exc.response_received:
-            state["delivery_status"] = "response_received"
-    except Exception:
-        response = None
-        transport_reason = "transport_failed"
+        response_received = exc.response_received
     except (KeyboardInterrupt, SystemExit) as exc:
         pending_interruption = exc
         transport_reason = "execution_interrupted"
+    except Exception:
+        transport_reason = "transport_failed"
+
+    if response_received:
+        state["delivery_status"] = "response_received"
+        settlement_ok = settle_lease("response_received")
+    else:
+        settlement_ok = settle_lease("attempted_unknown")
+
+    if response is not None:
+        if not isinstance(response, str) or not response:
+            response = None
+            transport_reason = "response_invalid"
+        else:
+            try:
+                encoded_response = response.encode("utf-8")
+            except UnicodeEncodeError:
+                response = None
+                transport_reason = "response_invalid"
+            else:
+                if len(encoded_response) > active_policy.max_response_bytes:
+                    response = None
+                    transport_reason = "response_too_large"
 
     invalidation: set[str] = set()
+    if not settlement_ok:
+        invalidation.add("adaptive_admission_blocked")
     try:
         state["endpoint_probe_requests"] = 2
         probe_post = active_transport.probe_models(
-            base_url=_base_url(target.expert),
+            base_url=base_url,
             timeout_seconds=active_policy.timeout_seconds,
             maximum_bytes=active_policy.max_probe_bytes,
             maximum_models=active_policy.max_models,
