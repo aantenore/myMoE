@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-moe-orchestrator"
-version = "0.13.0a1"
+version = "0.14.0a1"
 description = "Local-first system-level MoE orchestration runtime"
 readme = "README.md"
 license = "Apache-2.0"
@@ -51,12 +51,16 @@ mlx-vlm = [
   "huggingface-hub",
   "psutil"
 ]
+local-cascade = [
+  "mcp>=1.27.2,<2"
+]
 ui-test = [
   "playwright"
 ]
 
 [project.scripts]
 mymoe = "local_moe.cli:main"
+mymoe-local-cascade-mcp = "local_moe.local_cascade_mcp:main"
 mymoe-paired = "local_moe.paired_execution_cli:main"
 mymoe-web = "local_moe.web:main"
 
