@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 import errno
@@ -10,6 +11,9 @@ from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import threading
+import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -263,6 +267,130 @@ class TwoPhaseFoundationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ContentAddressedStoreError, "regular file"):
                 store.get_bytes(descriptor)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX hard-link publication semantics")
+    def test_concurrent_identical_cas_put_accepts_publish_link_settlement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ContentAddressedStore(Path(temporary) / "cas")
+            value = b"concurrent candidate content"
+            start = threading.Barrier(3)
+            published = threading.Event()
+            release_publisher = threading.Event()
+            reader_observed = threading.Event()
+            reader_coordination = threading.Lock()
+            transitions: list[tuple[int, int, int, int]] = []
+            real_link = os.link
+            real_read = os.read
+
+            def coordinated_link(
+                source: object,
+                destination: object,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                real_link(source, destination, *args, **kwargs)
+                if not published.is_set():
+                    published.set()
+                    if not release_publisher.wait(timeout=5):
+                        raise AssertionError(
+                            "Concurrent reader did not observe CAS publication."
+                        )
+
+            def coordinated_read(descriptor: int, size: int) -> bytes:
+                data = real_read(descriptor, size)
+                if not data or not published.is_set():
+                    return data
+                with reader_coordination:
+                    if reader_observed.is_set():
+                        return data
+                    reader_observed.set()
+                before = os.fstat(descriptor)
+                release_publisher.set()
+                deadline = time.monotonic() + 5
+                while os.fstat(descriptor).st_nlink > 1 and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                after = os.fstat(descriptor)
+                transitions.append(
+                    (
+                        before.st_nlink,
+                        after.st_nlink,
+                        before.st_ctime_ns,
+                        after.st_ctime_ns,
+                    )
+                )
+                return data
+
+            def put() -> ArtifactDescriptor:
+                start.wait(timeout=5)
+                return store.put_bytes(
+                    value,
+                    media_type="application/octet-stream",
+                )
+
+            with (
+                mock.patch.object(cas_module.os, "link", side_effect=coordinated_link),
+                mock.patch.object(cas_module.os, "read", side_effect=coordinated_read),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                futures = (executor.submit(put), executor.submit(put))
+                start.wait(timeout=5)
+                descriptors = tuple(future.result(timeout=10) for future in futures)
+
+            self.assertEqual(descriptors[0], descriptors[1])
+            self.assertEqual(len(transitions), 1)
+            self.assertEqual(transitions[0][:2], (2, 1))
+            self.assertNotEqual(transitions[0][2], transitions[0][3])
+            target = store._object_path(
+                descriptors[0].sha256,
+                create_parent=False,
+            )
+            self.assertEqual(target.stat().st_nlink, 1)
+            self.assertEqual(tuple(target.parent.glob(".*.tmp")), ())
+
+    def test_cas_rejects_every_other_metadata_transition_during_read(self) -> None:
+        base = {
+            "st_dev": 1,
+            "st_ino": 2,
+            "st_mode": 0o100600,
+            "st_uid": 3,
+            "st_gid": 4,
+            "st_nlink": 2,
+            "st_size": 5,
+            "st_mtime_ns": 6,
+            "st_ctime_ns": 7,
+        }
+        opened = SimpleNamespace(**base)
+        settled = SimpleNamespace(**{**base, "st_nlink": 1, "st_ctime_ns": 8})
+
+        self.assertFalse(
+            cas_module._artifact_changed_during_read(
+                opened,
+                SimpleNamespace(**base),
+            )
+        )
+        self.assertFalse(cas_module._artifact_changed_during_read(opened, settled))
+        self.assertTrue(
+            cas_module._artifact_changed_during_read(
+                opened,
+                SimpleNamespace(**{**base, "st_ctime_ns": 8}),
+            )
+        )
+        for field, value in (
+            ("st_dev", 10),
+            ("st_ino", 10),
+            ("st_mode", 0o100400),
+            ("st_uid", 10),
+            ("st_gid", 10),
+            ("st_nlink", 3),
+            ("st_size", 10),
+            ("st_mtime_ns", 10),
+            ("st_ctime_ns", 7),
+        ):
+            with self.subTest(field=field):
+                changed = SimpleNamespace(**{**settled.__dict__, field: value})
+                self.assertTrue(
+                    cas_module._artifact_changed_during_read(opened, changed)
+                )
 
     def test_store_candidate_binds_ordered_manifest_changeset_and_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

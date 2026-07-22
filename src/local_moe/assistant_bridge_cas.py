@@ -234,9 +234,13 @@ class ContentAddressedStore:
                 os.link(temporary, target, follow_symlinks=False)
             except FileExistsError:
                 pass
+            else:
+                temporary.unlink()
             _fsync_directory(target.parent)
         except OSError as exc:
-            raise ContentAddressedStoreError("CAS object could not be persisted.") from exc
+            raise ContentAddressedStoreError(
+                "CAS object could not be persisted."
+            ) from exc
         finally:
             if descriptor_fd >= 0:
                 os.close(descriptor_fd)
@@ -245,7 +249,9 @@ class ContentAddressedStore:
             except FileNotFoundError:
                 pass
         if self.get_bytes(descriptor) != value:
-            raise ContentAddressedStoreError("CAS object failed post-write verification.")
+            raise ContentAddressedStoreError(
+                "CAS object failed post-write verification."
+            )
         return descriptor
 
     def put_json(self, value: Mapping[str, Any], *, media_type: str) -> ArtifactDescriptor:
@@ -308,19 +314,7 @@ class ContentAddressedStore:
         finally:
             if descriptor_fd >= 0:
                 os.close(descriptor_fd)
-        if (
-            opened.st_dev,
-            opened.st_ino,
-            opened.st_size,
-            opened.st_mtime_ns,
-            opened.st_ctime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ):
+        if _artifact_changed_during_read(opened, after):
             raise ContentAddressedStoreError("CAS artifact changed while read.")
         if digest.hexdigest() != descriptor.sha256:
             raise ContentAddressedStoreError("CAS artifact digest binding failed.")
@@ -908,6 +902,34 @@ def _write_all(descriptor: int, value: bytes) -> None:
         if written <= 0:
             raise OSError("CAS write made no progress")
         offset += written
+
+
+def _artifact_changed_during_read(
+    opened: os.stat_result,
+    after: os.stat_result,
+) -> bool:
+    stable_fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_uid",
+        "st_gid",
+        "st_size",
+        "st_mtime_ns",
+    )
+    if all(getattr(opened, field) == getattr(after, field) for field in stable_fields):
+        if (
+            opened.st_nlink == after.st_nlink
+            and opened.st_ctime_ns == after.st_ctime_ns
+        ):
+            return False
+        if (
+            opened.st_nlink == 2
+            and after.st_nlink == 1
+            and opened.st_ctime_ns != after.st_ctime_ns
+        ):
+            return False
+    return True
 
 
 def _fsync_directory(path: Path) -> None:
